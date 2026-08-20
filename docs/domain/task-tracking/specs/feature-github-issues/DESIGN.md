@@ -174,7 +174,9 @@ silently orphans every mapping. The catalogue supplies a stable key.
 ### 2.5 Descriptor and Bronze Schema
 
 New streams need their bronze DDL added to the connectors-ddl snapshot and the
-connector descriptor version bumped. The descriptor bump lands post-merge, so a
+connector descriptor version bumped — past whatever the base branch already
+ships, since reconcile keys on that number and two manifests under one version
+leave the older one in place. The descriptor bump lands post-merge, so a
 green pull request does not prove the deployed descriptor moved — verify after
 merge.
 
@@ -629,6 +631,7 @@ changes add data that an incremental cursor will never go back for.
 | `issues` | Clear state, full re-sync | The hoisted `issue_field_values` column is populated only by a fetch. The cursor is a datetime cursor on `updated_at`, so an issue nobody touches again is never re-read — and those are precisely the issues whose field values were set at creation and never changed, which is what the column exists to capture. |
 | `issue_timeline_events` | Clear state, full re-walk | Historical events carry field and type names but no identifiers. Keying history on names instead would mean two resolution paths and a silent failure whenever something is renamed. |
 | `issue_fields`, `issue_types` | Nothing | New streams have no state; the first sync is complete by definition. |
+| Configuration | Author the bindings | Not a stream and not optional: GitHub states no lifecycle category anywhere, so with no binding the issues reach silver and stop there. |
 | `projects_v2` and the rest | Nothing | Unchanged. |
 
 ### Order of operations
@@ -643,7 +646,26 @@ merge
 ```
 
 Clearing state before the new descriptor is live re-syncs against the *old*
-manifest: the full cost of the walk, none of the new data.
+manifest: the full cost of the walk, none of the new data. Check the descriptor
+version reached the deployment: two different manifests under one version number
+would leave the older one in place.
+
+### An empty configuration is safe; a partial one is not
+
+With no bindings at all, GitHub issues reach silver and go no further — the
+assignee role does not resolve, so gold's inner join drops them. The build stays
+green: the coverage tests only examine sources that have declared at least one
+binding. Rolling out before an operator has authored anything is therefore inert
+rather than harmful.
+
+Binding *some* roles and not others is the state to avoid. Every aggregate over
+a filtered set in gold returns its type's default rather than null when nothing
+matches, so a source with an assignee binding but no status binding survives the
+attribution join and then reads as though its issues last changed status in
+1970 — which the staleness measure counts. The two `OrNull` guards in
+`task_issue_state` and `task_metric_evidence` close that, but the rollout order
+still matters: author the whole role set for a source before its first
+transform, not one role at a time.
 
 ### What is already safe
 

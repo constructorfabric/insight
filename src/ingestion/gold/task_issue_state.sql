@@ -90,7 +90,11 @@ issue_pivot AS (
             * argMaxIf(unit_multiplier, (event_at, _version),
                  role = 'spent' AND delta_action = 'set')                    AS time_spent_seconds,
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
-        maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
+        -- OrNull for the same reason `issue_close` uses it: over a
+        -- non-Nullable column with nothing matching, `maxIf` returns the epoch,
+        -- which passes `IS NOT NULL` and dates the staleness measure to 1970.
+        -- Reachable whenever a source has an assignee binding but no status one.
+        maxIfOrNull(event_at, role = 'status' AND delta_action = 'set')   AS last_status_event_at,
         any(data_source)                                                     AS data_source
     FROM history
     GROUP BY insight_source_id, issue_id
