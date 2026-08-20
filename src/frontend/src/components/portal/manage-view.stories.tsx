@@ -41,10 +41,8 @@ type Story = StoryObj<typeof meta>;
 export const ConnectorDelivery: Story = {
   args: { item: "data-health" },
   play: async () => {
-    await expect(
-      await screen.findByText("Connectors · 3 of 4 have delivered"),
-    ).toBeInTheDocument();
-    await expect(screen.getByText("never")).toBeInTheDocument();
+    await expect(await screen.findByText("never")).toBeInTheDocument();
     await expect(screen.getByText("2 days ago")).toBeInTheDocument();
+    await expect(screen.getByText("not delivering")).toBeInTheDocument();
   },
 };

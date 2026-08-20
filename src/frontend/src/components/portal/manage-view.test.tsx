@@ -166,16 +166,37 @@ describe("Manage · What's new", () => {
 });
 
 describe("Manage · Data health", () => {
-  it("counts schema statuses and, separately, definitions with no data", () => {
+  const tile = (label: string) =>
+    screen.getByText(label).closest("div")?.parentElement?.textContent ?? "";
+
+  it("counts a schema-broken definition once, not as broken and awaiting data both", () => {
     render(<ManageView item="data-health" />);
-    expect(screen.getByText(/across 3 metrics/)).toBeInTheDocument();
-    // 2 ok · 1 error · 0 unchecked · 1 without any observation
-    const tile = (label: string) =>
-      screen.getByText(label).closest("div")?.parentElement?.textContent ?? "";
-    expect(tile("ok")).toMatch(/^2/);
-    expect(tile("error")).toMatch(/^1/);
-    expect(tile("unchecked")).toMatch(/^0/);
-    expect(tile("no data yet")).toMatch(/^1/);
+
+    expect(tile("serving data")).toMatch(/^2/);
+    expect(tile("not computing here")).toMatch(/^1/);
+    expect(tile("no data yet")).toMatch(/^0/);
+  });
+
+  it("does not report a custom metric as unverified or awaiting data", () => {
+    mocks.q.data = [
+      {
+        prefix: "git",
+        metrics: [
+          def({
+            metric_key: "git.custom",
+            origin: "custom",
+            schema_status: "unchecked",
+            last_observed_date: null,
+          }),
+        ],
+      },
+    ];
+
+    render(<ManageView item="data-health" />);
+
+    expect(tile("custom")).toMatch(/^1/);
+    expect(tile("not verified")).toMatch(/^0/);
+    expect(tile("no data yet")).toMatch(/^0/);
   });
 });
 
@@ -270,11 +291,9 @@ describe("Manage · connector delivery", () => {
 
     render(<ManageView item="data-health" />);
 
-    expect(
-      screen.getByText("Connectors · 1 of 2 have delivered"),
-    ).toBeInTheDocument();
     expect(screen.getByText("10h ago")).toBeInTheDocument();
     expect(screen.getByText("never")).toBeInTheDocument();
+    expect(screen.getByText("not delivering")).toBeInTheDocument();
 
     const names = screen
       .getAllByRole("row")

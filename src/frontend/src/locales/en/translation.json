@@ -575,12 +575,13 @@
     }
   },
   "connector_health": {
-    "heading": "Connectors · {{delivering}} of {{total}} have delivered",
+    "heading": "Connectors",
     "columns": {
       "connector": "Connector",
       "last_data": "Last data",
       "streams_with_data": "Streams with data",
-      "rows": "Rows"
+      "rows": "Rows",
+      "state": "State"
     },
     "streams_fraction": "{{withData}} / {{total}}",
     "elapsed": {
@@ -588,6 +589,25 @@
       "hours": "{{count}}h ago",
       "days_one": "{{count}} day ago",
       "days_other": "{{count}} days ago"
+    },
+    "tiles": {
+      "delivering": "delivering",
+      "never": "never delivered",
+      "empty_streams": "streams with no data"
+    },
+    "state": {
+      "delivering": "delivering",
+      "partial": "partial",
+      "never": "not delivering"
     }
+  },
+  "catalogue_health": {
+    "heading": "Metric catalog",
+    "serving": "serving data",
+    "awaiting_data": "no data yet",
+    "unverified": "not verified",
+    "broken": "not computing here",
+    "custom": "custom",
+    "disabled": "disabled"
   }
 }

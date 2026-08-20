@@ -22,9 +22,16 @@ import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { useConnectorHealth } from "@/queries/connector-health";
 import { elapsedSince, orderByAttention } from "@/lib/portal/connector-health";
+import { catalogueHealth } from "@/lib/portal/catalogue-health";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
+
+const CONNECTOR_STATE_STYLE: Record<string, string> = {
+  delivering: "bg-success/15 text-success",
+  partial: "bg-warning/20 text-warning-foreground",
+  never: "bg-destructive/15 text-destructive",
+};
 
 const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
   ok: "bg-success/15 text-success",
@@ -202,6 +209,7 @@ function MetricCatalogTable() {
 }
 
 function DataHealth() {
+  const { t } = useTranslation();
   const { metrics, isLoading, isError, refetch } = useFlatDefinitions();
   if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
   if (isError)
@@ -211,44 +219,33 @@ function DataHealth() {
       </div>
     );
 
-  const counts: Record<MetricDefinitionSchemaStatus, number> = {
-    ok: 0,
-    error: 0,
-    unchecked: 0,
-  };
-  for (const m of metrics) counts[m.schema_status] += 1;
-  // A definition whose schema checks out can still have never produced a row
-  // for this tenant — two separate questions, so show both answers.
-  const noData = metrics.filter((m) => m.last_observed_date == null).length;
+  const catalogue = catalogueHealth(metrics);
+  const tiles = [
+    { key: "serving", value: catalogue.serving, tone: "text-success" },
+    { key: "awaiting_data", value: catalogue.awaitingData, tone: "" },
+    { key: "unverified", value: catalogue.unverified, tone: "" },
+    { key: "broken", value: catalogue.broken, tone: "text-destructive" },
+    { key: "custom", value: catalogue.custom, tone: "" },
+    { key: "disabled", value: catalogue.disabled, tone: "" },
+  ] as const;
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">Data health</h1>
-        <p className="text-sm text-muted-foreground">
-          Schema-check status across {metrics.length} metrics
-        </p>
-      </div>
+    <div className="flex flex-col gap-6 p-4 md:p-6">
       <ConnectorDelivery />
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
-        {(["ok", "error", "unchecked"] as const).map((s) => (
-          <div key={s} className="rounded-lg border bg-card p-4">
-            <div className={TEXT_FIGURE}>{counts[s]}</div>
-            <div
-              className={cn(
-                "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s]
-              )}
-            >
-              {s}
+
+      <div className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          {t("catalogue_health.heading")}
+        </h2>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+          {tiles.map((tile) => (
+            <div key={tile.key} className="rounded-lg border bg-card p-4">
+              <div className={cn(TEXT_FIGURE, tile.tone)}>{tile.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {t(`catalogue_health.${tile.key}`)}
+              </div>
             </div>
-          </div>
-        ))}
-        <div className="rounded-lg border bg-card p-4">
-          <div className={TEXT_FIGURE}>{noData}</div>
-          <div className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            no data yet
-          </div>
+          ))}
         </div>
       </div>
     </div>
@@ -270,15 +267,40 @@ function ConnectorDelivery() {
   const asOf = new Date(data.as_of);
   const connectors = orderByAttention(data.connectors);
   const delivering = connectors.filter((c) => c.last_write != null).length;
+  const emptyStreams = connectors.reduce(
+    (n, c) => n + (c.streams - c.streams_with_data),
+    0,
+  );
+
+  const tiles = [
+    { key: "delivering", value: delivering, tone: "text-success" },
+    {
+      key: "never",
+      value: connectors.length - delivering,
+      tone: connectors.length - delivering > 0 ? "text-destructive" : "",
+    },
+    { key: "empty_streams", value: emptyStreams, tone: "" },
+  ] as const;
 
   return (
-    <div className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium text-muted-foreground">
-        {t("connector_health.heading", {
-          delivering,
-          total: connectors.length,
-        })}
-      </h2>
+    <div className="flex flex-col gap-4">
+      <div>
+        <h1 className="text-lg font-semibold tracking-tight">
+          {t("connector_health.heading")}
+        </h1>
+      </div>
+
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+        {tiles.map((tile) => (
+          <div key={tile.key} className="rounded-lg border bg-card p-4">
+            <div className={cn(TEXT_FIGURE, tile.tone)}>{tile.value}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t(`connector_health.tiles.${tile.key}`)}
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
@@ -291,17 +313,36 @@ function ConnectorDelivery() {
               <TableHead className="text-end">
                 {t("connector_health.columns.rows")}
               </TableHead>
+              <TableHead>{t("connector_health.columns.state")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {connectors.map((c) => {
               const elapsed = elapsedSince(c.last_write, asOf);
+              const state =
+                elapsed.kind === "never"
+                  ? "never"
+                  : c.streams_with_data < c.streams
+                    ? "partial"
+                    : "delivering";
               return (
                 <TableRow key={c.namespace}>
-                  <TableCell className="font-medium">{c.connector}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className="flex items-center gap-2.5">
+                      <span
+                        aria-hidden
+                        className="size-2 shrink-0 rounded-full"
+                        style={{
+                          background: `var(--brand-${c.connector}, var(--muted-foreground))`,
+                        }}
+                      />
+                      {c.connector}
+                    </span>
+                  </TableCell>
                   <TableCell
                     className={cn(
-                      elapsed.kind === "never" && "text-muted-foreground",
+                      "tabular-nums",
+                      state === "never" && "text-muted-foreground",
                     )}
                   >
                     {elapsed.kind === "never"
@@ -318,6 +359,14 @@ function ConnectorDelivery() {
                   </TableCell>
                   <TableCell className="text-end tabular-nums">
                     {c.rows.toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="secondary"
+                      className={cn("font-medium", CONNECTOR_STATE_STYLE[state])}
+                    >
+                      {t(`connector_health.state.${state}`)}
+                    </Badge>
                   </TableCell>
                 </TableRow>
               );
