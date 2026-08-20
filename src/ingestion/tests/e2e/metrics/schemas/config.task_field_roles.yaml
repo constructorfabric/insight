@@ -10,8 +10,12 @@ schemas:
       insight_source_id: *id001
       data_source: *id001
       field_id: *id001
-      valid_from: *id001
-      recorded_at: *id001
+      valid_from:
+        type: string
+        format: date-time
+      recorded_at:
+        type: string
+        format: date-time
       unique_key: *id001
       role: *id001
       precedence: &id002
@@ -22,4 +26,6 @@ schemas:
       is_deleted: *id002
       note: *id001
       recorded_by: *id001
-      _version: *id001
+      _version:
+        type: string
+        format: date-time

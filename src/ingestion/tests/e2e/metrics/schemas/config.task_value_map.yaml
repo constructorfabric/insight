@@ -11,8 +11,12 @@ schemas:
       data_source: *id001
       field_id: *id001
       value_id: *id001
-      valid_from: *id001
-      recorded_at: *id001
+      valid_from:
+        type: string
+        format: date-time
+      recorded_at:
+        type: string
+        format: date-time
       unique_key: *id001
       canonical_value: *id001
       value_display: *id001
@@ -20,4 +24,6 @@ schemas:
         type: integer
       note: *id001
       recorded_by: *id001
-      _version: *id001
+      _version:
+        type: string
+        format: date-time

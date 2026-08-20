@@ -52,7 +52,9 @@ history AS (
         fh.value_ids                                                          AS value_ids,
         fh.value_displays                                                     AS value_displays,
         fh._version                                                           AS _version,
-        r.role                                                                AS role,
+        -- Null-proof under EITHER join_use_nulls setting: an unbound field must
+        -- read as "no role", never as NULL propagating through the filter.
+        ifNull(r.role, '')                                                    AS role,
         -- Only a convertible unit is scaled. An estimate stated in a unit that
         -- is not commensurable with time must produce nothing rather than a
         -- plausible number.
@@ -63,7 +65,7 @@ history AS (
         ON r.insight_source_id = fh.insight_source_id
         AND r.data_source = fh.data_source
         AND r.field_id = fh.field_id
-    WHERE r.role != '' OR fh.event_kind = 'synthetic_initial'
+    WHERE ifNull(r.role, '') != '' OR fh.event_kind = 'synthetic_initial'
 ),
 issue_pivot AS (
     SELECT
