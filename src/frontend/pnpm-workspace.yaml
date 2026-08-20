@@ -2,6 +2,11 @@
 # This applies to all dependencies, including transitive ones.
 minimumReleaseAge: 10080
 
+# First-party Constructor packages are built and reviewed in-house, so the
+# quarantine above only delays picking up our own releases.
+minimumReleaseAgeExclude:
+  - '@gears-frontx/*'
+
 # Save exact versions when installing dependencies.
 saveExact: true
 
