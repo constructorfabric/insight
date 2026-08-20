@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
 import { OrgTree } from "@/components/org-tree";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
@@ -523,21 +524,42 @@ function WorkChart() {
   // and calling it a chart would name a structure the reader cannot see.
   const { isFlat } = useVisibilityPolicy();
 
+  const find = (
+    <div className="relative px-2">
+      <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Find someone"
+        aria-label="Find someone in the org"
+        className="h-8 ps-7 text-sm"
+      />
+    </div>
+  );
+
+  // A roster is the whole organisation, so it takes the rest of the pane and
+  // scrolls there: the sections above it stay put, the list runs to the bottom
+  // edge, and rows pass UNDER the search rather than stopping short of it.
+  if (isFlat) {
+    return (
+      <SidebarGroup className="min-h-0 flex-1">
+        <SidebarGroupLabel>Everyone</SidebarGroupLabel>
+        <SidebarGroupContent className="flex min-h-0 flex-1 flex-col">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="sticky top-0 z-10 bg-sidebar pb-2">{find}</div>
+            <OrgTree leadsToTeam query={query} />
+          </ScrollArea>
+        </SidebarGroupContent>
+      </SidebarGroup>
+    );
+  }
+
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{isFlat ? "Everyone" : "WorkChart"}</SidebarGroupLabel>
+      <SidebarGroupLabel>WorkChart</SidebarGroupLabel>
       <SidebarGroupContent className="flex flex-col gap-2">
-        <div className="relative px-2">
-          <Search className="pointer-events-none absolute top-1/2 left-4 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Find someone"
-            aria-label="Find someone in the org"
-            className="h-8 ps-7 text-sm"
-          />
-        </div>
+        {find}
         <OrgTree leadsToTeam query={query} />
       </SidebarGroupContent>
     </SidebarGroup>

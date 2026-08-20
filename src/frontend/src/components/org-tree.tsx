@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, User, Users } from "lucide-react";
 import { useMemo } from "react";
 
 import { useViewer } from "@/auth";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -155,11 +154,9 @@ function RosterList({ query }: { query: string }) {
   }
 
   return (
-    // The roster is the whole organisation, so it scrolls in its own area —
-    // paging it into the sidebar would carry the sections above it off-screen.
-    // Capped rather than fixed, so a small organisation does not leave a gap.
-    <ScrollArea className="max-h-[60svh]">
-      <SidebarMenu>
+    // Padding INSIDE the scroll region the pane owns, so the first and last
+    // names clear its edges instead of touching them.
+    <SidebarMenu className="pb-2">
         {listed.map(({ person, label }) => (
           <SidebarMenuItem key={person.person_id}>
             <SidebarMenuButton
@@ -180,9 +177,8 @@ function RosterList({ query }: { query: string }) {
               <span className="truncate">{label}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
-        ))}
-      </SidebarMenu>
-    </ScrollArea>
+      ))}
+    </SidebarMenu>
   );
 }
 
