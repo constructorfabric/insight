@@ -50,6 +50,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { screenLabel } from "@/lib/portal/screen-label";
+import { visitorLabel } from "@/lib/portal/visitor-label";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
@@ -295,7 +296,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
           columns={[
             {
               header: "Person",
-              cell: (row) => row.display_name || row.person_id,
+              cell: (row) => <VisitorName row={row} />,
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
@@ -304,6 +305,19 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
         />
       )}
     </section>
+  );
+}
+
+function VisitorName({ row }: { row: UsagePerson }) {
+  const { label, detail } = visitorLabel(row);
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger render={<span className="truncate" />}>{label}</TooltipTrigger>
+        <TooltipContent className="font-mono text-xs">{detail}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

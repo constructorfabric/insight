@@ -273,6 +273,7 @@ fn people_sql() -> String {
     format!(
         "SELECT toString(u.person) AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
+         coalesce(p.username, '') AS username, \
          u.visits AS visits, u.page_views AS page_views, u.last_seen AS last_seen \
          FROM (\
            SELECT person_id AS person, {VISITS} AS visits, \
@@ -290,9 +291,10 @@ fn people_sql() -> String {
                ' ', \
                coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'last_name'), '') \
              )), '') \
-           ) AS display_name \
+           ) AS display_name, \
+           nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'username'), '') AS username \
            FROM identity.identity_persons \
-           WHERE value_type IN ('display_name', 'first_name', 'last_name') \
+           WHERE value_type IN ('display_name', 'first_name', 'last_name', 'username') \
            AND insight_tenant_id = toUUID(?) \
            GROUP BY person_id) AS p ON p.person_id = u.person \
          ORDER BY u.visits DESC, u.page_views DESC"
@@ -385,6 +387,8 @@ pub struct UsagePerson {
     pub person_id: String,
     /// Empty when the visitor has not been mirrored into the identity rows yet.
     pub display_name: String,
+    /// The account handle, empty when no identity row carries one.
+    pub username: String,
     pub visits: u64,
     pub page_views: u64,
     pub last_seen: String,

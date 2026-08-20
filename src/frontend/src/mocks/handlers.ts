@@ -861,6 +861,7 @@ function usageHandlers() {
           {
             person_id: defaultPerson?.person_id ?? "",
             display_name: defaultPerson?.name ?? "",
+            username: defaultPerson?.email.split("@")[0] ?? "",
             visits: 31,
             page_views: 96,
             last_seen: `${by_day.at(-1)?.day ?? ""} 09:12`,
@@ -868,6 +869,7 @@ function usageHandlers() {
           {
             person_id: PEOPLE[1]?.person_id ?? "",
             display_name: PEOPLE[1]?.name ?? "",
+            username: PEOPLE[1]?.email.split("@")[0] ?? "",
             visits: 18,
             page_views: 64,
             last_seen: `${by_day.at(-1)?.day ?? ""} 08:40`,
@@ -875,6 +877,7 @@ function usageHandlers() {
           {
             person_id: PEOPLE[2]?.person_id ?? "",
             display_name: PEOPLE[2]?.name ?? "",
+            username: PEOPLE[2]?.email.split("@")[0] ?? "",
             visits: 7,
             page_views: 54,
             last_seen: `${by_day.at(-2)?.day ?? ""} 17:05`,
