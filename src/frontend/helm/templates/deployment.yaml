@@ -62,6 +62,10 @@ spec:
               mountPath: /usr/share/nginx/html/config.js
               subPath: config.js
               readOnly: true
+            - name: runtime-config
+              mountPath: /usr/share/nginx/html/version.json
+              subPath: version.json
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
