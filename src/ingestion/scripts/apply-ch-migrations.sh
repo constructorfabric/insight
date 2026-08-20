@@ -166,6 +166,29 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+echo "=== Healing git file-change object id columns ==="
+# The file-change object ids arrive at the tail of every staging projection
+# that feeds class_git_file_changes. Pre-existing staging tables lack them and
+# the positional insert misaligns; the silver side heals in migrations/*.sql,
+# staging heals here because these tables exist only after the connector's
+# first run. Existing rows heal to NULL and carry an oid from the first sync
+# that re-collects them. Idempotent.
+heal_git_file_change_oids() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS post_image_oid Nullable(String) AFTER pre_image_oid;
+ALTER TABLE staging.${table} MODIFY COLUMN pre_image_oid Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE staging.${table} MODIFY COLUMN post_image_oid Nullable(String) AFTER pre_image_oid;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_file_change_oids "${_git_source}__file_changes"
+done
+
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)
 # from raw bronze Decimal(38,9) to toString(...), but pre-existing
