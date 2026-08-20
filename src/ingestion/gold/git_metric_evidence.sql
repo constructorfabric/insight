@@ -74,6 +74,56 @@ commits_source AS (
     ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
     LIMIT 1 BY tenant_id, data_source, commit_hash
 ),
+-- One row per change CONTENT, not per commit that carries it. The same content
+-- entering a repository on two lines of history — a branch whose copy of a
+-- tree was squashed onto the default branch as well, a cherry-pick, a
+-- reverted-then-restored file — is one authored change with one oid pair, and
+-- summing both commits' diffs would count those lines twice.
+--
+-- Earliest commit wins, so the value lands in the period the content was first
+-- authored and does not move when a later commit repeats it.
+--
+-- The commit_hash tie-breaker keeps rows whose identity is UNKNOWN (a source
+-- that reports no oid, or a row collected before the proxy did) distinct per
+-- commit: without it every such row for one path would collapse into one,
+-- because LIMIT 1 BY reads their NULL keys as equal.
+deduplicated_file_changes AS (
+    SELECT
+        raw_file_change.tenant_id AS tenant_id,
+        raw_file_change.source_id AS source_id,
+        raw_file_change.project_key AS project_key,
+        raw_file_change.repo_slug AS repo_slug,
+        raw_file_change.commit_hash AS commit_hash,
+        raw_file_change.data_source AS data_source,
+        raw_file_change.file_path AS file_path,
+        raw_file_change.file_extension AS file_extension,
+        raw_file_change.change_type AS change_type,
+        raw_file_change.lines_added AS lines_added,
+        raw_file_change.lines_removed AS lines_removed
+    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+    INNER JOIN commits_source AS commits
+        ON commits.tenant_id = raw_file_change.tenant_id
+        AND commits.source_id = raw_file_change.source_id
+        AND commits.project_key = raw_file_change.project_key
+        AND commits.repo_slug = raw_file_change.repo_slug
+        AND commits.commit_hash = raw_file_change.commit_hash
+    ORDER BY commits.observed_at, raw_file_change.commit_hash
+    LIMIT 1 BY
+        raw_file_change.tenant_id,
+        raw_file_change.data_source,
+        raw_file_change.project_key,
+        raw_file_change.repo_slug,
+        raw_file_change.file_path,
+        raw_file_change.change_type,
+        raw_file_change.pre_image_oid,
+        raw_file_change.post_image_oid,
+        if(
+            coalesce(raw_file_change.pre_image_oid, '') = ''
+                AND coalesce(raw_file_change.post_image_oid, '') = '',
+            raw_file_change.commit_hash,
+            ''
+        )
+),
 file_changes_source AS (
     SELECT
         commits.tenant_id AS tenant_id,
@@ -129,7 +179,7 @@ file_changes_source AS (
             ) AS change_type_label,
             sum(lines_added) AS lines_added,
             sum(lines_removed) AS lines_removed
-        FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+        FROM deduplicated_file_changes AS raw_file_change
         GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category, file_extension_value, file_extension_label, change_type_value, change_type_label
     ) AS file_changes
     INNER JOIN commits_source AS commits
