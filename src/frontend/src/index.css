@@ -111,6 +111,10 @@
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-ring: var(--ring);
+  /* The kit's sidebar foreground is its muted label colour. This sidebar uses
+     the token as its base text colour and derives muted steps from it by
+     opacity, so taking the kit's value put every label at 3.9:1. */
+  --sidebar-foreground: var(--foreground);
 }
 
 .dark {

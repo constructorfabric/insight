@@ -32,6 +32,11 @@ const RENDERED = cn(
   "group/card flex flex-col overflow-hidden rounded-xl bg-card text-sm text-card-foreground",
   "ring-1 ring-foreground/10 gap-(--card-spacing) py-(--card-spacing)",
   "[--card-spacing:var(--space-6)] data-[size=sm]:[--card-spacing:var(--space-4)]",
+  // The kit scopes part padding to a `.card .part` descendant pair, which this
+  // element cannot match.
+  "[&_[data-slot=card-header]]:px-(--card-spacing)",
+  "[&_[data-slot=card-content]]:px-(--card-spacing)",
+  "[&_[data-slot=card-footer]]:px-(--card-spacing)",
 );
 
 function RenderedCard({
