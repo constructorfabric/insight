@@ -54,9 +54,7 @@ pub fn register_routes(
             crate::csrf::middleware,
         ))
         .layer(Extension(state));
-    host_router
-        .merge(insight_build_version::router("authenticator"))
-        .merge(api)
+    host_router.merge(api)
 }
 
 /// Declare every operation through the toolkit's `OperationBuilder` so each

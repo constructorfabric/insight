@@ -8,9 +8,7 @@ on:
     branches: [main]
     paths:
       - "src/backend/services/analytics/helm/**"
-      - "src/backend/services/authenticator/helm/**"
       - "src/backend/services/identity-resolution/helm/**"
-      - "src/frontend/helm/**"
       - "charts/insight/tests/**"
       - ".github/workflows/build-version-helm.yml"
   workflow_dispatch:

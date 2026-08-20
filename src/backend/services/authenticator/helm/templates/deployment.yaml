@@ -99,17 +99,15 @@ spec:
             # APP__gears__authenticator__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-authenticator-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+          {{- if .Values.idp.extraCaCertSecret }}
           env:
-            - name: INSIGHT_BUILD_VERSION
-              value: "{{ .Values.image.tag | default .Chart.AppVersion }}"
-            {{- if .Values.idp.extraCaCertSecret }}
             # Point the binary at the mounted extra-CA bundle. Set here (not
             # via the config Secret) because the path is chart-derived from
             # idp.extraCaCertPath and must stay in lockstep with the volume
             # mount above. Overrides any value carried in the config Secret.
             - name: APP__gears__authenticator__config__idp__extra_ca_cert_path
               value: {{ .Values.idp.extraCaCertPath | quote }}
-            {{- end }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

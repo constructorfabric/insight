@@ -337,7 +337,6 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
- "insight-build-version",
  "jsonwebtoken",
  "openidconnect",
  "opentelemetry 0.32.0",

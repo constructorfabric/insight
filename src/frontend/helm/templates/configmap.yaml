@@ -7,5 +7,3 @@ metadata:
 data:
   config.js: |
     window.__INSIGHT_CONFIG__ = {{ toJson (dict "sentryDsn" .Values.sentry.dsn) }};
-  version.json: |
-    {{ toJson (dict "service" "frontend" "version" (.Values.image.tag | default .Chart.AppVersion)) }}

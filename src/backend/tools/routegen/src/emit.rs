@@ -345,10 +345,6 @@ fn emit_server(
     c.push_str("        location /internal/ {\n");
     c.push_str("            return 404;\n");
     c.push_str("        }\n\n");
-    c.push_str("        # the frontend serves /version.json; the edge does not expose it\n");
-    c.push_str("        location = /version.json {\n");
-    c.push_str("            return 404;\n");
-    c.push_str("        }\n\n");
     c.push_str(
         "        # the SPA rides through the gateway: one origin, one __Host- cookie (DD-GW-04)\n",
     );
