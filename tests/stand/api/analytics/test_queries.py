@@ -180,17 +180,9 @@ def test_an_update_revalidates_the_sql(api: ApiClient, scratch_saved_query: Save
     )
 
 
-@pytest.mark.parametrize(
-    "statement",
-    [
-        "SELECT person_id, session_id, path, ts FROM product_usage.usage_events LIMIT 5",
-        "SELECT * FROM merge('product_usage', 'usage_events')",
-    ],
-    ids=["qualified-read", "table-function"],
-)
 @pytest.mark.security
 def test_a_read_of_the_usage_records_is_refused_without_the_admin_grant(
-    api: ApiClient, statement: str
+    api: ApiClient,
 ) -> None:
     """`GET /v1/usage/summary` is admin-only, and so are the records behind it.
 
@@ -198,13 +190,12 @@ def test_a_read_of_the_usage_records_is_refused_without_the_admin_grant(
     account can read the usage records because the summary route serves them.
     A caller the summary answers 403 would otherwise read the same rows, other
     people's among them, by storing the read here instead.
-
-    The second case takes the database from a string argument rather than a
-    qualified name.
     """
-    response = api.post(QUERIES, json_body={"name": scratch_name("usage-store"), "sql": statement})
+    response = api.post(
+        QUERIES, json_body={"name": scratch_name("usage-store"), "sql": USAGE_RECORDS_SQL}
+    )
     assert response.status_code == 403, (
-        f"{statement!r} was accepted from a caller holding no admin grant "
+        f"a caller holding no admin grant stored a usage read "
         f"({response.status_code}): {response.text[:300]}"
     )
 

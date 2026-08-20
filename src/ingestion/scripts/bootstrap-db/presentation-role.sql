@@ -20,5 +20,6 @@ GRANT SELECT, INSERT, CREATE ON presentation.* TO presentation_ro;
 
 -- product_usage (append-only): adoption events (#2573). No CREATE — the table
 -- comes from migrations/20260816000000_usage-events.sql. SELECT serves the
--- admin-gated usage summary; the analytics query gate refuses the database.
+-- admin-gated usage summary; analytics checks the admin role itself for reads
+-- of this database that arrive by any other route.
 GRANT SELECT, INSERT ON product_usage.* TO presentation_ro;

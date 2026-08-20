@@ -51,8 +51,8 @@ pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option
         .and_then(|value| value.to_str().ok())
 }
 
-/// Whether identity confirms the caller holds an active `admin` role. An
-/// identity that is absent or unreachable is a server error, never a permit.
+// SAFETY: an identity that is absent or unreachable is a server error, never a
+// permit.
 pub(crate) async fn is_admin_caller(
     state: &AppState,
     headers: &axum::http::HeaderMap,

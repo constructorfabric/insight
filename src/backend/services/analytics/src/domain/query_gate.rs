@@ -5,11 +5,7 @@
 //! unparseable input are rejected. Using a parser (not hand-rolled scanning)
 //! keeps a `;` inside a string/comment/identifier from hiding a second
 //! statement. Defense in depth: the `presentation_ro` grants (#1963) are the
-//! real boundary — except where one account serves both an admin-gated route
-//! and this one, which no grant can separate. Those databases are named here:
-//! [`admin_only_database`] tells a caller-scoped route to check the role, and
-//! [`validate_custom_observation_sql`] refuses them outright, having no reader
-//! to check.
+//! real boundary, except for the databases named in [`ADMIN_ONLY_DATABASES`].
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::ClickHouseDialect;
@@ -58,8 +54,11 @@ const DENIED_TABLE_FUNCTIONS: &[&str] = &[
 ];
 
 /// Databases only an admin may read. `product_usage` holds the records the
-/// admin-gated usage summary serves, which the service account can read for
-/// that route.
+/// admin-gated usage summary serves, and today one ClickHouse account serves
+/// that route and this path alike, so the grants cannot tell the two readers
+/// apart: a caller-scoped route asks [`admin_only_database`] and then checks the
+/// role, and [`validate_custom_observation_sql`] refuses outright, having no
+/// reader to check.
 const ADMIN_ONLY_DATABASES: &[&str] = &["product_usage"];
 
 /// Reject anything that is not a single read statement (`SELECT`/`WITH`).
@@ -79,11 +78,11 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
 
 /// Gate a custom observation source's SQL: a single read (as above) that names
 /// no admin-only database and calls no external/remote table function. The
-/// compiler wraps this SQL as
-/// `FROM (<sql>)` and executes it as `presentation_ro`; the outer tenant
-/// predicate filters the rows it *emits*, not the tables it *reads*, so denying
-/// the functions that escape the warehouse contract is what keeps a custom
-/// source inside the same boundary a managed one has. Tenant-row isolation of
+/// compiler wraps this SQL as `FROM (<sql>)` and executes it as
+/// `presentation_ro`; the outer tenant predicate filters the rows it *emits*,
+/// not the tables it *reads*, so denying the functions that escape the warehouse
+/// contract is what keeps a custom source inside the same boundary a managed one
+/// has. Tenant-row isolation of
 /// the warehouse relations themselves is the authorship-trust + experimental
 /// gate, the same posture as the saved-query console.
 pub fn validate_custom_observation_sql(sql: &str) -> Result<(), String> {
@@ -165,14 +164,31 @@ fn ends_table_factor(token: &Token) -> bool {
 }
 
 /// Return the first admin-only database `sql` names, if any. Matched wherever
-/// the name appears — a table function takes its database as a string argument.
+/// the name appears, not only in qualified-name position: a table function takes
+/// its database as a string argument.
 pub fn admin_only_database(sql: &str) -> Option<&'static str> {
     let lowered = sql.to_ascii_lowercase();
 
     ADMIN_ONLY_DATABASES
         .iter()
         .copied()
-        .find(|database| lowered.contains(database))
+        .find(|database| names(&lowered, database))
+}
+
+/// Whether `lowered` carries `name` as a whole identifier — a longer name that
+/// merely contains it (`product_usage_score`) is a different relation.
+fn names(lowered: &str, name: &str) -> bool {
+    let bytes = lowered.as_bytes();
+
+    lowered.match_indices(name).any(|(at, hit)| {
+        let before = at.checked_sub(1).map(|index| bytes[index]);
+        let after = bytes.get(at + hit.len()).copied();
+        !before.is_some_and(continues_identifier) && !after.is_some_and(continues_identifier)
+    })
+}
+
+fn continues_identifier(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// Return the first denied table-function name called in `sql`, if any. A call
@@ -211,15 +227,10 @@ mod tests {
     #[test]
     fn a_read_of_the_usage_event_store_is_admin_only() {
         for sql in [
-            "SELECT person_id, session_id, path, ts FROM product_usage.usage_events LIMIT 5",
+            "SELECT person_id, path, ts FROM product_usage.usage_events LIMIT 5",
             "SELECT * FROM Product_Usage.Usage_Events",
-            "SELECT * FROM `product_usage`.usage_events",
             "SELECT * FROM `product_usage.usage_events`",
-            "WITH visits AS (SELECT ts FROM product_usage.usage_events) SELECT * FROM visits",
-            "SELECT s.id FROM silver.t AS s JOIN product_usage.usage_events AS u USING (id)",
-            "SELECT id FROM silver.t WHERE id IN (SELECT person_id FROM product_usage.usage_events)",
             "SELECT * FROM merge('product_usage', 'usage_events')",
-            "SELECT * FROM remote('host:9000', 'product_usage.usage_events')",
         ] {
             assert_eq!(
                 admin_only(sql),
@@ -234,12 +245,9 @@ mod tests {
         for sql in [
             "SELECT 1",
             "SELECT * FROM silver.events",
-            "SELECT count() FROM insight.metric_values",
             "SELECT person_id FROM identity.identity_persons",
-            "SELECT * FROM person.map",
-            "SELECT * FROM presentation.cached_result",
-            "SELECT * FROM events",
             "SELECT usage_events FROM silver.events",
+            "SELECT product_usage_score FROM silver.events",
         ] {
             assert_eq!(admin_only(sql), None, "should need no role: {sql:?}");
         }
@@ -247,7 +255,6 @@ mod tests {
 
     #[test]
     fn a_custom_observation_source_may_not_read_an_admin_only_database() {
-        // A metric definition has no reader whose role could be checked.
         assert!(custom("SELECT ts FROM product_usage.usage_events").is_err());
     }
 

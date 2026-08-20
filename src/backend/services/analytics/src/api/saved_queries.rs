@@ -3,10 +3,9 @@
 //! CRUD is plain metadata over the `saved_queries` service-DB table, mirroring
 //! the metric CRUD in [`super::handlers`]. Every request is tenant-scoped from
 //! the session `SecurityContext`. The `sql` is validated by the single-SELECT
-//! gate on create, update, and run, and SQL naming an admin-only database is
-//! served on those three only to a caller identity confirms is an admin. Only
-//! `/run` reaches ClickHouse — it executes the stored SQL as `presentation_ro`
-//! and returns untyped JSON rows.
+//! gate on create, update, and run, and a read of an admin-only database is
+//! authorized on all three. Only `/run` reaches ClickHouse — it executes the
+//! stored SQL as `presentation_ro` and returns untyped JSON rows.
 //!
 //! Phase-A scope: `/run` binds named parameters server-side — `{tenant}` always
 //! (from context), `{period}` when supplied (#1966). The injected tenant-row
@@ -153,11 +152,9 @@ pub async fn run_saved_query(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let saved = find_saved_query(&state, ctx.subject_tenant_id(), id).await?;
 
-    // Re-validate on run: a query stored before a rule existed must not run
-    // under it.
+    // INVARIANT: stored SQL is re-gated per run — a saved query has no owner, so
+    // neither the rules nor the caller are the ones it was stored under.
     validate_single_select(&saved.sql).map_err(|e| invalid_sql_for(id, e))?;
-    // INVARIANT: a saved query has no owner, so the role is checked on every run,
-    // not once when the query was stored.
     authorize_read(&state, &headers, &saved.sql).await?;
 
     // Named parameters (#1966): `{tenant}` is always bound from context; the
@@ -280,8 +277,6 @@ async fn find_saved_query(
         })
 }
 
-/// SQL that reads an admin-only database is served only to a caller identity
-/// confirms is an admin.
 async fn authorize_read(
     state: &AppState,
     headers: &HeaderMap,
