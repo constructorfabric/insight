@@ -174,9 +174,8 @@
   }
 }
 
-/* The kit's own CSS is moved into this same layer, so these have to outrank it
-   on specificity rather than on order. Utilities stay a later layer and still
-   win, which is what keeps call-site classes working. */
+/* The kit's CSS sits in this layer too, so these outrank it on specificity
+   rather than order. Utilities are a later layer and still win. */
 @layer components {
   html [data-slot="button"] svg:not([class*="size-"]) {
     width: 1rem;

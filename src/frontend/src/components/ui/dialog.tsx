@@ -11,9 +11,8 @@ function DialogClose(props: DialogCloseProps) {
   return <KitDialogClose data-slot="dialog-close" {...props} />;
 }
 
-// The kit's popup is a grid whose track is already minmax(0,1fr); its items
-// still default to min-width:auto, so an unbreakable value pushes out through
-// the side without this.
+// The kit's popup is a grid; its items still default to min-width:auto, so an
+// unbreakable value pushes out through the side without this.
 function DialogContent({ className, ...props }: DialogContentProps) {
   return <KitDialogContent className={cn("[&>*]:min-w-0", className)} {...props} />;
 }

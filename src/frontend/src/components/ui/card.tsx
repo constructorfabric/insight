@@ -25,10 +25,9 @@ type CardProps = KitCardProps & {
   render?: useRender.ComponentProps<"div">["render"];
 };
 
-// The kit's Card is a plain div with no polymorphism, and three tiles make the
-// whole card the button that opens them. Until the kit grows a render prop
-// those keep a local element, painted from the same tokens. --card-spacing is
-// declared here because the kit scopes its own to the class this path lacks.
+// The kit's Card is a plain div, so cards that render as a button need this
+// path. --card-spacing is redeclared because the kit scopes its own to the
+// class this element does not carry.
 const RENDERED = cn(
   "group/card flex flex-col overflow-hidden rounded-xl bg-card text-sm text-card-foreground",
   "ring-1 ring-foreground/10 gap-(--card-spacing) py-(--card-spacing)",

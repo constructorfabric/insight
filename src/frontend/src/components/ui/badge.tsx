@@ -8,9 +8,8 @@ type AppVariant =
   | "ghost"
   | "link";
 
-// The kit names badge variants for the status they carry; this codebase names
-// them for their paint. Nothing here is a colour decision — every entry is the
-// nearest kit semantic for the paint the call site already asked for.
+// The kit names variants for the status a badge carries; this codebase names
+// them for its paint.
 const VARIANT: Record<AppVariant, Pick<KitBadgeProps, "variant" | "shape">> = {
   default: { variant: "info", shape: "pill" },
   secondary: { variant: "muted", shape: "pill" },

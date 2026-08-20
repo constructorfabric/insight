@@ -2,12 +2,10 @@ import type { Plugin } from "vite";
 
 const KIT = "@gears-frontx/ui-kit";
 
-// The kit ships unlayered CSS. Tailwind emits its utilities into @layer
-// utilities, and an unlayered declaration beats every layered one whatever the
-// specificity — so without this, any utility a call site passes is silently
-// dropped wherever the kit declares the same property. @layer components is
-// declared ahead of utilities, so moving the kit there restores the override.
-// Theme tokens are @imported from index.css and must stay unlayered.
+// The kit ships unlayered CSS, which beats Tailwind's layered utilities at any
+// specificity: without this, a call site's className is silently dropped
+// wherever the kit declares the same property. Theme tokens arrive through an
+// @import in index.css and must stay unlayered.
 export function uiKitLayer(): Plugin {
   return {
     name: "ui-kit-layer",
