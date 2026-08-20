@@ -502,7 +502,11 @@ metrics:
     label: Code lines added
     short_label: Code lines
     description: Lines added to code files
-    explanation: Lines added to files classified as code — tests, configuration, and documentation excluded.
+    explanation: >-
+      Lines added to files classified as code — tests, configuration, and
+      documentation excluded. Each change counts once: when the same content
+      reaches a repository in more than one commit, the lines belong to the
+      commit that introduced them first.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -524,7 +528,11 @@ metrics:
     label: Lines added
     short_label: Lines +
     description: All lines added, by file category
-    explanation: 'Lines added across all files, split by file category: code, tests, configuration, documentation.'
+    explanation: >-
+      Lines added across all files, split by file category: code, tests,
+      configuration, documentation. Each change counts once: when the same
+      content reaches a repository in more than one commit, the lines belong
+      to the commit that introduced them first.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -547,7 +555,11 @@ metrics:
     label: Lines removed
     short_label: Lines −
     description: All lines removed, by file category
-    explanation: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+    explanation: >-
+      Lines removed across all reported file changes, with file-category,
+      repository, and source breakdowns available. Each change counts once:
+      when the same removal reaches a repository in more than one commit, the
+      lines belong to the commit that made it first.
     unit: lines
     format: integer
     direction: neutral
@@ -659,7 +671,11 @@ metrics:
       - distribution
     label: Commit size
     description: Typical diff size per commit
-    explanation: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+    explanation: >-
+      Median diff size of authored commits (lines added plus removed),
+      counting only content a commit is the first to introduce — a commit
+      that repeats content already in the repository has a size of zero.
+      Smaller commits are easier to review.
     unit: lines
     format: integer
     direction: lower_is_better

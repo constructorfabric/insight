@@ -124,6 +124,84 @@ deduplicated_file_changes AS (
             ''
         )
 ),
+-- A commit's own line stats, less the lines of the file changes that lost the
+-- content dedup. The stats stay the base — a source can report a commit's
+-- totals without reporting its file changes at all — and only what the dedup
+-- removed is taken back out, so a commit that introduces nothing new reports a
+-- size of zero and its drilldown detail agrees with what it contributed.
+reported_commit_file_lines AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        sum(lines_added) AS lines_added,
+        sum(lines_removed) AS lines_removed
+    FROM {{ ref('class_git_file_changes') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+),
+authored_commit_file_lines AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        sum(lines_added) AS lines_added,
+        sum(lines_removed) AS lines_removed
+    FROM deduplicated_file_changes
+    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+),
+authored_commits AS (
+    SELECT
+        commits.tenant_id AS tenant_id,
+        commits.entity_id AS entity_id,
+        commits.metric_date AS metric_date,
+        commits.observed_at AS observed_at,
+        commits.commit_hash AS commit_hash,
+        commits.message AS message,
+        commits.author_name AS author_name,
+        commits.repository_label AS repository_label,
+        commits.source_value AS source_value,
+        commits.source_dimensions AS source_dimensions,
+        -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
+        -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
+        -- commit whose source reported no line stats. `greatest` floors the
+        -- result because a commit's own stats and the sum of its file changes
+        -- need not agree (binary files, truncated diffs).
+        if(
+            commits.lines_added IS NULL,
+            CAST(NULL AS Nullable(Int64)),
+            toNullable(greatest(
+                toInt64(0),
+                assumeNotNull(commits.lines_added)
+                    - (coalesce(reported.lines_added, 0) - coalesce(authored.lines_added, 0))
+            ))
+        ) AS lines_added,
+        if(
+            commits.lines_removed IS NULL,
+            CAST(NULL AS Nullable(Int64)),
+            toNullable(greatest(
+                toInt64(0),
+                assumeNotNull(commits.lines_removed)
+                    - (coalesce(reported.lines_removed, 0) - coalesce(authored.lines_removed, 0))
+            ))
+        ) AS lines_removed
+    FROM commits_source AS commits
+    LEFT JOIN reported_commit_file_lines AS reported
+        ON reported.tenant_id = commits.tenant_id
+        AND reported.source_id = commits.source_id
+        AND reported.project_key = commits.project_key
+        AND reported.repo_slug = commits.repo_slug
+        AND reported.commit_hash = commits.commit_hash
+    LEFT JOIN authored_commit_file_lines AS authored
+        ON authored.tenant_id = commits.tenant_id
+        AND authored.source_id = commits.source_id
+        AND authored.project_key = commits.project_key
+        AND authored.repo_slug = commits.repo_slug
+        AND authored.commit_hash = commits.commit_hash
+),
 file_changes_source AS (
     SELECT
         commits.tenant_id AS tenant_id,
@@ -418,7 +496,7 @@ SELECT
         'lines_added', coalesce(toString(lines_added), ''),
         'lines_removed', coalesce(toString(lines_removed), '')
     ) AS details
-FROM commits_source
+FROM authored_commits
 ARRAY JOIN arrayConcat(
     [tuple('commit_count', toFloat64(1))],
     if(

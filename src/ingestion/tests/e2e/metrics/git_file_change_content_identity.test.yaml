@@ -16,6 +16,8 @@ description: >
     * mod-dup-1 / mod-dup-2 make the same oid-to-oid transition on
       src/app.ts — +8/-3 counts once.
     * distinct adds different content, so it is never folded in.
+    * add-dup-2 is also what pins the commit-level correction: its own stats
+      say +100, every line of which October already counted, so its size is 0.
     * unknown-1 / unknown-2 report NO oid (a source that has none, or a row
       collected before the proxy reported one). Their identity is unknown, so
       they must both survive — collapsing them would read NULL keys as equal.
@@ -98,6 +100,11 @@ cases:
           - metric_key: git.commits
             views:
               - {view: breakdown, dimensions: [repository]}
+          # No repository dimension on this one, so the window is what isolates
+          # it: November holds exactly this fixture's one commit.
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
     expect:
       - assert: "status == 200"
       # November holds one commit, and the only file change it carries repeats
@@ -112,3 +119,9 @@ cases:
       - metric: git.lines_added
         view: breakdown
         assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/content-identity'))"
+      # The commit's own size agrees with what it contributed: its line stats
+      # less the file-change lines the content dedup removed.
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 0}
