@@ -40,6 +40,14 @@ bronze:
     - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
     - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
 
+  # Without a (account, e-mail) pair there is no `class_task_users` row, and
+  # gold's inner join drops every issue — a GitHub fixture that seeds only
+  # issues attributes nothing at all.
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1001, _airbyte_raw_id: gh-author-1001, author_id: 1001, author_login: alice, author_email: alice@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1002, _airbyte_raw_id: gh-author-1002, author_id: 1002, author_login: bob, author_email: bob@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
   bronze_github.issue_types:
     - $ref: templates/github_task.yaml#/templates/issue_type_task
     - $ref: templates/github_task.yaml#/templates/issue_type_bug
