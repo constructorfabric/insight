@@ -1867,6 +1867,10 @@
           "person_id": {
             "type": "string"
           },
+          "username": {
+            "description": "The account handle, empty when no identity row carries one.",
+            "type": "string"
+          },
           "visits": {
             "format": "int64",
             "minimum": 0,
@@ -1876,6 +1880,7 @@
         "required": [
           "person_id",
           "display_name",
+          "username",
           "visits",
           "page_views",
           "last_seen"
