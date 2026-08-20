@@ -37,10 +37,13 @@ SELECT
     CAST(t.issue_type_id AS Nullable(String))               AS issue_type_id,
     CAST(t.issue_type_name AS Nullable(String))             AS issue_type_name,
     CAST(t.issue_type_name AS Nullable(String))             AS untranslated_name,
-    COALESCE(
-        nullIf(a.canonical_value, ''),
+    -- CAST off the LowCardinality the config column carries: `union_by_tag`
+    -- unions this with the other sources' branches, and one differing type
+    -- fails the shared class for every source at once.
+    CAST(COALESCE(
+        nullIf(toString(a.canonical_value), ''),
         {{ task_issue_kind("toString(t.issue_type_name)") }}
-    )                                                       AS issue_kind,
+    ) AS String)                                            AS issue_kind,
     toDateTime64(t._airbyte_extracted_at, 3)                AS collected_at,
     toUnixTimestamp64Milli(now64(3))                        AS _version
 FROM {{ source('bronze_github', 'issue_types') }} AS t FINAL

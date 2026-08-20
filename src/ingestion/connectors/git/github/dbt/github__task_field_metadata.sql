@@ -50,11 +50,11 @@ catalogued AS (
     SELECT
         tenant_id,
         source_id,
-        field_id,
-        field_name,
-        lower(data_type) AS field_type,
+        COALESCE(field_id, '') AS field_id,
+        COALESCE(field_name, '') AS field_name,
+        lower(COALESCE(data_type, '')) AS field_type,
         toUInt8(COALESCE(is_multi, false)) AS is_multi,
-        toUInt8(data_type IN ('SINGLE_SELECT', 'MULTI_SELECT')) AS has_id,
+        toUInt8(COALESCE(data_type, '') IN ('SINGLE_SELECT', 'MULTI_SELECT')) AS has_id,
         _airbyte_extracted_at AS observed_at
     FROM {{ source('bronze_github', 'issue_fields') }} FINAL
 ),

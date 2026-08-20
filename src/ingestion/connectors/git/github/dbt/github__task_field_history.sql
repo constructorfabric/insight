@@ -335,7 +335,10 @@ SELECT
     CAST(issue_id AS String)                                    AS issue_id,
     CAST(id_readable AS String)                                 AS id_readable,
     CAST(event_id AS String)                                    AS event_id,
-    event_at                                                    AS event_at,
+    -- The WHERE below already excludes the unparseable ones; the class declares
+    -- a non-Nullable column and `union_by_tag` fails the shared relation for
+    -- every source if one branch widens it.
+    assumeNotNull(event_at)                                     AS event_at,
     CAST(event_kind AS Enum8('changelog' = 1, 'synthetic_initial' = 2)) AS event_kind,
     _seq                                                        AS _seq,
     CAST(nullIf(author_id, '0') AS Nullable(String))            AS author_id,
@@ -353,6 +356,6 @@ SELECT
         AS Enum8('opaque_id' = 1, 'account_id' = 2, 'string_literal' = 3, 'path' = 4, 'none' = 5)
     )                                                           AS value_id_type,
     toDateTime64(_airbyte_extracted_at, 3)                      AS collected_at,
-    toUnixTimestamp64Milli(toDateTime64(_airbyte_extracted_at, 3)) AS _version
+    CAST(toUnixTimestamp64Milli(toDateTime64(_airbyte_extracted_at, 3)) AS UInt64) AS _version
 FROM every_row
 WHERE event_at IS NOT NULL
