@@ -62,16 +62,16 @@ mod tests {
 
     #[tokio::test]
     async fn names_the_service_so_a_reply_cannot_be_mistaken_for_another_gear() {
-        let report = reported("analytics", Some("2026.08.20.10.11-f8db7bc")).await;
+        let report = reported("analytics", Some("1970.01.01.00.00-abc1234")).await;
 
         assert_eq!(report["service"], "analytics");
     }
 
     #[tokio::test]
     async fn answers_with_the_tag_the_deploy_stamped() {
-        let report = reported("analytics", Some("2026.08.20.10.11-f8db7bc")).await;
+        let report = reported("analytics", Some("1970.01.01.00.00-abc1234")).await;
 
-        assert_eq!(report["version"], "2026.08.20.10.11-f8db7bc");
+        assert_eq!(report["version"], "1970.01.01.00.00-abc1234");
     }
 
     #[tokio::test]

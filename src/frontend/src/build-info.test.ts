@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { publishBuildInfo } from "./build-info";
 
-const RELEASE = "2026.08.20.10.11-f8db7bc";
+const RELEASE = "1970.01.01.00.00-abc1234";
 
 function answered(body: unknown): Response {
   return { ok: true, json: () => Promise.resolve(body) } as Response;
