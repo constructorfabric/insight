@@ -336,6 +336,68 @@ mod live_tests {
         );
     }
 
+    /// The identity a consumer deduplicates on: the same content entering the
+    /// repository on two lines of history is two commits but one post-image
+    /// oid, while different content at the same path is two.
+    #[tokio::test]
+    async fn identical_content_added_twice_shares_one_post_image_oid() {
+        let f = fixture("blob-identity");
+        sh(
+            &f.root.join("origin"),
+            "git checkout -q -b one && printf 'shared\\n' > v.txt && git add v.txt && \
+             GIT_AUTHOR_DATE='2026-08-02T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-02T11:00:00+0000' git commit -qm one && \
+             git checkout -q main && git checkout -q -b two && \
+             printf 'shared\\n' > v.txt && git add v.txt && \
+             GIT_AUTHOR_DATE='2026-08-03T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-03T11:00:00+0000' git commit -qm two && \
+             git checkout -q main && git checkout -q -b three && \
+             printf 'different\\n' > v.txt && git add v.txt && \
+             GIT_AUTHOR_DATE='2026-08-04T11:00:00+0000' \
+             GIT_COMMITTER_DATE='2026-08-04T11:00:00+0000' git commit -qm three && \
+             git checkout -q main",
+        );
+
+        let runner = f.store.runner();
+        let guard = open_until_ready(&f, &key(&f), refresh()).await;
+        let git_dir = guard.git_dir();
+
+        let keys = match commits::enumerate(runner, git_dir, &creds()).await {
+            Ok(k) => k,
+            Err(e) => panic!("commits::enumerate: {e}"),
+        };
+        let shas: Vec<String> = keys.iter().map(|k| k.sha.clone()).collect();
+        if let Err(e) = blobs::prefetch(runner, git_dir, &shas, &creds(), u64::MAX).await {
+            panic!("blobs::prefetch: {e}");
+        }
+        let stats = match numstat::read(runner, git_dir, &shas, usize::MAX, &creds()).await {
+            Ok(s) => s,
+            Err(e) => panic!("numstat::read: {e}"),
+        };
+
+        let mut oids: Vec<String> = stats
+            .values()
+            .flatten()
+            .filter(|file| file.filename == "v.txt")
+            .map(|file| match file.post_image_oid.clone() {
+                Some(oid) => oid,
+                None => panic!("an added path must carry a post-image oid: {file:?}"),
+            })
+            .collect();
+        assert_eq!(oids.len(), 3, "three commits add v.txt: {stats:?}");
+        oids.sort();
+        oids.dedup();
+        assert_eq!(
+            oids.len(),
+            2,
+            "the two identical adds collapse, the third stays: {oids:?}"
+        );
+        assert!(
+            oids.iter().all(|oid| oid.len() == 40),
+            "full oids, never the abbreviation git prints by default: {oids:?}"
+        );
+    }
+
     #[tokio::test]
     async fn stat_retention_stops_at_the_row_cap_and_totals_stay_whole() {
         // The per-file map is only needed up to the row cap — nothing past it

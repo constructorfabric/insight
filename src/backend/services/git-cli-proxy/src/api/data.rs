@@ -139,6 +139,8 @@ pub struct FileChangeRow {
     pub deletions: Option<u64>,
     pub changes: Option<u64>,
     pub is_binary: bool,
+    pub pre_image_oid: Option<String>,
+    pub post_image_oid: Option<String>,
     pub patch: Option<String>,
     pub patch_truncated: bool,
 }
@@ -376,6 +378,8 @@ fn emit_file_changes(
                 deletions: file.deletions,
                 changes: file.additions.and_then(|a| file.deletions.map(|d| a + d)),
                 is_binary: file.is_binary,
+                pre_image_oid: file.pre_image_oid.clone(),
+                post_image_oid: file.post_image_oid.clone(),
                 patch_truncated: patch.as_ref().is_some_and(|p| p.truncated),
                 patch: patch.map(|p| p.text),
             });
@@ -745,6 +749,8 @@ mod tests {
             additions: Some(1),
             deletions: Some(1),
             is_binary: false,
+            pre_image_oid: None,
+            post_image_oid: None,
         }
     }
 
