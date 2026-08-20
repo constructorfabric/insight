@@ -373,16 +373,15 @@ describe("MergeCaseDialog", () => {
 
   // The panel is a grid, and a grid item will not shrink below its own
   // content. An address and a person id are exactly the values that do not
-  // wrap, so without these two classes the body pushes itself out through the
-  // side — invisible in jsdom, in a review, and to every other test here.
+  // wrap, so without this the body pushes itself out through the side —
+  // invisible in jsdom, in a review, and to every other test here. The track
+  // itself is minmax(0,1fr) in the ui-kit's own stylesheet.
   it("lays the panel out so a value too wide for it truncates instead of escaping", () => {
     render(
       <MergeCaseDialog survivor={BOB} absorbed={[CAROL]} onClose={vi.fn()} />,
     );
 
-    const panel = screen.getByRole("dialog");
-    expect(panel).toHaveClass("grid-cols-[minmax(0,1fr)]");
-    expect(panel).toHaveClass("[&>*]:min-w-0");
+    expect(screen.getByRole("dialog")).toHaveClass("[&>*]:min-w-0");
   });
 
 });
