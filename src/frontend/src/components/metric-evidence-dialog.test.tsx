@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   queryMetricDrilldown: vi.fn(),
   downloadMetricDrilldown: vi.fn(),
   tableProps: null as Record<string, unknown> | null,
+  declaredDimensions: new Map<string, ReadonlySet<string>>(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -22,11 +23,12 @@ vi.mock("@tanstack/react-query", () => ({
   },
 }));
 
-// Whether `source` may be asked for alongside a git metric's evidence. These
-// tests are about the dialog, so it declares nothing and stays out of the way.
+// Which dimensions a metric will accept. Most of these tests declare none, so
+// the selection they assert on is the caller's own; the export test below
+// declares `source` because that is when the two diverge.
 vi.mock("@/queries/metric-definitions", () => ({
   useDeclaredMetricDimensions: () => ({
-    byMetricKey: new Map<string, ReadonlySet<string>>(),
+    byMetricKey: mocks.declaredDimensions,
     isPending: false,
   }),
 }));
@@ -180,6 +182,7 @@ describe("MetricEvidenceDialog", () => {
     mocks.queryMetricDrilldown.mockReset();
     mocks.downloadMetricDrilldown.mockReset().mockResolvedValue(undefined);
     mocks.tableProps = null;
+    mocks.declaredDimensions = new Map();
   });
 
   it("loads, orders, paginates, exports, and closes evidence", async () => {
@@ -305,6 +308,42 @@ describe("MetricEvidenceDialog", () => {
       hasNextPage: false,
       pageLimitReached: true,
     });
+  });
+
+  // The dimension that makes a row linkable is asked for, hidden from the
+  // table, and must not reach the file: an export that carries a column the
+  // screen does not show is not an export OF that screen.
+  it("asks for the source dimension but keeps it out of the export", async () => {
+    const user = userEvent.setup();
+    mocks.declaredDimensions = new Map([
+      ["git.commits", new Set(["repository", "source"])],
+    ]);
+
+    render(
+      <MetricEvidenceDialog
+        state={state}
+        onMetricChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const requested = (mocks.queryOptions?.queryKey as unknown[])[2] as {
+      display_dimensions: string[];
+    };
+    expect(requested.display_dimensions).toContain("source");
+
+    await user.click(screen.getByRole("button", { name: /CSV/ }));
+    await waitFor(() =>
+      expect(mocks.downloadMetricDrilldown).toHaveBeenCalledWith(
+        selection,
+        "csv",
+        expect.any(AbortSignal)
+      )
+    );
+    const [exported] = mocks.downloadMetricDrilldown.mock.calls[0]!;
+    expect(
+      (exported as { display_dimensions: string[] }).display_dimensions
+    ).not.toContain("source");
   });
 
   describe("what the dialog is named", () => {

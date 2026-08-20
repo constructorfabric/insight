@@ -176,14 +176,19 @@ export function MetricEvidenceDialog({
   }
 
   async function exportRows(format: "csv" | "xlsx") {
-    if (!selection) return;
+    // INVARIANT: the export carries the caller's OWN selection, never the one
+    // widened for links. `source` rides along only so a row can be linked, and
+    // it is hidden from the table — exporting it would put a column in the file
+    // that is not on the screen it came from.
+    const exported = activeTarget?.selection;
+    if (!exported) return;
     exportController.current?.abort();
     const controller = new AbortController();
     exportController.current = controller;
     setExporting(true);
     setExportFailure(null);
     try {
-      await downloadMetricDrilldown(selection, format, controller.signal);
+      await downloadMetricDrilldown(exported, format, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         setExportFailure(
