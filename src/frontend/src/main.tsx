@@ -14,6 +14,7 @@ import {
   signIn,
   startSessionRefresh,
 } from "@/auth";
+import { publishBuildInfo } from "@/build-info";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { LoginError } from "@/components/login-error";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -31,6 +32,7 @@ async function enableMocking(): Promise<void> {
   await worker.start({ onUnhandledRequest: "bypass" });
 }
 
+publishBuildInfo();
 initSentry(router);
 
 // `?__override=<email>` (view-as, insight#1941) bounces straight into the
