@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import {
+  provisionalDays,
   silentDays,
   stripDays,
   uncollectedDays,
@@ -242,10 +243,11 @@ function dayTitle(metric: NormalizedMetricResult, day: StripDay): string {
     metric.format,
     metric.unit
   );
+  const suffix = day.provisional ? ", may still change" : "";
   if (day.numerator != null && day.denominator != null) {
-    return `${when} — ${value} of ${day.denominator}`;
+    return `${when} — ${value} of ${day.denominator}${suffix}`;
   }
-  return `${when} — ${value}`;
+  return `${when} — ${value}${suffix}`;
 }
 
 /**
@@ -284,6 +286,12 @@ function stripSummary(
       `${pending} ${pending === 1 ? "day is" : "days are"} not collected yet`
     );
   }
+  const open = provisionalDays(days);
+  if (open > 0) {
+    parts.push(
+      `${open} ${open === 1 ? "day may" : "days may"} still change`
+    );
+  }
   return `${parts.join("; ")}.`;
 }
 
@@ -298,7 +306,9 @@ function DayStrip({
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
   const period = metric.selection?.period;
-  const collectedThrough = useCollectedThrough(metric.metric_key);
+  const { collectedThrough, revisionWindowDays } = useCollectedThrough(
+    metric.metric_key
+  );
   const days = useMemo(
     () =>
       period
@@ -306,10 +316,11 @@ function DayStrip({
             dailyReadings(rows, columns),
             period.from,
             period.to,
-            collectedThrough
+            collectedThrough,
+            revisionWindowDays
           )
         : [],
-    [rows, columns, period, collectedThrough]
+    [rows, columns, period, collectedThrough, revisionWindowDays]
   );
   if (days.length === 0) return null;
 
@@ -319,6 +330,7 @@ function DayStrip({
   const leftAnchored = hovered != null && hovered < days.length / 2;
   const silent = silentDays(days);
   const pending = uncollectedDays(days);
+  const open = provisionalDays(days);
   // One denominator for the whole period is worth naming: it is the thing a
   // reader argues with when a share looks wrong, and it is invisible in the
   // percentage itself.
@@ -395,7 +407,10 @@ function DayStrip({
                   // A measured zero keeps a hairline: without it the day is
                   // indistinguishable from one the source said nothing about,
                   // and those mean opposite things.
-                  day.height === 0 && "bg-foreground/20"
+                  day.height === 0 && "bg-foreground/20",
+                  // Still open to revision: the reading is real, so it keeps
+                  // its height and loses only weight.
+                  day.provisional && "bg-foreground/20"
                 )}
                 style={{ height: `${Math.max(day.height * 100, 2)}%` }}
               />
@@ -408,11 +423,13 @@ function DayStrip({
         <span className="text-center">
           {pending > 0
             ? `${pending} ${pending === 1 ? "day" : "days"} not collected yet`
-            : constantDenominator != null
-              ? `measured against ${constantDenominator} per day`
-              : silent > 0
-                ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
-                : null}
+            : open > 0
+              ? `last ${open} ${open === 1 ? "day" : "days"} may still change`
+              : constantDenominator != null
+                ? `measured against ${constantDenominator} per day`
+                : silent > 0
+                  ? `${silent} ${silent === 1 ? "day" : "days"} with no reading`
+                  : null}
         </span>
         <span>{period ? formatDate(period.to) : null}</span>
       </div>

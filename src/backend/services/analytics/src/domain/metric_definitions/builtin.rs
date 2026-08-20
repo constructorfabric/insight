@@ -71,6 +71,14 @@ pub struct SourceSeed {
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
+    /// How many days a delivered day keeps changing before it settles, when the
+    /// suppliers revise one. Absent where nothing revises, or where nobody has
+    /// established it — a reader treats absence as "settles on arrival" rather
+    /// than as zero uncertainty. Where several suppliers feed one source the
+    /// longest window wins: calling a settled day provisional costs less than
+    /// the reverse.
+    #[serde(default)]
+    pub revision_window_days: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]

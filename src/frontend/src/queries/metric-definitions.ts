@@ -67,12 +67,22 @@ export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionL
  *
  * Rides the one cached catalogue query, so it costs no extra request.
  */
-export function useCollectedThrough(metricKey: string): string | null {
+export function useCollectedThrough(metricKey: string): CollectionBoundary {
   const { data } = useMetricDefinitionsResponse();
-  return (
-    data?.metrics.find((metric) => metric.metric_key === metricKey)
-      ?.last_observed_date ?? null
+  const definition = data?.metrics.find(
+    (metric) => metric.metric_key === metricKey
   );
+  return {
+    collectedThrough: definition?.last_observed_date ?? null,
+    revisionWindowDays: definition?.revision_window_days ?? null,
+  };
+}
+
+export interface CollectionBoundary {
+  /** Newest date the metric has an observation for; null = no boundary known. */
+  collectedThrough: string | null;
+  /** Days back from it the suppliers may still revise; null = none declared. */
+  revisionWindowDays: number | null;
 }
 
 export interface AvailableMetricKeys {

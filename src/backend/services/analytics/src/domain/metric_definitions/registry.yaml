@@ -4,6 +4,9 @@ sources:
       kind: managed_observation
       source_ref: ai_metric_observations
       evidence_ref: ai_metric_evidence
+      # Longest lookback_window among the connectors feeding this source:
+      # claude-enterprise re-reads 3 days, claude-team and chatgpt-team 2.
+      revision_window_days: 3
     measures:
       - key: accepted_lines
         evidence_granularity: source_summary

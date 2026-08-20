@@ -6,6 +6,8 @@ export interface StripDay {
   value: number | null;
   /** False where the source has not delivered this day yet. */
   collected: boolean;
+  /** True where the day is delivered but its suppliers may still revise it. */
+  provisional: boolean;
   /** Share of the tallest reading, 0..1; null follows `value`. */
   height: number | null;
   numerator: number | null;
@@ -44,12 +46,17 @@ function calendar(from: string, to: string): string[] {
  * delivered the day yet, so nothing can be said about it — before it, silence
  * is the answer. Null leaves every day collected, which is what the catalogue
  * reports for a metric it cannot date rather than one nobody has collected.
+ *
+ * `revisionWindowDays` marks the delivered days the suppliers may still change.
+ * Their readings are real and are drawn as such — the mark says the figure is
+ * not yet final, not that it is absent.
  */
 export function stripDays(
   readings: DayReading[],
   from: string,
   to: string,
-  collectedThrough?: string | null
+  collectedThrough?: string | null,
+  revisionWindowDays?: number | null
 ): StripDay[] {
   const byDate = new Map(readings.map((r) => [r.date, r]));
   const days = calendar(from, to);
@@ -60,13 +67,23 @@ export function stripDays(
     (max, date) => Math.max(max, byDate.get(date)?.value ?? 0),
     0
   );
+  // The first date that has settled: everything from here to the boundary is
+  // still open to revision. Absent window means everything settles on arrival.
+  const settledBefore =
+    collectedThrough != null && revisionWindowDays != null
+      ? new Date(Date.parse(`${collectedThrough}T00:00:00Z`) - revisionWindowDays * DAY_MS)
+          .toISOString()
+          .slice(0, 10)
+      : null;
   return days.map((date) => {
     const collected = collectedThrough == null || date <= collectedThrough;
+    const provisional = collected && settledBefore != null && date > settledBefore;
     const reading = byDate.get(date);
     if (!reading) {
       return {
         date,
         collected,
+        provisional,
         value: null,
         height: null,
         numerator: null,
@@ -76,6 +93,7 @@ export function stripDays(
     return {
       date,
       collected,
+      provisional,
       value: reading.value,
       height: peak > 0 ? reading.value / peak : 0,
       numerator: reading.numerator,
@@ -92,4 +110,9 @@ export function silentDays(days: StripDay[]): number {
 /** How many days the source has not delivered yet. */
 export function uncollectedDays(days: StripDay[]): number {
   return days.filter((d) => !d.collected).length;
+}
+
+/** How many delivered days may still be revised. */
+export function provisionalDays(days: StripDay[]): number {
+  return days.filter((d) => d.provisional).length;
 }

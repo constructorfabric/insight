@@ -493,6 +493,15 @@
             "$ref": "#/components/schemas/MetricOrigin",
             "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
           },
+          "revision_window_days": {
+            "description": "How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means \"settles on arrival\", not\n\"revised forever\". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "schema_error_code": {
             "oneOf": [
               {

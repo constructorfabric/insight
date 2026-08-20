@@ -23,6 +23,7 @@ const detail = vi.hoisted(() => ({
   },
   calls: [] as unknown[],
   collectedThrough: null as string | null,
+  revisionWindowDays: null as number | null,
 }));
 vi.mock("@/queries/metric-detail", () => ({
   DETAIL_LIMIT: 200,
@@ -34,7 +35,10 @@ vi.mock("@/queries/metric-detail", () => ({
 // The catalogue is a query like the detail one above; the collection boundary
 // it carries is set per test through `detail.collectedThrough`.
 vi.mock("@/queries/metric-definitions", () => ({
-  useCollectedThrough: () => detail.collectedThrough,
+  useCollectedThrough: () => ({
+    collectedThrough: detail.collectedThrough,
+    revisionWindowDays: detail.revisionWindowDays,
+  }),
 }));
 
 import { MetricActivity } from "./metric-activity";
@@ -82,6 +86,7 @@ function draw(m: ReturnType<typeof metric>) {
 beforeEach(() => {
   detail.calls = [];
   detail.collectedThrough = null;
+  detail.revisionWindowDays = null;
   detail.state = {
     isPending: false,
     isError: false,
@@ -177,6 +182,30 @@ describe("MetricActivity", () => {
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
     expect(label).toMatch(/1 day has no reading/);
     expect(label).toMatch(/2 days are not collected yet/);
+  });
+
+  it("marks the days the supplier may still revise without hiding their figures", () => {
+    // Delivered through the 3rd, revised for 2 days: the 2nd and 3rd carry real
+    // readings that are not final. Drawing them as absent would throw away a
+    // measurement; drawing them as settled would overstate it.
+    detail.collectedThrough = "2026-03-03";
+    detail.revisionWindowDays = 2;
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [
+        { values: { date: "2026-03-01", value: 4 } },
+        { values: { date: "2026-03-02", value: 3 } },
+        { values: { date: "2026-03-03", value: 2 } },
+      ],
+    };
+    draw(metric("collab.messages_sent", ["source_summary"], 6));
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/2 days may still change/);
+    // The uncollected tail still outranks it in the one-line caption.
+    expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {
