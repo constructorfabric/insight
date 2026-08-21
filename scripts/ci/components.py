@@ -97,6 +97,13 @@ COMPONENTS = [
     # (output, --check, failure paths) so main.rs is covered too. The gateway.yml
     # workflow additionally runs nginx -t on the emitted config.
     {
+        "name": "git-cli-proxy",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "git-cli-proxy",
+        "paths": ["src/backend/services/git-cli-proxy"],
+    },
+    {
         "name": "routegen",
         "lang": "rust",
         "root": "src/backend",
@@ -174,13 +181,6 @@ COMPONENTS = [
         "root": "src/ingestion/connectors/git/github-v2",
         "cov_package": "source_github_v2",
         "paths": ["src/ingestion/connectors/git/github-v2"],
-    },
-    {
-        "name": "bitbucket-cloud",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/bitbucket-cloud",
-        "cov_package": "source_bitbucket_cloud",
-        "paths": ["src/ingestion/connectors/git/bitbucket-cloud"],
     },
     {
         "name": "hubspot",

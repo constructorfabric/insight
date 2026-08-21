@@ -1,11 +1,55 @@
 connectors:
+  active-directory:
+    path: hr-directory/active-directory
+    config:
+      ad_bind_dn:
+        value: svc-insight@corp.example.com
+      ad_bind_password:
+        value: fake
+      ad_search_base:
+        value: DC=corp,DC=example,DC=com
+      ad_server_host:
+        value: dc1.corp.example.com
+      insight_source_id:
+        value: active-directory-corp
+      insight_tenant_id:
+        value: fake
+  bamboohr:
+    path: hr-directory/bamboohr
+    config:
+      bamboohr_api_key:
+        value: fake
+      bamboohr_domain:
+        value: acme
+      insight_source_id:
+        value: bamboohr-acme-prod
+      insight_tenant_id:
+        value: fake
+  bitbucket-cloud:
+    path: git/bitbucket-cloud
+    config:
+      bitbucket_token:
+        value: fake
+      bitbucket_workspaces:
+        value:
+        - fake
+      bitbucket_start_date:
+        value: '2020-01-01'
+      git_proxy_url:
+        value: http://fake
+      git_proxy_token:
+        value: fake
+      insight_source_id:
+        value: bitbucket-acme-prod
+      insight_tenant_id:
+        value: fake
   chatgpt-team:
     path: ai/chatgpt-team
     config:
       chatgpt_account_id:
         value: fake
       insight_source_id:
-        value: ""
+        value: ''
       insight_tenant_id:
         value: fake
       proxy_auth_token:
@@ -34,17 +78,45 @@ connectors:
       claude_org_id:
         value: fake
       insight_source_id:
-        value: ""
+        value: ''
       insight_tenant_id:
         value: fake
       proxy_auth_token:
         value: fake
       proxy_url:
         value: fake
+  confluence:
+    path: wiki/confluence
+    config:
+      confluence_api_token:
+        value: fake
+      confluence_email:
+        value: fake
+      confluence_instance_url:
+        value: fake
+      confluence_start_date:
+        value: '2020-01-01'
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
   cursor:
     path: ai/cursor
     config:
       cursor_api_key:
+        value: fake
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
+  figma:
+    path: ui-design/figma
+    config:
+      figma_start_date:
+        value: '2020-01-01'
+      figma_team_ids:
+        value: fake
+      figma_token:
         value: fake
       insight_source_id:
         value: fake
@@ -61,115 +133,18 @@ connectors:
         value: github-copilot-acme
       insight_tenant_id:
         value: fake
-  openai:
-    path: ai/openai
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      openai_admin_api_key:
-        value: fake
-      openai_start_date:
-        value: "2020-01-01"
-  m365:
-    path: collaboration/m365
-    config:
-      azure_client_id:
-        value: fake
-      azure_client_secret:
-        value: fake
-      azure_tenant_id:
-        value: fake
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-  slack:
-    path: collaboration/slack
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      slack_bot_token:
-        value: fake
-      slack_start_date:
-        value: "2020-01-01"
-  zoom:
-    path: collaboration/zoom
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      zoom_account_id:
-        value: fake
-      zoom_client_id:
-        value: fake
-      zoom_client_secret:
-        value: fake
-      zoom_start_date:
-        value: "2020-01-01"
-  zulip-proxy:
-    path: collaboration/zulip-proxy
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      zulip_proxy_api_key:
-        value: fake
-      zulip_proxy_base_url:
-        value: http://10.0.0.1:9999/api
-      zulip_proxy_start_date:
-        value: "2024-01-01"
-  hubspot:
-    path: crm/hubspot
-    config:
-      hubspot_access_token:
-        env: HUBSPOT_ACCESS_TOKEN
-      insight_source_id:
-        value: hubspot-acme-prod
-      insight_tenant_id:
-        value: fake
-  salesforce:
-    path: crm/salesforce
-    config:
-      insight_source_id:
-        value: salesforce-acme-prod
-      insight_tenant_id:
-        value: fake
-      salesforce_client_id:
-        env: SALESFORCE_CLIENT_ID
-      salesforce_client_secret:
-        env: SALESFORCE_CLIENT_SECRET
-      salesforce_instance_url:
-        env: SALESFORCE_INSTANCE_URL
-  bitbucket-cloud:
-    path: git/bitbucket-cloud
-    config:
-      bitbucket_token:
-        value: fake
-      bitbucket_workspaces:
-        value:
-          - fake
-      insight_source_id:
-        value: bitbucket-acme-prod
-      insight_tenant_id:
-        value: fake
   github-v2:
     path: git/github-v2
     config:
       github_organizations:
         value:
-          - fake
+        - fake
       github_skip_archived:
         value: true
       github_skip_forks:
         value: true
       github_start_date:
-        value: "2024-01-01"
+        value: '2024-01-01'
       github_token:
         value: fake
       insight_source_id:
@@ -187,30 +162,39 @@ connectors:
         value: gitlab-acme-prod
       insight_tenant_id:
         value: fake
-  active-directory:
-    path: hr-directory/active-directory
+  hubspot:
+    path: crm/hubspot
     config:
-      ad_bind_dn:
-        value: svc-insight@corp.example.com
-      ad_bind_password:
-        value: fake
-      ad_search_base:
-        value: DC=corp,DC=example,DC=com
-      ad_server_host:
-        value: dc1.corp.example.com
+      hubspot_access_token:
+        env: HUBSPOT_ACCESS_TOKEN
       insight_source_id:
-        value: active-directory-corp
+        value: hubspot-acme-prod
       insight_tenant_id:
         value: fake
-  bamboohr:
-    path: hr-directory/bamboohr
+  jira:
+    path: task-tracking/jira
     config:
-      bamboohr_api_key:
-        value: fake
-      bamboohr_domain:
-        value: acme
       insight_source_id:
-        value: bamboohr-acme-prod
+        value: fake
+      insight_tenant_id:
+        value: fake
+      jira_api_token:
+        value: fake
+      jira_email:
+        value: fake
+      jira_instance_url:
+        value: fake
+  m365:
+    path: collaboration/m365
+    config:
+      azure_client_id:
+        value: fake
+      azure_client_secret:
+        value: fake
+      azure_tenant_id:
+        value: fake
+      insight_source_id:
+        value: fake
       insight_tenant_id:
         value: fake
   ms-entra:
@@ -226,6 +210,54 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
+  openai:
+    path: ai/openai
+    config:
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
+      openai_admin_api_key:
+        value: fake
+      openai_start_date:
+        value: '2020-01-01'
+  outline:
+    path: wiki/outline
+    config:
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
+      outline_api_token:
+        value: fake
+      outline_instance_url:
+        value: fake
+      outline_start_date:
+        value: '2020-01-01'
+  salesforce:
+    path: crm/salesforce
+    config:
+      insight_source_id:
+        value: salesforce-acme-prod
+      insight_tenant_id:
+        value: fake
+      salesforce_client_id:
+        env: SALESFORCE_CLIENT_ID
+      salesforce_client_secret:
+        env: SALESFORCE_CLIENT_SECRET
+      salesforce_instance_url:
+        env: SALESFORCE_INSTANCE_URL
+  slack:
+    path: collaboration/slack
+    config:
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
+      slack_bot_token:
+        value: fake
+      slack_start_date:
+        value: '2020-01-01'
   workday:
     path: hr-directory/workday
     config:
@@ -243,32 +275,6 @@ connectors:
         value: ISU_Insight/Insight_Leave_Sync
       workday_workers_report_path:
         value: ISU_Insight/Insight_Employee_Sync
-  zendesk:
-    path: support/zendesk
-    config:
-      insight_source_id:
-        value: ""
-      insight_tenant_id:
-        value: fake
-      zendesk_api_token:
-        value: fake
-      zendesk_email:
-        value: fake
-      zendesk_subdomain:
-        value: fake
-  jira:
-    path: task-tracking/jira
-    config:
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-      jira_api_token:
-        value: fake
-      jira_email:
-        value: fake
-      jira_instance_url:
-        value: fake
   youtrack:
     path: task-tracking/youtrack
     config:
@@ -280,44 +286,44 @@ connectors:
         value: fake
       youtrack_token:
         value: fake
-  figma:
-    path: ui-design/figma
+  zendesk:
+    path: support/zendesk
     config:
-      figma_start_date:
-        value: "2020-01-01"
-      figma_team_ids:
-        value: fake
-      figma_token:
-        value: fake
       insight_source_id:
-        value: fake
+        value: ''
       insight_tenant_id:
         value: fake
-  confluence:
-    path: wiki/confluence
-    config:
-      confluence_api_token:
+      zendesk_api_token:
         value: fake
-      confluence_email:
+      zendesk_email:
         value: fake
-      confluence_instance_url:
+      zendesk_subdomain:
         value: fake
-      confluence_start_date:
-        value: "2020-01-01"
-      insight_source_id:
-        value: fake
-      insight_tenant_id:
-        value: fake
-  outline:
-    path: wiki/outline
+  zoom:
+    path: collaboration/zoom
     config:
       insight_source_id:
         value: fake
       insight_tenant_id:
         value: fake
-      outline_api_token:
+      zoom_account_id:
         value: fake
-      outline_instance_url:
+      zoom_client_id:
         value: fake
-      outline_start_date:
-        value: "2020-01-01"
+      zoom_client_secret:
+        value: fake
+      zoom_start_date:
+        value: '2020-01-01'
+  zulip-proxy:
+    path: collaboration/zulip-proxy
+    config:
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
+      zulip_proxy_api_key:
+        value: fake
+      zulip_proxy_base_url:
+        value: http://10.0.0.1:9999/api
+      zulip_proxy_start_date:
+        value: '2024-01-01'

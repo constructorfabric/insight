@@ -23,6 +23,7 @@ services=(
   "GATEWAY:src/backend/services/gateway/helm/Chart.yaml"
   "IDENTITY:src/backend/services/identity/helm/Chart.yaml"
   "IDENTITY_RESOLUTION:src/backend/services/identity-resolution/helm/Chart.yaml"
+  "GIT_CLI_PROXY:src/backend/services/git-cli-proxy/helm/Chart.yaml"
 )
 
 for entry in "${services[@]}"; do

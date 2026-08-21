@@ -300,6 +300,14 @@ for p in json.load(sys.stdin):
 # POST /api/v1/connector_builder_projects/create with the manifest as a
 # parsed object. Prints the new builderProjectId. Manifest is loaded by
 # python/load_connector_manifest.py to convert YAML -> JSON object.
+#
+# The manifest reaches python on STDIN, never as an argument: Linux caps a
+# single argument at MAX_ARG_STRLEN (131072 bytes, kernel-fixed and not
+# raisable by ulimit), and a manifest crosses that long before it is unusual —
+# `execve` then fails with "Argument list too long", the body comes out empty,
+# and the API answers the empty POST with a 500 that names nothing. macOS has
+# no per-argument cap, so the same call succeeds locally and fails only in the
+# toolbox. A pipe has no such limit.
 # ---------------------------------------------------------------------------
 ab_builder_create_with_manifest() {
   local workspace_id="$1"
@@ -312,16 +320,16 @@ ab_builder_create_with_manifest() {
   local manifest_json
   manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
   local body
-  body=$(python3 -c '
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
 print(json.dumps({
   "workspaceId": sys.argv[1],
   "builderProject": {
     "name": sys.argv[2],
-    "draftManifest": json.loads(sys.argv[3]),
+    "draftManifest": json.load(sys.stdin),
   },
 }))
-' "${workspace_id}" "${connector_name}" "${manifest_json}")
+' "${workspace_id}" "${connector_name}")
   ab__curl POST /api/v1/connector_builder_projects/create "${body}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("builderProjectId",""))'
 }
@@ -350,9 +358,11 @@ ab_builder_publish() {
   # (which is {type, connection_specification}). Build the wrapper here from
   # snake_case manifest fields. Same shape used by update path below.
   local body
-  body=$(python3 -c '
+  # The manifest arrives on stdin, not as an argument — see the note on
+  # ab_builder_create_with_manifest.
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
-m = json.loads(sys.argv[5])
+m = json.load(sys.stdin)
 mspec = m.get("spec", {}) or {}
 spec = {
   "documentationUrl": mspec.get("documentation_url", ""),
@@ -371,7 +381,7 @@ print(json.dumps({
     "version": 1,
   },
 }))
-' "${workspace_id}" "${builder_project_id}" "${connector_name}" "${description}" "${manifest_json}")
+' "${workspace_id}" "${builder_project_id}" "${connector_name}" "${description}")
   ab__curl POST /api/v1/connector_builder_projects/publish "${body}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("sourceDefinitionId",""))'
 }
@@ -416,9 +426,11 @@ else:
   local next_version=$((current_version + 1))
 
   local body
-  body=$(python3 -c '
+  # The manifest arrives on stdin, not as an argument — see the note on
+  # ab_builder_create_with_manifest.
+  body=$(printf '%s' "${manifest_json}" | python3 -c '
 import sys, json
-m = json.loads(sys.argv[4])
+m = json.load(sys.stdin)
 mspec = m.get("spec", {}) or {}
 spec = {
   "documentationUrl": mspec.get("documentation_url", ""),
@@ -434,10 +446,10 @@ print(json.dumps({
     "description": sys.argv[3],
     "manifest": m,
     "spec": spec,
-    "version": int(sys.argv[5]),
+    "version": int(sys.argv[4]),
   },
 }))
-' "${workspace_id}" "${source_definition_id}" "${description}" "${manifest_json}" "${next_version}")
+' "${workspace_id}" "${source_definition_id}" "${description}" "${next_version}")
   ab__curl POST /api/v1/declarative_source_definitions/create_manifest "${body}"
 }
 
@@ -569,6 +581,19 @@ ab_delete_source() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_delete_connection <connection_id>
+# POST /api/v1/connections/delete — removes a single connection (leaves its
+# source/destination intact). Used to prune duplicate connections created by
+# overlapping reconcile executions racing the same source's bootstrap.
+# ---------------------------------------------------------------------------
+ab_delete_connection() {
+  local connection_id="$1"
+  local body
+  body=$(printf '{"connectionId":"%s"}' "${connection_id}")
+  ab__curl POST /api/v1/connections/delete "${body}"
+}
+
+# ---------------------------------------------------------------------------
 # ab_list_connections <workspace_id>
 # Returns JSON array of connections in workspace.
 # ---------------------------------------------------------------------------
@@ -618,25 +643,37 @@ ab_get_connection() {
 }
 
 # ---------------------------------------------------------------------------
-# ab_update_connection_sync_catalog <connection_id> <sync_catalog_json>
+# ab_update_connection_sync_catalog <connection_id> <sync_catalog_json> \
+#                                    [source_catalog_id]
 # POST /api/v1/connections/update with the existing connection body but the
 # new sync_catalog merged in. Per ADR-0015: called on every republish to
 # pick up new streams/fields the connector advertises. State (per-stream
 # cursors) is preserved by Airbyte across `connections/update` since state
 # is keyed on (connectionId, streamName) — only sync_catalog shape changes,
 # not the connection identity.
+#
+# source_catalog_id: the `catalogId` from the discover_schema response the
+# sync_catalog was built from. Airbyte's "Schema changes detected" indicator
+# compares the connection's sourceCatalogId against the latest discovered
+# catalog id — carrying the stale id forward leaves the banner stuck on
+# every republish even though the syncCatalog itself is fresh. Empty keeps
+# the existing value (pre-fix behaviour).
 # ---------------------------------------------------------------------------
 ab_update_connection_sync_catalog() {
   local connection_id="$1"
   local sync_catalog_json="$2"
+  local source_catalog_id="${3:-}"
   local current body
   if ! current="$(ab_get_connection "${connection_id}")"; then
     return 1
   fi
-  body=$(SYNC_CATALOG_ENV="${sync_catalog_json}" python3 -c '
+  body=$(SYNC_CATALOG_ENV="${sync_catalog_json}" \
+         SOURCE_CATALOG_ID_ENV="${source_catalog_id}" python3 -c '
 import sys, os, json
 conn = json.load(sys.stdin)
 conn["syncCatalog"] = json.loads(os.environ["SYNC_CATALOG_ENV"])
+if os.environ["SOURCE_CATALOG_ID_ENV"]:
+    conn["sourceCatalogId"] = os.environ["SOURCE_CATALOG_ID_ENV"]
 # /connections/update accepts a subset; keep only the fields Airbyte
 # requires for the update call. Forwarding the full response body works on
 # current versions but pruning to the documented update schema is safer.
@@ -800,7 +837,8 @@ print(json.dumps(arr))
 
 # ---------------------------------------------------------------------------
 # ab_create_connection <workspace_id> <source_id> <destination_id> <name> \
-#                      <schedule_json> <tags_json> [sync_catalog_json]
+#                      <schedule_json> <tags_json> [sync_catalog_json] \
+#                      [namespace_format] [source_catalog_id]
 # POST /api/v1/connections/create — private v1 schema requires Tag objects
 # on `tags`. tags_json is a JSON array of Tag objects (with tagId, name,
 # workspaceId, color). Use ab_resolve_tags to turn a string array of tag
@@ -809,6 +847,11 @@ print(json.dumps(arr))
 #                '{"scheduleType":"cron","cronExpression":"0 2 * * *"}'.
 # sync_catalog_json: optional pre-discovered syncCatalog object (else
 # caller should call sources/discover_schema beforehand and pass it).
+# source_catalog_id: the `catalogId` from the discover_schema response the
+# syncCatalog was built from; anchors Airbyte's schema-change detection to
+# the catalog we just configured (otherwise the connection is born with no
+# sourceCatalogId and the next scheduled discover flags "Schema changes
+# detected" against a catalog that is already applied).
 #
 # @cpt-constraint:cpt-dataflow-constraint-airbyte-append:p1
 # Per cpt-dataflow-constraint-airbyte-append (PR #251 conventions),
@@ -828,6 +871,7 @@ ab_create_connection() {
   local tags_json="$6"
   local sync_catalog_json="${7:-}"
   local namespace_format="${8:-}"
+  local source_catalog_id="${9:-}"
   [[ -n "${sync_catalog_json}" ]] || sync_catalog_json='{"streams":[]}'
   [[ -n "${tags_json}" && "${tags_json}" != "null" ]] || tags_json='[]'
   # schedule_json is the Airbyte 1.7+ schedule shape: flat object with
@@ -860,9 +904,13 @@ ns_fmt = sys.argv[8]
 if ns_fmt:
     payload["namespaceDefinition"] = "customformat"
     payload["namespaceFormat"]     = ns_fmt
+src_catalog_id = sys.argv[9]
+if src_catalog_id:
+    payload["sourceCatalogId"] = src_catalog_id
 print(json.dumps(payload))
 ' "${workspace_id}" "${source_id}" "${destination_id}" "${name}" \
-  "${schedule_json}" "${tags_json}" "${sync_catalog_json}" "${namespace_format}")
+  "${schedule_json}" "${tags_json}" "${sync_catalog_json}" "${namespace_format}" \
+  "${source_catalog_id}")
   ab__curl POST /api/v1/connections/create "${body}"
 }
 
