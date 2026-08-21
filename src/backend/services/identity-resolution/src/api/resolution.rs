@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -1350,8 +1350,15 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
         })
         .collect();
 
+    // The seed's own map, not one derived from the evidence: an address stays
+    // claimed after the account that carried it closes, and the seed still
+    // attaches new accounts to that person. See `review_queue::build`.
+    let claimed_addresses = seed_repo::latest_email_to_person(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to read claimed addresses"))?;
+
     Ok((
-        review_queue::build(observed, &bindings.by_account),
+        review_queue::build(observed, &bindings.by_account, &claimed_addresses),
         truncated,
     ))
 }

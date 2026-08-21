@@ -33,13 +33,13 @@ pub enum ItemKind {
     /// may duplicate one already on the roster under a different account, and
     /// only an operator can say which it is.
     MintedFromRoster,
-    /// The account has evidence to match on, but no connector states an id for
-    /// it AND no bound account shares its address — so no seed run can reach it
-    /// from either side. Only an operator, or a sign-in through the account,
-    /// can decide it, which is why it belongs on the queue rather than in
-    /// `pending`. An id-less account whose address IS already held stays in
-    /// `pending`: the seed folds it into that person, and its activity resolves
-    /// through the sibling's binding.
+    /// No route to a person exists for the account: no connector states an id
+    /// to write a binding from, and nobody holds its address for the seed to
+    /// fold it into. Only an operator, or a sign-in through the account, can
+    /// decide it — which is why it belongs on the queue rather than in
+    /// `pending`. An id-less account whose address IS held stays in `pending`:
+    /// the seed attaches it to that person, and its activity resolves through
+    /// the binding that person already has.
     NoSourceId,
     /// The account carries no identity evidence automation can match on —
     /// e-mail is the only matching key today, so a username-only account is
@@ -116,7 +116,15 @@ pub struct EvidenceAccount {
     pub states_binding_id: bool,
 }
 
-/// Build the review from folded evidence and current bindings.
+/// Build the review from folded evidence, current bindings, and the addresses
+/// the persons journal already names an owner for.
+///
+/// `claimed_addresses` is the seed's own `email -> person` map, passed in rather
+/// than re-derived: it is the second of the two routes automation has to a
+/// person, and it reaches further than the evidence does — an address stays
+/// claimed after the account that carried it closes or leaves the roster.
+/// Deriving it from evidence instead would queue accounts the next seed run
+/// resolves by itself.
 ///
 /// Closed accounts are skipped entirely: their latest evidence event is a
 /// closure, so there is nothing to decide. Everything else is classified in one
@@ -125,6 +133,7 @@ pub struct EvidenceAccount {
 pub fn build(
     evidence: Vec<EvidenceAccount>,
     bindings: &HashMap<SourceAccountKey, KnownBinding>,
+    claimed_addresses: &HashMap<String, Uuid>,
 ) -> Review {
     let active: Vec<EvidenceAccount> = evidence.into_iter().filter(|e| !e.is_closed).collect();
 
@@ -157,11 +166,14 @@ pub fn build(
                 if candidates.len() > 1 {
                     rates.pending += 1;
                     items.push(item(ItemKind::Contested, account, None, candidates));
-                } else if !account.states_binding_id && candidates.is_empty() {
+                } else if !account.states_binding_id
+                    && candidates.is_empty()
+                    && !address_is_claimed(account, claimed_addresses)
+                {
                     // Neither route to a person exists: the source states no id
-                    // to write a binding from, and no bound account shares the
-                    // address to fold it into. Every later run answers the same,
-                    // so an operator is the only way out.
+                    // to write a binding from, and nobody holds the address to
+                    // fold it into. Every later run answers the same, so an
+                    // operator is the only way out.
                     rates.no_source_id += 1;
                     items.push(item(ItemKind::NoSourceId, account, None, candidates));
                 } else {
@@ -262,6 +274,23 @@ fn candidates_for(
 // invisible forever: pending, never surfaced, never auto-bound.
 fn has_matchable_evidence(account: &EvidenceAccount) -> bool {
     account.email.is_some()
+}
+
+/// Whether the persons journal already names an owner for this account's
+/// address — the seed's second route to a person (`resolve_assignments` step 2,
+/// its `claimed_by`).
+///
+/// INVARIANT: the lookup mirrors that one exactly — same normalization, the
+/// same map as handed to the seed, and the same sentinel exclusion. Answering
+/// it differently here would either hide an account the seed skips or queue one
+/// the seed resolves; both are states nobody can see from the other side.
+fn address_is_claimed(account: &EvidenceAccount, claimed: &HashMap<String, Uuid>) -> bool {
+    account
+        .email
+        .as_deref()
+        .map(normalize_email)
+        .and_then(|email| claimed.get(&email).copied())
+        .is_some_and(|person| person != EXCLUDED_PERSON)
 }
 
 /// The item an already-bound account earns, when its binding still awaits a
@@ -393,7 +422,11 @@ mod tests {
         let mut bindings = HashMap::new();
         bindings.insert(account("bamboohr", "e-1"), roster_bound(7));
 
-        let review = build(vec![described("bamboohr", "e-1", "Sam Example")], &bindings);
+        let review = build(
+            vec![described("bamboohr", "e-1", "Sam Example")],
+            &bindings,
+            &HashMap::new(),
+        );
 
         assert_eq!(review.items.len(), 1);
         assert_eq!(review.items[0].kind, ItemKind::MintedFromRoster);
@@ -427,7 +460,11 @@ mod tests {
             },
         );
 
-        let review = build(vec![observed("bamboohr", "e-1", None)], &bindings);
+        let review = build(
+            vec![observed("bamboohr", "e-1", None)],
+            &bindings,
+            &HashMap::new(),
+        );
 
         assert!(
             review.items.is_empty(),
@@ -443,6 +480,7 @@ mod tests {
         let review = build(
             vec![observed("bamboohr", "e-1", Some("sam@example.com"))],
             &bindings,
+            &HashMap::new(),
         );
 
         assert!(
@@ -484,6 +522,7 @@ mod tests {
                 orphan,
             ],
             &bindings,
+            &HashMap::new(),
         );
 
         let kinds: Vec<ItemKind> = review.items.iter().map(|i| i.kind).collect();
@@ -520,6 +559,7 @@ mod tests {
                 Some("sam@corp.com"),
             )],
             &HashMap::new(),
+            &HashMap::new(),
         );
 
         assert_eq!(review.items.len(), 1);
@@ -534,6 +574,7 @@ mod tests {
         // the operator for a decision automation is about to make.
         let review = build(
             vec![observed("bamboohr", "e-1", Some("sam@corp.com"))],
+            &HashMap::new(),
             &HashMap::new(),
         );
 
@@ -553,11 +594,44 @@ mod tests {
         let mut bindings = HashMap::new();
         bindings.insert(held.account.clone(), seed_bound(17));
 
-        let review = build(vec![held, claim], &bindings);
+        let review = build(vec![held, claim], &bindings, &HashMap::new());
 
         assert!(review.items.is_empty(), "got {:?}", review.items);
         assert_eq!(review.rates.no_source_id, 0);
         assert_eq!(review.rates.pending, 1, "the claim waits on the next run");
+    }
+
+    #[test]
+    fn an_address_the_journal_already_owns_keeps_its_account_with_automation() {
+        // The account that carried this address has closed, so it is out of the
+        // evidence and no candidate can be derived from it — but the journal
+        // still names its person, and the seed attaches this new account to them
+        // on its next run. Deriving the answer from evidence alone would queue
+        // an account automation resolves by itself, and keep queueing it.
+        let claim = without_source_id("github-commit-email", "sam@corp.com", Some("Sam@Corp.com"));
+        let mut claimed = HashMap::new();
+        claimed.insert("sam@corp.com".to_owned(), Uuid::from_u128(17));
+
+        let review = build(vec![claim], &HashMap::new(), &claimed);
+
+        assert!(review.items.is_empty(), "got {:?}", review.items);
+        assert_eq!(review.rates.no_source_id, 0);
+        assert_eq!(review.rates.pending, 1);
+    }
+
+    #[test]
+    fn an_address_held_only_by_the_excluded_sentinel_is_held_by_nobody() {
+        // An exclusion is not a person: the seed drops such an account before
+        // any linking decision, so it reaches the mint branch, which now skips
+        // it — the account really does need an operator.
+        let claim = without_source_id("github-commit-email", "bot@corp.com", Some("bot@corp.com"));
+        let mut claimed = HashMap::new();
+        claimed.insert("bot@corp.com".to_owned(), EXCLUDED_PERSON);
+
+        let review = build(vec![claim], &HashMap::new(), &claimed);
+
+        assert_eq!(review.items.len(), 1);
+        assert_eq!(review.items[0].kind, ItemKind::NoSourceId);
     }
 
     #[test]
@@ -576,7 +650,7 @@ mod tests {
         bindings.insert(a.account.clone(), seed_bound(17));
         bindings.insert(b.account.clone(), seed_bound(23));
 
-        let review = build(vec![a, b, claim.clone()], &bindings);
+        let review = build(vec![a, b, claim.clone()], &bindings, &HashMap::new());
 
         let claim_items: Vec<ItemKind> = review
             .items
@@ -593,7 +667,11 @@ mod tests {
 
     #[test]
     fn accounts_without_identity_evidence_are_surfaced_not_hidden() {
-        let review = build(vec![observed("jira", "jr-1", None)], &HashMap::new());
+        let review = build(
+            vec![observed("jira", "jr-1", None)],
+            &HashMap::new(),
+            &HashMap::new(),
+        );
 
         assert_eq!(review.items.len(), 1);
         assert_eq!(review.items[0].kind, ItemKind::NoEvidence);
@@ -609,7 +687,7 @@ mod tests {
         let mut orphan = observed("github", "gh-1", None);
         orphan.username = Some("octocat".to_owned());
 
-        let review = build(vec![orphan], &HashMap::new());
+        let review = build(vec![orphan], &HashMap::new(), &HashMap::new());
 
         assert_eq!(review.items.len(), 1);
         assert_eq!(review.items[0].kind, ItemKind::NoEvidence);
@@ -624,6 +702,7 @@ mod tests {
         // bound by a person or by nobody, and a person needs to recognise one.
         let review = build(
             vec![described("bamboohr", "921", "Ann Lee")],
+            &HashMap::new(),
             &HashMap::new(),
         );
 
@@ -647,7 +726,11 @@ mod tests {
         bindings.insert(anna.account.clone(), seed_bound(5));
         bindings.insert(boris.account.clone(), operator_bound(6));
 
-        let review = build(vec![anna, boris, newcomer.clone()], &bindings);
+        let review = build(
+            vec![anna, boris, newcomer.clone()],
+            &bindings,
+            &HashMap::new(),
+        );
 
         let contested: Vec<&QueueItem> = review
             .items
@@ -672,7 +755,7 @@ mod tests {
         bindings.insert(anna.account.clone(), seed_bound(5));
         bindings.insert(boris.account.clone(), operator_bound(6));
 
-        let review = build(vec![anna, boris], &bindings);
+        let review = build(vec![anna, boris], &bindings, &HashMap::new());
 
         assert!(
             !review
@@ -697,6 +780,7 @@ mod tests {
                 observed("chat", "2", Some("a@example.com")),
             ],
             &bindings,
+            &HashMap::new(),
         );
 
         let hr: Vec<&QueueItem> = review
@@ -718,7 +802,11 @@ mod tests {
         let mut bindings = HashMap::new();
         bindings.insert(account("github", "gh-1"), login_bound(7));
 
-        let review = build(vec![observed("github", "gh-1", None)], &bindings);
+        let review = build(
+            vec![observed("github", "gh-1", None)],
+            &bindings,
+            &HashMap::new(),
+        );
 
         assert_eq!(review.items.len(), 1);
         assert_eq!(review.items[0].kind, ItemKind::ProvisionedAtLogin);
@@ -744,7 +832,11 @@ mod tests {
             },
         );
 
-        let review = build(vec![observed("github", "gh-1", None)], &bindings);
+        let review = build(
+            vec![observed("github", "gh-1", None)],
+            &bindings,
+            &HashMap::new(),
+        );
 
         assert!(
             review.items.is_empty(),
@@ -754,7 +846,11 @@ mod tests {
 
     #[test]
     fn an_unbound_queue_item_is_bound_to_nobody() {
-        let review = build(vec![observed("jira", "jr-1", None)], &HashMap::new());
+        let review = build(
+            vec![observed("jira", "jr-1", None)],
+            &HashMap::new(),
+            &HashMap::new(),
+        );
 
         assert_eq!(review.items[0].bound_to, None);
     }
@@ -767,7 +863,7 @@ mod tests {
         bindings.insert(a.account.clone(), seed_bound(17));
         bindings.insert(b.account.clone(), seed_bound(23));
 
-        let review = build(vec![a, b], &bindings);
+        let review = build(vec![a, b], &bindings, &HashMap::new());
 
         let conflicts: Vec<&QueueItem> = review
             .items
@@ -790,8 +886,12 @@ mod tests {
         bindings.insert(a.account.clone(), seed_bound(17));
         bindings.insert(b.account.clone(), seed_bound(23));
 
-        let first = build(vec![a.clone(), b.clone(), orphan.clone()], &bindings);
-        let again = build(vec![orphan, b, a], &bindings);
+        let first = build(
+            vec![a.clone(), b.clone(), orphan.clone()],
+            &bindings,
+            &HashMap::new(),
+        );
+        let again = build(vec![orphan, b, a], &bindings, &HashMap::new());
 
         assert_eq!(
             first.items, again.items,
@@ -804,7 +904,7 @@ mod tests {
         let mut closed = observed("github", "gh-9", None);
         closed.is_closed = true;
 
-        let review = build(vec![closed], &HashMap::new());
+        let review = build(vec![closed], &HashMap::new(), &HashMap::new());
 
         assert!(
             review.items.is_empty(),
@@ -826,7 +926,7 @@ mod tests {
             },
         );
 
-        let review = build(vec![bot], &bindings);
+        let review = build(vec![bot], &bindings, &HashMap::new());
 
         assert!(review.items.is_empty());
         assert_eq!(review.rates.excluded, 1);
