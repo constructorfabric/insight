@@ -8,6 +8,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { personIdFromPath } from "@/lib/metrics/entity";
 import {
@@ -17,7 +18,6 @@ import {
 import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
-import type { PersonSummary } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 // Person ids, not emails: the identity cutover made the id the key the route
@@ -109,16 +109,6 @@ function PersonNode({
   );
 }
 
-/** How a roster row is labelled: the handle beats no name at all. */
-function rosterLabel(person: PersonSummary): string {
-  return (
-    person.display_name?.trim() ||
-    person.email?.trim() ||
-    person.username?.trim() ||
-    person.person_id
-  );
-}
-
 /**
  * The same navigation for an organisation with no reporting lines: one flat
  * list, in label order, scrolling in the pane exactly as the chart does. There
@@ -138,7 +128,7 @@ function RosterList({ query }: { query: string }) {
   const listed = useMemo(() => {
     const term = query.trim().toLowerCase();
     const rows = roster
-      .map((person) => ({ person, label: rosterLabel(person) }))
+      .map((person) => ({ person, label: personDisplayName(person) }))
       .sort((left, right) => left.label.localeCompare(right.label));
     return term
       ? rows.filter((row) => row.label.toLowerCase().includes(term))

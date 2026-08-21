@@ -6,10 +6,15 @@
 //! list, and a page boundary must fall in the same place either way.
 //!
 //! **The order is the card's own label** — display name, else the composed
-//! first/last, else the address, else the source-native handle — folded to
+//! first/last, else the source-native handle, else the address — folded to
 //! lower case, with the people the journal knows by nothing but an id last.
 //! Ordering by anything else would sort the list by a value the rows do not
 //! show.
+//!
+//! The address is the LAST resort, behind the handle: a source that hides a
+//! member's e-mail still reports one for their commits, and a generated address
+//! naming an account (`<id>+<handle>@…`) is not what anybody calls that person.
+//! The handle is.
 //!
 //! INVARIANT: the label follows `person_card`'s rule exactly, including where
 //! that rule leaves an attribute absent. Both rank every observation of a value
@@ -412,8 +417,8 @@ const LABEL_CTES: &str = r"
                        NULLIF(TRIM(CONCAT_WS(' ',
                            NULLIF(TRIM(first_name), ''),
                            NULLIF(TRIM(last_name), ''))), ''),
-                       NULLIF(TRIM(email), ''),
-                       NULLIF(TRIM(username), '')
+                       NULLIF(TRIM(username), ''),
+                       NULLIF(TRIM(email), '')
                    ) AS label
             FROM (
                 SELECT person_id,

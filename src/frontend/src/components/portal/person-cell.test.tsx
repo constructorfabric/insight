@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
  * One person must read the same everywhere: name by the card's precedence
- * (display name → email → username → id), an identifying second line that
- * never repeats the name, and a leaver marked so nobody merges into them.
+ * (display name, then username, then email, then the id), an identifying second
+ * line that never repeats the name, and a leaver marked so nobody merges into
+ * them.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -22,8 +23,8 @@ function person(over: Partial<PersonSummary>): PersonSummary {
 describe("personDisplayName", () => {
   it.each<[string, Partial<PersonSummary>, string]>([
     ["display name first", { display_name: "Ann Lee", email: "a@example.com" }, "Ann Lee"],
-    ["email when unnamed", { email: "a@example.com", username: "alee" }, "a@example.com"],
-    ["username for a git-only identity", { username: "alee" }, "alee"],
+    ["the handle over the address", { email: "a@example.com", username: "alee" }, "alee"],
+    ["the address when there is no handle", { email: "a@example.com" }, "a@example.com"],
     ["the id when nothing else exists", {}, "01900000-0000-7000-8000-000000000001"],
   ])("picks %s", (_name, fields, expected) => {
     expect(personDisplayName(person(fields))).toBe(expected);
