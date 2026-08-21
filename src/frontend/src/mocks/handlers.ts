@@ -380,7 +380,7 @@ export const handlers = [
       .catch(() => null)) as MetricResultsRequest | null;
     if (
       !body ||
-      !Array.isArray(body.entity?.ids) ||
+      !body.entity ||
       !Array.isArray(body.metrics)
     ) {
       return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
@@ -389,9 +389,24 @@ export const handlers = [
     // person UUIDs and an email is a 400. Without this the mock would happily
     // answer a stale email fixture and hide the very regression it exists to
     // catch.
-    if (!body.entity.ids.every((id) => typeof id === "string" && isPersonId(id))) {
+    if (
+      body.entity.type === "person" &&
+      (!Array.isArray(body.entity.ids) ||
+        !body.entity.ids.every((id) => typeof id === "string" && isPersonId(id)))
+    ) {
       return HttpResponse.json(
         { error: "invalid_argument", field: "entity.ids" },
+        { status: 400 },
+      );
+    }
+    if (
+      body.entity.type === "tenant" &&
+      body.metrics.some((metric) =>
+        metric.views.some((view) => view.view === "peer"),
+      )
+    ) {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "metrics.views" },
         { status: 400 },
       );
     }

@@ -67,7 +67,10 @@ const MOCK_TOOLS = [
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
-  const ids = request.entity.ids;
+  const ids =
+    request.entity.type === "person"
+      ? request.entity.ids
+      : ["00000000-0000-4000-8000-00000000c0de"];
   const metrics: MetricResult[] = request.metrics.map((metricRequest) => {
     const meta = metaFor(metricRequest.metric_key);
     const key = metricRequest.metric_key;

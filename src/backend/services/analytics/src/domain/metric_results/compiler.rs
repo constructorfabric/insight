@@ -2,11 +2,13 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
 use serde::Deserialize;
+use uuid::Uuid;
 
 use super::batch::ResolvedGroupLimit;
 use super::batch::{peer_aliases, period_alias};
 use super::validation::{
-    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedMetricResultsRequest, query_row_limit,
+    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedEntitySelection,
+    ValidatedMetricResultsRequest, query_row_limit,
 };
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
@@ -97,8 +99,7 @@ pub(crate) fn compile_period_batch_query(
     let mut params = Vec::new();
     let selects = item_value_selects(defs, &mut params, period_alias);
     let metric_scope = shared_observation_where(defs, req, filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let observation_table = batch_observation_table(defs);
     let limit = query_row_limit();
     let inner = format!(
@@ -107,7 +108,7 @@ pub(crate) fn compile_period_batch_query(
             entity_id{selects}
         FROM {observation_table}
         WHERE {metric_scope}
-          AND entity_id IN ({entity_id_params})
+          AND {entity_predicate}
         GROUP BY entity_id
         LIMIT {limit}
         "
@@ -129,8 +130,7 @@ pub(crate) fn compile_timeseries_query(
     }
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let bucket = bucket_expr(bucket);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
     let bucket_group = if dim_group.is_empty() {
@@ -159,7 +159,7 @@ pub(crate) fn compile_timeseries_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entity_id_params})
+          AND {entity_predicate}
         GROUP BY GROUPING SETS (({bucket_group}), ({total_group}))
         ORDER BY entity_id, is_total, bucket_start
         LIMIT {limit}
@@ -180,8 +180,7 @@ pub(crate) fn compile_group_ranking_query(
     let mut params = grouped_value_params(def);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
     let observation_table = observation_table(def.observation_source());
     let value_expr = grouped_value_expr(def);
@@ -193,7 +192,7 @@ pub(crate) fn compile_group_ranking_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entity_id_params})
+          AND {entity_predicate}
         GROUP BY {dim_group}
         ",
         metric_where = metric_where(def, req.enforce_tenant_scope),
@@ -221,8 +220,7 @@ fn compile_capped_timeseries_query(
 ) -> CompiledQuery {
     let mut params = metric_where_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let bucket = bucket_expr(bucket);
     let raw_dimensions = dimensions.iter().enumerate().fold(
         String::new(),
@@ -257,7 +255,7 @@ fn compile_capped_timeseries_query(
             FROM {observation_table}
             WHERE {metric_where}
               {filter_where}
-              AND entity_id IN ({entity_id_params})
+              AND {entity_predicate}
         ),
         ranked AS (
             SELECT
@@ -383,8 +381,7 @@ pub(crate) fn compile_breakdown_query(
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
     let group = if dim_group.is_empty() {
         "entity_id".to_owned()
@@ -402,7 +399,7 @@ pub(crate) fn compile_breakdown_query(
         FROM {observation_table}
         WHERE {metric_where}
           {filter_where}
-          AND entity_id IN ({entity_id_params})
+          AND {entity_predicate}
         GROUP BY {group}
         ORDER BY entity_id
         LIMIT {limit}
@@ -446,8 +443,7 @@ pub(crate) fn compile_histogram_query(
 ) -> CompiledQuery {
     let mut params = metric_params(def, req);
     let filter_where = dimension_filter_where(filters, &mut params);
-    params.extend(req.entity.entity_ids());
-    let entity_id_params = placeholders(req.entity.len());
+    let entity_predicate = selected_entity_predicate(req, &mut params);
     let observation_table = observation_table(def.observation_source());
     let bins = HISTOGRAM_BINS;
     let max_bin = HISTOGRAM_BINS - 1;
@@ -461,7 +457,7 @@ pub(crate) fn compile_histogram_query(
             FROM {observation_table}
             WHERE {metric_where}
               {filter_where}
-              AND entity_id IN ({entity_id_params})
+              AND {entity_predicate}
               AND value IS NOT NULL
         ),
         events AS (
@@ -931,6 +927,19 @@ fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
+fn selected_entity_predicate(
+    req: &ValidatedMetricResultsRequest,
+    params: &mut Vec<String>,
+) -> String {
+    match &req.entity {
+        ValidatedEntitySelection::Person { ids } => {
+            params.extend(ids.iter().map(Uuid::to_string));
+            format!("entity_id IN ({})", placeholders(ids.len()))
+        }
+        ValidatedEntitySelection::Tenant { .. } => "entity_id = tenant_id".to_owned(),
+    }
+}
+
 fn bucket_expr(bucket: Bucket) -> &'static str {
     match bucket {
         Bucket::Day => "metric_date",
@@ -1188,6 +1197,19 @@ mod tests {
                 "00000000-0000-0000-0000-00000000000b",
             ]
         );
+    }
+
+    #[test]
+    fn tenant_queries_match_the_entity_to_its_storage_partition() {
+        let sum = sum_metric();
+        let mut req = request();
+        req.entity = ValidatedEntitySelection::Tenant { id: TEST_TENANT };
+
+        let query = compile_period_batch_query(&[&sum], &req, &[]);
+
+        assert!(query.sql.contains("AND entity_id = tenant_id"));
+        assert!(!query.params.iter().any(|value| value == "default"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
     }
 
     const CUSTOM_SQL: &str = "SELECT tenant_id, source_key, entity_type, entity_id, \

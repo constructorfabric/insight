@@ -6,7 +6,6 @@ import type {
   MetricComputation,
   MetricDirection,
   MetricDimensionFilter,
-  MetricEntityType,
   MetricFormat,
   MetricGroupLimit,
   MetricResult,
@@ -80,7 +79,7 @@ export function filterCollectionToAvailable(
 }
 
 export interface MetricCollectionEntity {
-  type: MetricEntityType;
+  type: "person";
   ids: string[];
 }
 

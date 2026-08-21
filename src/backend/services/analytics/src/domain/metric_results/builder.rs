@@ -51,7 +51,7 @@ pub fn build_period_view(
 ) -> MetricResultViewDto {
     let values_by_entity: HashMap<String, Option<f64>> = rows
         .into_iter()
-        .map(|row| (row.entity_id, row.value))
+        .map(|row| (req.entity.canonicalize_entity_id(row.entity_id), row.value))
         .collect();
     // `entity_id` IS the canonical contract on the wire and in the relations;
     // the selection renders the ids in that form, one rule for every view
@@ -93,8 +93,9 @@ pub fn build_timeseries_view(
         } else {
             row_dimensions(&row.extra, dimensions)?
         };
+        let entity_id = req.entity.canonicalize_entity_id(row.entity_id);
         let data = by_series
-            .entry((row.entity_id, remainder, dims))
+            .entry((entity_id, remainder, dims))
             .or_insert_with(|| SeriesData::new(row.rank, remainder, row.group_label.clone()));
         if row.is_total != 0 {
             data.total = row.value;
@@ -180,6 +181,7 @@ pub fn build_peer_view(rows: Vec<PeerQueryRow>) -> MetricResultViewDto {
 }
 
 pub fn build_breakdown_view(
+    req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
     rows: Vec<BreakdownQueryRow>,
 ) -> Result<MetricResultViewDto, CanonicalError> {
@@ -187,7 +189,7 @@ pub fn build_breakdown_view(
         .into_iter()
         .map(|row| {
             Ok(BreakdownValueDto {
-                entity_id: row.entity_id,
+                entity_id: req.entity.canonicalize_entity_id(row.entity_id),
                 dimensions: row_dimensions(&row.extra, dimensions)?
                     .into_iter()
                     .map(|(key, value, label)| MetricDimensionDto { key, value, label })
@@ -219,7 +221,8 @@ pub fn build_histogram_view(
 
     let mut by_entity: HashMap<String, EntityBins> = HashMap::new();
     for row in rows {
-        let entry = by_entity.entry(row.entity_id).or_insert(EntityBins {
+        let entity_id = req.entity.canonicalize_entity_id(row.entity_id);
+        let entry = by_entity.entry(entity_id).or_insert(EntityBins {
             lo: row.entity_lo,
             hi: row.entity_hi,
             counts: HashMap::new(),
@@ -501,6 +504,25 @@ mod tests {
         assert_eq!(values[0].value, None);
         assert_eq!(values[1].entity_id, "00000000-0000-0000-0000-00000000000a");
         assert_eq!(values[1].value, Some(5.0));
+    }
+
+    #[test]
+    fn tenant_period_view_exposes_the_session_tenant_not_the_storage_key() {
+        let tenant_id = Uuid::from_u128(0x1967);
+        let mut req = request(Vec::new(), "2026-01-01", "2026-01-31");
+        req.entity = ValidatedEntitySelection::Tenant { id: tenant_id };
+        let rows = vec![PeriodQueryRow {
+            entity_id: "default".to_owned(),
+            value: Some(5.0),
+        }];
+
+        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].entity_id, tenant_id.to_string());
+        assert_eq!(values[0].value, Some(5.0));
     }
 
     #[test]
@@ -829,8 +851,13 @@ mod tests {
             extra,
         }];
         let dimensions = vec!["tool".to_owned()];
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
         let Ok(MetricResultViewDto::Breakdown { values, .. }) =
-            build_breakdown_view(&dimensions, rows)
+            build_breakdown_view(&req, &dimensions, rows)
         else {
             panic!("expected breakdown view");
         };
@@ -844,8 +871,7 @@ mod tests {
     fn selection(metric_key: &str) -> super::super::dto::MetricResultSelectionDto {
         super::super::dto::MetricResultSelectionDto {
             metric_key: metric_key.to_owned(),
-            entity: super::super::dto::MetricResultsEntityDto {
-                r#type: "person".to_owned(),
+            entity: super::super::dto::MetricResultsEntityDto::Person {
                 ids: vec!["person@example.com".to_owned()],
             },
             period: super::super::dto::MetricResultsPeriodDto {

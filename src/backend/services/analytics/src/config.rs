@@ -73,6 +73,12 @@ impl Default for GearConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct MetricCatalogConfig {
+    /// Permit authenticated callers to read tenant-level metric definitions,
+    /// results, evidence, and exports.
+    ///
+    /// Env: `APP__gears__analytics__config__metric_catalog__tenant_metrics_enabled`.
+    pub tenant_metrics_enabled: bool,
+
     /// Enforce the per-tenant observation filter (#1967) on metric reads.
     /// Defaults to `false`: the ingested `tenant_id` in the bronze/silver/gold
     /// pipeline is not yet aligned to the JWT tenant, so an exact

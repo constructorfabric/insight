@@ -311,6 +311,13 @@
         ],
         "type": "object"
       },
+      "EntityType": {
+        "enum": [
+          "person",
+          "tenant"
+        ],
+        "type": "string"
+      },
       "EvidenceGranularity": {
         "enum": [
           "event",
@@ -463,6 +470,9 @@
               }
             ]
           },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          },
           "explanation": {
             "type": [
               "string",
@@ -546,6 +556,7 @@
         },
         "required": [
           "metric_key",
+          "entity_type",
           "label",
           "format",
           "direction",
@@ -664,19 +675,40 @@
         "type": "string"
       },
       "MetricDrilldownEntity": {
-        "properties": {
-          "id": {
-            "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "id"
-        ],
-        "type": "object"
+        ]
       },
       "MetricDrilldownExportFormat": {
         "enum": [
@@ -1168,42 +1200,82 @@
         ]
       },
       "MetricResultsEntity": {
-        "properties": {
-          "ids": {
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
-            "items": {
-              "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
             },
-            "type": "array"
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "ids"
-        ],
-        "type": "object"
+        ]
       },
       "MetricResultsEntityDto": {
-        "properties": {
-          "ids": {
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
-            "items": {
-              "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
             },
-            "type": "array"
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "ids"
-        ],
-        "type": "object"
+        ]
       },
       "MetricResultsPeriod": {
         "properties": {

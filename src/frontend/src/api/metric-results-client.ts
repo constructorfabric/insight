@@ -17,10 +17,13 @@ export type MetricResultViewKind =
   | "histogram";
 export type MetricBucket = "day" | "week" | "month";
 export type MetricComputation = "sum" | "ratio" | "median" | "distinct_count";
-export type MetricEntityType = "person";
+export type MetricEntityType = "person" | "tenant";
+export type MetricResultsEntity =
+  | { type: "person"; ids: string[] }
+  | { type: "tenant" };
 
 export interface MetricResultsRequest {
-  entity: { type: MetricEntityType; ids: string[] };
+  entity: MetricResultsEntity;
   period: { from: string; to: string };
   metrics: MetricRequest[];
 }
@@ -42,7 +45,7 @@ export interface MetricDrilldownCapability {
 
 export interface MetricCanonicalSelection {
   metric_key: string;
-  entity: { type: MetricEntityType; ids: string[] };
+  entity: MetricResultsEntity;
   period: { from: string; to: string };
   filters: MetricDimensionFilter[];
 }
@@ -188,7 +191,7 @@ export async function queryMetricResults(
   // "entity.ids must not be empty"). Callers are expected to keep the query
   // disabled until they have entities; failing here names the real cause
   // instead of surfacing a server validation error in the network log.
-  if (body.entity.ids.length === 0) {
+  if (body.entity.type === "person" && body.entity.ids.length === 0) {
     throw new Error(
       "metric-results: refusing to request an empty entity list — the caller should stay disabled until the roster resolves",
     );
