@@ -8,6 +8,8 @@ members = [
     # Dev/e2e-only fake OIDC provider (never shipped in a prod image). See
     # services/fakeidp/README.md and cf/NGINX_BFF.md §10 G6.
     "services/fakeidp",
+    # Clone-based git extraction the nocode git connectors read through.
+    "services/git-cli-proxy",
     # Build-time CLI: compiles the gateway routes.yaml into nginx.conf
     # (gateway DESIGN DD-GW-02). Never shipped in a runtime image.
     "tools/routegen",
@@ -32,6 +34,9 @@ expect_used = "deny"
 dbg_macro = "deny"
 
 [workspace.dependencies]
+base64 = "0.23"
+hex = "0.4"
+sha2 = "0.11"
 # ClickHouse client
 clickhouse = { version = "0.14", features = ["uuid"] }
 

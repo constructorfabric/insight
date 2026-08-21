@@ -65,6 +65,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       identity: ${{ steps.filter.outputs.identity }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
+      git_cli_proxy: ${{ steps.filter.outputs.git_cli_proxy }}
       toolbox: ${{ steps.filter.outputs.toolbox }}
       umbrella: ${{ steps.filter.outputs.umbrella }}
       build_tag: ${{ steps.tag.outputs.build_tag }}
@@ -108,6 +109,11 @@ jobs:
               - 'src/backend/Cargo.lock'
             identity:
               - 'src/backend/services/identity/**'
+            git_cli_proxy:
+              - 'src/backend/services/git-cli-proxy/**'
+              - 'src/backend/docker-entrypoint.sh'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
             identity_resolution:
               - 'src/backend/services/identity-resolution/**'
               # The image compiles the path-dependency lib in — a lib change
@@ -770,6 +776,116 @@ jobs:
   #
   # Per-arch matrix runs amd64 and arm64 builds in parallel on native
   # runners; merge-toolbox below assembles the multi-arch manifest.
+  backend-git-cli-proxy:
+    needs: changes
+    if: |
+      needs.changes.outputs.git_cli_proxy == 'true'
+      || (github.event_name == 'workflow_dispatch' && inputs.frontend_tag == '')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: needs.changes.outputs.should_push == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/git-cli-proxy/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          cache-from: type=gha,scope=git-cli-proxy-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=git-cli-proxy-${{ matrix.arch }},ignore-error=true
+      - name: Export digest
+        if: needs.changes.outputs.should_push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.changes.outputs.should_push == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-git-cli-proxy-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-git-cli-proxy:
+    needs: [changes, backend-git-cli-proxy]
+    if: |
+      always()
+      && needs.backend-git-cli-proxy.result == 'success'
+      && needs.changes.outputs.should_push == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-git-cli-proxy-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-git-cli-proxy:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
+
+  # ─── Toolbox build (with dbt parse smoke) ──────────────────────────────────
+  # Toolbox is special — it bakes every connector's descriptor.yaml and dbt
+  # project at build time, so a descriptor-only change (commit A from
+  # bump-descriptors) MUST re-trigger it. paths-filter for `toolbox` matches
+  # `src/ingestion/**` (which includes descriptor.yaml).
+  #
+  # Per-arch matrix runs amd64 and arm64 builds in parallel on native
+  # runners; merge-toolbox below assembles the multi-arch manifest.
   toolbox:
     needs: changes
     if: |
@@ -1173,6 +1289,7 @@ jobs:
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY: ${{ needs.changes.outputs.identity }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
+          GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       - name: Commit descriptor patches (no [skip ci])
@@ -1358,6 +1475,7 @@ jobs:
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY: ${{ needs.changes.outputs.identity }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
+          GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
       # Cross-repo frontend bump. The frontend lives in

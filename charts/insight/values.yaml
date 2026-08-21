@@ -537,6 +537,69 @@ identityResolution:
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
 # ─── Frontend (SPA) ──────────────────────────────────────────────────────
+# Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
+# Airbyte-only consumer: no gateway route, no platform-config entry (other
+# services must not discover it), ingress restricted by its own NetworkPolicy.
+# Deployed by default: every nocode git connector reads its commits, file
+# changes and commit authors through this service, so an instance without it can
+# sync no git source at all. The cost is one PVC (`persistence.size`) on an
+# instance that syncs none — set deploy=false there.
+# Two prerequisites an environment must meet before this renders for it:
+#   * under `credentials.deploymentMode: gitops`, set `proxyToken` (or
+#     pre-create insight-git-cli-proxy-config) — a template-time token would
+#     differ on every sync, so secrets.yaml refuses to generate one;
+#   * the deploy credential must hold a persistentvolumeclaims rule for the
+#     cache claim (test-stand: ci-deployer-rbac.yaml).
+gitCliProxy:
+  deploy: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/constructorfabric/insight-git-cli-proxy
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  persistence:
+    size: 50Gi
+    storageClass: ""
+  cache:
+    # Budget defaults to 85% of persistence.size (subchart-computed); the
+    # headroom absorbs transient packs and git temp files. Override with
+    # diskBudgetBytes (must stay within 50-90% of the volume).
+    maxRepoBytes: 10737418240
+    defaultMaxStalenessSeconds: 300
+    heavyOpsConcurrency: 4
+    caCertPath: ""
+  caCertSecret: ""
+  # Bearer token the proxy requires on every /v1 request. Empty = generated on
+  # first install and reused on every upgrade; reconcile hands it to the
+  # connectors, so an operator never needs to see or copy it. Set it only to
+  # pin a specific value.
+  #
+  # Under `credentials.autoGenerate: false` — which every gitops overlay runs —
+  # the chart emits no Secret at all and this value is unused: pre-create
+  # `existingSecret` below with the key
+  # APP__gears__git_cli_proxy__config__proxy_token, the same contract as
+  # `insight-db-creds`. Never inline the token here in a committed overlay.
+  proxyToken: ""
+  # Composed by templates/secrets.yaml (carries the bearer token).
+  existingSecret: "insight-git-cli-proxy-config"
+  networkPolicy:
+    # Off by default, as on the authenticator: the /v1 bearer token is the
+    # control, and requiring every deployment to declare where Airbyte runs
+    # before the chart will install is friction the token already covers.
+    # Enable it per deployment — the clone cache serves private source, so
+    # hiding it from the rest of the cluster is worth the one value.
+    enabled: false
+    # Namespaces whose pods may call the proxy: the one running Airbyte
+    # connector jobs, which is `airbyte.namespace` above when that is set.
+    # Required whenever enabled=true — the subchart refuses to render an
+    # allow-list that would deny every caller.
+    allowedNamespaceLabels:
+      - key: kubernetes.io/metadata.name
+        values: []
+
 frontend:
   # Served through the gateway edge at "/". Set deploy=false for a backend-only
   # bring-up (the gateway resolves its front upstream lazily, so /api/* still
