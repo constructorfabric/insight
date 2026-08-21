@@ -463,9 +463,10 @@ jobs:
             "${force_args[@]}" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
-          # One sentinel line, written by insight_seed/manifest.py:write_manifest.
+          # One plain sentinel line, or gzipped chunks past ~64 personas;
+          # manifest-from-log.sh normalises either form.
           manifest_rc=0
-          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
+          ./src/ingestion/tools/seed/manifest-from-log.sh "$RUNNER_TEMP/seed.log" \
             | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
 
           if [ "$seed_rc" -eq 0 ] && [ "$manifest_rc" -eq 0 ]; then
@@ -480,7 +481,7 @@ jobs:
           # reach the public log, never the pod log it follows.
           echo "::error::the seed stage failed."
           [ "$seed_rc" -eq 0 ] || echo "::error::seed-stand.sh exited $seed_rc."
-          [ "$manifest_rc" -eq 0 ] || echo "::error::no SEED_MANIFEST_JSON line in the seed log — the seeder did not reach the end of its run."
+          [ "$manifest_rc" -eq 0 ] || echo "::error::no manifest sentinel in the seed log — the seeder did not reach the end of its run."
           grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/seed.log" | python3 "$REDACT" || true
           echo "The full seed log (cluster and pod output) stays on the runner in \$RUNNER_TEMP;"
           echo "it is not published. While the Job survives (an hour, backoffLimit 0), read it"

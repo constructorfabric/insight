@@ -171,7 +171,7 @@ jobs:
           fi
           echo "reading the manifest from $job"
           kubectl -n "$STAND_NAMESPACE" logs "$job" --tail=-1 2>/dev/null \
-            | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- \
+            | ./src/ingestion/tools/seed/manifest-from-log.sh | cut -d' ' -f2- \
             > "$RUNNER_TEMP/stand-manifest.json" || true
           if ! jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
             echo "::error::$job carries no manifest sentinel — it did not reach the end of its run."
@@ -193,7 +193,7 @@ jobs:
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" --context "$kube_context" --days 730 \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
-          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
+          ./src/ingestion/tools/seed/manifest-from-log.sh "$RUNNER_TEMP/seed.log" \
             | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || true
           if [ "$seed_rc" -eq 0 ] && jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
             echo "personas=$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json") window=$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"

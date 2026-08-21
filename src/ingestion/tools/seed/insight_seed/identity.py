@@ -27,7 +27,7 @@ from .profiles import (
     TENANT_OTHER,
     Person,
     build_other_tenant_roster,
-    build_roster,
+    build_seeded_roster,
     get_dev_user_email,
     get_idp_source_type,
     get_login_id_pairs,
@@ -436,7 +436,7 @@ def run() -> None:
 
     tenant = config.parse_tenant_id(os.environ)
     dev_email = get_dev_user_email()
-    roster = build_roster(dev_email)
+    roster = build_seeded_roster(dev_email, config.parse_org_headcount(os.environ))
     LOG.info(
         "seeding %d persons under tenant %s (dev lead = %s)",
         len(roster),

@@ -28,6 +28,7 @@ PULL_SECRETS=""
 IDP_SOURCE_TYPE=""
 WINDOW_DAYS=""
 ANCHOR_DATE=""
+ORG_HEADCOUNT=""
 CROSS_TENANT="0"
 FORCE="0"
 DRY_RUN=0
@@ -72,6 +73,12 @@ Seed options:
                            alone just rebuilds over the map as it stands now.
       --days <n>           activity-window length in days
       --anchor <date>      last day carrying activity (YYYY-MM-DD)
+      --org-headcount <n>  seed an organisation of n people instead of the
+                           committed 26-person demo roster. Opt-in and additive:
+                           the committed people keep their uuids, emails and
+                           names, and the extra ones are appended in squads under
+                           the existing team leads. 27..3000; omit it (or 0) for
+                           the committed roster, which is what CI asserts against.
       --cross-tenant       also write the second-tenant refusal fixture
       --force              seed a tenant that already holds foreign person rows
       --deadline <secs>    pod wall-clock ceiling                  [default: 3600]
@@ -127,6 +134,7 @@ while [[ $# -gt 0 ]]; do
     --step)              STEP="${2:?--step needs a value}"; shift 2 ;;
     --days)              WINDOW_DAYS="${2:?--days needs a value}"; shift 2 ;;
     --anchor)            ANCHOR_DATE="${2:?--anchor needs a value}"; shift 2 ;;
+    --org-headcount)     ORG_HEADCOUNT="${2:?--org-headcount needs a value}"; shift 2 ;;
     --deadline)          DEADLINE_SECONDS="${2:?--deadline needs a value}"; shift 2 ;;
     --cross-tenant)      CROSS_TENANT="1"; shift ;;
     --force)             FORCE="1"; shift ;;
@@ -150,6 +158,9 @@ esac
 # Also the poll loop's own budget; a non-numeric value would silently zero it.
 [[ "$DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEADLINE_SECONDS" -gt 0 ]] \
   || die "--deadline must be a positive whole number of seconds (got '$DEADLINE_SECONDS')."
+# Shape only; the seeder's own contract owns the range and reports it.
+[[ -z "$ORG_HEADCOUNT" || "$ORG_HEADCOUNT" =~ ^[0-9]+$ ]] \
+  || die "--org-headcount must be a whole number of people (got '$ORG_HEADCOUNT')."
 
 # Assumed from the namespace; every value below is verified, so a wrong
 # guess fails naming --release.
@@ -480,6 +491,10 @@ export SEED_FORCE="$FORCE"
 # Allowed to be empty: the seeder has its own default window.
 export SEED_WINDOW_DAYS="$WINDOW_DAYS"
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
+# Empty means the committed roster. Resolved here rather than in the template:
+# WORKAROUND: GNU envsubst emits `${VAR:-default}` verbatim, so a default
+# written in the template would reach the cluster as that literal.
+export SEED_ORG_HEADCOUNT="$ORG_HEADCOUNT"
 export SEED_PULL_SECRETS="$PULL_SECRETS"
 
 # Renders the Job manifest for the step in $SEED_STEP / name in $SEED_JOB_NAME.
@@ -494,18 +509,31 @@ render_seed_manifest() {
     ${SEED_CLICKHOUSE_DATABASE}
     ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
     ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
+    ${SEED_ORG_HEADCOUNT}
     ${SEED_PULL_SECRETS}
   ' < "$JOB_TEMPLATE"
 }
 
 # print_manifest_sentinel NAME — re-read the finished Job's log and print the
-# one manifest line, or nothing for a step that writes no manifest. Read from
-# the completed Job rather than taken from the stream below, because the
-# seeder prints it last and `logs -f` can end without the container's final
-# lines; a consumer that lost it cannot tell a seeded stand from an attempt.
+# manifest, or nothing for a step that writes none. Read from the finished
+# Job: `logs -f` can end without the container's final lines, and a consumer
+# that lost the manifest cannot tell a seeded stand from an attempt.
 print_manifest_sentinel() {
-  kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null \
-    | grep -m1 '^SEED_MANIFEST_JSON: ' || true
+  local log
+  log="$(kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null || true)"
+  if grep -m1 '^SEED_MANIFEST_JSON: ' <<<"$log"; then
+    return 0
+  fi
+  grep -q '^SEED_MANIFEST_GZ: ' <<<"$log" || return 0
+
+  local chunks
+  chunks="$(grep -c '^SEED_MANIFEST_GZ: ' <<<"$log")"
+  echo "==> manifest emitted in $chunks gzipped chunk(s); reassembling" >&2
+  if printf '%s\n' "$log" | "$SCRIPT_DIR/manifest-from-log.sh"; then
+    return 0
+  fi
+  echo "ERROR: the Job's $chunks gzipped manifest chunk(s) could not be reassembled." >&2
+  return 1
 }
 
 # wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
@@ -523,9 +551,9 @@ wait_for_job() {
     sleep 2
   done
 
-  # The sentinel is filtered out here and re-emitted from the finished Job on
-  # success, so the log carries it exactly once and never a truncated copy.
-  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -v '^SEED_MANIFEST_JSON: ' || true
+  # Filtered here and re-emitted from the finished Job, so the log carries
+  # the manifest once and never truncated.
+  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -Ev '^SEED_MANIFEST_(JSON|GZ): ' || true
 
   # Polled, not `kubectl wait --for=condition=complete`, which only waits for
   # success. `|| true`: a transient apiserver hiccup must not kill the loop.
@@ -582,7 +610,8 @@ run_seed_step() {
   job_name="insight-seed-${step}-$(date -u +%Y%m%d%H%M%S)"
   export SEED_STEP="$step"
   export SEED_JOB_NAME="$job_name"
-  render_seed_manifest | kube apply -f -
+  render_seed_manifest | kube apply -f - \
+    || die "kubectl apply failed for step $step; no Job was created."
   echo "==> applied Job $SEED_JOB_NAME (step: $step)"
   wait_for_job "$SEED_JOB_NAME"
 }
@@ -610,7 +639,10 @@ project_identity() {
   fi
   job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
   echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
-  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
+  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name" || {
+    echo "ERROR: could not create $job_name from cronjob/$cronjob." >&2
+    return 1
+  }
   wait_for_job "$job_name" || {
     echo "ERROR: $component did not complete; gold would stay unresolved." >&2
     return 1
