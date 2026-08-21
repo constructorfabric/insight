@@ -20,7 +20,15 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
-const hooks = vi.hoisted(() => ({
+const hooks = vi.hoisted(() => {
+  const verb = () => ({
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    isError: false,
+    error: null as unknown,
+  });
+  return {
   accounts: {
     data: undefined as
       | { person_id: string; accounts: PersonAccountEntry[] }
@@ -37,13 +45,9 @@ const hooks = vi.hoisted(() => ({
     hasNextPage: false,
     fetchNextPage: vi.fn(),
   },
-  verb: {
-    mutate: vi.fn(),
-    reset: vi.fn(),
-    isPending: false,
-    isError: false,
-    error: null as unknown,
-  },
+  bind: verb(),
+  detach: verb(),
+  exclude: verb(),
   accountSearch: {
     data: undefined as { pages: { items: unknown[] }[] } | undefined,
     isFetching: false,
@@ -53,7 +57,8 @@ const hooks = vi.hoisted(() => ({
     hasNextPage: false,
     fetchNextPage: vi.fn(),
   },
-}));
+  };
+});
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
@@ -61,9 +66,9 @@ vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   useAccountList: () => hooks.accountSearch,
   // The verbs belong to person-dialog.test; stubbed so the window can render
   // them without this suite standing up a query client.
-  useBindAccount: () => hooks.verb,
-  useDetachAccount: () => hooks.verb,
-  useExcludeAccount: () => hooks.verb,
+  useBindAccount: () => hooks.bind,
+  useDetachAccount: () => hooks.detach,
+  useExcludeAccount: () => hooks.exclude,
 }));
 
 import { portalRouter } from "@/test/portal-router";
@@ -102,10 +107,25 @@ beforeEach(() => {
   hooks.accounts.isError = false;
   hooks.accounts.refetch.mockClear();
   hooks.search.data = undefined;
+  hooks.search.isFetching = false;
+  hooks.search.isFetchingNextPage = false;
+  hooks.search.isError = false;
+  hooks.search.hasNextPage = false;
+  hooks.search.fetchNextPage.mockClear();
   hooks.accountSearch.data = undefined;
+  hooks.accountSearch.isFetching = false;
+  hooks.accountSearch.isFetchingNextPage = false;
+  hooks.accountSearch.isError = false;
   hooks.accountSearch.hasNextPage = false;
   hooks.accountSearch.isPlaceholderData = false;
   hooks.accountSearch.fetchNextPage.mockClear();
+  for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
+    verb.mutate.mockReset();
+    verb.reset.mockReset();
+    verb.isPending = false;
+    verb.isError = false;
+    verb.error = null;
+  }
   portalRouter.reset();
   portalRouter.set({ zone: "manage", item: "identities", mode: "person" });
 });

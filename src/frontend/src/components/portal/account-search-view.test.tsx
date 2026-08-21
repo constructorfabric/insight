@@ -10,7 +10,7 @@
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { AccountMatch } from "@/api/identity-client";
@@ -110,6 +110,8 @@ function page(items: AccountMatch[]) {
 function row() {
   return screen.getByRole("button", { name: /^octocat,/ });
 }
+
+afterEach(() => window.getSelection()?.removeAllRanges());
 
 beforeEach(() => {
   hooks.search.data = undefined;
@@ -275,6 +277,9 @@ describe("AccountSearchView", () => {
     hooks.search.data = page([match()]);
     render(<AccountSearchView />);
 
+    // The positive control: without it this case also passes for a row that
+    // failed to render at all.
+    expect(row()).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^open$/i }),
     ).not.toBeInTheDocument();
@@ -300,6 +305,13 @@ describe("AccountSearchView", () => {
 
     expect(portalRouter.search.acct).toBeUndefined();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The same click with nothing selected DOES open — without this the case
+    // would still pass for a row that never opens at all.
+    selection?.removeAllRanges();
+    fireEvent.click(row());
+
+    expect(portalRouter.search.acct).toContain("gh-main");
   });
 
   // The holder's card carries a copy control, and pressing it is not a request
@@ -314,6 +326,12 @@ describe("AccountSearchView", () => {
 
     expect(portalRouter.search.acct).toBeUndefined();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The row itself still opens, so the guard above is a guard and not a row
+    // that never worked.
+    await userEvent.click(row());
+
+    expect(portalRouter.search.acct).toContain("gh-main");
   });
 
   // The search itself proves the account exists — an unbound, never-decided

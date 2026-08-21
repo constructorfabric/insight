@@ -307,12 +307,6 @@ function Queue({
   const other = items.filter((i) => !known.has(i.kind));
   if (other.length > 0) groups.push({ kind: "other", items: other });
 
-  // The rendered order, flattened: what "the next case" means to someone
-  // working down the queue, and it must not be re-derived differently here.
-  const ordered = groups.flatMap((group) =>
-    groupIntoCases(group.items).flatMap((c) => c.items.map(itemKey)),
-  );
-
   const select = (key: string | null) => {
     if (key) setVisited((seen) => new Set(seen).add(key));
     setAcct(key);
@@ -405,8 +399,6 @@ function Queue({
       <CaseDialog
         acct={acct}
         items={items}
-        ordered={ordered}
-        onSelect={select}
         onClose={() => {
           const opened = acct;
           setAcct(null);

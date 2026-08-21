@@ -83,8 +83,10 @@ function binding(over: Partial<AccountBinding> = {}): AccountBinding {
 
 beforeEach(() => {
   for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
-    verb.mutate.mockClear();
-    verb.reset.mockClear();
+    // Reset, not clear: `mockClear` keeps an implementation a case installed,
+    // and the outcomes wired mid-file would then fire in every case after them.
+    verb.mutate.mockReset();
+    verb.reset.mockReset();
     verb.isError = false;
     verb.error = null;
     verb.isPending = false;
@@ -168,6 +170,29 @@ describe("AccountActions", () => {
     expect(
       screen.queryByRole("button", { name: /carol chen/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // A candidate is already named above with a Bind of their own; offering them
+  // in the search too would list the same decision twice.
+  it("keeps the candidates out of the search that names them already", async () => {
+    hooks.search.data = { pages: [{ items: [BOB, CAROL] }] };
+    render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[CAROL]}
+      />,
+    );
+
+    await userEvent.type(screen.getByRole("searchbox"), "chen");
+
+    // Named once, on the candidate row that carries her own Bind — and not
+    // offered a second time as a search hit.
+    expect(screen.getByText("Carol Chen")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /carol chen/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /bob park/i })).toBeInTheDocument();
   });
 
   // The search is the only way to a person this window does not already name.

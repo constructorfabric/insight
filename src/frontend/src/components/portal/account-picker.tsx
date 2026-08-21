@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import {
   belowAccountFloor,
@@ -79,7 +80,7 @@ export function AccountPicker({
   });
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-h-0 flex-col gap-2">
       <div className="relative w-full shrink-0">
         <Search className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -120,7 +121,7 @@ export function AccountPicker({
           INSIDE the scroller — an observer never reports a target that is not a
           descendant of its root. */}
       {items.length > 0 || (asked && search.hasNextPage) ? (
-        <div ref={scroller} className="max-h-64 overflow-y-auto">
+        <div ref={scroller} className="min-h-0 max-h-64 overflow-y-auto">
           <ul
             aria-busy={behind}
             className={cn("flex flex-col gap-1", behind && "opacity-60")}
@@ -183,8 +184,21 @@ function AccountOption({
         event.preventDefault();
         onPick();
       }}
-      aria-label={label}
-      className="grid w-full cursor-pointer grid-cols-1 items-center gap-2 rounded-md border border-transparent p-2 text-start select-text hover:bg-muted/60 lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]"
+      // The holder is the whole reason this row is not a plain label, so the
+      // name has to carry them: without it a reader hears the address, presses
+      // Enter, and only learns in the confirmation that it is somebody else's.
+      aria-label={[
+        label,
+        item.source,
+        item.person
+          ? t("identities.queue.bound_to", {
+              name: personDisplayName(item.person),
+            })
+          : item.excluded
+            ? t("identities.accounts.excluded")
+            : t("identities.accounts.unbound"),
+      ].join(", ")}
+      className="grid w-full cursor-pointer grid-cols-1 items-center gap-2 rounded-md border border-transparent p-2 text-start select-text hover:bg-muted/60 md:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]"
     >
       <div className="min-w-0">
         <div className="truncate text-sm font-medium">{label}</div>

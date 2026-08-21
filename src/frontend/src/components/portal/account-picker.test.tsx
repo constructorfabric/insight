@@ -5,12 +5,13 @@
  * to search says so instead of going quiet; and every row names whoever holds
  * the account, since binding one somebody else holds takes it off them.
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { AccountMatch } from "@/api/identity-client";
+import { scrollEndIntoView } from "@/test/intersection-observer";
 
 const hooks = vi.hoisted(() => ({
   search: {
@@ -63,6 +64,8 @@ function pick(over: { excludeKeys?: string[] } = {}) {
 
 const field = () => screen.getByRole("searchbox", { name: PLACEHOLDER });
 
+afterEach(() => vi.restoreAllMocks());
+
 beforeEach(() => {
   hooks.search.data = undefined;
   hooks.search.isFetching = false;
@@ -74,11 +77,16 @@ beforeEach(() => {
 });
 
 describe("AccountPicker", () => {
-  it("lists nothing until the field is asked something", () => {
+  it("lists nothing until the field is asked something", async () => {
     hooks.search.data = { pages: [{ items: [match()] }] };
     pick();
 
     expect(screen.queryByText("annlee")).not.toBeInTheDocument();
+    // And the same rows DO arrive once asked — without this the case passes for
+    // a picker that lists nothing ever.
+    await userEvent.type(field(), "annlee");
+
+    expect(screen.getByText("annlee")).toBeInTheDocument();
   });
 
   // The answer to "why is nothing happening" should not wait for a debounce.
@@ -95,7 +103,7 @@ describe("AccountPicker", () => {
     const onPick = pick();
 
     await userEvent.type(field(), "annlee");
-    await userEvent.click(screen.getByRole("button", { name: /^annlee$/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^annlee,/ }));
 
     expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ account_id: "zm-9" }));
   });
@@ -133,6 +141,111 @@ describe("AccountPicker", () => {
 
     expect(screen.queryByText("annlee")).not.toBeInTheDocument();
     expect(screen.getByText("other")).toBeInTheDocument();
+  });
+
+  // The rows answer the term the query key carries, not the one in the field,
+  // until the fetch lands. Marked rather than hidden, so the list does not
+  // blank between keystrokes — and never read as the answer.
+  it("marks the rows that still answer the previous term", async () => {
+    hooks.search.data = { pages: [{ items: [match()] }] };
+    hooks.search.isPlaceholderData = true;
+    pick();
+
+    await userEvent.type(field(), "annlee");
+
+    expect(screen.getByRole("list")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("annlee")).toBeInTheDocument();
+  });
+
+  // The marker asks for the next page, and it has to live INSIDE the scroller:
+  // an observer never reports a target that is not a descendant of its root.
+  it("asks for the next page when the end of the list comes into view", async () => {
+    hooks.search.data = { pages: [{ items: [match()] }] };
+    hooks.search.hasNextPage = true;
+    pick();
+
+    await userEvent.type(field(), "annlee");
+    scrollEndIntoView();
+
+    expect(hooks.search.fetchNextPage).toHaveBeenCalled();
+  });
+
+  // A page whose every row was filtered out has no rows to scroll, so the
+  // marker is the only thing left that can ask for the page that does.
+  it("keeps asking with every row filtered out", async () => {
+    hooks.search.data = { pages: [{ items: [match()] }] };
+    hooks.search.hasNextPage = true;
+    pick({ excludeKeys: ["zoom:01900000-0000-7000-8000-00000000aa03:zm-9"] });
+
+    await userEvent.type(field(), "annlee");
+    scrollEndIntoView();
+
+    expect(hooks.search.fetchNextPage).toHaveBeenCalled();
+  });
+
+  // Labelling an idle list "loading" is a lie the reader cannot dismiss.
+  it("says it is loading only while the next page is on its way", async () => {
+    hooks.search.data = { pages: [{ items: [match()] }] };
+    hooks.search.hasNextPage = true;
+    pick();
+    await userEvent.type(field(), "annlee");
+
+    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
+  });
+
+  // Not a <button>: the holder's card carries its own copy control, and a
+  // button may neither nest one nor let its text be selected.
+  it("picks on Enter from the row, and not from a control inside it", async () => {
+    hooks.search.data = {
+      pages: [
+        {
+          items: [
+            match({
+              person: {
+                person_id: "01900000-0000-7000-8000-0000000000b0",
+                display_name: "Bob Park",
+              },
+            }),
+          ],
+        },
+      ],
+    };
+    const onPick = pick();
+    await userEvent.type(field(), "annlee");
+    const row = screen.getByRole("button", { name: /^annlee,/ });
+
+    await userEvent.click(within(row).getByRole("button", { name: /copy/i }));
+    expect(onPick).not.toHaveBeenCalled();
+
+    row.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onPick).toHaveBeenCalledTimes(1);
+  });
+
+  // Binding an account somebody else holds takes it off them, so the name the
+  // row is reached by has to say so — not just the address.
+  it("names the holder in the row's accessible name", async () => {
+    hooks.search.data = {
+      pages: [
+        {
+          items: [
+            match({
+              person: {
+                person_id: "01900000-0000-7000-8000-0000000000b0",
+                display_name: "Bob Park",
+              },
+            }),
+          ],
+        },
+      ],
+    };
+    pick();
+
+    await userEvent.type(field(), "annlee");
+
+    expect(
+      screen.getByRole("button", { name: /^annlee, zoom, held by Bob Park$/ }),
+    ).toBeInTheDocument();
   });
 
   it("states a failed search rather than an empty list", async () => {

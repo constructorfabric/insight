@@ -109,7 +109,6 @@ export function AccountSearchView() {
     candidates: [],
     holder: m.person ?? null,
   }));
-  const ordered = openable.map((item) => accountKey(item));
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
@@ -218,8 +217,6 @@ export function AccountSearchView() {
       <CaseDialog
         acct={acct}
         items={openable}
-        ordered={ordered}
-        onSelect={setAcct}
         onClose={() => setAcct(null)}
       />
     </div>
