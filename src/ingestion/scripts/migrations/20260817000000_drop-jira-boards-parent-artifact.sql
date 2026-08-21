@@ -1,0 +1,12 @@
+-- Drop bronze_jira._boards, a substream-parent table left behind by an
+-- earlier shape of the Jira connector.
+--
+-- jira_sprints needs a parent stream to enumerate board ids. When that parent
+-- is visible to discover, reconcile (ADR-0015) auto-selects every discovered
+-- stream, so the parent lands as a real bronze table. The current manifest
+-- declares it inline under parent_stream_configs[].stream, which keeps it out
+-- of the catalog entirely, so nothing writes to this table any more and no
+-- model reads it. Board data lives in bronze_jira.jira_boards.
+--
+-- Idempotent: this channel has no ledger and re-runs on every deploy.
+DROP TABLE IF EXISTS bronze_jira._boards;

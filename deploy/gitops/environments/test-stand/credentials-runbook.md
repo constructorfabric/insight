@@ -149,6 +149,8 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `create roles.rbac.authorization.k8s.io -n insight` | the chart renders its own reconcile RBAC |
 | `create workflowtemplates.argoproj.io -n insight` | the chart renders WorkflowTemplates and CronWorkflows |
 | `update httproutes.gateway.networking.k8s.io -n insight` | the umbrella renders both edge routes from `gateway.route` / `keycloak.route`, so `helm upgrade` writes them on every run |
+| `get persistentvolumeclaims -n insight` | the git-cli-proxy renders a claim for its clone cache, and `helm upgrade` reads it before patching |
+| `update persistentvolumeclaims -n insight` | its chart and version labels change on every bump |
 | `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
 | `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
 
@@ -164,6 +166,7 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `list nodes --all-namespaces` | no cluster-scoped reads |
 | `create clusterrolebindings… --all-namespaces` | cannot widen its own grant |
 | `get pods -n kube-system` | no unrelated namespace, control plane included |
+| `delete persistentvolumeclaims -n insight` | the clone cache is annotated `helm.sh/resource-policy: keep` and outlives the release; a credential that could delete it could discard every synced repository |
 
 ### 3.2 One RBAC subtlety worth knowing
 
@@ -466,16 +469,17 @@ next seed follows it. If the environment carries an explicit
 cluster action — but changing it *alone* re-opens the drift, because the realm
 still names whoever it named. Move both, or delete the secret and let the realm
 be the one writer. The persona password is a third case, and it is worth being
-precise about why. On a stand
-whose realm is generated from the seed roster, the IdP's copy of that password
-is a constant in the realm generator (`insight_seed.keycloak_realm`), shared by
-every user it emits: changing the GitHub secret alone changes nothing on the
-stand and breaks the gate on the next merge. Moving that value means changing
-the generator, regenerating and re-applying the realm, and setting the secret —
-in that order, in one sitting. Until the generator learns to take a password
-instead of embedding one, treat this secret as *masking* a published constant in
-a public log rather than as a rotatable credential, and see the stand
-environment's README ("Known gaps") for the follow-up that fixes it properly.
+precise about why. On a stand whose realm is generated from the seed roster,
+the IdP's copy of that password is whatever the generator
+(`insight_seed.keycloak_realm`) was given in `INSIGHT_SEED_PERSONA_PASSWORD`,
+shared by every user it emits — and a constant documented for local stands when
+it was given nothing. So changing the GitHub secret alone changes nothing on the
+stand and breaks the gate on the next merge. Rotating means setting the
+generator's input, regenerating and re-applying the realm, and setting the
+secret — in that order, in one sitting. A realm generated without that input
+carries a value published in this repository, and the secret masks it in a
+public log rather than making it private; the stand environment's README
+("Known gaps") states what that costs.
 
 ---
 
@@ -535,6 +539,15 @@ it does not itself hold, and `admin` does not carry `escalate`. The chart render
 its own reconcile Role with `argoproj.io` and `onepassword.com` rules. Someone
 trimmed the supplemental `Role` in `ci-deployer-rbac.yaml` — diff it against
 git history and re-run `make provision-ci ENV=test-stand` to repair drift.
+
+**`could not get information about the resource <kind> … is forbidden`**
+The chart grew a kind the Role does not enumerate — the guard working, not a
+broken credential. Helm reads *every* rendered object before it plans the
+patch, so one unreadable kind fails the whole upgrade. Either add the kind to
+`ci-deployer-rbac.yaml` and re-apply (`make -C deploy/gitops provision-ci
+ENV=test-stand`, which does not rotate the token), or turn the subchart off in
+this environment's `values.yaml` when the stand does not need it —
+`gitCliProxy.deploy: false` is there for that reason.
 
 **`namespaces is forbidden` on a first install**
 `helm upgrade --install --create-namespace` POSTs a Namespace at cluster scope,

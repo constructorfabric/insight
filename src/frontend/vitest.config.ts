@@ -18,6 +18,8 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { storybookTest } from "@storybook/addon-vitest/vitest-plugin";
+
+import { uiKitLayer } from "./vite.ui-kit-layer";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -28,6 +30,9 @@ export default defineConfig({
     },
   },
   test: {
+    // The kit's JS chunks import their own .css, which node's ESM loader
+    // rejects by extension before `css: false` can neutralise it.
+    server: { deps: { inline: ["@gears-frontx/ui-kit"] } },
     // A timezone with no UTC-coinciding offset, ever. CI runners live in UTC,
     // where "parse a zone-less timestamp as UTC" and "parse it as local" are
     // the same function — every zone-handling test passes vacuously. Pinning
@@ -68,7 +73,7 @@ export default defineConfig({
           globals: false,
           css: false,
           setupFiles: ["./src/test/setup.ts"],
-          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx", "vite.*.test.ts"],
         },
       },
       {
@@ -80,6 +85,7 @@ export default defineConfig({
           // (recharts measures its container) never paint. Storybook's own
           // builder gets this from `vite.config.ts`; this project does not.
           tailwindcss(),
+          uiKitLayer(),
           storybookTest({
             configDir: path.resolve(__dirname, ".storybook"),
             tags: { include: ["test"], exclude: [], skip: ["skip-test"] },
@@ -120,6 +126,7 @@ export default defineConfig({
             "@base-ui/react/merge-props",
             "@base-ui/react/popover",
             "@base-ui/react/preview-card",
+            "@base-ui/react/scroll-area",
             "@base-ui/react/select",
             "@base-ui/react/separator",
             "@base-ui/react/switch",
@@ -128,6 +135,8 @@ export default defineConfig({
             "@base-ui/react/toggle-group",
             "@base-ui/react/tooltip",
             "@base-ui/react/use-render",
+            "@gears-frontx/telemetry",
+            "@gears-frontx/ui-kit",
             "@sentry/react",
             "@tanstack/react-virtual",
             // `await import("exceljs")` inside the export path: the scan cannot
@@ -136,7 +145,6 @@ export default defineConfig({
             "exceljs",
             "react-day-picker",
             "react-error-boundary",
-            "sonner",
           ],
         },
         test: {

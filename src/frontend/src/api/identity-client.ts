@@ -55,10 +55,18 @@ export interface MeRole {
  * login token's realm roles, which no identity endpoint reads. An empty list
  * IS the "not an admin" answer; the endpoint never 403s.
  */
+/**
+ * Whose data a caller may see, as the identity service decides it: the
+ * reporting line plus explicit grants, or every person in the tenant.
+ */
+export type VisibilityPolicy = "org_chart" | "flat";
+
 export interface MeResponse {
   person_id: string;
   insight_tenant_id: string;
   roles: MeRole[];
+  /** Absent from an older service; readers treat that as `org_chart`. */
+  visibility_policy?: VisibilityPolicy;
 }
 
 /**
@@ -100,9 +108,10 @@ function isMeRole(role: unknown): role is MeRole {
 /** A person as operator surfaces display them — the wire `PersonSummaryResponse`. */
 export interface PersonSummary {
   person_id: string;
-  /** The journal holds nothing but a login-mint for them: they exist so
-   *  somebody could sign in, and may duplicate a person the roster knows.
-   *  Never a merge target — the history is on the other side. */
+  /** The journal holds nothing but an automatic mint for them — a sign-in that
+   *  needed somebody to enter as, or a roster listing an account with no
+   *  address. They may duplicate a person the roster knows, so never a merge
+   *  target: the history is on the other side. */
   provisional?: boolean;
   email?: string | null;
   username?: string | null;
@@ -113,7 +122,8 @@ export interface PersonSummary {
 
 /** One account awaiting an operator decision. */
 export interface AttentionItem {
-  /** `contested` | `binding_conflict` | `no_evidence` — open vocabulary. */
+  /** `contested` | `binding_conflict` | `provisioned_at_login` |
+   *  `minted_from_roster` | `no_source_id` | `no_evidence` — open vocabulary. */
   kind: string;
   source: string;
   source_id: string;
@@ -139,6 +149,8 @@ export interface ResolutionRates {
   observed: number;
   bound: number;
   pending: number;
+  /** Unbound accounts no seed run can bind — an operator decides, or nobody. */
+  no_source_id: number;
   no_evidence: number;
   excluded: number;
 }
@@ -146,8 +158,8 @@ export interface ResolutionRates {
 export interface AttentionResponse {
   items: AttentionItem[];
   rates: ResolutionRates;
-  /** The server's evidence read hit its safety cap: the queue and the rates
-   *  describe only a prefix of the tenant's accounts. Optional so a client
+  /** One of the reads behind the queue hit its safety cap: the queue and the
+   *  rates describe only part of the tenant's accounts. Optional so a client
    *  deployed ahead of the backend keeps working; absent reads as complete. */
   truncated?: boolean;
   /** `limit` cut the item list — the rates are still whole-tenant, only this
@@ -155,12 +167,26 @@ export interface AttentionResponse {
   items_truncated?: boolean;
 }
 
+/** The queue's first read — a healthy backlog arrives whole. */
+export const QUEUE_FIRST_PAGE = 200;
+
+/** The service's own ceiling on `limit`: asking past it answers the same page,
+ *  so a reader who has reached it is told to work the backlog down instead.
+ *
+ *  INVARIANT: mirrors `MAX_QUEUE_LIMIT` in the identity-resolution service. */
+export const QUEUE_MAX_ITEMS = 1000;
+
 /**
  * The operator review queue (`GET /resolution/attention`) — accounts the
  * resolver could not decide, with the tenant-wide match rate. Admin-gated
  * server-side; the caller is expected to sit behind `useIsAdmin`.
+ *
+ * There is no cursor: the queue is derived from the whole tenant on every
+ * read, so asking for more of it is a larger `limit`, not a next page.
  */
-export async function getAttention(limit = 200): Promise<AttentionResponse> {
+export async function getAttention(
+  limit: number = QUEUE_FIRST_PAGE,
+): Promise<AttentionResponse> {
   const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -198,21 +224,24 @@ export interface AccountMatch {
 
 export interface AccountSearchResponse {
   items: AccountMatch[];
-  /** More matched than the limit allowed — narrow the terms. */
-  truncated: boolean;
+  /** Pass back as `cursor` for the next page; absent on the last one. */
+  next_cursor?: string | null;
 }
 
 /**
- * Find an observed account by a value it carries (`GET /resolution/accounts`).
- * The person search answers "which person is this"; this answers the question
- * an operator arrives with when they hold an account instead.
+ * The observed accounts and whose each one is (`GET /resolution/accounts`).
+ * The person listing answers "which person is this"; this answers the question
+ * an operator arrives with when they hold an account instead. Blank `q` lists
+ * every open account.
  */
 export async function searchAccounts(
   q: string,
-  limit = 20,
+  page: PageRequest = {},
+  signal?: AbortSignal,
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
-    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}&limit=${limit}`,
+    `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -361,6 +390,30 @@ export async function bindAccount(args: {
   });
 }
 
+/** One binding per account, in one call — the wire shape `bind` always took. */
+export interface WireBinding {
+  account: WireAccountRef;
+  person_id: string;
+}
+
+/**
+ * Bind MANY accounts in one call.
+ *
+ * The endpoint caps a call at 1000 bindings; a caller with more sends more than
+ * one call and folds the answers, since one operator decision is owed one answer.
+ */
+export const MAX_BINDINGS_PER_CALL = 1000;
+
+export async function bindAccounts(args: {
+  bindings: WireBinding[];
+  comment?: string;
+}): Promise<CorrectionResponse> {
+  return postCorrection("bind", {
+    bindings: args.bindings,
+    comment: args.comment ?? "",
+  });
+}
+
 /** Declare two persons one human: every account of `source` moves to `target`. */
 export async function mergePersons(args: {
   source_person_id: string;
@@ -398,16 +451,38 @@ export async function excludeAccount(args: {
 
 export interface PersonSearchResponse {
   items: PersonSummary[];
-  /** More persons matched than the limit allowed — ask for narrower terms. */
-  truncated: boolean;
+  /** Pass back as `cursor` for the next page; absent on the last one. */
+  next_cursor?: string | null;
+}
+
+/** One page of a listing: where to resume and how many rows to ask for. */
+export interface PageRequest {
+  cursor?: string;
+  limit?: number;
+}
+
+function pageParams(page: PageRequest): string {
+  const params = new URLSearchParams();
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  return query ? `&${query}` : "";
 }
 
 /**
- * The operator person picker (`GET /persons?q=`) — tenant-wide, admin-gated,
- * matching every whitespace-separated term against current identity values.
+ * The operator's person listing (`GET /persons`) — tenant-wide, admin-gated.
+ * Blank `q` lists everyone; terms narrow the same list, and a page is walked
+ * with the cursor the previous one returned.
  */
-export async function searchPersons(q: string): Promise<PersonSearchResponse> {
-  const res = await fetchWithAuth(`${BASE}/persons?q=${encodeURIComponent(q)}`);
+export async function searchPersons(
+  q: string,
+  page: PageRequest = {},
+  signal?: AbortSignal,
+): Promise<PersonSearchResponse> {
+  const res = await fetchWithAuth(
+    `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
+    { signal },
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);
@@ -422,6 +497,38 @@ export async function searchPersons(q: string): Promise<PersonSearchResponse> {
     throw new IdentityApiError(res.status, { error: "malformed_search" });
   }
   return found;
+}
+
+/**
+ * The persons the caller may see (`GET /visible-persons`) — one page, ordered by
+ * the label each is shown under. Any signed-in caller may ask; the answer is
+ * their own visible set, so it needs no admin role.
+ */
+export async function listVisiblePersons(
+  page: PageRequest & { q?: string } = {},
+): Promise<PersonSearchResponse> {
+  const params = new URLSearchParams();
+  if (page.q) params.set("q", page.q);
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const res = await fetchWithAuth(
+    `${BASE}/visible-persons${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PersonSearchResponse;
+  try {
+    listed = (await res.json()) as PersonSearchResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
 }
 
 export interface PersonAccountEntry {

@@ -53,6 +53,8 @@ from .analytics import (
     RunResponse,
     SavedQuery,
     SavedQueryListResponse,
+    UsageConfigResponse,
+    UsageSummaryResponse,
 )
 from .analytics import (
     MetricResultViewDto1 as PeriodView,
@@ -72,6 +74,7 @@ from .identity import (
     PersonAccountsResponse,
     PersonListResponse,
     SubchartNode,
+    VisibilityPolicy,
 )
 from .identity import (
     PersonRoleListResponse as PersonRoleList,
@@ -108,6 +111,9 @@ from .identity import (
 )
 from .identity import (
     VisibilityResponse as Visibility,
+)
+from .identity import (
+    VisiblePersonsPageResponse as VisiblePersonsPage,
 )
 from .identity import (
     VisiblePersonsResponse as VisiblePersons,
@@ -151,7 +157,11 @@ __all__: Sequence[str] = (
     "SubchartForest",
     "SubchartNode",
     "SyncOperationList",
+    "UsageConfigResponse",
+    "UsageSummaryResponse",
     "Visibility",
     "VisibilityList",
+    "VisibilityPolicy",
     "VisiblePersons",
+    "VisiblePersonsPage",
 )

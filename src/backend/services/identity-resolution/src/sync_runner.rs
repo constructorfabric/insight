@@ -3,11 +3,11 @@
 //! Copies the MariaDB `persons` observation log into ClickHouse
 //! `identity.identity_persons` (full snapshot, atomic swap — see
 //! `infra::identity_persons`) so the metrics dbt builds can resolve
-//! `email -> person_id`. CLI-only from the start, mirroring the persons-seed
-//! shape (#1690): a Helm `CronJob` / manual Job runs
-//! `identity-resolution sync` — no HTTP trigger, no auth; only the GET
-//! journal routes remain on the API. The natural pairing is "sync right
-//! after seed" — the seed rewrites the log, the sync publishes it.
+//! `email -> person_id`. Nothing schedules it on its own: every seed run and
+//! every applied operator correction invokes this runner as its publish step,
+//! and the `sync` subcommand remains as the manual repair tool for a snapshot
+//! that has fallen behind them — no HTTP trigger, no auth; only the GET
+//! journal routes remain on the API.
 //!
 //! One run: advisory lock → zombie sweep → `operations` journal row → log
 //! read → guard → snapshot replace → journal completed/failed.
@@ -16,8 +16,10 @@
 //! (`infra::db::SyncLockGuard` — global, not per-tenant: the sync copies the
 //! whole log). This is the actual serialization of the publish step; the
 //! writer's `_synced_at` watermark guard is a backstop for anything that
-//! bypasses the runner. A concurrent run fails fast
-//! ([`SyncRunError::LockBusy`], exit code 2).
+//! bypasses the runner. A concurrent run waits up to [`LOCK_WAIT_SECS`] for
+//! the holder, then reports [`SyncRunError::LockBusy`] (exit code 2) — and
+//! the holder's quiescence re-check means its snapshot already covers every
+//! row committed before a waiter gave up.
 //!
 //! Guard (overridable with `--force`, recorded as a `failed` operation so
 //! the journal explains why nothing was published): an EMPTY `persons` log.
@@ -32,7 +34,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::GearConfig;
-use crate::domain::sync_service::{SyncError, SyncSummary, run_sync};
+use crate::domain::sync_service::{SyncError, SyncOutcome, run_sync_until_quiescent};
 use crate::infra::db::{self, ops_repo, persons_log_repo::MariaDbPersonsLogReader, seed_repo};
 use crate::infra::identity_persons::ClickHouseIdentityPersonsWriter;
 use crate::seed_runner::{SYSTEM_AUTHOR, resolve_tenant};
@@ -51,6 +53,12 @@ const RUN_TIMEOUT: Duration = Duration::from_mins(7);
 /// How stale a `queued`/`running` operation must be before the pre-run
 /// sweep reclaims it (same convention as the seed runner).
 const ZOMBIE_CUTOFF_HOURS: i64 = 1;
+
+/// How long a run waits for the advisory lock before reporting `LockBusy`.
+/// A healthy publish is seconds even with its quiescence re-copies, so a
+/// holder outliving this wait is wedged, not slow. Each waiter parks one
+/// MariaDB session for at most this long — keep it well under [`RUN_TIMEOUT`].
+const LOCK_WAIT_SECS: u32 = 15;
 
 /// Why a sync run did not complete — the `sync` subcommand maps each variant
 /// to a distinct exit code (0 ok / 1 failed / 2 lock busy / 3 guard), same
@@ -77,7 +85,7 @@ impl From<anyhow::Error> for SyncRunError {
 /// # Errors
 ///
 /// [`SyncRunError`] — lock busy, guard refusal, or a failed run.
-pub async fn run(config: &GearConfig, force: bool) -> Result<SyncSummary, SyncRunError> {
+pub async fn run(config: &GearConfig, force: bool) -> Result<SyncOutcome, SyncRunError> {
     let db = db::connect(&config.database_url).await?;
 
     // The sync itself is tenant-agnostic (whole-log copy), but its journal
@@ -90,7 +98,7 @@ pub async fn run(config: &GearConfig, force: bool) -> Result<SyncSummary, SyncRu
         Err(msg) => return Err(SyncRunError::Failed(anyhow::anyhow!(msg))),
     };
 
-    let Some(lock) = db::SyncLockGuard::try_acquire(&config.database_url).await? else {
+    let Some(lock) = db::SyncLockGuard::acquire(&config.database_url, LOCK_WAIT_SECS).await? else {
         return Err(SyncRunError::LockBusy);
     };
 
@@ -114,7 +122,7 @@ async fn run_locked(
     config: &GearConfig,
     tenant: Uuid,
     force: bool,
-) -> Result<SyncSummary, SyncRunError> {
+) -> Result<SyncOutcome, SyncRunError> {
     // Reclaim rows a killed run left behind. Log-only failure: a broken
     // sweep must not block the sync itself.
     let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::hours(ZOMBIE_CUTOFF_HOURS);
@@ -174,7 +182,7 @@ async fn guarded_sync(
     db: &sea_orm::DatabaseConnection,
     config: &GearConfig,
     force: bool,
-) -> Result<SyncSummary, SyncRunError> {
+) -> Result<SyncOutcome, SyncRunError> {
     let reader = MariaDbPersonsLogReader::new(db);
     let writer = ClickHouseIdentityPersonsWriter::connect(
         &config.clickhouse_url,
@@ -185,7 +193,7 @@ async fn guarded_sync(
     let run = async {
         // The empty-log guard lives with the rows it judges (see `run_sync`), so
         // a seed emptying the log mid-run cannot slip past a stale count.
-        run_sync(&reader, &writer, chrono::Utc::now().naive_utc(), force)
+        run_sync_until_quiescent(&reader, &writer, || chrono::Utc::now().naive_utc(), force)
             .await
             .map_err(|e| match e {
                 SyncError::EmptyLog(msg) => SyncRunError::Guard(msg),

@@ -1105,10 +1105,11 @@ Populate the demo dataset. Stack must be up first.
   all        Both (default if no arg).
 
 After `silver` or `all` runs, three follow-up steps run automatically:
-the identity projection is refreshed (persons-seed + persons-sync in the
-identity-resolution container — the same pair the k8s CronJobs run), gold
-is rebuilt so observation rows resolve through the refreshed map, and
-analytics is restarted so its metric-catalog schema validator re-checks
+the identity projection is refreshed (persons-seed in the
+identity-resolution container, which publishes to ClickHouse as its own
+final step — the same run the k8s CronJob makes), gold is rebuilt so
+observation rows resolve through the refreshed map, and analytics is
+restarted so its metric-catalog schema validator re-checks
 the freshly-populated tables. Without the bounce, every metric stays
 cached at the boot-time `schema_status='error'`, the FE flags every
 bullet row schema_error=true, and section badges read "no peer data"
@@ -1131,9 +1132,9 @@ env_file_value() {
   printf '%s' "$value"
 }
 
-# The persons-seed/sync pair the k8s CronJobs run: gold resolves identities
-# only through the bindings and snapshot these two publish, and compose has
-# no cron to run them.
+# The persons-seed run the k8s CronJob makes (it publishes the snapshot as
+# its own final step): gold resolves identities only through what it
+# publishes, and compose has no cron to run it.
 seed_identity_projection() {
   local env_file="$1"; shift
   local compose_cmd=("$@")
@@ -1144,18 +1145,15 @@ seed_identity_projection() {
   tenant="$(env_file_value "$env_file" TENANT_DEFAULT_ID)"
   tenant="${tenant:-00000000-df51-5b42-9538-d2b56b7ee953}"
 
-  local subcommand
-  for subcommand in seed sync; do
-    echo "=== identity projection: persons-${subcommand} (as the k8s CronJob runs it) ==="
-    "${compose_cmd[@]}" exec -T \
-        -e "APP__gears__identity_resolution__config__tenant_default_id=${tenant}" \
-        identity-resolution /app/identity-resolution -c /app/config/insight.yaml "$subcommand" || {
-      local status=$?
-      echo "ERROR: persons-${subcommand} failed (exit ${status}; 2 = another run holds the lock," >&2
-      echo "       3 = input guard refused — see the container log above)." >&2
-      return "$status"
-    }
-  done
+  echo "=== identity projection: persons-seed (as the k8s CronJob runs it) ==="
+  "${compose_cmd[@]}" exec -T \
+      -e "APP__gears__identity_resolution__config__tenant_default_id=${tenant}" \
+      identity-resolution /app/identity-resolution -c /app/config/insight.yaml seed || {
+    local status=$?
+    echo "ERROR: persons-seed failed (exit ${status}; 2 = another run holds the lock," >&2
+    echo "       3 = input guard refused — see the container log above)." >&2
+    return "$status"
+  }
 }
 
 cmd_seed() {
@@ -1438,6 +1436,9 @@ for dbt-built gold data rather than for containers to report healthy.
 
           --build-backend    Compile the Rust services from this tree. Adds
                              ~28 min (measured across CI's build-path runs).
+          --prebuilt-backend Use backend images already loaded under the four
+                             *_IMAGE environment variables. Never builds or
+                             pulls a fallback image.
           --build-frontend   Build the SPA from this tree with pnpm, served by
                              the front-built nginx. Backend stays pinned.
           --build            Both.
@@ -1517,6 +1518,24 @@ test_stand_pull_backends() {
   done
 }
 
+test_stand_use_prebuilt_backends() {
+  local entry var name image
+  for entry in "${TEST_STAND_PINNED_BACKENDS[@]}"; do
+    IFS='|' read -r var _ name <<<"$entry"
+    image="${!var:-}"
+    [[ -n "$image" ]] || {
+      echo "ERROR: --prebuilt-backend requires $var." >&2
+      return 1
+    }
+    docker image inspect "$image" >/dev/null 2>&1 || {
+      echo "ERROR: pre-built image '$image' for $name is not loaded." >&2
+      return 1
+    }
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$image"
+  done
+  echo "=== the backend uses pre-built images from this ref ==="
+}
+
 # Refuse to pin when the working tree differs from what a chart describes.
 #
 # The appVersions track main. A branch that edits the given source tree and
@@ -1590,17 +1609,17 @@ test_stand_write_env() {
 #   collab  <- class_collab_{chat,email,meeting}_activity, focus_metrics (collab.py)
 #   ai      <- class_ai_{assistant,dev}_usage                            (ai.py)
 #   ai_cost <- class_ai_overage                                          (ai.py)
+#   wiki    <- class_wiki_{pages,activity,engagement}                    (wiki.py)
 #
-# `wiki_metric_observations` is absent ON PURPOSE: its evidence model reads
-# class_wiki_* and there is no wiki generator, so requiring it would hang every
-# run. The crm, support, hr and people generators have no observation table of
-# their own — they feed other surfaces — so they cannot be gated on here.
+# The crm, support, hr and people generators have no observation table of their
+# own — they feed other surfaces — so they cannot be gated on here.
 TEST_STAND_READY_TABLES=(
   task_metric_observations
   git_metric_observations
   collab_metric_observations
   ai_metric_observations
   ai_cost_metric_observations
+  wiki_metric_observations
 )
 
 test_stand_ch_query() {
@@ -1701,12 +1720,7 @@ TEST_STAND_GATEWAY_CONTAINER=insight-gateway
 # --output flag to keep in step.
 TEST_STAND_ARTIFACT_DIR="test-results"
 
-# Run the suite inside a container image against the running stand.
-#
-# The image is never built here, and none is published anymore (CI runs the
-# suite host-side from the checkout) — a developer builds one by hand if they
-# want this mode. This function only wires it to the stand, and the wiring is
-# the part that is easy to get wrong.
+# Run the suite inside a browser runner image against the running stand.
 #
 # Network namespace, not the compose network. The session cookie is
 # `__Host-`-prefixed, so the browser stores it only from a trustworthy origin,
@@ -1715,9 +1729,6 @@ TEST_STAND_ARTIFACT_DIR="test-results"
 # browser and the HTTP clients alike, with no Chromium flags (which do not lift
 # the restriction anyway — measured, see tests/stand/ui/conftest.py).
 #
-# Arguments are passed to pytest verbatim and are IMAGE-SIDE paths: the suite
-# lives at /tests/stand in the image, so select with /tests/stand/ui, not
-# tests/stand/ui.
 test_stand_test_in_image() {
   local image="$1" gw_port="$2"
   shift 2
@@ -1757,6 +1768,8 @@ test_stand_test_in_image() {
     # cannot write into it — and the traces a failed journey uploads are the
     # whole reason that mount exists.
     --user "$(id -u):$(id -g)"
+    --init
+    --ipc=host
     --network "container:${TEST_STAND_GATEWAY_CONTAINER}"
     -e "INSIGHT_STAND_BASE_URL=http://localhost:${TEST_STAND_GATEWAY_CONTAINER_PORT}"
     # Mounted at a stable path and NAMED, rather than reproducing the suite's
@@ -1764,13 +1777,15 @@ test_stand_test_in_image() {
     # /tests and there is nothing above it.
     -v "$PWD/${manifest}:/stand/manifest.json:ro"
     -e "INSIGHT_STAND_MANIFEST=/stand/manifest.json"
-    -v "$PWD/${TEST_STAND_ARTIFACT_DIR}:/tests/${TEST_STAND_ARTIFACT_DIR}"
-    # Named, not inferred. The suite otherwise resolves this by walking up from
-    # its own file to the directory holding `tests/` — which is the repo root in
-    # a checkout and `/` in this image, where the suite lives at /tests with
-    # nothing above it. That wrote the ledger to /.artifacts, outside the mount,
-    # and only worked at all because the image used to run as root.
-    -e "INSIGHT_STAND_ARTIFACT_DIR=/tests/${TEST_STAND_ARTIFACT_DIR}"
+    -v "$PWD/tests:/workspace/tests:ro"
+    -v "$PWD/${TEST_STAND_ARTIFACT_DIR}:/workspace/${TEST_STAND_ARTIFACT_DIR}"
+    -w /workspace
+    -e "INSIGHT_STAND_ARTIFACT_DIR=/workspace/${TEST_STAND_ARTIFACT_DIR}"
+    -e HOME=/tmp
+    -e XDG_CACHE_HOME=/tmp/.cache
+    -e UV_PYTHON_INSTALL_DIR=/tmp/uv-python
+    -e UV_PROJECT_ENVIRONMENT=/tmp/stand-tests
+    -e PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
   )
 
   # The persona password comes from the generated realm export when it is
@@ -1778,7 +1793,7 @@ test_stand_test_in_image() {
   # keycloak stand working with no secret to distribute; the env var stays the
   # path for a stand whose realm this checkout cannot see.
   local realm="deploy/compose/keycloak/realm-insight.generated.json"
-  [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/${realm}:ro")
+  [[ -f "$realm" ]] && run_args+=(-v "$PWD/${realm}:/workspace/${realm}:ro")
   [[ -n "${INSIGHT_STAND_PERSONA_PASSWORD:-}" ]] && run_args+=(-e INSIGHT_STAND_PERSONA_PASSWORD)
 
   # Service-principal tests need the `testclient` private key to sign their
@@ -1799,7 +1814,14 @@ test_stand_test_in_image() {
   fi
 
   echo "=== running the suite in ${image} (namespace: ${TEST_STAND_GATEWAY_CONTAINER}) ==="
-  docker run "${run_args[@]}" "$image" "$@"
+  docker run "${run_args[@]}" "$image" sh -ceu '
+    python -m pip install --user --no-cache-dir "uv==0.12.0"
+    export PATH="$HOME/.local/bin:$PATH"
+    uv sync --project /workspace/tests --frozen --no-dev --no-install-project
+    export PYTHONPATH="/workspace/tests/lib${PYTHONPATH:+:$PYTHONPATH}"
+    uv run --project /workspace/tests --no-sync \
+      pytest /workspace/tests/stand "$@"
+  ' sh "$@"
 }
 
 cmd_test_stand() {
@@ -1810,11 +1832,12 @@ cmd_test_stand() {
     up)
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
-      local image build_backend=false build_frontend=false
+      local image backend_mode=pinned build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --build)          build_backend=true; build_frontend=true; shift ;;
-          --build-backend)  build_backend=true; shift ;;
+          --build)          backend_mode=source; build_frontend=true; shift ;;
+          --build-backend)  backend_mode=source; shift ;;
+          --prebuilt-backend) backend_mode=prebuilt; shift ;;
           --build-frontend) build_frontend=true; shift ;;
           -h|--help) cmd_test_stand_help; return 0 ;;
           *) echo "ERROR: unknown test-stand up option: $1" >&2; return 2 ;;
@@ -1833,12 +1856,18 @@ cmd_test_stand() {
       # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
       # keeping cmd_up off the compiler — so it has to run before cmd_up reads
       # the env file.
-      if [[ "$build_backend" == true ]]; then
-        echo "=== the backend is compiled from this tree, not pulled ==="
-      else
-        test_stand_backend_matches_charts || return 1
-        test_stand_pull_backends || return 1
-      fi
+      case "$backend_mode" in
+        source)
+          echo "=== the backend is compiled from this tree, not pulled ==="
+          ;;
+        prebuilt)
+          test_stand_use_prebuilt_backends || return 1
+          ;;
+        pinned)
+          test_stand_backend_matches_charts || return 1
+          test_stand_pull_backends || return 1
+          ;;
+      esac
 
       local up_args=(--env-file "$TEST_STAND_ENV_FILE"
                      --authenticator-redirect "$(test_stand_origin)/auth/callback")
@@ -1875,10 +1904,8 @@ cmd_test_stand() {
       # tears it down, so a failing suite leaves the stand intact to inspect.
       #
       # Two runners, one verb. On the host (default) the suite runs from
-      # tests/ with uv — CI does the same. With --image it runs inside an
-      # already-pulled suite image instead: the browser, its version and the
-      # locked dependency set then come from that artefact rather than
-      # from whatever the runner happens to have installed.
+      # tests/ with uv. With --image, it runs the checkout's test source in a
+      # browser runner image instead.
       local image=""
       while [[ $# -gt 0 ]]; do
         case "$1" in

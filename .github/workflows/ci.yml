@@ -1,7 +1,7 @@
 name: Lint, Test & Coverage Gate
 
 on:
-  # PR-only gate (+ manual dispatch). Coverage is reported self-contained via the
+  # PR gate with trusted main cache warming (+ manual dispatch). Coverage is reported self-contained via the
   # GitHub Actions job summary — no external service, and no PR comment (fork PRs
   # only get a read-only token, so a comment post 403s). Works on any plan.
   #
@@ -20,6 +20,16 @@ on:
       - ".github/workflows/ci.yml"
       # Inputs to connector-wiring-guard beyond the connector tree itself: the
       # bootstrap connector registry and the shared class_people union.
+      - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
+      - "src/ingestion/silver/_shared/**"
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/**"
+      - "src/frontend/**"
+      - "src/ingestion/connectors/**"
+      - "scripts/ci/**"
+      - ".github/workflows/ci.yml"
       - "src/ingestion/scripts/bootstrap-db/connectors-config.yaml"
       - "src/ingestion/silver/_shared/**"
   # Merge-queue builds. paths filters don't apply to merge_group, so every queue
@@ -63,6 +73,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       python: ${{ steps.detect.outputs.python }}
       js: ${{ steps.detect.outputs.js }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,12 +84,18 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Test component detection
+        run: python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py'
       - id: detect
         env:
           FULL: ${{ github.event.inputs.full }}
+          PUSH_BASE: ${{ github.event.before }}
         run: |
           if [ "$FULL" = "true" ]; then
             changed=$(python3 scripts/ci/changed.py --all)
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            : "${PUSH_BASE:?push event must provide a base revision}"
+            changed=$(python3 scripts/ci/changed.py --compare-ref "$PUSH_BASE")
           else
             changed=$(python3 scripts/ci/changed.py)
           fi
@@ -95,6 +112,7 @@ jobs:
   jwt-provider-guard:
     name: JWT crypto-provider invariant
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -124,6 +142,7 @@ jobs:
   connector-wiring-guard:
     name: Connector wiring invariants
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,17 +168,20 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.rust) }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false # don't leave the token in .git/config
 
-      - name: Install protoc + librdkafka build deps
-        # protobuf-compiler: grpc-hub -> prost-build. cmake + libcurl headers:
-        # the authenticator vendors librdkafka (audit events, step 10.8) via
-        # rdkafka's cmake-build; librdkafka's OAUTHBEARER path needs curl/curl.h
-        # even with WITH_CURL=0.
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+      - name: Install protoc + curl headers
+        # INVARIANT: grpc-hub's generated code requires protoc; the authenticator's
+        # rdkafka OAUTHBEARER build requires curl/curl.h even with WITH_CURL=0.
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libcurl4-openssl-dev
+
+      - name: Install CMake for authenticator
+        if: ${{ matrix.entry.name == 'authenticator' }}
+        run: sudo apt-get install -y cmake
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
@@ -175,6 +197,7 @@ jobs:
             src/backend -> target
             src/ingestion/connectors/task-tracking/jira/enrich -> target
           key: ${{ matrix.entry.name }}
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Format check (${{ matrix.entry.name }})
         if: ${{ matrix.entry.lint }}
@@ -193,7 +216,7 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
@@ -304,6 +327,7 @@ jobs:
       fail-fast: false
       matrix:
         entry: ${{ fromJson(needs.changes.outputs.python) }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -318,6 +342,7 @@ jobs:
           # Per-connector cache key so parallel setup-uv jobs don't race to
           # reserve one shared key ("Unable to reserve cache …").
           cache-suffix: ${{ matrix.entry.name }}
+          save-cache: ${{ github.event_name == 'push' }}
 
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         working-directory: ${{ matrix.entry.root }}
@@ -459,6 +484,7 @@ jobs:
     needs: [changes, rust, python, js]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       # If detection failed, or any CHANGED component's producer job failed
       # (compile error, test failure, crash), the report set is incomplete — fail

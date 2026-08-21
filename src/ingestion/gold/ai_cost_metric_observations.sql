@@ -11,10 +11,10 @@ SELECT
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
-    -- Both measures are additive across a person's several seats: two seats
-    -- spend two amounts, and their ceilings bound two seats. A window spanning
-    -- months adds each month's closing figure, which is the money incurred in
-    -- the window.
+    -- Every measure is additive across a person's several seats: two seats
+    -- spend two amounts, cost two fees, and their ceilings bound two seats. A
+    -- window spanning months adds each month's closing figure, which is the
+    -- money incurred in the window.
     toNullable({{ collapsed_value('contribution') }}) AS value,
     subject_key,
     dimensions

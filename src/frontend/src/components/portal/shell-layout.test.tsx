@@ -30,6 +30,11 @@ vi.mock("@/lib/portal/use-shell-layout", () => ({ useShellLayout: () => mocks.la
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
 }));
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: false }),
@@ -247,6 +252,15 @@ describe("shell layout: phone", () => {
 describe("shell layout: narrow (tablet)", () => {
   beforeEach(() => {
     mocks.layout = "narrow";
+  });
+
+  it("seats the pane beside the rail, not under it", () => {
+    // The drawer is positioned from the viewport edge, and at this tier the
+    // rail is what stands there.
+    const { container } = render(<Shell />);
+    expect(container.querySelector('[data-slot="sidebar-container"]')).toHaveClass(
+      "data-[side=left]:left-(--rail-width)",
+    );
   });
 
   it("collapses the pane off-canvas instead of Sheeting it", () => {

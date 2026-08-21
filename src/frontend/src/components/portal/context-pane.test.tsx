@@ -5,9 +5,6 @@
  * items for People, catalog items for Manage), and clicking writes the
  * portal-store selection the content area renders from.
  */
-vi.mock("@/queries/identity-me", () => ({
-  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
-}));
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return portalRouterMock();
@@ -20,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
   standings: [] as Array<{
     id: string;
@@ -30,11 +28,20 @@ const mocks = vi.hoisted(() => ({
     peersHaveData: boolean;
     isPending: boolean;
   }>,
+  isAdmin: false,
 }));
 
 vi.mock("@/lib/portal/use-active-zone", () => ({ useActiveZone: () => mocks.zone }));
 vi.mock("@/components/org-tree", () => ({
   OrgTree: () => <div data-testid="org-tree" />,
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
 }));
 
 import {
@@ -102,6 +109,27 @@ describe("ContextPane", () => {
     expect(lens.result.current).toBe("Git output");
   });
 
+  it("expands a direction and its first lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Knowledge / Wiki"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+    expect(portalRouter.search).toMatchObject({ dir: "wiki", lens: "Overview" });
+  });
+
+  it("picks a lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Git output"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+  });
+
   it("switches direction when another domain is clicked", async () => {
     mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
     pane();
@@ -154,6 +182,20 @@ describe("ContextPane", () => {
     mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
     pane();
     expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
+  });
+
+  it("keeps admin-only Manage items away from a non-admin", () => {
+    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+    mocks.isAdmin = false;
+    pane();
+    expect(screen.queryByText(/Platform usage/i)).not.toBeInTheDocument();
+  });
+
+  it("shows admin-only Manage items to an admin", () => {
+    mocks.zone = { activeZone: "manage", activePerson: "boss@x" };
+    mocks.isAdmin = true;
+    pane();
+    expect(screen.getByText(/Platform usage/i)).toBeInTheDocument();
   });
 
   it("renders the person's sections nav in the Person zone", () => {
@@ -246,5 +288,34 @@ describe("ContextPane", () => {
     // flight, so a tooltip that trusted them would announce the strongest
     // claim of the three on an answer the hook has not given.
     expect(button.getAttribute("title")).toBeNull();
+  });
+});
+
+describe("ContextPane on an organisation with no reporting lines", () => {
+  it("names the People views for an organisation with no reporting lines", () => {
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByText("Roster")).toBeInTheDocument();
+    expect(screen.queryByText("Employees")).toBeNull();
+    expect(screen.queryByText("People (roster)")).toBeNull();
+    expect(screen.queryByText("Median by Role")).toBeNull();
+  });
+
+  it("does not call the roster a chart", () => {
+    // "WorkChart" describes a structure a flat organisation does not have, and
+    // the list needs no heading of its own inside the People zone.
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    expect(screen.queryByText("WorkChart")).toBeNull();
+    expect(
+      screen.getByLabelText("Find someone in the org"),
+    ).toBeInTheDocument();
   });
 });

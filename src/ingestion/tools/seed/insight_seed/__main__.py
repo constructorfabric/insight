@@ -7,14 +7,14 @@ Subcommands:
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     analytics  The catalogue rows no endpoint can create — a
                tenant metric-definition override (MariaDB, analytics database).
-    gold       Rebuild the dbt gold models only (after persons-seed + sync).
+    gold       Rebuild the dbt gold models only (after a persons-seed run).
     all        Run every step (gold is part of silver's build, not repeated).
 
 A bare `silver` / `all` run leaves gold UNRESOLVED and still writes the
 manifest: observations gain rows only once the identity projection is
-refreshed (persons-seed + persons-sync) and gold is rebuilt over it.
-dev-compose.sh's cmd_seed runs all three after the seed; on Kubernetes the
-identity CronJobs and the next gold build do.
+refreshed (a persons-seed run, which publishes itself) and gold is rebuilt
+over it. dev-compose.sh's cmd_seed runs both after the seed; on Kubernetes
+the seed CronJob and the next gold build do.
 
 Run as a module from the tool directory:
 

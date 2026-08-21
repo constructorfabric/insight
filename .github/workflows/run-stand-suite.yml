@@ -1,0 +1,293 @@
+# Run this ref's stand suite against the deployed test stand, on request.
+#
+# The post-publish deploy runs the same suite, but only after a merge, against
+# a chart that did not exist until the merge happened. That is the wrong loop
+# for changing the suite itself: a test that passes against compose can still
+# be wrong about a real IdP, real TLS, a real cluster's identity projection —
+# and finding out after merging is finding out too late.
+#
+# So this one deploys nothing and publishes nothing. It runs THIS ref's
+# tests/stand against whatever chart the stand is already carrying, which is
+# the one thing the compose lane cannot tell you.
+#
+# Dispatch only, on purpose: the stand is shared, persistent and
+# internet-reachable, and every run mutates it (the API suite creates scratch
+# resources and deletes them again). Nothing here should ever fire from a push.
+name: Run the stand suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Which half of the suite to run."
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - api
+          - ui
+      k_expression:
+        description: "Optional pytest -k expression, e.g. drilldown and not export. Empty runs the whole lane."
+        required: false
+        default: ''
+        type: string
+      reseed:
+        description: "Re-seed the stand first. Needed when no seed Job survives to read a manifest from — and it REPLACES the stand's data."
+        required: false
+        default: false
+        type: boolean
+
+# The deploy's group, deliberately. A deploy landing halfway through a suite
+# would swap the images under it and report the difference as a test failure.
+# Safe to share only because nothing here `uses:` deploy-test-stand.yml — a
+# caller that both reuses this group and calls that workflow deadlocks against
+# itself, which is what the warning on the group over there is about.
+concurrency:
+  group: test-stand-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: stand suite
+    runs-on: ubuntu-latest
+    # This environment has to admit the ref being dispatched. An allow-list of
+    # exactly `main` would make this workflow — whose whole purpose is running a
+    # branch's tests — fail before its first step.
+    environment: insight-test-stand
+    # Above the sum of the step ceilings: re-seed (110) + browser (10) +
+    # suite (60). A job ceiling under that kills the run before a step's own
+    # limit can fire, which is how a slow re-seed leaves a Job in the cluster.
+    timeout-minutes: 190
+    env:
+      STAND_NAMESPACE: insight
+      INVENTORY_FILE: deploy/gitops/environments/test-stand/inventory.yaml
+      # This repo is public. Cluster and pytest output goes through $REDACT on
+      # its way to the console — the pipes below, not a blanket property of the
+      # job: a step that echoes something new has to add its own.
+      REDACT: .github/workflows/scripts/redact-stand-log.py
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+
+      # Only the re-seed path needs helm — seed-stand.sh reads the release's
+      # values to resolve the seeder image — but it is pinned here rather than
+      # taken from the runner image for the same reason the deploy pins it.
+      - name: Set up Helm
+        if: ${{ inputs.reseed }}
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: '3.14.0'
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          cache-suffix: stand-suite-dispatch
+
+      # The seeder shells out to these; a missing one should say so here rather
+      # than half way through a re-seed.
+      - name: Check the tools this workflow and the seeder shell out to
+        env:
+          RESEED: ${{ inputs.reseed }}
+        run: |
+          set -euo pipefail
+          tools="kubectl jq python3"
+          if [ "$RESEED" = "true" ]; then tools="$tools helm yq envsubst"; fi
+          missing=""
+          for tool in $tools; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::the runner image no longer carries:$missing — install it in this job"
+            exit 1
+          fi
+
+      - name: Confirm the environment is wired up
+        env:
+          HAVE_KUBECONFIG: ${{ secrets.TEST_STAND_KUBECONFIG != '' }}
+          HAVE_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD != '' }}
+          HAVE_BASE_URL: ${{ vars.TEST_STAND_BASE_URL != '' }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ "$HAVE_KUBECONFIG" = "true" ]        || missing="$missing secrets.TEST_STAND_KUBECONFIG"
+          [ "$HAVE_PERSONA_PASSWORD" = "true" ]  || missing="$missing secrets.TEST_STAND_PERSONA_PASSWORD"
+          [ "$HAVE_BASE_URL" = "true" ]          || missing="$missing vars.TEST_STAND_BASE_URL"
+          if [ -n "$missing" ]; then
+            echo "::error::the insight-test-stand environment is missing:$missing"
+            echo "Each one is described in deploy/gitops/environments/test-stand/credentials-runbook.md."
+            exit 1
+          fi
+
+      - name: Resolve this run's suite dependencies
+        run: uv sync --project tests --frozen
+
+      - name: Write the stand kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.TEST_STAND_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/test-stand.kubeconfig"
+          # umask before the file exists, chmod after — never readable by
+          # another process, not even momentarily.
+          (
+            umask 077
+            printf '%s' "$KUBECONFIG_B64" | tr -d '[:space:]' | base64 -d > "$target"
+          )
+          chmod 600 "$target"
+          if ! KUBECONFIG="$target" kubectl config view --minify >/dev/null 2>&1; then
+            echo "::error::TEST_STAND_KUBECONFIG did not decode into a usable kubeconfig."
+            exit 1
+          fi
+          echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
+
+      # The stand is already seeded; what this needs is the manifest describing
+      # WHAT it was seeded with, and on a cluster stand that document exists
+      # only in the seed Job's log. Jobs are reaped an hour after they finish,
+      # so a stand seeded longer ago than that is still perfectly good and its
+      # manifest is simply gone — hence `reseed` rather than a silent re-seed,
+      # which would replace the data someone may be looking at.
+      - name: Recover the seed manifest
+        id: manifest
+        if: ${{ !inputs.reseed }}
+        run: |
+          set -euo pipefail
+          job="$(
+            kubectl -n "$STAND_NAMESPACE" get jobs \
+              --sort-by=.metadata.creationTimestamp -o name 2>/dev/null \
+              | grep 'insight-seed-all-' | tail -1 || true
+          )"
+          if [ -z "$job" ]; then
+            echo "::error::no surviving seed Job in namespace $STAND_NAMESPACE to read a manifest from."
+            echo "The stand is probably seeded — Jobs are reaped an hour after they finish, the data is not."
+            echo "Re-run this workflow with reseed=true to seed it again and get a fresh manifest."
+            exit 1
+          fi
+          echo "reading the manifest from $job"
+          kubectl -n "$STAND_NAMESPACE" logs "$job" --tail=-1 2>/dev/null \
+            | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- \
+            > "$RUNNER_TEMP/stand-manifest.json" || true
+          if ! jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
+            echo "::error::$job carries no manifest sentinel — it did not reach the end of its run."
+            echo "Re-run with reseed=true."
+            exit 1
+          fi
+          echo "personas=$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json") window=$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"
+
+      # Same invocation the post-publish deploy uses, so a suite validated here
+      # is validated against the data the merge lane will produce.
+      - name: Re-seed the stand
+        if: ${{ inputs.reseed }}
+        timeout-minutes: 110
+        run: |
+          set -euo pipefail
+          echo "::warning::re-seeding — this REPLACES the stand's data for everyone using it."
+          kube_context="$(yq -r '.kubeContext' "$INVENTORY_FILE")"
+          seed_rc=0
+          ./src/ingestion/tools/seed/seed-stand.sh \
+            -n "$STAND_NAMESPACE" --context "$kube_context" --days 730 \
+            > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
+          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
+            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || true
+          if [ "$seed_rc" -eq 0 ] && jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
+            echo "personas=$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json") window=$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"
+            exit 0
+          fi
+          echo "::error::the seed failed."
+          # Allowlist by shape: only seed-stand.sh's own lines reach the public log.
+          grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/seed.log" | python3 "$REDACT" || true
+          exit 1
+
+      - name: Install the browser the journeys drive
+        if: ${{ inputs.lane != 'api' }}
+        timeout-minutes: 10
+        run: uv run --project tests --frozen playwright install --with-deps chromium
+
+      # Inputs reach the shell through the environment and are quoted into
+      # array elements, never spliced into the command line — a `-k` expression
+      # is user text and this workflow can read the stand's credentials.
+      - name: Run the suite
+        id: run
+        timeout-minutes: 60
+        env:
+          INSIGHT_STAND_BASE_URL: ${{ vars.TEST_STAND_BASE_URL }}
+          INSIGHT_STAND_PERSONA_PASSWORD: ${{ secrets.TEST_STAND_PERSONA_PASSWORD }}
+          INSIGHT_STAND_MANIFEST: ${{ runner.temp }}/stand-manifest.json
+          LANE: ${{ inputs.lane }}
+          K_EXPRESSION: ${{ inputs.k_expression }}
+        run: |
+          set -euo pipefail
+          export INSIGHT_STAND_ARTIFACT_DIR="$RUNNER_TEMP/stand-artifacts"
+          mkdir -p "$INSIGHT_STAND_ARTIFACT_DIR"
+
+          args=()
+          case "$LANE" in
+            api) args+=(--ignore=tests/stand/ui) ;;
+            ui)  args+=(--ignore=tests/stand/api --ignore=tests/stand/meta) ;;
+            all) ;;
+            *)   echo "::error::unknown lane '$LANE'"; exit 1 ;;
+          esac
+          if [ "$LANE" != "api" ]; then
+            args+=(--browser chromium --tracing=retain-on-failure --screenshot=only-on-failure)
+          fi
+          if [ -n "${K_EXPRESSION:-}" ]; then
+            args+=(-k "$K_EXPRESSION")
+          fi
+
+          echo "lane=$LANE"
+          if [ -n "${K_EXPRESSION:-}" ]; then
+            echo "selection: -k ${K_EXPRESSION}"
+          fi
+          uv run --project tests --frozen \
+            pytest tests/stand -ra --stand-manifest "$INSIGHT_STAND_MANIFEST" "${args[@]}" \
+            2>&1 | python3 "$REDACT"
+
+      # BETWEEN capture and upload, and always. A Playwright trace replays a
+      # real signed-in session; the script fails closed, deleting anything it
+      # cannot rewrite and verify.
+      - name: Strip credentials from traces
+        id: redact_traces
+        if: always() && (steps.run.outcome == 'success' || steps.run.outcome == 'failure')
+        run: python3 .github/workflows/scripts/redact-playwright-trace.py test-results
+
+      - name: Upload traces and screenshots
+        if: always() && steps.redact_traces.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stand-suite-traces
+          path: |
+            test-results/**/*.zip
+            test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Summarise the run
+        if: always()
+        env:
+          OUTCOME: ${{ job.status }}
+          LANE: ${{ inputs.lane }}
+          RESEEDED: ${{ inputs.reseed }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Stand suite — \`$REF\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| ref | \`$REF\` |"
+            echo "| lane | \`$LANE\` |"
+            echo "| re-seeded | \`$RESEEDED\` |"
+            echo "| outcome | **$OUTCOME** |"
+            echo ""
+            echo "This ran **this ref's tests** against the chart the stand was already carrying."
+            echo "It says nothing about this ref's product code — no image here was built from it."
+            echo "The stand keeps whatever the run left behind; the suite's own leak sweep is what"
+            echo "removes the scratch resources it created."
+          } >> "$GITHUB_STEP_SUMMARY"

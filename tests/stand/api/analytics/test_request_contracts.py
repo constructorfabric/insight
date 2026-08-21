@@ -60,6 +60,7 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/v1/metrics"),
     ("PUT", f"/v1/metrics/{scratch.UNKNOWN_METRIC_KEY}"),
     ("POST", "/v1/metrics/import"),
+    ("POST", "/v1/usage/events"),
 )
 
 
@@ -142,6 +143,10 @@ OFF_SCHEMA_BODY: JsonValue = "not the request type"
 #: rejection — whether it becomes `None` or an error is the Option wrapper's
 #: business, and pinning either would be pinning axum's version rather than
 #: this product's contract. The rig leaves it out for the same reason.
+
+#: `POST /v1/usage/events` is absent too, on its own grounds: it is the only
+#: body route that declares no 400, so there is no gap between declaration and
+#: behaviour for this table to pin.
 
 
 @pytest.mark.parametrize(

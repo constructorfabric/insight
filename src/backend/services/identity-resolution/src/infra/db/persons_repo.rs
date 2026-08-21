@@ -21,8 +21,8 @@ use sea_orm::{
 use uuid::Uuid;
 
 use super::entities::persons;
-use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
 use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
@@ -325,122 +325,13 @@ pub async fn person_exists(
     Ok(found.is_some())
 }
 
-/// Find persons whose CURRENT observed values match every search term
-/// (case-insensitive substring). "Current" is the same window rule
-/// [`resolve_person_ids_by_email`] applies — the latest observation per
-/// person × source × value type — so a value superseded by that person's own
-/// newer data stops matching, while a value two persons both currently claim
-/// returns both. Ordered by `person_id` for a stable page; the API layer
-/// re-sorts for display.
+/// Of the given persons, those the journal holds nothing but automatic mints for
+/// — a sign-in that needed somebody to enter as, or a roster that listed an
+/// account carrying no address.
 ///
-/// INVARIANT: this is a deliberate tenant-bounded scan, not a missing index.
-/// A substring match over the journal cannot use a B-tree, and a derived
-/// current-values table would be one more cache to keep in sync with every
-/// write path. The consumer is the admin picker — one debounced human — and
-/// the scan is bounded by the tenant filter and the six searchable value
-/// types. Revisit as a derived table only if measured slow at real scale.
-///
-/// # Errors
-///
-/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
-pub async fn search_persons_by_current_values(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    terms: &[String],
-    // Restrict matching to these persons; empty = the whole tenant. The id+value
-    // search needs the value filter applied WITHIN the named ids — intersecting
-    // with an independently truncated tenant-wide result drops genuine matches.
-    within: &[Uuid],
-    limit: u64,
-) -> anyhow::Result<Vec<Uuid>> {
-    if terms.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // One EXISTS per term: every term must match SOME current value of the
-    // person, not necessarily the same one ("iva example.com" finds a person
-    // via name + email together).
-    let mut sql = String::from(
-        r"
-        WITH ranked AS (
-            SELECT
-                person_id,
-                value_effective,
-                ROW_NUMBER() OVER (
-                    PARTITION BY person_id, insight_source_type, insight_source_id, value_type
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn
-            FROM persons
-            WHERE insight_tenant_id = ?
-              AND value_type IN ('email', 'username', 'display_name',
-                                 'first_name', 'last_name', 'employee_id')
-        ),
-        current_vals AS (
-            SELECT person_id, value_effective
-            FROM ranked
-            WHERE rn = 1 AND value_effective IS NOT NULL
-        )
-        SELECT DISTINCT cv.person_id
-        FROM current_vals cv
-        WHERE cv.person_id != ?
-    ",
-    );
-    if !within.is_empty() {
-        let placeholders = vec!["?"; within.len()].join(", ");
-        sql.push_str(" AND cv.person_id IN (");
-        sql.push_str(&placeholders);
-        sql.push(')');
-    }
-    for _ in terms {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM current_vals t \
-              WHERE t.person_id = cv.person_id AND t.value_effective LIKE ? ESCAPE '!')",
-        );
-    }
-    sql.push_str(" ORDER BY cv.person_id LIMIT ?");
-
-    let mut values: Vec<sea_orm::Value> = vec![
-        tenant_id.as_bytes().to_vec().into(),
-        EXCLUDED_PERSON.as_bytes().to_vec().into(),
-    ];
-    values.extend(within.iter().map(|id| id.as_bytes().to_vec().into()));
-    values.extend(terms.iter().map(|t| like_pattern(t).into()));
-    values.push(limit.into());
-
-    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
-    person_ids_from_rows(db.query_all(stmt).await?)
-}
-
-/// `%…%` LIKE pattern for a term, with the wildcard characters neutralised via
-/// the `!` escape (declared in the query) — `50%` searches for a literal
-/// percent sign instead of everything.
-fn like_pattern(term: &str) -> String {
-    let escaped = term
-        .replace('!', "!!")
-        .replace('%', "!%")
-        .replace('_', "!_");
-    format!("%{escaped}%")
-}
-
-/// Hydrate person cards for MANY persons in one query — the shared id→display
-/// read behind every operator response that embeds cards (queue candidates,
-/// person search). Only the CURRENT observation per person × source × value
-/// type leaves the database (the same `rn = 1` window the resolvers use): the
-/// journal is append-only, and shipping a person's full re-observation history
-/// to collapse it in Rust would grow every response with tenant age. The Rust
-/// collapse then picks the latest across sources. An id the journal holds no
-/// card attributes for is simply absent from the map, and the caller renders
-/// it via [`PersonCard::empty`].
-///
-/// # Errors
-///
-/// Returns an error if the query fails.
-/// Of the given persons, those the journal holds nothing but login-mints for.
-///
-/// Such a person exists so somebody could sign in, and nothing else about them
-/// has been observed or decided yet — so they may well duplicate a person the
-/// roster already knows. Naming one as a merge target is the wrong direction:
-/// the history is on the other side.
+/// Either way nobody has decided who they are, so they may well duplicate a
+/// person the roster already knows. Naming one as a merge target is the wrong
+/// direction: the history is on the other side.
 ///
 /// # Errors
 ///
@@ -455,16 +346,23 @@ pub async fn provisional_persons(
     }
 
     let placeholders = vec!["?"; person_ids.len()].join(", ");
+    // SAFETY: `<=>`, not `=` — migration 009 made `reason` nullable, and `=`
+    // would make the CASE NULL for such a row, the SUM NULL with it, and drop
+    // the person from the answer. A NULL reason is "not an automatic mint".
+    let mint_reasons = vec!["reason <=> ?"; UNCONFIRMED_MINT_REASONS.len()].join(" OR ");
     let sql = format!(
-        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN reason <=> ? THEN 0 ELSE 1 END) = 0"
+        "SELECT person_id          FROM persons          WHERE insight_tenant_id = ? AND person_id IN ({placeholders})          GROUP BY person_id          HAVING SUM(CASE WHEN {mint_reasons} THEN 0 ELSE 1 END) = 0"
     );
 
-    let mut params: Vec<sea_orm::Value> = Vec::with_capacity(person_ids.len() + 2);
+    let mut params: Vec<sea_orm::Value> =
+        Vec::with_capacity(person_ids.len() + 1 + UNCONFIRMED_MINT_REASONS.len());
     params.push(tenant_id.as_bytes().to_vec().into());
     for id in person_ids {
         params.push(id.as_bytes().to_vec().into());
     }
-    params.push(LOGIN_BOOTSTRAP_REASON.into());
+    for reason in UNCONFIRMED_MINT_REASONS {
+        params.push(reason.into());
+    }
 
     let rows = db
         .query_all(Statement::from_sql_and_values(
@@ -482,6 +380,19 @@ pub async fn provisional_persons(
     Ok(provisional)
 }
 
+/// Hydrate person cards for MANY persons in one query — the shared id→display
+/// read behind every operator response that embeds cards (queue candidates,
+/// person search). Only the CURRENT observation per person × source × value
+/// type leaves the database (the same `rn = 1` window the resolvers use): the
+/// journal is append-only, and shipping a person's full re-observation history
+/// to collapse it in Rust would grow every response with tenant age. The Rust
+/// collapse then picks the latest across sources. An id the journal holds no
+/// card attributes for is simply absent from the map, and the caller renders
+/// it via [`PersonCard::empty`].
+///
+/// # Errors
+///
+/// Returns an error if the query fails.
 pub async fn person_cards(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -741,18 +652,6 @@ fn person_ids_from_rows(rows: Vec<QueryResult>) -> anyhow::Result<Vec<Uuid>> {
 mod tests {
     use super::*;
     use crate::infra::db;
-
-    #[test]
-    fn like_pattern_neutralises_wildcards() {
-        for (term, expected) in [
-            ("alice", "%alice%"),
-            ("50%", "%50!%%"),
-            ("a_b", "%a!_b%"),
-            ("bang!", "%bang!!%"),
-        ] {
-            assert_eq!(like_pattern(term), expected, "term: {term:?}");
-        }
-    }
 
     /// Integration test against a live MariaDB. Data-dependent (dev cluster).
     /// Set `IDENTITY_TEST_DB_URL` + `IDENTITY_TEST_TENANT_ID` + `IDENTITY_TEST_EMAIL`

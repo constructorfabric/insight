@@ -130,8 +130,12 @@ spec:
             # descriptor sets platform_config.git_proxy — the chart owns the
             # address and the token, so no connector Secret carries either and
             # a port change cannot desync them.
+            #
+            # Namespace-qualified: the connector pods that resolve this run in
+            # the Airbyte namespace, not this release's, where the bare service
+            # name does not resolve.
             - name: GIT_PROXY_URL
-              value: {{ printf "http://%s-git-cli-proxy:%v" .Release.Name .Values.gitCliProxy.service.port | quote }}
+              value: {{ printf "http://%s-git-cli-proxy.%s.svc.cluster.local:%v" .Release.Name .Release.Namespace .Values.gitCliProxy.service.port | quote }}
             - name: GIT_PROXY_TOKEN
               valueFrom:
                 secretKeyRef:

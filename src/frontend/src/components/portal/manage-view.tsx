@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -17,6 +17,7 @@ import type {
   MetricDefinition,
 } from "@/api/metric-definitions-client";
 import { IdentitiesView } from "@/components/portal/identities-view";
+import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { WhatsNewBody } from "@/screens/whats-new";
@@ -42,7 +43,18 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health") return <DataHealth />;
-  if (item === "identities") return <IdentitiesGate />;
+  if (item === "identities")
+    return (
+      <AdminGate>
+        <IdentitiesView />
+      </AdminGate>
+    );
+  if (item === "platform-usage")
+    return (
+      <AdminGate>
+        <PlatformUsage />
+      </AdminGate>
+    );
   if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">
@@ -61,7 +73,7 @@ export function ManageView({ item }: { item: string | null }) {
  * for a role they already hold would send them chasing a grant that fixes
  * nothing.
  */
-function IdentitiesGate() {
+function AdminGate({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
   if (isPending) return <CenteredSpinner />;
@@ -89,7 +101,7 @@ function IdentitiesGate() {
       </div>
     );
   }
-  return <IdentitiesView />;
+  return children;
 }
 
 /** Flatten the prefix-grouped query result into one key-sorted list. */

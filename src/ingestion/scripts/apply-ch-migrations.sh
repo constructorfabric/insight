@@ -60,7 +60,9 @@ echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they
 # derive in gold — macros/ai_labels.sql): DROP converges every table
-# state. conversation_count is data: ADD/MODIFY pin its position.
+# state. conversation_count and seat_status are data: ADD/MODIFY pin their
+# position. All four contributors in one deploy — a class unions them
+# positionally, so healing per-sync mismatches the column counts.
 # Guarded (staging tables exist only after the connector's first run);
 # idempotent (re-runs are no-ops).
 heal_ai_dev_staging() {
@@ -71,6 +73,8 @@ heal_ai_dev_staging() {
 ALTER TABLE staging.${table} DROP COLUMN IF EXISTS tool_label;
 ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS conversation_count Nullable(UInt32) AFTER session_count;
 ALTER TABLE staging.${table} MODIFY COLUMN conversation_count Nullable(UInt32) AFTER session_count;
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS seat_status Nullable(String) AFTER _version;
+ALTER TABLE staging.${table} MODIFY COLUMN seat_status Nullable(String) AFTER _version;
 SQL
 }
 
@@ -161,6 +165,42 @@ SQL
 }
 
 heal_task_users_table silver class_task_users
+
+echo "=== Healing git file-change object id columns ==="
+# The file-change object ids arrive at the tail of every projection that feeds
+# class_git_file_changes. Pre-existing tables lack them and the positional
+# insert misaligns; the silver side heals in migrations/*.sql, the rest heals
+# here because these tables exist only after a connector has run.
+#
+# bronze_github.file_changes is healed for a different reason: the GitHub
+# staging model READS the two columns, and nothing else adds them in time.
+# create-bronze-placeholders.sh is IF NOT EXISTS so a warm bronze table is
+# never altered, and the destination only widens it on the connector's next
+# sync — which lands after this deploy's dbt run, leaving the staging model
+# (and every git model downstream of it) failing on an unknown identifier
+# until then.
+#
+# Existing rows heal to NULL and carry an oid from the first sync that
+# re-collects them. Idempotent.
+heal_git_file_change_oids() {
+  local db="$1" table="$2" anchor="$3"
+  ch_table_is_real "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS post_image_oid Nullable(String) AFTER pre_image_oid;
+ALTER TABLE ${db}.${table} MODIFY COLUMN pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} MODIFY COLUMN post_image_oid Nullable(String) AFTER pre_image_oid;
+SQL
+}
+
+# Bronze's tail is patch_truncated; every staging projection ends with
+# _airbyte_extracted_at.
+heal_git_file_change_oids bronze_github file_changes patch_truncated
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
+done
 
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)

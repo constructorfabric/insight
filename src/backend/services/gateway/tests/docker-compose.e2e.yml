@@ -47,6 +47,7 @@ services:
       - "${KEYCLOAK_E2E_PORT:-18084}:8085"
 
   authenticator:
+    image: insight-authenticator:e2e-prebuilt
     build:
       context: ../../..
       dockerfile: services/authenticator/Dockerfile
@@ -87,6 +88,7 @@ services:
     command: ["python", "/echo-stub.py", "0.0.0.0:9090"]
 
   gateway:
+    image: insight-gateway:e2e-prebuilt
     build:
       context: ../../..
       dockerfile: services/gateway/Dockerfile

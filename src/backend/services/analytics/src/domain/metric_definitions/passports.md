@@ -28,7 +28,7 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit days
 - Notes: Distinct days with person-attributed AI activity across dev and assistant tools.
 
-## ai.cost — AI usage cost
+## ai.cost — AI potential usage cost
 
 - Source: ai_usage (ai_metric_observations)
 - Reads: cost_usd
@@ -36,7 +36,15 @@ this file and the registry disagree.
 - Shape: currency, lower_is_better
 - Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
 
-## ai.extra_usage_cost — AI extra usage
+## ai.seat_cost — AI seat cost
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: seat_cost_usd
+- Formula: sum(seat_cost_usd)
+- Shape: currency, lower_is_better
+- Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+
+## ai.extra_usage_cost — AI actual usage cost
 
 - Source: ai_cost (ai_cost_metric_observations)
 - Reads: extra_usage_usd
@@ -50,7 +58,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd, extra_usage_limit_usd
 - Formula: 100 * (extra_usage_usd / extra_usage_limit_usd)
 - Shape: percent, lower_is_better
-- Notes: Extra usage measured against the ceiling an administrator set on it. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator.
+- Notes: Extra usage measured against the ceiling in force on the seat — the plan tier's default, or a different one set for that member. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator. Above 100 per cent means the ceiling was lowered below what the seat had already spent — the vendor reports the ceiling in force now against the whole month's spend, so a limit set or reduced mid-month is read against money that predates it.
 
 ## ai.accepted_edit_actions — Accepted AI edits
 
@@ -90,7 +98,7 @@ this file and the registry disagree.
 - Reads: dev_conversations
 - Formula: sum(dev_conversations)
 - Shape: integer, higher_is_better, unit conversations
-- Notes: Person-attributed coding conversations from dev tools that report them.
+- Notes: Person-attributed conversations with coding AI tools, counted as the vendor counts them. For the agent tools this is the session or thread count — a session is the unit of conversation there, and no vendor publishes a separate conversation counter — so the number reads as "times the person started working with the assistant", not as messages exchanged. Tools that report no such unit, inline-completion tools among them, return no value rather than a zero.
 
 ## ai.chat_assistant_conversations — AI chat conversations
 
@@ -99,6 +107,22 @@ this file and the registry disagree.
 - Formula: sum(chat_assistant_conversations)
 - Shape: integer, higher_is_better, unit conversations
 - Notes: Person-attributed chat assistant conversations from supported AI chat tools.
+
+## ai.prs_with_assistant — PRs with AI assistance
+
+- Source: ai_usage (ai_metric_observations)
+- Reads: prs_with_assistant
+- Formula: sum(prs_with_assistant)
+- Shape: integer, higher_is_better, unit PRs
+- Notes: Pull requests where the coding assistant was active at least once, as the vendor attributes them. Reported only by sources that connect to the code host themselves, so a person working without that connection returns no value rather than a zero. Counts pull requests, not commits or lines, and says nothing about how much of the change the assistant wrote.
+
+## ai.prs_total — PRs seen by the AI vendor
+
+- Source: ai_usage (ai_metric_observations)
+- Reads: prs_total
+- Formula: sum(prs_total)
+- Shape: integer, neutral, unit PRs
+- Notes: Pull requests the AI vendor observed for the person, served as the context for PRs with AI assistance rather than as a goal of its own. It is the vendor's count over the vendor's own window, which need not be the day it is reported against and need not agree with the git sources — read it next to that measure, not next to git pull-request metrics.
 
 ## git.commits — Commits
 
@@ -114,7 +138,7 @@ this file and the registry disagree.
 - Reads: code_lines_added
 - Formula: sum(code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded.
+- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_added — Lines added
 
@@ -122,7 +146,7 @@ this file and the registry disagree.
 - Reads: lines_added
 - Formula: sum(lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation.
+- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
 ## git.lines_removed — Lines removed
 
@@ -130,7 +154,7 @@ this file and the registry disagree.
 - Reads: lines_removed
 - Formula: sum(lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
 
 ## git.prs_created — Pull requests created
 
@@ -170,7 +194,7 @@ this file and the registry disagree.
 - Reads: commit_change_size
 - Formula: median(commit_change_size)
 - Shape: integer, lower_is_better, unit lines
-- Notes: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+- Notes: Median diff size of authored commits (lines added plus removed), counting only content a commit is the first to introduce — a commit that repeats content already in the repository has a size of zero. Smaller commits are easier to review.
 
 ## git.pr_size — PR size
 

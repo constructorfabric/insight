@@ -74,32 +74,16 @@ beforeEach(() => {
 });
 
 describe("AccountDetail", () => {
-  it("shows the bound person as a card when the queue knows them", () => {
+  // The bound card and the verbs live in `AccountActions` now — see its suite.
+  // What stays this window's job is handing the queue's candidates down.
+  it("passes the queue's candidates to the decision surface", () => {
     binding.q.data = bound();
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
-    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
-    expect(screen.getByText("Bob Park")).toBeInTheDocument();
     expect(screen.getByTestId("account-actions")).toHaveAttribute(
       "data-candidates",
       "1",
     );
-  });
-
-  it("keeps an unknown bound person an honest bare id", () => {
-    binding.q.data = bound({ person_id: "01900000-0000-7000-8000-00000000ffff" });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem({ candidates: [] })} />);
-
-    expect(
-      screen.getByText("01900000-0000-7000-8000-00000000ffff"),
-    ).toBeInTheDocument();
-  });
-
-  it("states an unbound account as a fact", () => {
-    binding.q.data = bound({ person_id: null });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
-
-    expect(screen.getByText(/account is unresolved/i)).toBeInTheDocument();
   });
 
   it("names known verbs and passes unknown reasons through verbatim", () => {
@@ -174,6 +158,27 @@ describe("AccountDetail", () => {
 
     expect(screen.getByText(/first sign-in/i)).toBeInTheDocument();
     expect(screen.queryByText("login-bootstrap")).not.toBeInTheDocument();
+  });
+
+  // The batch mints this binding because the roster lists the account, not
+  // because anything matched it. Same problem as above: a raw `roster-mint`
+  // tells an operator nothing about what they are being asked to confirm.
+  it("names the roster-mint reason", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "roster-mint",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/added from the roster/i)).toBeInTheDocument();
+    expect(screen.queryByText("roster-mint")).not.toBeInTheDocument();
   });
 
   // The comment is the one thing no other record holds — why a human did

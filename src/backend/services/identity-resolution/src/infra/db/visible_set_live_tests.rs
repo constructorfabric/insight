@@ -170,3 +170,85 @@ async fn the_admin_role_confers_no_visibility() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_flat_policy_shows_a_caller_with_no_reports_the_whole_tenant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let leaf = f.person("leaf@flat-policy.test").await?;
+    let stranger = f.person("stranger@flat-policy.test").await?;
+
+    let mut visible = f.visible_flat(leaf, &[leaf, stranger]).await?;
+    visible.sort();
+    let mut expected = vec![leaf, stranger];
+    expected.sort();
+
+    assert_eq!(visible, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_covers_the_tenants_persons_not_every_id_asked_about() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let viewer = f.person("viewer@flat-policy.test").await?;
+    let elsewhere = f.in_another_tenant();
+    let foreign = elsewhere.person("foreign@flat-policy.test").await?;
+    let never_a_person = Uuid::now_v7();
+
+    let visible = f
+        .visible_flat(viewer, &[viewer, foreign, never_a_person])
+        .await?;
+
+    assert_eq!(visible, vec![viewer]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_answers_the_single_target_probe_within_the_tenant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let viewer = f.person("probe-viewer@flat-policy.test").await?;
+    let stranger = f.person("probe-stranger@flat-policy.test").await?;
+    let elsewhere = f.in_another_tenant();
+    let foreign = elsewhere.person("probe-foreign@flat-policy.test").await?;
+
+    assert!(f.can_see_flat(viewer, stranger).await?);
+    assert!(!f.can_see_flat(viewer, foreign).await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_wildcard_grant_confirms_only_persons_of_the_tenant() -> TestResult {
+    // A wildcard grant covers everyone IN THE TENANT. Confirming an id from
+    // another tenant — or one that names nobody — would answer about a person
+    // the grant never reached, and `GET /v1/subchart/{id}` reads this predicate
+    // to decide between a subtree and a 404.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let viewer = f.person("wildcard-viewer@visible-set.test").await?;
+    let ours = f.person("wildcard-ours@visible-set.test").await?;
+    let elsewhere = f.in_another_tenant();
+    let foreign = elsewhere
+        .person("wildcard-foreign@visible-set.test")
+        .await?;
+    f.grant(viewer, None).await?;
+
+    assert!(
+        f.can_see(viewer, ours).await?,
+        "the grant covers the tenant"
+    );
+    assert!(
+        !f.can_see(viewer, foreign).await?,
+        "{foreign} belongs to another tenant"
+    );
+    assert!(
+        !f.can_see(viewer, Uuid::now_v7()).await?,
+        "an id that names nobody is not a person the grant reaches"
+    );
+    Ok(())
+}

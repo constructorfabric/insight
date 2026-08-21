@@ -69,14 +69,16 @@ These fields are added to every record by the connector — do **not** put them 
 |--------|----------------------|-----------|--------|------|-----------|------------|
 | `claude_team_members` | `GET /api/organizations/{org}/members` | Full refresh | — | — | None (plain array) | `{tenant}-{source}-{account.uuid}` |
 | `claude_team_invites` | `GET /api/organizations/{org}/invites` | Full refresh | — | — | None (plain array) | `{tenant}-{source}-{uuid}` |
-| `claude_team_overage_spend` | `GET /api/organizations/{org}/overage_spend_limits` | Full refresh | — | — | PageIncrement (100/page) | `{tenant}-{source}-{account_uuid}` |
+| `claude_team_overage_spend` | `GET /api/organizations/{org}/overage_spend_limits` | Full refresh | — | — | PageIncrement (100/page) | `{tenant}-{source}-{account_uuid}-{YYYY-MM-DD}` |
 | `claude_team_code_metrics` | `GET /api/claude_code/metrics_aggs/users` | Incremental | `metric_date` | P1D | OffsetIncrement (100/page) | `{tenant}-{source}-{date}-{email}` |
+| `claude_team_code_metrics_org` | `GET /api/claude_code/metrics_aggs/users` | Incremental | `metric_date` | P1D | None (envelope, not the `users` array) | `{tenant}-{source}-{date}` |
 
 ### Notes
 
 - **`claude_team_members` / `claude_team_invites`**: full snapshot — only the current state is returned. Historical invite events (accepted/expired) are not recoverable from this endpoint.
-- **`claude_team_overage_spend`**: requires `billing:view` permission on the sessionKey. Returns HTTP 403 if absent; the error handler marks the stream as empty and continues the sync.
+- **`claude_team_overage_spend`**: requires `billing:view` permission on the sessionKey. Returns HTTP 403 if absent; the error handler marks the stream as empty and continues the sync. The key carries the read day because the endpoint reports only the billing month in progress and keeps no history, so one API object is one reading of a seat: keyed on the seat alone Bronze held one row per seat and no closed month could be reproduced, and keyed on seat-and-month it held each month's closing figure but overwrote the readings inside the month, leaving the spend part way through a month nowhere. `snapshot_date` carries the same day in the record. A re-run on the same day replaces its own row rather than adding a second.
 - **`claude_team_code_metrics`**: one API request per day in the backfill window (P1D step). The endpoint is the most expensive (~3–13 s per page due to API-side aggregation). The `metric_date` field is injected by the connector — the API omits it from per-user objects.
+- **`claude_team_code_metrics_org`**: the same request as `claude_team_code_metrics`, but the record is the response envelope rather than its `users` array, so it captures the org-level `pr_attribution` and top-user rankings. One request and one row per day; the per-user array and the paging flag are stripped so the roster is not stored twice. No Silver target — the AI class contracts are per-person, and the vendor keeps no history of these values, so Bronze is where they are retained.
 - **Hard floor `2025-11-24`**: the earliest date for which data exists in the reference org. Going earlier returns empty pages. Operators with older data can override via `start_date`.
 
 ## Silver Targets
@@ -89,6 +91,7 @@ Silver transformations are out of scope for this MVP (Phase 6+). `dbt_select` in
 - **Cloudflare challenge**: the proxy solves the CF challenge during `setSessionKey`, not at startup. First call after a key rotation may take up to 60 s. Insight retries on transient 503/502.
 - **Token rotation**: `proxy_auth_token` rotation requires updating both the K8s Secret here and the `PROXY_AUTH_TOKEN` env on the proxy container. Coordinate via the customer.
 - **One proxy = one org**: the proxy container is bound to a single `CLAUDE_ORG_ID`. Multiple claude organisations require multiple proxy deployments and multiple Insight connector instances.
+- **Reporting lag**: a day keeps being revised for a while after it closes. The daily-metrics streams read up to today and re-read that tail on every run (`lookback_window: P2D`) rather than waiting for it to settle: a revised day returns with a later `_airbyte_extracted_at`, and `ReplacingMergeTree(_version)` keeps it. Reading recent days late instead left them absent until they settled, which reads downstream as no activity rather than as no data (#2682).
 
 ## Validation
 

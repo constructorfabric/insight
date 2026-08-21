@@ -13,7 +13,7 @@ export type LandingDecision =
   | { kind: "wait" }
   /** The zone in the URL stands. */
   | { kind: "keep" }
-  /** A manager landing on bare /portal starts at the org rollup. */
+  /** A viewer with a cohort landing on bare /portal starts at the org rollup. */
   | { kind: "pin-overview" }
   /** The zone is not this viewer's to see — back to route-driven (Person). */
   | { kind: "reset" };
@@ -21,16 +21,16 @@ export type LandingDecision =
 export function landingDecision(args: {
   zone: string | null;
   mgrPending: boolean;
-  isManager: boolean;
+  canSeeOthers: boolean;
   adminPending: boolean;
   isAdmin: boolean;
 }): LandingDecision {
-  const { zone, mgrPending, isManager, adminPending, isAdmin } = args;
+  const { zone, mgrPending, canSeeOthers, adminPending, isAdmin } = args;
 
   if (mgrPending) return { kind: "wait" };
-  if (isManager) return zone == null ? { kind: "pin-overview" } : { kind: "keep" };
+  if (canSeeOthers) return zone == null ? { kind: "pin-overview" } : { kind: "keep" };
 
-  // A non-manager's portal collapses to Person — except Manage, which is
+  // A viewer with nobody to look at collapses to Person — except Manage, which is
   // gated by the admin role, not by having reports. Hold the decision until
   // the role answer is in: resetting first would discard the URL the admin
   // deliberately opened.

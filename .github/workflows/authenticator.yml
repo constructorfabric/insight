@@ -28,6 +28,19 @@ on:
       - "src/ingestion/tests/e2e/lib/api_coverage.py"
       - "docs/components/backend/authenticator/openapi.json"
       - ".github/workflows/authenticator.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/backend/services/authenticator/**"
+      - "src/backend/libs/authenticator-sdk/**"
+      - "deploy/compose/keycloak/**"
+      - "src/ingestion/tools/seed/insight_seed/profiles.py"
+      - "src/ingestion/tools/seed/insight_seed/keycloak_realm.py"
+      - "src/backend/Cargo.toml"
+      - "src/backend/Cargo.lock"
+      - "src/ingestion/tests/e2e/lib/api_coverage.py"
+      - "docs/components/backend/authenticator/openapi.json"
+      - ".github/workflows/authenticator.yml"
   workflow_dispatch:
 
 concurrency:
@@ -61,6 +74,7 @@ jobs:
         with:
           workspaces: src/backend -> target
           key: authenticator-e2e
+          save-if: ${{ github.event_name == 'push' }}
 
       # run-e2e.sh generates the realm through `uv run --project`: the
       # generator is a console script of the seed package, and uv resolves and
@@ -68,6 +82,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           cache-suffix: authenticator-e2e
+          save-cache: ${{ github.event_name == 'push' }}
 
       - name: Run the authenticator e2e suite
         # run-e2e.sh builds the authenticator (release), boots the stack

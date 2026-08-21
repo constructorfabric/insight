@@ -1,0 +1,31 @@
+# Operator-authored role bindings; DDL owned by the create_task_config_tables macro.
+schemas:
+  config.task_field_roles:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: &id001
+        type: string
+      insight_source_id: *id001
+      data_source: *id001
+      field_id: *id001
+      valid_from:
+        type: string
+        format: date-time
+      recorded_at:
+        type: string
+        format: date-time
+      unique_key: *id001
+      role: *id001
+      precedence: &id002
+        type: integer
+      value_unit: *id001
+      unit_multiplier:
+        type: number
+      is_deleted: *id002
+      note: *id001
+      recorded_by: *id001
+      _version:
+        type: string
+        format: date-time

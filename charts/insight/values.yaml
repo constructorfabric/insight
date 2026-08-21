@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.16.14.12-9511b24" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.21.07.58-f865428" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.16.14.12-9511b24" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.21.07.58-f865428" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -282,6 +282,9 @@ clickhouse:
     # user are provisioned by the clickhouse-migrate Hook (apply-ch-migrations
     # -> provision-presentation-access.sh).
     - presentation
+    # Adoption events (#2573). Here rather than in the migration alone because
+    # the presentation_ro grant references it before that migration runs.
+    - product_usage
   # When true (default), a post-install/post-upgrade Hook Job
   # (clickhouse-migrate-job) applies the gold-view migrations
   # (src/ingestion/scripts/migrations/*.sql) + ADR-0007 placeholders against
@@ -517,10 +520,18 @@ analytics:
 # Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
 # Airbyte-only consumer: no gateway route, no platform-config entry (other
 # services must not discover it), ingress restricted by its own NetworkPolicy.
-# Deploy is OFF by default: it costs a PVC and is only useful once a git
-# connector is configured to use it.
+# Deployed by default: every nocode git connector reads its commits, file
+# changes and commit authors through this service, so an instance without it can
+# sync no git source at all. The cost is one PVC (`persistence.size`) on an
+# instance that syncs none — set deploy=false there.
+# Two prerequisites an environment must meet before this renders for it:
+#   * under `credentials.deploymentMode: gitops`, set `proxyToken` (or
+#     pre-create insight-git-cli-proxy-config) — a template-time token would
+#     differ on every sync, so secrets.yaml refuses to generate one;
+#   * the deploy credential must hold a persistentvolumeclaims rule for the
+#     cache claim (test-stand: ci-deployer-rbac.yaml).
 gitCliProxy:
-  deploy: false
+  deploy: true
   replicaCount: 1
   image:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
@@ -545,14 +556,26 @@ gitCliProxy:
   # first install and reused on every upgrade; reconcile hands it to the
   # connectors, so an operator never needs to see or copy it. Set it only to
   # pin a specific value.
+  #
+  # Under `credentials.autoGenerate: false` — which every gitops overlay runs —
+  # the chart emits no Secret at all and this value is unused: pre-create
+  # `existingSecret` below with the key
+  # APP__gears__git_cli_proxy__config__proxy_token, the same contract as
+  # `insight-db-creds`. Never inline the token here in a committed overlay.
   proxyToken: ""
   # Composed by templates/secrets.yaml (carries the bearer token).
   existingSecret: "insight-git-cli-proxy-config"
   networkPolicy:
-    enabled: true
+    # Off by default, as on the authenticator: the /v1 bearer token is the
+    # control, and requiring every deployment to declare where Airbyte runs
+    # before the chart will install is friction the token already covers.
+    # Enable it per deployment — the clone cache serves private source, so
+    # hiding it from the rest of the cluster is worth the one value.
+    enabled: false
     # Namespaces whose pods may call the proxy: the one running Airbyte
-    # connector jobs. Required when deploy=true — the subchart refuses to
-    # render an allow-list that would deny every caller.
+    # connector jobs, which is `airbyte.namespace` above when that is set.
+    # Required whenever enabled=true — the subchart refuses to render an
+    # allow-list that would deny every caller.
     allowedNamespaceLabels:
       - key: kubernetes.io/metadata.name
         values: []
@@ -573,6 +596,14 @@ identityResolution:
   # `global.tenantDefaultId`, idempotently. The person row must already
   # exist in `persons` for that tenant. Empty string disables the runner.
   bootstrapAdminPersonId: ""
+  # The ONE source trusted to say who exists: the persons-seed mints a person for
+  # its accounts even with no address to match on, and the identities console
+  # asks an operator to confirm each one. Empty (the default) mints from an
+  # address only, and enabling it is not undone by disabling it — `persons` is
+  # append-only. A `source_type` as the connectors emit it, and it must be a
+  # source that can report deactivation, or leavers stay minted and queued. See
+  # the identity DESIGN §4.1.
+  rosterSourceType: ""
   # The umbrella generates `insight-identity-resolution-config` with every
   # APP__gears__identity_resolution__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
@@ -587,7 +618,7 @@ identityResolution:
   # Manual run: kubectl create job --from=cronjob/<release>-identity-resolution-seed ...
   seed:
     enabled: true
-    schedule: "30 6 * * *" # daily, after overnight syncs + the 06:00 data-quality run
+    schedule: "*/15 * * * *" # freshness backstop; the pipeline + corrections publish on their own
   # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
   # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
   # over https on `issuer` and trusts its CA from the authn-tls cert Secret.

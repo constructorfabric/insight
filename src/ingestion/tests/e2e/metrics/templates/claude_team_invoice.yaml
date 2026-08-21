@@ -1,0 +1,67 @@
+# Reusable Claude Team invoice records
+# (bronze_claude_team_invoices.claude_team_invoice_lines).
+#
+# Base carries every schema column (unused = null) incl. the 4 _airbyte_* CDK
+# columns. The connector emits two row shapes into one table: an invoice's own
+# row, which carries the invoice's money and no line, and one row per line,
+# which carries only the line's own money. Both bases are here; a test overrides
+# the fields under test.
+#
+# The staging model requires a non-empty unique_key, dates a row by the period
+# its lines charge for (period_start_ts, falling back to invoice_created_ts), and
+# reads a seat price only from seat_unit_amount.
+templates:
+  claude_team_invoice_envelope:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-12-10T00:00:00Z"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: "claude-team-invoices-test"
+    unique_key: null
+    collected_at: "2026-12-10T00:00:00Z"
+    data_source: "insight_claude_team"
+    chain_status: "ok"
+    invoice_id: null
+    invoice_status: "paid"
+    invoice_created_ts: 1796083200
+    invoice_due_date_ts: null
+    invoice_currency: "usd"
+    invoice_total: null
+    invoice_total_excluding_tax: null
+    invoice_num_seats: null
+    invoice_payment_intent: null
+    line_id: null
+    description: null
+    product_name: null
+    tier_label: null
+    category: null
+    is_proration: null
+    amount: null
+    currency: null
+    quantity: null
+    unit_amount: null
+    seat_unit_amount: null
+    period_start_ts: null
+    period_end_ts: null
+
+  # An invoice's own row: its money, and no line. Carries no seat price, so it
+  # must not reach the price the gold layer derives.
+  december_invoice:
+    $ref: "#/templates/claude_team_invoice_envelope"
+    invoice_id: "in_202612"
+    unique_key: "invoice-202612"
+    invoice_payment_intent: "pi_202612"
+    invoice_total: 8300
+    invoice_total_excluding_tax: 8300
+    period_start_ts: 1796083200
+    period_end_ts: 1798761600
+
+  # One line of that invoice. A test sets the category, the tier and the prices.
+  december_line:
+    $ref: "#/templates/claude_team_invoice_envelope"
+    invoice_id: "in_202612"
+    currency: "usd"
+    is_proration: false
+    period_start_ts: 1796083200
+    period_end_ts: 1798761600

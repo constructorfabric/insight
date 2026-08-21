@@ -116,9 +116,11 @@ models:
     description: >
       Source measure observations for the unified metrics runtime, AI cost
       family. One row per (tenant, entity, read day, measure, dimension tuple).
-      extra_usage_usd is the money the vendor billed once a seat exhausted the
-      usage included in its fee; extra_usage_limit_usd is the admin-set ceiling
-      on that spend, and serves only as the utilisation denominator.
+      seat_cost_usd is the invoiced price of the seat itself, from the per-seat
+      amount on the invoice's subscription lines; extra_usage_usd is the money
+      the vendor billed once that seat exhausted the usage included in its fee;
+      extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
+      only as the utilisation denominator.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -239,6 +241,8 @@ models:
                   - assistant_messages
                   - assistant_actions
                   - chat_assistant_conversations
+                  - prs_with_assistant
+                  - prs_total
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -737,7 +741,7 @@ models:
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
-      rows), one row per source (git/ai_usage/collab/task/wiki) plus
+      rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
       hr_cohorts for the peer-membership relation. A TABLE materialized in
       the same gold build as the serving relations, reading the resolution
       snapshot stamped into evidence — so coverage answers for exactly what

@@ -24,14 +24,11 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
-    AccountEvidence, ClickHouseEvidenceReader, EvidenceSnapshot,
+    AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
 
-/// A handle or an address, not a prefix of one: a one-character needle scans
-/// the whole fold to answer with everything.
-const MIN_ACCOUNT_SEARCH_CHARS: usize = 3;
 const DEFAULT_ACCOUNT_SEARCH_LIMIT: u64 = 20;
 const MAX_ACCOUNT_SEARCH_LIMIT: u64 = 100;
 
@@ -397,12 +394,42 @@ async fn apply_correction(
     )
     .await;
 
+    let applied = count_items(&items, OUTCOME_APPLIED);
+    if applied > 0 {
+        // Spawned: the correction is already durable in `persons`, so the
+        // response must not wait on ClickHouse.
+        let config = state.config.clone();
+        tokio::spawn(async move { publish_correction(&config).await });
+    }
+
     Ok(CorrectionResponse {
-        applied: count_items(&items, OUTCOME_APPLIED),
+        applied,
         already_decided: count_items(&items, OUTCOME_ALREADY_DECIDED),
         items,
         new_person_id: None,
     })
+}
+
+/// Publish the corrected log into the snapshot the metrics resolver reads.
+/// Never fails the verb: the runner waits for a busy lock, the lock holder's
+/// quiescence re-check covers rows it raced with, and the next publish is
+/// the catch-up path for everything else.
+async fn publish_correction(config: &crate::config::GearConfig) {
+    use crate::sync_runner::{self, SyncRunError};
+    match sync_runner::run(config, false).await {
+        Ok(outcome) => tracing::info!(?outcome, "persons-sync published the corrected log"),
+        Err(SyncRunError::LockBusy) => tracing::warn!(
+            "publish lock stayed busy past the wait; the correction reaches the resolver with \
+             the next publish"
+        ),
+        Err(SyncRunError::Guard(msg)) => {
+            tracing::warn!(%msg, "persons-sync refused the post-correction publish");
+        }
+        Err(SyncRunError::Failed(e)) => tracing::warn!(
+            error = %format!("{e:#}"),
+            "publishing the correction failed; the resolver snapshot is stale until the next publish"
+        ),
+    }
 }
 
 fn count_items(items: &[ItemResult], wanted: &str) -> usize {
@@ -628,6 +655,20 @@ fn internal(error: &anyhow::Error, message: &str) -> CanonicalError {
     CanonicalError::internal(message).create()
 }
 
+/// The queue cannot be derived: the binding read stopped at its ceiling, so
+/// whether a given account is bound is unknown rather than false. Refusing is
+/// the safe answer — the alternative is a queue of accounts that look unbound
+/// and are not.
+fn bindings_beyond_ceiling() -> CanonicalError {
+    tracing::error!(
+        cap = resolution_repo::MAX_TENANT_BINDINGS,
+        "review queue: the tenant holds more bindings than this surface reads; \
+         refusing to classify accounts whose binding may sit past the ceiling"
+    );
+    CanonicalError::internal("the tenant holds more identity bindings than the review queue reads")
+        .create()
+}
+
 /// Query knobs for the review queue.
 #[derive(Debug, Deserialize)]
 pub struct AttentionParams {
@@ -637,7 +678,8 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` |
+    /// `minted_from_roster` | `no_source_id` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -667,9 +709,10 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
-    /// The journal holds nothing but a login-mint for this person: they exist
-    /// so somebody could sign in, and may duplicate one the roster knows. Not
-    /// a merge target — the history is on the other side.
+    /// The journal holds nothing but an automatic mint for this person — a
+    /// sign-in that needed somebody to enter as, or a roster listing an account
+    /// with no address. They may duplicate one the roster knows, so they are not
+    /// a merge target: the history is on the other side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provisional: bool,
     pub email: Option<String>,
@@ -719,13 +762,18 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// Share of observed accounts per resolution state — the operator-visible match
-/// rate.
+/// How the tenant's observed accounts are split across the resolution states.
+///
+/// Deliberately no person total. A journal-wide count answers "how many ids have
+/// we ever written", which after a merge never falls and after a detach only
+/// rises — so it read as a roster size while measuring something else. A figure
+/// that would have to be explained every time it is read is worse than none.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
+    pub no_source_id: usize,
     pub no_evidence: usize,
     pub excluded: usize,
 }
@@ -736,7 +784,8 @@ pub struct AttentionResponse {
     pub rates: ResolutionRatesResponse,
     /// The evidence read hit its safety cap: the queue and the rates describe
     /// only the first accounts of the tenant, not all of them. Consumers must
-    /// not present these numbers as tenant-wide.
+    /// not present these numbers as tenant-wide. (The binding read cannot be a
+    /// prefix — a partial one would misclassify, so it fails the request.)
     pub truncated: bool,
     /// `limit` cut the item list — more accounts await a decision than are
     /// listed here. Distinct from `truncated`: the rates stay whole-tenant,
@@ -812,6 +861,7 @@ pub async fn attention(
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,
+            no_source_id: review.rates.no_source_id,
             no_evidence: review.rates.no_evidence,
             excluded: review.rates.excluded,
         },
@@ -896,8 +946,9 @@ pub struct AccountMatchResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccountSearchResponse {
     pub items: Vec<AccountMatchResponse>,
-    /// More accounts matched than `limit` allowed — narrow the terms.
-    pub truncated: bool,
+    /// Pass back as `?cursor=` for the next page; absent on the last one. Only
+    /// valid for the query that issued it — narrowing `q` starts over.
+    pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
 
@@ -905,14 +956,29 @@ impl toolkit::api::api_dto::ResponseApiDto for AccountSearchResponse {}
 pub struct AccountSearchParams {
     pub q: Option<String>,
     pub limit: Option<i64>,
+    pub cursor: Option<String>,
 }
 
-/// `GET /v1/resolution/accounts?q=` — find an account by a value it carries,
-/// and say whose it is.
+/// Where the next page of accounts resumes. Opaque on the wire.
+#[derive(Debug, Serialize, Deserialize)]
+struct AccountPageKey {
+    order_label: String,
+    source: String,
+    source_id: String,
+    account_id: String,
+}
+
+impl super::listing::PagePosition for AccountPageKey {
+    const KIND: &'static str = "observed-accounts";
+}
+
+/// `GET /v1/resolution/accounts` — list the observed accounts and say whose
+/// each one is; `?q=` narrows the same list.
 ///
-/// The person search answers "which person is this"; this answers the question
+/// The person listing answers "which person is this"; this answers the question
 /// an operator arrives with when they hold an account instead: a git handle
-/// from a review, an address from a ticket.
+/// from a review, an address from a ticket. Browsing it is bounded by the page,
+/// so an operator can also just look at what the connectors reported.
 pub async fn search_accounts(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -922,29 +988,35 @@ pub async fn search_accounts(
     let tenant = ctx.subject_tenant_id();
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
-    if needle.chars().count() < MIN_ACCOUNT_SEARCH_CHARS {
-        return Err(invalid(
-            "q",
-            &format!("at least {MIN_ACCOUNT_SEARCH_CHARS} characters are required"),
-        ));
-    }
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,
         MAX_ACCOUNT_SEARCH_LIMIT,
     );
+    let resume = account_resume_from(params.cursor.as_deref(), tenant, &needle)?;
 
     let reader = evidence_reader(&state);
-    // Over-fetch by one: the extra row is the truncation probe, never served.
-    let mut found = reader
-        .search(&needle, limit + 1)
+    let page = reader
+        .list(
+            (!needle.is_empty()).then_some(needle.as_str()),
+            resume.as_ref().map(|key| AfterAccount {
+                order_label: &key.order_label,
+                source_type: &key.source,
+                source_id: &key.source_id,
+                account_id: &key.account_id,
+            }),
+            limit,
+        )
         .await
-        .map_err(|e| internal(&e, "failed to search the observed accounts"))?;
-    let truncated = found.len() > usize::try_from(limit).unwrap_or(usize::MAX);
-    if truncated {
-        found.pop();
-    }
+        .map_err(|e| internal(&e, "failed to read the observed accounts"))?;
 
+    let next_cursor = page
+        .more
+        .then(|| next_account_cursor(page.accounts.last(), tenant, &needle))
+        .transpose()?
+        .flatten();
+
+    let found: Vec<AccountEvidence> = page.accounts.into_iter().map(|row| row.evidence).collect();
     let keys: Vec<SourceAccountKey> = found.iter().map(|e| e.account.clone()).collect();
     let bindings = resolution_repo::current_bindings(&state.db, tenant, &keys)
         .await
@@ -994,7 +1066,46 @@ pub async fn search_accounts(
         })
         .collect();
 
-    Ok(Json(AccountSearchResponse { items, truncated }))
+    Ok(Json(AccountSearchResponse { items, next_cursor }))
+}
+
+fn account_resume_from(
+    cursor: Option<&str>,
+    tenant: Uuid,
+    needle: &str,
+) -> Result<Option<AccountPageKey>, CanonicalError> {
+    let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+
+    super::listing::decode_cursor::<AccountPageKey>(cursor, tenant, needle)
+        .map(Some)
+        .map_err(|rejected| invalid("cursor", rejected.message()))
+}
+
+/// The cursor that resumes after the last row served.
+fn next_account_cursor(
+    last: Option<&ListedAccount>,
+    tenant: Uuid,
+    needle: &str,
+) -> Result<Option<String>, CanonicalError> {
+    last.map(|row| {
+        super::listing::encode_cursor(
+            tenant,
+            needle,
+            &AccountPageKey {
+                order_label: row.order_label.clone(),
+                source: row.evidence.account.source_type.clone(),
+                source_id: row.evidence.account.source_id.to_string(),
+                account_id: row.evidence.account.account_id.clone(),
+            },
+        )
+    })
+    .transpose()
+    .map_err(|e| {
+        tracing::error!(error = %e, "failed to issue an account page cursor");
+        CanonicalError::internal("failed to list the observed accounts").create()
+    })
 }
 
 /// `GET /v1/resolution/accounts/{source}/{source_id}/{account_id}` — why this
@@ -1194,6 +1305,8 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
         ItemKind::ProvisionedAtLogin => "provisioned_at_login",
+        ItemKind::MintedFromRoster => "minted_from_roster",
+        ItemKind::NoSourceId => "no_source_id",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -1203,15 +1316,26 @@ fn kind_label(kind: ItemKind) -> &'static str {
 /// tenant, not all of it.
 async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), CanonicalError> {
     let evidence = read_evidence(state).await?;
+    // The whole tenant rather than the observed accounts by name: this asks
+    // about all of them, and a statement's cost grows faster than the number it
+    // names. Bindings for accounts no connector reports any more come back too;
+    // the review only ever looks up the keys it was given.
+    let bindings = resolution_repo::current_bindings_in_tenant(
+        &state.db,
+        tenant,
+        resolution_repo::Ceiling::Bounded(resolution_repo::MAX_TENANT_BINDINGS),
+    )
+    .await
+    .map_err(|e| internal(&e, "failed to read current bindings"))?;
+    // A prefix of the bindings is not a partial answer, it is a wrong one: an
+    // account whose binding sits past the ceiling reads as unbound, and the queue
+    // would offer an operator a correction that overwrites a binding nobody saw.
+    // The evidence half can be a prefix honestly — it decides which accounts are
+    // examined, not what is true of them.
+    if bindings.truncated {
+        return Err(bindings_beyond_ceiling());
+    }
     let truncated = evidence.truncated;
-    let accounts: Vec<SourceAccountKey> = evidence
-        .accounts
-        .iter()
-        .map(|e| e.account.clone())
-        .collect();
-    let bindings = resolution_repo::current_bindings(&state.db, tenant, &accounts)
-        .await
-        .map_err(|e| internal(&e, "failed to read current bindings"))?;
 
     let observed = evidence
         .accounts
@@ -1222,10 +1346,21 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
             username: e.username,
             description: e.description,
             is_closed: e.is_closed,
+            states_binding_id: e.states_binding_id,
         })
         .collect();
 
-    Ok((review_queue::build(observed, &bindings), truncated))
+    // The seed's own map, not one derived from the evidence: an address stays
+    // claimed after the account that carried it closes, and the seed still
+    // attaches new accounts to that person. See `review_queue::build`.
+    let claimed_addresses = seed_repo::latest_email_to_person(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to read claimed addresses"))?;
+
+    Ok((
+        review_queue::build(observed, &bindings.by_account, &claimed_addresses),
+        truncated,
+    ))
 }
 
 /// One hydration read for a queue page: every distinct candidate id, fetched
@@ -1261,4 +1396,26 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
         .accounts()
         .await
         .map_err(|e| internal(&e, "failed to read connector evidence"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
+        // The console groups by this exact string and drops anything it does not
+        // know into a catch-all "needs review" bucket, so a typo here is not a
+        // broken response — it is a queue that quietly stops explaining itself.
+        for (kind, expected) in [
+            (ItemKind::Contested, "contested"),
+            (ItemKind::BindingConflict, "binding_conflict"),
+            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
+            (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoSourceId, "no_source_id"),
+            (ItemKind::NoEvidence, "no_evidence"),
+        ] {
+            assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
+        }
+    }
 }

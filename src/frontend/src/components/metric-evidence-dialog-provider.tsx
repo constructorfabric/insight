@@ -16,6 +16,7 @@ import {
   type EvidenceDialogState,
 } from "@/components/metric-evidence-context";
 import { MetricEvidenceDialog } from "@/components/metric-evidence-dialog";
+import { recordUsageEvent } from "@/telemetry";
 
 type ScopedEvidenceDialogState = EvidenceDialogState & {
   sessionScope: string | null;
@@ -57,6 +58,7 @@ export function MetricEvidenceDialogProvider({
       )
         ? requested!
         : first.selection.metric_key;
+      recordUsageEvent("drill", active);
       setState({
         targets: [first, ...uniqueTargets.slice(1)],
         activeMetricKey: active,

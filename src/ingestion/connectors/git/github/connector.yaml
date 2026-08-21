@@ -21,6 +21,33 @@ type: DeclarativeSource
 # computed nullable string field coalesces with `or ''` — a rendered Jinja
 # `none` under value_type: string stores the literal text "None" as a value.
 
+# GitHub meters REST and GraphQL as two separate 5000/hour budgets, both
+# reported through the same X-RateLimit-* headers. An error handler cannot wait
+# one out: DefaultErrorHandler caps total backoff at 600 seconds and the
+# manifest has no field to raise it. The budget paces requests before they are
+# sent and sleeps until the window resets, which a reset an hour away needs.
+# Matchers split the two budgets by method: GET is REST, POST is GraphQL — a
+# policy added without a method would claim both.
+api_budget:
+  type: HTTPAPIBudget
+  ratelimit_reset_header: X-RateLimit-Reset
+  ratelimit_remaining_header: X-RateLimit-Remaining
+  status_codes_for_ratelimit_hit: [403, 429]
+  policies:
+    - type: FixedWindowCallRatePolicy
+      period: PT1H
+      call_limit: 5000
+      matchers:
+        - method: POST
+          url_base: https://api.github.com
+          url_path_pattern: ^/graphql
+    - type: FixedWindowCallRatePolicy
+      period: PT1H
+      call_limit: 5000
+      matchers:
+        - method: GET
+          url_base: https://api.github.com
+
 definitions:
   # The CDK resolves backoff per requester, not per response filter: the first
   # strategy returning a value wins for every retryable response. X-RateLimit-Reset
@@ -78,7 +105,10 @@ definitions:
         http_codes: [429]
       - type: HttpResponseFilter
         action: RATE_LIMITED
-        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['RATE_LIMITED', 'RATE_LIMIT']) | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
       - type: HttpResponseFilter
         action: FAIL
         http_codes: [401]
@@ -106,7 +136,10 @@ definitions:
         http_codes: [429]
       - type: HttpResponseFilter
         action: RATE_LIMITED
-        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'equalto', 'RATE_LIMITED') | list | length > 0 }}"
+        predicate: "{{ (response.get('errors') or []) | selectattr('type', 'in', ['RATE_LIMITED', 'RATE_LIMIT']) | list | length > 0 }}"
+      - type: HttpResponseFilter
+        action: RATE_LIMITED
+        predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
       - type: HttpResponseFilter
         action: FAIL
         http_codes: [401]
@@ -300,9 +333,16 @@ definitions:
       cursor_datetime_formats:
         - "%Y-%m-%dT%H:%M:%S%z"
       is_client_side_incremental: true
+      # A repository whose last push predates the start date has no commit,
+      # file change or author inside the window, so it is never worth the
+      # clone the proxy streams would spend on it. `pushed_at` is never older
+      # than the newest commit's push, so nothing in the window is lost by
+      # dropping it here. The endpoint offers no date filter, hence the
+      # client-side drop — and the CDK refuses to pair that with a data-feed
+      # stop, so the listing itself is still walked whole.
       start_datetime:
         type: MinMaxDatetime
-        datetime: "1970-01-01"
+        datetime: "{{ config['github_start_date'] }}"
         datetime_format: "%Y-%m-%d"
 
   # Full roster (no pushed_at gate): reviews/comments/issues/CI advance
@@ -622,6 +662,10 @@ streams:
           is_binary: {type: [boolean, "null"]}
           patch: {type: [string, "null"]}
           patch_truncated: {type: [boolean, "null"]}
+          # INVARIANT: bronze column order is the destination's insert order —
+          # a new column appends at the tail.
+          pre_image_oid: {type: [string, "null"]}
+          post_image_oid: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -1230,6 +1274,10 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: &pull_requests_window
               type: DeclarativeStream
               name: pull_requests_window
@@ -1282,9 +1330,12 @@ streams:
                 datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
-                # Stateless sliding window: the child has no cursor of its
-                # own, so parent state would never persist. The data-feed
-                # stop is what bounds pagination at the window edge.
+                # The start date, so a pull request's reviews, commits and
+                # lifecycle events cover the same period the pull request
+                # itself does. Every child of this window carries a cursor and
+                # sets `incremental_dependency`, which is what makes the bound
+                # affordable: this walk is paid once, and later syncs resume
+                # from the stored state rather than re-reading the window.
                 # VERIFIED against the CDK: the data-feed stop halts pagination at the
                 # first record older than the slice start, but the boundary PAGE's tail
                 # still emits — up to one page of pre-start_date rows per partition
@@ -1294,8 +1345,8 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
-                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -1303,6 +1354,20 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the review's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: submitted_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -1416,7 +1481,25 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: *pull_requests_window
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the commit's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: committed_date
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -2023,6 +2106,7 @@ streams:
           assignee_ids: {type: [string, "null"]}
           label_names: {type: [string, "null"]}
           issue_type: {type: [string, "null"]}
+          issue_type_id: {type: [string, "null"]}
           milestone_title: {type: [string, "null"]}
           milestone_number: {type: [integer, "null"]}
           closed_by_login: {type: [string, "null"]}
@@ -2033,6 +2117,7 @@ streams:
           created_at: {type: [string, "null"]}
           updated_at: {type: [string, "null"]}
           closed_at: {type: [string, "null"]}
+          issue_field_values_json: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2124,6 +2209,12 @@ streams:
             path: [issue_type]
             value: "{{ (record.get('type') or {}).get('name') or '' }}"
             value_type: string
+          # The node id, so the snapshot resolves against the type catalogue
+          # without matching on a renameable display name.
+          - type: AddedFieldDefinition
+            path: [issue_type_id]
+            value: "{{ (record.get('type') or {}).get('node_id') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [milestone_title]
             value: "{{ ((record.get('milestone') or {}).get('title') or '')[:1024] }}"
@@ -2152,6 +2243,13 @@ streams:
           - type: AddedFieldDefinition
             path: [body]
             value: "{{ (record.get('body') or '')[:2048] }}"
+            value_type: string
+          # Current values of the organization's native issue fields, as JSON.
+          # A field set at creation and never changed produces no timeline
+          # event, so this snapshot is the only place its value is ever stated.
+          - type: AddedFieldDefinition
+            path: [issue_field_values_json]
+            value: "{{ (record.get('issue_field_values') or []) | tojson }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -2281,6 +2379,240 @@ streams:
             path: [unique_key]
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
+
+  # ── Native issue fields (GitHub GraphQL) ────────────────────────────────
+  # The organization's own issue-field catalogue: every field an issue can
+  # carry, its data type, and — for the select types — the options it admits.
+  # A timeline event names the field it changed by node id; without this
+  # catalogue that id resolves to nothing, and an operator binding a field to
+  # a metric role has no list of real identifiers to bind against.
+  #
+  # Organization-scoped, so one query per configured organization. The union
+  # has no interface exposing `id`/`name` in common, so every member type is
+  # spelled out; a type absent from this list is skipped by the extractor
+  # rather than failing the query.
+  - type: DeclarativeStream
+    name: issue_fields
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          org: {type: [string, "null"]}
+          field_id: {type: [string, "null"]}
+          field_database_id: {type: [string, "null"]}
+          field_name: {type: [string, "null"]}
+          data_type: {type: [string, "null"]}
+          is_multi: {type: [boolean, "null"]}
+          options_json: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                issueFields(first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    __typename
+                    ... on IssueFieldSingleSelect { id fullDatabaseId name dataType options { id name } }
+                    ... on IssueFieldMultiSelect { id fullDatabaseId name dataType options { id name } }
+                    ... on IssueFieldNumber { id fullDatabaseId name dataType }
+                    ... on IssueFieldDate { id fullDatabaseId name dataType }
+                    ... on IssueFieldText { id fullDatabaseId name dataType }
+                  }
+                }
+              }
+            }
+          variables:
+            org: "{{ stream_partition.org }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, organization, issueFields, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['data']['organization']['issueFields']['pageInfo']['endCursor'] }}"
+          stop_condition: "{{ not response['data']['organization']['issueFields']['pageInfo']['hasNextPage'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [org]
+            value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_name]
+            value: "{{ record.get('name') or '' }}"
+            value_type: string
+          # The REST issue payload names a field by its numeric id while the
+          # timeline names it by node id. Carrying both is what lets a snapshot
+          # value and a change event resolve to one field.
+          - type: AddedFieldDefinition
+            path: [field_database_id]
+            value: "{{ record.get('fullDatabaseId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [data_type]
+            value: "{{ record.get('dataType') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_multi]
+            value: "{{ record.get('__typename') == 'IssueFieldMultiSelect' }}"
+            value_type: boolean
+          # Select options as JSON, so a value seen in history resolves to the
+          # option it names without a second call.
+          - type: AddedFieldDefinition
+            path: [options_json]
+            value: "{{ (record.get('options') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_field:{{ (record.get('id') or '') | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [fullDatabaseId]
+          - [name]
+          - [dataType]
+          - [options]
+
+  # ── Native issue types (GitHub GraphQL) ─────────────────────────────────
+  # The organization's issue-type catalogue. The REST issue payload states the
+  # type by display name only, so without this the type has no stable key and
+  # a rename orphans every mapping built on it.
+  - type: DeclarativeStream
+    name: issue_types
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          org: {type: [string, "null"]}
+          issue_type_id: {type: [string, "null"]}
+          issue_type_name: {type: [string, "null"]}
+          description: {type: [string, "null"]}
+          is_enabled: {type: [boolean, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                issueTypes(first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { id name description isEnabled }
+                }
+              }
+            }
+          variables:
+            org: "{{ stream_partition.org }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, organization, issueTypes, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['data']['organization']['issueTypes']['pageInfo']['endCursor'] }}"
+          stop_condition: "{{ not response['data']['organization']['issueTypes']['pageInfo']['hasNextPage'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [org]
+            value: "{{ stream_partition.org }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [issue_type_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [issue_type_name]
+            value: "{{ record.get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('description') or '')[:1024] }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_enabled]
+            value: "{{ record.get('isEnabled') }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:issue_type:{{ (record.get('id') or '') | replace(':', '%3A') }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase originals stay out of bronze.
+        field_pointers:
+          - [id]
+          - [name]
+          - [isEnabled]
 
   # ── Actions workflow runs (GitHub API) ──────────────────────────────────
   # The `created` range goes in a plain request parameter: start_time_option
@@ -2650,6 +2982,10 @@ streams:
             partition_field: deployment_id
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # deployment since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream:
               type: DeclarativeStream
               name: deployments_window
@@ -2699,8 +3035,10 @@ streams:
                 datetime_format: "%Y-%m-%dT%H:%M:%SZ"
                 cursor_datetime_formats:
                   - "%Y-%m-%dT%H:%M:%S%z"
-                # Stateless sliding window; data-feed stop bounds the
-                # newest-first pagination at the window edge.
+                # The start date, so a deployment's outcome covers the same
+                # period the deployment does. The child carries a cursor and
+                # sets `incremental_dependency`, so this walk is paid once and
+                # later syncs resume from the stored state.
                 # VERIFIED against the CDK: the data-feed stop halts pagination at the
                 # first record older than the slice start, but the boundary PAGE's tail
                 # still emits — up to one page of pre-start_date rows per partition
@@ -2710,8 +3048,8 @@ streams:
                 is_data_feed: true
                 start_datetime:
                   type: MinMaxDatetime
-                  datetime: "{{ format_datetime(now_utc() - duration('P30D'), '%Y-%m-%dT%H:%M:%SZ') }}"
-                  datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+                  datetime: "{{ config['github_start_date'] }}"
+                  datetime_format: "%Y-%m-%d"
               transformations:
                 - type: AddFields
                   fields:
@@ -2719,6 +3057,20 @@ streams:
                       path: [repo_full_name]
                       value: "{{ stream_partition.repo_full_name }}"
                       value_type: string
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the status's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: created_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -2861,7 +3213,25 @@ streams:
             partition_field: pull_number
             extra_fields:
               - [repo_full_name]
+            # Without this the parent cursor never persists, and every
+            # pull request since the start date is re-walked — one call each —
+            # on every sync.
+            incremental_dependency: true
             stream: *pull_requests_window
+    incremental_sync:
+      # A cursor of its own is what lets the parent's state persist
+      # (`incremental_dependency` above): the event's own timestamp, so a later sync
+      # resumes instead of re-reading everything since the start date.
+      type: DatetimeBasedCursor
+      cursor_field: event_at
+      datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S%z"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
     transformations:
       - type: AddFields
         fields: *standard_fields
@@ -2970,9 +3340,14 @@ streams:
           target_id: {type: [integer, "null"]}
           label_name: {type: [string, "null"]}
           state_reason: {type: [string, "null"]}
+          field_id: {type: [string, "null"]}
           field_name: {type: [string, "null"]}
           prev_value: {type: [string, "null"]}
           new_value: {type: [string, "null"]}
+          prev_value_id: {type: [string, "null"]}
+          new_value_id: {type: [string, "null"]}
+          prev_options_json: {type: [string, "null"]}
+          new_options_json: {type: [string, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2998,15 +3373,16 @@ streams:
                       ... on UnlabeledEvent { id createdAt actor { login ... on User { databaseId } } label { name } }
                       ... on ClosedEvent { id createdAt actor { login ... on User { databaseId } } stateReason }
                       ... on ReopenedEvent { id createdAt actor { login ... on User { databaseId } } }
-                      ... on IssueTypeChangedEvent { id createdAt actor { login ... on User { databaseId } } issueType { name } prevIssueType { name } }
+                      ... on IssueTypeChangedEvent { id createdAt actor { login ... on User { databaseId } } issueType { id name } prevIssueType { id name } }
                       ... on IssueFieldChangedEvent {
                         id createdAt actor { login ... on User { databaseId } } previousValue newValue
+                        previousOptions { name } newOptions { name }
                         issueField {
-                          ... on IssueFieldSingleSelect { name }
-                          ... on IssueFieldMultiSelect { name }
-                          ... on IssueFieldDate { name }
-                          ... on IssueFieldNumber { name }
-                          ... on IssueFieldText { name }
+                          ... on IssueFieldSingleSelect { id name }
+                          ... on IssueFieldMultiSelect { id name }
+                          ... on IssueFieldDate { id name }
+                          ... on IssueFieldNumber { id name }
+                          ... on IssueFieldText { id name }
                         }
                       }
                       ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login ... on User { databaseId } } previousStatus status }
@@ -3168,8 +3544,14 @@ streams:
             path: [state_reason]
             value: "{{ record.get('stateReason') or '' }}"
             value_type: string
-          # The changed field's own name for a native issue-field edit; the
-          # type and board-status events name their own field in the mapping.
+          # The changed field's own identity for a native issue-field edit. The
+          # node id is the stable key a rename cannot break; the name is kept
+          # for humans. Type and board-status events name their own field in
+          # the mapping and leave both empty.
+          - type: AddedFieldDefinition
+            path: [field_id]
+            value: "{{ (record.get('issueField') or {}).get('id') or '' }}"
+            value_type: string
           - type: AddedFieldDefinition
             path: [field_name]
             value: "{{ (record.get('issueField') or {}).get('name') or '' }}"
@@ -3183,6 +3565,28 @@ streams:
             path: [new_value]
             value: >-
               {{ record.get('newValue') or record.get('status') or (record.get('issueType') or {}).get('name') or '' }}
+            value_type: string
+          # Identifier counterparts, where the vendor has one. Only the issue
+          # type carries an id on both sides today; board status is free text
+          # and native field values are scalars.
+          - type: AddedFieldDefinition
+            path: [prev_value_id]
+            value: "{{ (record.get('prevIssueType') or {}).get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [new_value_id]
+            value: "{{ (record.get('issueType') or {}).get('id') or '' }}"
+            value_type: string
+          # A multi-select change states its whole option set on both sides and
+          # says nothing in previousValue/newValue, so dropping these would
+          # record the event with an empty before and after.
+          - type: AddedFieldDefinition
+            path: [prev_options_json]
+            value: "{{ (record.get('previousOptions') or []) | map(attribute='name') | list | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [new_options_json]
+            value: "{{ (record.get('newOptions') or []) | map(attribute='name') | list | tojson }}"
             value_type: string
           - type: AddedFieldDefinition
             path: [unique_key]
@@ -3203,6 +3607,8 @@ streams:
           - [prevIssueType]
           - [previousValue]
           - [newValue]
+          - [previousOptions]
+          - [newOptions]
           - [previousStatus]
           - [status]
     # Formal cursor: no request option is injected and nothing is filtered, so
@@ -3272,9 +3678,12 @@ spec:
       git_proxy_url:
         type: string
         description: >-
-          Base URL of the git-cli-proxy service (cluster-internal, e.g.
-          http://insight-git-cli-proxy:8085). No default: a wrong or absent
-          value must fail the check, not fall back somewhere.
+          Base URL of the git-cli-proxy service. Cluster-internal and
+          namespace-qualified, because the connector pod resolving it runs in
+          the Airbyte namespace rather than the proxy's, e.g.
+          http://insight-git-cli-proxy.insight.svc.cluster.local:8084. No
+          default: a wrong or absent value must fail the check, not fall back
+          somewhere.
         title: Git Proxy URL
         order: 4
       git_proxy_token:
@@ -3307,6 +3716,8 @@ metadata:
     pull_request_diff_stats: false
     issues: false
     projects_v2: false
+    issue_fields: false
+    issue_types: false
     workflow_runs: false
     deployments: false
     deployment_statuses: false

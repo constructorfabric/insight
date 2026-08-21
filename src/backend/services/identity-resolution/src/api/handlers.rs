@@ -123,6 +123,7 @@ async fn visible_person_ids(
             person_id,
             &state.config.org_chart_source_type,
             None,
+            state.config.visibility_policy,
         )
         .await
         .map_err(|e| {

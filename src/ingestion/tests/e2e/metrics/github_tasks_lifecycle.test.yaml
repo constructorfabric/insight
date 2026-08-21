@@ -1,0 +1,102 @@
+spec_version: 1
+description: >
+  Task Delivery - resolution time and reopen rate for GITHUB, both read from a
+  history the connector never received.
+
+  This fixture pins the part of the ingest that replaces the Rust enrich. A
+  GitHub timeline records changes, so an issue's creation is not in it: the
+  staging model synthesises a creation marker from the snapshot, and gold reads
+  that marker as `created_at`. Nothing else supplies it.
+
+  Both issues are created on 2026-03-01 and their first timeline event is
+  weeks later. Resolution time is therefore counted from creation, not from
+  the first thing that happened to be recorded — if the marker were missing or
+  the model fell back to the earliest event, the same data would report roughly
+  zero and look entirely plausible.
+
+  The second issue closes on the 5th, reopens on the 10th and closes again on
+  the 25th. That is two closures, one of them undone inside a fortnight, so the
+  reopen rate is one in two. Reconstructing it requires folding the state
+  history rather than reading the snapshot, which only knows the issue is
+  closed now.
+
+  Resolution is a median over the closures inside the window, and only the
+  25th of March closes land in it.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    - $ref: templates/github_task.yaml#/templates/role_state
+    - $ref: templates/github_task.yaml#/templates/role_assignees
+    - $ref: templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: templates/github_task.yaml#/templates/value_open
+    - $ref: templates/github_task.yaml#/templates/value_closed_completed
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  bronze_github.issue_types:
+    - $ref: templates/github_task.yaml#/templates/issue_type_task
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    # created the 1st, closed the 25th -> 24 days
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
+        created_at: "2026-03-01T09:00:00Z", closed_at: "2026-03-25T09:00:00Z" }
+    # created the 1st, closed the 5th, reopened the 10th, closed again the 25th
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
+        created_at: "2026-03-01T09:00:00Z", closed_at: "2026-03-25T09:00:00Z" }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1003, event_at: "2026-03-25T09:00:00Z" }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2a, event_id: CE_2a, item_number: 2, actor_id: 1003, event_at: "2026-03-05T09:00:00Z" }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2b, event_id: RE_2, item_number: 2, actor_id: 1003, event_at: "2026-03-10T09:00:00Z", event_type: ReopenedEvent, state_reason: "" }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2c, event_id: CE_2c, item_number: 2, actor_id: 1003, event_at: "2026-03-25T09:00:00Z" }
+
+cases:
+  - name: resolution counted from the synthesised creation marker
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - { metric_key: tasks.closed, views: [{ view: period }] }
+          - { metric_key: tasks.resolution_time, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 2 }
+      # 2026-03-01 to 2026-03-25 is 24 days. A model reading the first recorded
+      # event instead of the creation marker would report about zero here.
+      - metric: tasks.resolution_time
+        view: period
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) > 23.5 && double(v.value) < 24.5)"
+
+  - name: reopen rate folded out of the state history
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-03-01", to: "2026-03-31" }
+        metrics:
+          - { metric_key: tasks.reopen_rate, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      # Three closures across the two issues — one on the 5th, two on the 25th —
+      # and exactly one of them undone within a fortnight.
+      - metric: tasks.reopen_rate
+        view: period
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) > 33.0 && double(v.value) < 34.0)"

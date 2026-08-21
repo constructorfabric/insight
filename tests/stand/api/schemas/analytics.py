@@ -548,6 +548,19 @@ class SchemaStatus(StrEnum):
     unchecked = 'unchecked'
 
 
+class TelemetryRecord(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    context_app_name: str | None = None
+    context_app_version: str | None = None
+    context_session_id: str | None = None
+    data: Any | None = None
+    name: str | None = None
+    time_sent: int | None = Field(None, description='Epoch milliseconds on the same clock: when the batch was flushed.')
+    time_triggered: int | None = Field(None, description="Epoch milliseconds on the browser's clock: when the event happened.")
+
+
 class TimeseriesPointDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -569,6 +582,74 @@ class UpdateSavedQueryRequest(BaseModel):
     description: str | None = None
     name: str | None = None
     sql: str | None = None
+
+
+class UsageConfigResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    enabled: bool = Field(..., description='Whether this instance records usage at all.')
+
+
+class UsageDay(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    day: str
+    visitors: int = Field(..., ge=0)
+    visits: int = Field(..., ge=0)
+
+
+class UsageEvent(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    event_name: str
+    opens: int = Field(..., ge=0)
+    people: int = Field(..., ge=0)
+    target: str
+
+
+class UsageIngestRequest(BaseModel):
+    """
+    SDK v2 body. Fields shared by every record are hoisted out of them into
+    `meta`, so a record carries only what differs.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    meta: TelemetryRecord | None = None
+    records: list[TelemetryRecord] | None = None
+
+
+class UsagePage(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    path: str
+    views: int = Field(..., ge=0)
+    visitors: int = Field(..., ge=0)
+
+
+class UsagePerson(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str = Field(..., description='Empty when the visitor has not been mirrored into the identity rows yet.')
+    last_seen: str
+    page_views: int = Field(..., ge=0)
+    person_id: str
+    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+    visits: int = Field(..., ge=0)
+
+
+class UsageTotals(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    page_views: int = Field(..., ge=0)
+    visitors: int = Field(..., ge=0)
+    visits: int = Field(..., ge=0)
 
 
 class ValueTransform(BaseModel):
@@ -638,6 +719,7 @@ class MetricDefinitionView(BaseModel):
     last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).")
     metric_key: str
     origin: MetricOrigin = Field(..., description='`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as "never measured" for custom metrics.')
+    revision_window_days: int | None = Field(None, description='How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means "settles on arrival", not\n"revised forever". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.', ge=0)
     schema_error_code: MetricSchemaErrorCode | None = None
     schema_status: SchemaStatus
     short_label: str | None = Field(None, description='Compact label for dense surfaces; absent when the full label is\nalready compact enough.')
@@ -751,6 +833,19 @@ class TimeseriesDto(BaseModel):
     rank: int | None = Field(None, ge=0)
     remainder: bool | None = None
     total: float | None
+
+
+class UsageSummaryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    by_day: list[UsageDay]
+    by_event: list[UsageEvent]
+    by_page: list[UsagePage]
+    by_person: list[UsagePerson]
+    since: str
+    totals: UsageTotals
+    until: str
 
 
 class CustomMetric(BaseModel):

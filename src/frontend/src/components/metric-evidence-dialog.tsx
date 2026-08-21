@@ -11,6 +11,11 @@ import { sessionAuthorizationScope } from "@/auth/session-scope";
 import { useAuth } from "@/auth/use-auth";
 import type { EvidenceDialogState } from "@/components/metric-evidence-context";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
+import {
+  SOURCE_DIMENSION,
+  withGitSourceDimension,
+} from "@/lib/metrics/git-links";
+import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,7 +65,16 @@ export function MetricEvidenceDialog({
     ) ??
     state?.targets[0] ??
     null;
-  const selection = activeTarget?.selection ?? null;
+  // INVARIANT: the catalog decides whether `source` may be asked for, so the
+  // read waits for it — resolving later would change the selection mid-dialog
+  // and refetch every row.
+  const declaredDimensions = useDeclaredMetricDimensions();
+  const selection = activeTarget
+    ? withGitSourceDimension(
+        activeTarget.selection,
+        declaredDimensions.byMetricKey?.get(activeTarget.selection.metric_key)
+      )
+    : null;
   const query = useInfiniteQuery({
     queryKey: ["metric-drilldown", sessionScope, selection],
     queryFn: ({ pageParam, signal }) => {
@@ -72,7 +86,10 @@ export function MetricEvidenceDialog({
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
-    enabled: sessionScope != null && selection != null,
+    enabled:
+      sessionScope != null &&
+      selection != null &&
+      !declaredDimensions.isPending,
     retry: (failureCount, error) =>
       failureCount < 1 &&
       (!(error instanceof AnalyticsApiError) || error.status >= 500),
@@ -83,7 +100,11 @@ export function MetricEvidenceDialog({
     [pages]
   );
   const columns = useMemo(() => {
-    const columns = query.data?.pages[0]?.columns ?? [];
+    // `source` rides along purely to back a link (see withGitSourceDimension) —
+    // it is not a column anyone asked to see.
+    const columns = (query.data?.pages[0]?.columns ?? []).filter(
+      (column) => column.key !== SOURCE_DIMENSION
+    );
     const order = new Map([
       ["ref", 0],
       ["title", 1],
@@ -155,14 +176,19 @@ export function MetricEvidenceDialog({
   }
 
   async function exportRows(format: "csv" | "xlsx") {
-    if (!selection) return;
+    // INVARIANT: the export carries the caller's OWN selection, never the one
+    // widened for links. `source` rides along only so a row can be linked, and
+    // it is hidden from the table — exporting it would put a column in the file
+    // that is not on the screen it came from.
+    const exported = activeTarget?.selection;
+    if (!exported) return;
     exportController.current?.abort();
     const controller = new AbortController();
     exportController.current = controller;
     setExporting(true);
     setExportFailure(null);
     try {
-      await downloadMetricDrilldown(selection, format, controller.signal);
+      await downloadMetricDrilldown(exported, format, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         setExportFailure(
@@ -343,10 +369,13 @@ export function MetricEvidenceDialog({
               // INVARIANT: remounts per metric — expansion state is the
               // table's and must not carry across.
               key={activeMetricKey}
+              metricKey={activeMetricKey}
               rows={visibleRows}
               columns={columns}
               sort={sort}
-              onSortChange={(key) => setSort((current) => nextSort(current, key))}
+              onSortChange={(key) =>
+                setSort((current) => nextSort(current, key))
+              }
               fetchNextPage={fetchNextPage}
               hasNextPage={hasNextPage && !pageLimitReached}
               isFetchingNextPage={isFetchingNextPage}

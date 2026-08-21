@@ -132,6 +132,15 @@ function withZone(iso: string): string {
   return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
 }
 
+/**
+ * The instant's own UTC clock, for a surface whose other dates are UTC buckets.
+ * Dropping the zone is what does it: a date-time with no offset is local time
+ * per spec, so the UTC digits render unshifted.
+ */
+export function formatUtcClock(iso: string, pattern = "d MMM"): string {
+  return formatDate(iso.replace(" ", "T").replace(/Z$/i, ""), pattern);
+}
+
 /** "1.0k" reads worse than "1k" on an axis. */
 function trimTrailingZero(s: string): string {
   return s.endsWith(".0") ? s.slice(0, -2) : s;

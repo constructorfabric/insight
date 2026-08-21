@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AttentionItem } from "@/api/identity-client";
-import { CopyValueButton } from "@/components/copy-value-button";
+import type { AttentionItem, PersonSummary } from "@/api/identity-client";
 import { AccountDetail } from "@/components/portal/account-detail";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,10 +13,28 @@ import {
 } from "@/components/ui/dialog";
 import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
 
+/**
+ * A row this window can open.
+ *
+ * `candidates` is a QUEUE concept — the persons the evidence says could own the
+ * account, which is a question only an undecided account has. The surfaces that
+ * list settled accounts have no such question, so they carry `holder` instead:
+ * the card of whoever holds it, which the binding read answers with an id alone.
+ * Without that channel those surfaces had to pass the holder AS a candidate, and
+ * the window then offered to bind the account to the person already holding it.
+ * That offer belongs in the queue: re-asserting a binding the resolver made is
+ * the confirm act, and the accounts it matters for are queued for exactly that.
+ * Here it either changed nothing at all (the binding was already an operator's)
+ * or only flipped a badge.
+ */
+export interface CaseRow extends AttentionItem {
+  holder?: PersonSummary | null;
+}
+
 /** What the open case keeps when the list under it moves (see below). */
 interface HeldCase {
   acct?: string;
-  item?: AttentionItem;
+  item?: CaseRow;
   at?: number;
 }
 
@@ -39,13 +56,17 @@ export function CaseDialog({
   acct,
   items,
   ordered,
+  bindTo,
   onSelect,
   onClose,
 }: {
   acct: string | undefined;
-  items: AttentionItem[];
+  items: CaseRow[];
   /** Account keys in the order the queue renders them. */
   ordered: string[];
+  /** The person the surface behind this window has open, when it has one:
+   *  binding to them is then one press rather than a search. */
+  bindTo?: PersonSummary | null;
   onSelect: (key: string) => void;
   onClose: () => void;
 }) {
@@ -99,10 +120,10 @@ export function CaseDialog({
       <DialogContent
         ref={popupRef}
         className="flex h-[85vh] flex-col gap-4 sm:max-w-3xl"
-        // Focus the window itself. The default first-tabbable is the header's
-        // copy control ("Copy <account id>" — the wrong first thing to hear),
-        // and `initialFocus={false}` does not move focus AT ALL, stranding it
-        // in the aria-hidden page behind the dialog.
+        // Focus the window itself, not its first tabbable — that is a verb, and
+        // a decision should not be one keypress from arriving. `initialFocus={false}`
+        // is not the alternative: it does not move focus AT ALL, stranding it in
+        // the aria-hidden page behind the dialog.
         tabIndex={-1}
         initialFocus={popupRef}
       >
@@ -114,15 +135,6 @@ export function CaseDialog({
             <span className="truncate font-mono text-xs select-text">
               {ref?.source} · {ref?.account_id}
             </span>
-            {ref ? (
-              <CopyValueButton
-                value={ref.account_id}
-                title={t("identities.detail.copy_account_id")}
-                copyLabel={t("common.copy")}
-                copiedLabel={t("common.copied")}
-                errorMessage={t("common.copy_failed")}
-              />
-            ) : null}
           </DialogDescription>
         </DialogHeader>
         {/* Keyed by the account: the body holds per-account state (a verb's
@@ -134,6 +146,13 @@ export function CaseDialog({
             accountRef={ref}
             queueItem={queueItem}
             observed={observed}
+            holder={queueItem?.holder ?? null}
+            bindTo={bindTo}
+            // A decided account has nothing left to answer here: its candidate
+            // list and its binding are both reads the server has moved past.
+            // The surface behind re-reads (see `useCorrection`), so handing the
+            // window back shows the new state instead of the one just replaced.
+            onDecided={onClose}
           />
         ) : null}
         {/* Working a backlog is a conveyor: the next case is one press away,

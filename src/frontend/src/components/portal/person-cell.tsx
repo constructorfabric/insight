@@ -4,9 +4,9 @@
  * identity-console surface (queue candidates, detail panel, picker) so the
  * same person always reads the same way.
  *
- * Field precedence mirrors the backend card: `display_name`, else email, else
- * a source-native username — a git-only identity is recognisable by its
- * handle. A `terminated` status is marked so nobody merges INTO a leaver by
+ * Field precedence mirrors the backend card: `display_name`, else a
+ * source-native username, else email — a git-only identity is recognisable
+ * by its handle, and a generated address is not what anybody calls them. A `terminated` status is marked so nobody merges INTO a leaver by
  * accident.
  *
  * A person minted at a first sign-in is marked wherever they appear: the
@@ -24,6 +24,12 @@ import type { PersonSummary } from "@/api/identity-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { getInitials } from "@/lib/insight/get-initials";
 import { cn } from "@/lib/utils";
@@ -67,10 +73,31 @@ export function PersonCell({
           >
             {name}
           </span>
+          {/* One word on the badge, the warning behind it: a badge never wraps
+              and never shrinks, so a sentence in one pushes the name out of a
+              narrow column and spills across the row. The trigger takes a tab
+              stop of its own on purpose — this mark is what says a person is
+              the wrong side of a merge, and a hover-only carrier tells a
+              keyboard reader nothing. */}
           {person.provisional ? (
-            <Badge variant="outline" className="font-normal">
-              {t("identities.person.provisional")}
-            </Badge>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Badge
+                      variant="outline"
+                      className="cursor-help font-normal"
+                      tabIndex={0}
+                    />
+                  }
+                >
+                  {t("identities.person.provisional")}
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {t("identities.person.provisional_hint")}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           ) : null}
           {person.status?.trim().toLowerCase() === TERMINATED ? (
             <Badge

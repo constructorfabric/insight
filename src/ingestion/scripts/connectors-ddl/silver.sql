@@ -62,6 +62,37 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_dev_usage
     `source` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
+    `_version` Int64,
+    `seat_status` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_ai_invoice
+(
+    `insight_tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `invoice_id` Nullable(String),
+    `line_id` Nullable(String),
+    `tool` String,
+    `invoice_status` Nullable(String),
+    `chain_status` Nullable(String),
+    `category` Nullable(String),
+    `tier_label` Nullable(String),
+    `is_proration` UInt8,
+    `currency` String,
+    `period_month` Date,
+    `amount_cents` Nullable(Int64),
+    `seat_unit_cents` Nullable(Int64),
+    `seat_quantity` Nullable(Int64),
+    `invoice_net_cents` Nullable(Int64),
+    `invoice_metrics_json` String,
+    `source` String,
+    `data_source` Nullable(String),
+    `collected_at` Nullable(DateTime64(3)),
     `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)
@@ -86,6 +117,30 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_overage
     `is_over_limit` Nullable(UInt8),
     `is_enabled` Nullable(UInt8),
     `overage_metrics_json` String,
+    `source` String,
+    `data_source` Nullable(String),
+    `collected_at` Nullable(DateTime64(3)),
+    `_version` Int64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_ai_overage_daily
+(
+    `insight_tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` String,
+    `email` Nullable(String),
+    `account_id` Nullable(String),
+    `snapshot_date` Date,
+    `period_month` Date,
+    `tool` String,
+    `seat_tier` Nullable(String),
+    `currency` String,
+    `credit_limit_cents` Nullable(UInt32),
+    `used_amount_cents` UInt32,
     `source` String,
     `data_source` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
@@ -395,7 +450,9 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes
     `source_type` String,
     `data_source` String,
     `_version` Int64,
-    `_airbyte_extracted_at` DateTime64(3)
+    `_airbyte_extracted_at` DateTime64(3),
+    `pre_image_oid` Nullable(String),
+    `post_image_oid` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

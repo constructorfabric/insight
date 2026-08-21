@@ -83,6 +83,17 @@ export const ZONES: readonly Zone[] = [
 ];
 
 /** The zone a URL names, or undefined for an id no longer in the rail. */
+export function lensSlug(lens: string): string {
+  return lens
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function lensBySlug(direction: Direction, slug: string): string | undefined {
+  return direction.lenses.find((lens) => lensSlug(lens) === slug);
+}
+
 export function zoneById(id: string | null): Zone | undefined {
   if (!id) return undefined;
   return ZONES.find((z) => z.id === id);
@@ -275,6 +286,24 @@ export const PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "employees", label: "Employees", icon: Fingerprint },
 ];
 
+/**
+ * The same two views under names a flat organisation can use: there is no
+ * employees-versus-roster distinction to draw, and no job titles to cut a
+ * median by, so that entry is absent rather than empty.
+ *
+ * INVARIANT: the ids match {@link PEOPLE_ITEMS} — the pane routes on them, so a
+ * new People view has to be named for both shapes rather than one.
+ */
+const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
+  { id: "roster", label: "Overview", icon: LayoutGrid },
+  { id: "employees", label: "Roster", icon: Users },
+];
+
+/** The People pane for this deployment's shape. */
+export function peopleItemsFor(isFlat: boolean): readonly PaneItem[] {
+  return isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
+}
+
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
 /** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
@@ -291,7 +320,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "group-mgmt", label: "Group management", icon: Users, readiness: "unbuilt" },
   { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3, readiness: "unbuilt" },
   { id: "data-health", label: "Data health", icon: ShieldCheck },
-  { id: "platform-usage", label: "Platform usage", icon: Activity, readiness: "unbuilt" },
+  { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
   { id: "mcp", label: "MCP servers", icon: Server, readiness: "unbuilt" },
   { id: "config", label: "Config & setup", icon: Settings2, readiness: "unbuilt" },
   { id: "whats-new", label: "What's new", icon: Megaphone },

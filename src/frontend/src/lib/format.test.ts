@@ -6,6 +6,7 @@ import {
   formatMetricValue,
   formatPp,
   formatUtcAge,
+  formatUtcClock,
   formatUtcInstant,
   metricDisplayUnit,
 } from "@/lib/format";
@@ -57,6 +58,13 @@ describe("small formatters", () => {
 
   // TZ-independent on purpose: a zone-less identity timestamp must name the
   // same instant as its explicit-UTC spelling in EVERY runner timezone.
+  it("formatUtcClock shows the instant's own UTC clock, not the reader's", () => {
+    // The usage page buckets by UTC day, so a timestamp beside those buckets
+    // has to read in the same zone or one event carries two dates.
+    expect(formatUtcClock("2026-08-16 16:46:32.000", "d MMM HH:mm")).toBe("16 Aug 16:46");
+    expect(formatUtcClock("2026-08-16T16:46:32Z", "d MMM HH:mm")).toBe("16 Aug 16:46");
+  });
+
   it("formatUtcInstant reads a zone-less timestamp as UTC, not local", () => {
     expect(formatUtcInstant("2026-08-01T10:15:00.000000", "d MMM yyyy, HH:mm")).toBe(
       formatUtcInstant("2026-08-01T10:15:00Z", "d MMM yyyy, HH:mm"),

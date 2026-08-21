@@ -40,9 +40,19 @@ FROM bronze_claude_team.claude_team_code_metrics FINAL
 GROUP BY status
 ```
 
-**Decision: keep the filter.** The vendor documents no value set for this field, so a value
-other than `active` may appear at any time and would be dropped without a trace. Add a
-build-time check that counts non-active rows rather than removing the filter.
+**Decision: carry the field, do not filter on it.** The first reading — keep the filter, add
+a check that counts non-active rows — missed that the filter is retroactive. The endpoint
+restates the status for every day it re-reads, so the value describes the seat as of the read
+and not as of the metric date: the day a person's seat is deactivated, the filter deletes
+their entire history, and a full refresh removes it from silver altogether. Nothing about a
+seat's present state licenses deleting the work it recorded.
+
+So staging carries the value into the class-contract column `seat_status`, gold exposes it as
+the `seat_status` dimension, and emission is gated on the activity counters instead — the same
+gate every other contributor to the class already uses, and the one the class contract asks
+for. Rows written before the column existed carry no value and read as `unknown`, which is
+what they are: re-materialising them from bronze would mean a full refresh, and that is the
+operation that costs months of overage history.
 
 ## 3. `is_enabled` — resolves PRD OD-5
 
@@ -124,6 +134,15 @@ Anthropic populates both counters only for organisations that have connected its
    whether a pull request involved Claude Code, which is `#1660`'s subject, not cost — the
    entry was removed from the decomposition and recorded as a candidate for `#1660`.
 
+**Revised on the counters.** Leaving them in silver unread meant nobody could see them at all,
+which is a worse position than serving them with the vendor's own caveat attached. Both now
+reach gold as `ai.prs_with_assistant` and `ai.prs_total`, emitted only where the vendor
+supplies a value, so an organisation without the app returns no value rather than a zero —
+consequence 1 above, honoured by construction. Consequence 2 stands: a live demonstration
+still needs a tenant with the app connected. `ai.prs_total` is served as context for the other
+measure and not as a goal of its own, because the vendor's window may not be the day the row
+is dated.
+
 ## 7. Seat economics — what to show for 2.3
 
 ```sql
@@ -155,11 +174,11 @@ The properties the demonstration rests on, each visible in that query:
 
 | # | Decision | Affects |
 |---|---|---|
-| D1 | Keep the `status = 'active'` filter; add a build-time count of non-active rows | 2.1 → build |
+| D1 | Carry `status` into class-contract `seat_status` and gate emission on the activity counters instead; the filter was retroactive and deleted a deactivated person's whole history | 2.1 → build |
 | D2 | Seat-state gate is `credit_limit_cents IS NOT NULL` alone; `is_enabled` is carried as a dimension, never as a filter | 2.6; closes PRD OD-5 |
 | D3 | Do not carry `api_key_name`, `avg_cost_per_day`, `avg_lines_accepted_per_day`, `prs_with_cc_percentage` | 2.1 → closed |
 | D4 | Do not carry `last_active` yet; record as a candidate for an "idle seat" signal | 2.6 |
-| D5 | PR attribution leaves this decomposition; recorded as a candidate for `#1660` | — |
+| D5 | PR attribution leaves this decomposition. Superseded on the counters themselves: the two counts already in silver now reach gold as `ai.prs_with_assistant` / `ai.prs_total`, honest-NULL where the vendor does not report. The per-PR cost figure FR-9 forbids stays out, and the "did this PR involve the assistant" question remains `#1660`'s | — |
 | D6 | Guard `used_credits_basis` — the used-vs-limit comparison is only valid while every row shares one basis | 2.3 |
 | D7 | `members` and `invites` stop at bronze in both implementations; no parity gap, no action | — |
 | D8 | Invoices are the only genuine extraction gap against the reference | 2.5 |

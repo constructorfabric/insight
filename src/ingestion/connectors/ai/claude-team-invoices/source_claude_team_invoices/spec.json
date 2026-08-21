@@ -1,0 +1,42 @@
+{
+  "documentationUrl": "https://docs.airbyte.com/integrations/sources/claude-team-invoices",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Claude Team Invoices Spec",
+    "type": "object",
+    "required": ["proxy_url", "proxy_auth_token", "claude_org_id", "insight_tenant_id", "insight_source_id"],
+    "additionalProperties": true,
+    "properties": {
+      "proxy_url": {
+        "type": "string",
+        "title": "Proxy base URL",
+        "description": "Base URL of the claude-team-proxy. The same proxy the claude-team connector uses; invoices are reached through its /api/* passthrough.",
+        "order": 0
+      },
+      "proxy_auth_token": {
+        "type": "string",
+        "title": "Proxy bearer token",
+        "description": "Shared bearer token the proxy expects.",
+        "airbyte_secret": true,
+        "order": 1
+      },
+      "claude_org_id": {
+        "type": "string",
+        "title": "claude.ai organisation id",
+        "description": "UUID of the claude.ai organisation. Equals the Stripe customer id in the invoices path.",
+        "order": 2
+      },
+      "insight_tenant_id": {
+        "type": "string",
+        "title": "Insight tenant id",
+        "order": 3
+      },
+      "insight_source_id": {
+        "type": "string",
+        "title": "Insight source id",
+        "description": "From the insight.cyberfabric.com/source-id annotation. Part of every unique_key.",
+        "order": 4
+      }
+    }
+  }
+}

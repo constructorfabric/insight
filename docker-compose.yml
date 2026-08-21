@@ -729,7 +729,11 @@ services:
       # ISO date pins the dataset reproducibly, the literal `today` (or unset)
       # tracks the calendar. Both are recorded in the emitted manifest.
       SEED_ANCHOR_DATE: "${SEED_ANCHOR_DATE:-}"
-      SEED_DAYS: "${SEED_DAYS:-60}"
+      # Two years, matching the deployed stand. Wider than any one request the
+      # analytics API will answer (it refuses a period of 400 days or more), so
+      # a test asking about "the seeded period" must clamp — see
+      # tests/stand/api/analytics/query_window.
+      SEED_DAYS: "${SEED_DAYS:-730}"
       # The issuer the authenticator resolved for this run. `test-stand up`
       # persists it after cmd_up so the manifest
       # records the real IdP instead of assuming the default.

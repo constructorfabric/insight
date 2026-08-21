@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Seed a Kubernetes stand with the demo organisation and its activity. An
-# `all`/`silver` run finishes by resolving identity (persons-seed + persons-sync)
-# and rebuilding gold, so the stand serves real metrics rather than a null for
+# `all`/`silver` run finishes by resolving identity (persons-seed, which
+# publishes its own log) and rebuilding gold, so the stand serves real metrics rather than a null for
 # every person. Every coordinate is discovered from the cluster, never copied in
 # by an operator; credentials are never read. Nothing is defaulted.
 set -euo pipefail
@@ -67,7 +67,7 @@ Discovered from the stand (pass a flag only to override):
 Seed options:
       --step <step>        identity | silver | analytics | gold | all [default: all]
                            `all`/`silver` finish by running the identity
-                           projection (persons-seed + persons-sync) and rebuilding
+                           projection (persons-seed, which publishes) and rebuilding
                            gold, so the stand serves resolved metrics. `gold`
                            alone just rebuilds over the map as it stands now.
       --days <n>           activity-window length in days
@@ -498,6 +498,16 @@ render_seed_manifest() {
   ' < "$JOB_TEMPLATE"
 }
 
+# print_manifest_sentinel NAME — re-read the finished Job's log and print the
+# one manifest line, or nothing for a step that writes no manifest. Read from
+# the completed Job rather than taken from the stream below, because the
+# seeder prints it last and `logs -f` can end without the container's final
+# lines; a consumer that lost it cannot tell a seeded stand from an attempt.
+print_manifest_sentinel() {
+  kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null \
+    | grep -m1 '^SEED_MANIFEST_JSON: ' || true
+}
+
 # wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
 # object (the log stream ending is not the verdict). 0 on success, 1 otherwise;
 # never fatal on a transient apiserver read.
@@ -513,7 +523,9 @@ wait_for_job() {
     sleep 2
   done
 
-  kube -n "$NAMESPACE" logs -f "job/$job_name" || true
+  # The sentinel is filtered out here and re-emitted from the finished Job on
+  # success, so the log carries it exactly once and never a truncated copy.
+  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -v '^SEED_MANIFEST_JSON: ' || true
 
   # Polled, not `kubectl wait --for=condition=complete`, which only waits for
   # success. `|| true`: a transient apiserver hiccup must not kill the loop.
@@ -524,11 +536,20 @@ wait_for_job() {
     failed="$(kube -n "$NAMESPACE" get "job/$job_name" \
       -o 'jsonpath={.status.failed}' 2>/dev/null || true)"
     if [[ "${succeeded:-0}" -ge 1 ]]; then
+      print_manifest_sentinel "$job_name"
       echo "==> job complete: $job_name"
       return 0
     fi
     if [[ "${failed:-0}" -ge 1 ]]; then
-      echo "ERROR: Job $job_name failed. Its logs above hold the reason; it is not" >&2
+      # CI publishes only `==>`/`ERROR:` lines from this script's output, so
+      # re-emit the preflight refusal from the failed Job's log with an
+      # ERROR: prefix — otherwise the reason never reaches the CI log.
+      # Bounded on purpose: this is the one place pod output crosses into the
+      # allowlisted channel of a public repository, and a refusal is a handful
+      # of lines. Anything past the cap stays where the rest of the log is.
+      kube -n "$NAMESPACE" logs "job/$job_name" --tail=-1 2>/dev/null \
+        | sed -n '/PreflightError: /,$p' | head -40 | sed 's/^/ERROR: /' >&2 || true
+      echo "ERROR: Job $job_name failed. Its full log holds the reason; it is not" >&2
       echo "       retried (backoffLimit 0) and survives for an hour" >&2
       echo "       (ttlSecondsAfterFinished), so it can be read again until then:" >&2
       echo "         $(kubectl_hint) -n $NAMESPACE logs job/$job_name" >&2
@@ -566,37 +587,34 @@ run_seed_step() {
   wait_for_job "$SEED_JOB_NAME"
 }
 
-# project_identity — force the persons-seed then persons-sync CronJobs to run now
-# and wait for each. These are the SAME runs the chart's CronJobs make on
-# schedule; a fresh CI stand cannot wait for the 06:30 cron, so it forces them.
-# persons-seed LINKS each connector account to the seeded roster person by e-mail
-# (resolve_assignments' LinkedByEmail) and APPENDS to `persons` (INSERT IGNORE —
-# it never rewrites the seeder's login rows); persons-sync publishes the persons
-# log into ClickHouse identity_persons, where gold's resolve_person_id() reads it.
-# Without this, gold resolves nothing and the API answers 200 with a null for
-# every person metric. Discovered by component label, never named, so a chart
-# rename fails loudly here rather than silently skipping the projection.
+# project_identity — force the persons-seed CronJob to run now and wait for it:
+# a fresh CI stand cannot wait for the next scheduled tick. The run LINKS each connector
+# account to the seeded roster person by e-mail (resolve_assignments'
+# LinkedByEmail), APPENDS to `persons` (INSERT IGNORE — it never rewrites the
+# seeder's login rows), and publishes to ClickHouse identity_persons, where
+# gold's resolve_person_id() reads it. Without this, gold resolves nothing and
+# the API answers 200 with a null for every person metric. Discovered by
+# component label, never named, so a chart rename fails loudly here rather than
+# silently skipping the projection.
 project_identity() {
-  local component cronjob job_name
-  for component in persons-seed persons-sync; do
-    cronjob="$(kube -n "$NAMESPACE" get cronjob \
-      -l "app.kubernetes.io/component=$component" \
-      -o 'jsonpath={.items[0].metadata.name}' 2>/dev/null || true)"
-    if [[ -z "$cronjob" ]]; then
-      echo "ERROR: no $component CronJob in namespace $NAMESPACE — the identity" >&2
-      echo "       projection cannot run, so gold would resolve to a null for every" >&2
-      echo "       person. Enable identityResolution.${component#persons-}.enabled on" >&2
-      echo "       this stand, or seed --step silver and run the projection yourself." >&2
-      return 1
-    fi
-    job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
-    echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
-    kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
-    wait_for_job "$job_name" || {
-      echo "ERROR: $component did not complete; gold would stay unresolved." >&2
-      return 1
-    }
-  done
+  local component=persons-seed cronjob job_name
+  cronjob="$(kube -n "$NAMESPACE" get cronjob \
+    -l "app.kubernetes.io/component=$component" \
+    -o 'jsonpath={.items[0].metadata.name}' 2>/dev/null || true)"
+  if [[ -z "$cronjob" ]]; then
+    echo "ERROR: no $component CronJob in namespace $NAMESPACE — the identity" >&2
+    echo "       projection cannot run, so gold would resolve to a null for every" >&2
+    echo "       person. Enable identityResolution.seed.enabled on this stand," >&2
+    echo "       or seed --step silver and run the projection yourself." >&2
+    return 1
+  fi
+  job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
+  echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
+  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
+  wait_for_job "$job_name" || {
+    echo "ERROR: $component did not complete; gold would stay unresolved." >&2
+    return 1
+  }
 }
 
 # --dry-run: print the requested step's manifest and exit, writing nothing.
@@ -620,8 +638,8 @@ if [[ "$FOLLOW" -eq 0 ]]; then
   echo "    follow it with: $(kubectl_hint) -n $NAMESPACE logs -f job/$SEED_JOB_NAME"
   case "$STEP" in
     all|silver)
-      echo "    NOTE: gold is UNRESOLVED until the persons-seed/persons-sync CronJobs"
-      echo "          run and '--step gold' rebuilds over them. Without --no-follow"
+      echo "    NOTE: gold is UNRESOLVED until the persons-seed CronJob"
+      echo "          runs and '--step gold' rebuilds over it. Without --no-follow"
       echo "          this script does all three for you." ;;
   esac
   exit 0

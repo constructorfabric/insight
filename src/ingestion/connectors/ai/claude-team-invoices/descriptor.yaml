@@ -1,0 +1,28 @@
+name: claude-team-invoices
+version: "0.5.0"
+type: cdk
+schedule: "0 4 * * *" # daily at 04:00 UTC — invoices are monthly; a daily pass keeps a new one within a day
+workflow: sync
+# CI build metadata + runtime image refs (ADR-0016). images.cdk.image is
+# empty until first CI build from .github/workflows/build-images.yml,
+# which patches this field via the bump-descriptors job.
+images:
+  cdk:
+    name: source-claude-team-invoices-insight
+    dockerfile: ./Dockerfile
+    context: .
+    image: "ghcr.io/constructorfabric/source-claude-team-invoices-insight:2026.08.20.08.34-8ba69db"
+dbt_select: "tag:claude-team-invoices+"
+connection:
+  # Its own namespace, though it is the same vendor through the same proxy: dbt
+  # rejects two schema.yml files declaring one source, so sharing
+  # bronze_claude_team would put this connector's table under the declarative
+  # connector's ownership.
+  namespace: "bronze_claude_team_invoices"
+# Same three keys as the claude-team connector — one proxy, one session key on it.
+# The claude.ai sessionKey is never here: it lives on the customer's proxy only.
+secret:
+  required_fields:
+    - claude_org_id
+    - proxy_url
+    - proxy_auth_token

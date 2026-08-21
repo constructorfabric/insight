@@ -6,6 +6,7 @@ mod metric_drilldown;
 mod metric_results;
 mod metrics;
 mod saved_queries;
+pub(crate) mod usage;
 
 #[cfg(test)]
 mod http_live_tests;
@@ -20,6 +21,7 @@ use std::sync::Arc;
 use toolkit::api::{
     OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder, ResponseSpec,
 };
+use toolkit_canonical_errors::CanonicalError;
 use utoipa::openapi::RefOr;
 use utoipa::openapi::content::ContentBuilder;
 use utoipa::openapi::header::HeaderBuilder;
@@ -47,6 +49,27 @@ pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
+}
+
+// SAFETY: an identity that is absent or unreachable is a server error, never a
+// permit.
+pub(crate) async fn is_admin_caller(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+) -> Result<bool, CanonicalError> {
+    if !state.identity.is_configured() {
+        tracing::error!("identity service is not configured; admin access cannot be verified");
+        return Err(CanonicalError::internal("failed to verify caller permissions").create());
+    }
+
+    state
+        .identity
+        .is_admin(forwarded_authorization(headers))
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "admin role check failed");
+            CanonicalError::internal("failed to verify caller permissions").create()
+        })
 }
 
 /// Register all analytics routes onto the host's stateless router.
@@ -110,6 +133,50 @@ fn openapi_info() -> OpenApiInfo {
 #[allow(clippy::too_many_lines)]
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router: Router = router;
+
+    // Usage monitoring (#2573). Ingest is open to any signed-in caller — it is
+    // the SPA's beacon; the read model is admin-gated inside the handler.
+    router = OperationBuilder::post("/v1/usage/events")
+        .operation_id("analytics_api.usage.ingest")
+        .summary("Record usage events")
+        .authenticated()
+        .no_license_required()
+        .json_request::<usage::UsageIngestRequest>(openapi, "Telemetry SDK records")
+        .no_content_response(StatusCode::NO_CONTENT, "Accepted")
+        .error_401(openapi)
+        .error_415(openapi)
+        .handler(usage::ingest_usage_events)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/usage/config")
+        .operation_id("analytics_api.usage.config")
+        .summary("Whether this instance records usage")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<usage::UsageConfigResponse>(
+            openapi,
+            StatusCode::OK,
+            "Usage collection state",
+        )
+        .standard_errors(openapi)
+        .handler(usage::get_usage_config)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/usage/summary")
+        .operation_id("analytics_api.usage.summary")
+        .summary("Usage summary for a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .json_response_with_schema::<usage::UsageSummaryResponse>(
+            openapi,
+            StatusCode::OK,
+            "Usage summary",
+        )
+        .standard_errors(openapi)
+        .handler(usage::get_usage_summary)
+        .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")
         .operation_id("analytics_api.metric_results.create")

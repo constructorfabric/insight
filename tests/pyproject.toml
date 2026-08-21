@@ -50,6 +50,11 @@ dependencies = [
     # MINT anything: the assertion is a request for a token, exchanged at the
     # deployed endpoint, exactly as a real service does it.
     "pyjwt[crypto]>=2.9",
+    # Reads the .xlsx half of every export a journey downloads. A workbook is a
+    # zip of XML, so a hand-rolled reader is possible and is a liability: the
+    # assertion would then depend on test code nobody reviews as carefully as
+    # the product. Read-only here — the suite writes no spreadsheets.
+    "openpyxl>=3.1",
 ]
 
 [dependency-groups]

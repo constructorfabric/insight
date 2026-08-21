@@ -66,7 +66,8 @@ from ..schemas.analytics import (
     MetricDrilldownColumnType,
     MetricDrilldownResponse,
 )
-from .drilldown_matrix import EXPORT_SHAPES, MATRIX, Expectation, Tier
+from . import query_window
+from .drilldown_matrix import EMPTY_EVIDENCE_METRIC, EXPORT_SHAPES, MATRIX, Expectation, Tier
 
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
 DRILLDOWN_EXPORT = analytics_path("/v1/metric-drilldown/export")
@@ -154,7 +155,7 @@ def _request_for(
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
 ) -> dict[str, JsonValue]:
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     request: dict[str, JsonValue] = {
         "metric_key": metric_key,
         "entity": {
@@ -286,7 +287,7 @@ def _period_value(
     person with no observations in the period has no value at all, and that is
     what an empty evidence page has to agree with.
     """
-    start, _, end = manifest.data_window.partition("..")
+    start, end = query_window(manifest)
     person_id = manifest.fixture("dev_lead").uuid
     response = api.post(
         METRIC_RESULTS,
@@ -875,11 +876,6 @@ def test_export_cells_match_the_page_and_hostile_values_stay_inert(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_git_commit_drilldown_pages_and_reconciles(
     api: ApiClient, stand_manifest: Manifest
@@ -914,11 +910,6 @@ def test_git_commit_drilldown_pages_and_reconciles(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_git_commit_drilldown_exports_all_rows(api: ApiClient, stand_manifest: Manifest) -> None:
     walk = _walk(
@@ -965,24 +956,19 @@ def test_git_commit_drilldown_refuses_a_person_out_of_scope(
 
 
 @pytest.mark.requires_seed("dev_lead")
-@pytest.mark.xfail(
-    strict=False,
-    reason="constructorfabric/insight#2361 — intermittent 500 under suite load: the "
-    "identity service answers the person-visibility check with 429; passes in isolation",
-)
 @pytest.mark.reliability
 def test_supported_metric_with_no_evidence_returns_an_empty_page(
     api: ApiClient, stand_manifest: Manifest
 ) -> None:
     request = _seeded_request(stand_manifest)
-    request["metric_key"] = "wiki.pages_created"
+    request["metric_key"] = EMPTY_EVIDENCE_METRIC
     request["filters"] = []
     request["display_dimensions"] = []
 
     response = api.post(DRILLDOWN, json_body=request)
     assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
     result = response.parse(MetricDrilldownResponse)
-    assert result.selection.metric_key == "wiki.pages_created"
+    assert result.selection.metric_key == EMPTY_EVIDENCE_METRIC
     assert result.rows == []
     assert result.next_cursor is None
 

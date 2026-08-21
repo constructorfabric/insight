@@ -302,11 +302,7 @@ def build_manifest(
             # Compose seeds silver/gold directly; no connector ever runs, so
             # the ingestion path is not exercised on this stand.
             "ingestion": False,
-            # The authenticator's token listener is published on compose, so a
-            # runner can exchange an RFC 7523 assertion for a service principal
-            # there. A stand that keeps it in-cluster (no ingress) sets this
-            # False and the S2S tests skip with a reason instead of failing.
-            "service_principals": True,
+            "service_principals": config.service_principals_reachable(env),
             "idp": idp,
         },
         "seed_revision": seed_revision(),

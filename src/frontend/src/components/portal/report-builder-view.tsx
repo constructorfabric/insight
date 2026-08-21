@@ -35,6 +35,7 @@ import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
 import { collectReportPeople } from "@/lib/reports/roster-columns";
+import { recordUsageEvent } from "@/telemetry";
 import {
   bucketsInRange,
   needsRollup,
@@ -146,7 +147,12 @@ export function ReportBuilderView() {
   }
 
   const running = progress != null;
-  const canBuild = selectedMetrics.length > 0 && people.length > 0 && !running;
+  const blocker = selectedMetrics.length
+    ? people.length
+      ? null
+      : "This scope has no people"
+    : "Pick at least one metric";
+  const canBuild = blocker == null && !running;
 
   async function build(): Promise<void> {
     const controller = new AbortController();
@@ -174,6 +180,9 @@ export function ReportBuilderView() {
           timeStyle: "short",
         }),
       );
+      for (const metric of selectedMetrics) {
+        recordUsageEvent("report_column", metric.metric_key);
+      }
       setPreviewOpen(true);
       setTable(
         buildReportTable({
@@ -365,6 +374,9 @@ export function ReportBuilderView() {
             <Button type="button" disabled={!canBuild} onClick={() => void build()}>
               Build report
             </Button>
+            {blocker && !running ? (
+              <span className="text-sm text-muted-foreground">{blocker}</span>
+            ) : null}
             {running ? (
               <>
                 <span className="text-sm text-muted-foreground">
@@ -459,7 +471,10 @@ export function ReportBuilderView() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => downloadMatrixCsv(`${filename}.csv`, table)}
+                  onClick={() => {
+                    recordUsageEvent("export", "report:csv");
+                    downloadMatrixCsv(`${filename}.csv`, table);
+                  }}
                 >
                   <FileText className="size-4" />
                   CSV
@@ -468,7 +483,8 @@ export function ReportBuilderView() {
                   type="button"
                   size="sm"
                   onClick={() =>
-                    void downloadMatrixXlsx(`${filename}.xlsx`, "Report", table)
+                    void (recordUsageEvent("export", "report:xlsx"),
+                    downloadMatrixXlsx(`${filename}.xlsx`, "Report", table))
                   }
                 >
                   <FileSpreadsheet className="size-4" />
