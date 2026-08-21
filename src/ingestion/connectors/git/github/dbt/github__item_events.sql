@@ -8,6 +8,11 @@
     tags=['github', 'silver:class_git_item_events']
 ) }}
 
+-- Pull-request lifecycle events only. Issue events are a task tracker's
+-- history, not a git one, and reach `silver.class_task_field_history` through
+-- `github__task_field_history` — carrying them here as well would be two
+-- representations of the same facts, and only one of them feeds a metric.
+--
 -- GitHub names each change after the thing that changed rather than the field
 -- it changed, so the event type is what carries the semantics; this maps the
 -- vendor vocabulary onto the class's (field_id, delta_action, value) triple.
@@ -40,34 +45,8 @@ WITH pull_request_events AS (
     WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
     {% endif %}
 ),
-issue_events AS (
-    SELECT
-        tenant_id,
-        source_id,
-        unique_key,
-        repo_full_name,
-        'issue' AS item_type,
-        item_number,
-        event_id,
-        event_type,
-        event_at,
-        actor_login,
-        target_login,
-        label_name,
-        field_name,
-        prev_value,
-        new_value,
-        state_reason,
-        _airbyte_extracted_at
-    FROM {{ source('bronze_github', 'issue_timeline_events') }} FINAL
-    {% if is_incremental() %}
-    WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
-    {% endif %}
-),
 events AS (
     SELECT * FROM pull_request_events
-    UNION ALL
-    SELECT * FROM issue_events
 )
 SELECT
     tenant_id,
@@ -86,9 +65,6 @@ SELECT
         event_type IN ('AssignedEvent', 'UnassignedEvent'), 'assignee',
         event_type IN ('ReviewRequestedEvent', 'ReviewRequestRemovedEvent'), 'reviewer',
         event_type IN ('LabeledEvent', 'UnlabeledEvent'), 'label',
-        event_type = 'ProjectV2ItemStatusChangedEvent', 'board_status',
-        event_type = 'IssueTypeChangedEvent', 'issuetype',
-        event_type = 'IssueFieldChangedEvent', lower(COALESCE(field_name, '')),
         ''
     ) AS field_id,
     multiIf(
@@ -112,9 +88,9 @@ SELECT
         event_type = 'ClosedEvent', lower(COALESCE(state_reason, '')),
         ''
     ) AS delta_value_display,
-    -- Only the board-status and field-change events report where they came
-    -- from; NULL everywhere else is the honest answer, not an empty string.
-    if(COALESCE(prev_value, '') = '', CAST(NULL AS Nullable(String)), prev_value) AS prev_value_id,
+    -- No pull-request event reports where it came from; NULL is the honest
+    -- answer, not an empty string claiming the previous value was empty.
+    CAST(NULL AS Nullable(String)) AS prev_value_id,
     CAST(NULL AS Nullable(String)) AS prev_value_display,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,

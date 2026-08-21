@@ -55,6 +55,7 @@ issue_facts AS (
         toDate(s.final_close_at)                                             AS metric_date,
         any(s.final_close_at)                                                AS observed_at,
         s.issue_id                                                           AS issue_id,
+        any(s.data_source)                                                   AS data_source,
         any(s.issue_type)                                                    AS issue_type,
         any(s.status_category) = 'done'                                      AS is_done,
         toDate(s.final_close_at)                                             AS close_date,
@@ -93,11 +94,17 @@ issue_item_evidence AS (
         item_measure.1 AS measure_key,
         toFloat64(item_measure.2) AS contribution,
         CAST(
-            [tuple(
-                'type',
-                ifNull(issue_type_key, '__unknown__'),
-                ifNull(issue_type_name, 'Type unknown')
-            )] AS Array(Tuple(key String, value String, label Nullable(String)))
+            [
+                tuple(
+                    'type',
+                    ifNull(issue_type_key, '__unknown__'),
+                    ifNull(issue_type_name, 'Type unknown')
+                ),
+                -- Without this, two trackers blend into one per-person figure
+                -- with no way to tell them apart, and an issue mirrored between
+                -- them is counted twice with nothing to say so.
+                tuple('source', data_source, data_source)
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS type_dimensions
     FROM issue_state
     ARRAY JOIN arrayConcat(
@@ -164,8 +171,12 @@ close_reopen AS (
         s.entity_id                                                          AS entity_id,
         toDate(c.close_at)                                                   AS metric_date,
         toFloat64(1)                                                         AS close_event,
-        if(minIf(r.reopen_at, r.reopen_at > c.close_at) IS NOT NULL
-           AND minIf(r.reopen_at, r.reopen_at > c.close_at) <= c.close_at + INTERVAL 14 DAY,
+        -- OrNull, not minIf: over a non-Nullable column with nothing matching,
+        -- `minIf` returns the type's default — 1970-01-01, which IS NOT NULL —
+        -- so every close of every issue read as reopened. Only a fixture with a
+        -- reopened close AND a clean one alongside it shows the difference.
+        if(minIfOrNull(r.reopen_at, r.reopen_at > c.close_at) IS NOT NULL
+           AND minIfOrNull(r.reopen_at, r.reopen_at > c.close_at) <= c.close_at + INTERVAL 14 DAY,
            toFloat64(1), CAST(NULL AS Nullable(Float64)))                    AS reopened_14d,
         CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
     FROM closes AS c

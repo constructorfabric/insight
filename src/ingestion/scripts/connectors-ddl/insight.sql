@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS insight.task_issue_state
     `tenant_id` Nullable(String),
     `entity_id` Nullable(String),
     `insight_source_id` String,
+    `data_source` String,
     `issue_id` String,
     `status_category` String,
     `issue_type` String,

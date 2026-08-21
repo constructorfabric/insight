@@ -22,6 +22,8 @@ const detail = vi.hoisted(() => ({
     refetch: () => {},
   },
   calls: [] as unknown[],
+  collectedThrough: null as string | null,
+  revisionWindowDays: null as number | null,
 }));
 vi.mock("@/queries/metric-detail", () => ({
   DETAIL_LIMIT: 200,
@@ -37,7 +39,14 @@ vi.mock("@/queries/metric-detail", () => ({
 const declared = vi.hoisted(() => ({
   byMetricKey: new Map<string, ReadonlySet<string>>(),
 }));
+// One mock for the whole catalogue module: a second `vi.mock` of the same
+// specifier replaces the first, so both hooks are served from here. The
+// collection boundary is set per test through `detail.collectedThrough`.
 vi.mock("@/queries/metric-definitions", () => ({
+  useCollectedThrough: () => ({
+    collectedThrough: detail.collectedThrough,
+    revisionWindowDays: detail.revisionWindowDays,
+  }),
   useDeclaredMetricDimensions: () => ({
     byMetricKey: declared.byMetricKey,
     isPending: false,
@@ -88,6 +97,8 @@ function draw(m: ReturnType<typeof metric>) {
 
 beforeEach(() => {
   detail.calls = [];
+  detail.collectedThrough = null;
+  detail.revisionWindowDays = null;
   detail.state = {
     isPending: false,
     isError: false,
@@ -159,6 +170,54 @@ describe("MetricActivity", () => {
     expect(screen.getByText(/2 days with no reading/)).toBeInTheDocument();
     // Nothing is listed — a counter is not a list of things.
     expect(container.querySelector("li")).toBeNull();
+  });
+
+  it("separates the days nobody collected from the days that were quiet", () => {
+    // The source stops on the 3rd; the 4th and 5th were never delivered. Read
+    // as silence they would say this person did none of it, which is the one
+    // thing the data cannot support.
+    detail.collectedThrough = "2026-03-03";
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [
+        { values: { date: "2026-03-01", value: 4 } },
+        { values: { date: "2026-03-03", value: 2 } },
+      ],
+    };
+    draw(metric("collab.messages_sent", ["source_summary"], 6));
+    // The 2nd is the only quiet day; the tail is uncollected, not quiet.
+    expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/days with no reading/)).not.toBeInTheDocument();
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/1 day has no reading/);
+    expect(label).toMatch(/2 days are not collected yet/);
+  });
+
+  it("marks the days the supplier may still revise without hiding their figures", () => {
+    // Delivered through the 3rd, revised for 2 days: the 2nd and 3rd carry real
+    // readings that are not final. Drawing them as absent would throw away a
+    // measurement; drawing them as settled would overstate it.
+    detail.collectedThrough = "2026-03-03";
+    detail.revisionWindowDays = 2;
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [
+        { values: { date: "2026-03-01", value: 4 } },
+        { values: { date: "2026-03-02", value: 3 } },
+        { values: { date: "2026-03-03", value: 2 } },
+      ],
+    };
+    draw(metric("collab.messages_sent", ["source_summary"], 6));
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/2 days may still change/);
+    // The uncollected tail still outranks it in the one-line caption.
+    expect(screen.getByText(/2 days not collected yet/)).toBeInTheDocument();
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {

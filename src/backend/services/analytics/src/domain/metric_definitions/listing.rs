@@ -16,6 +16,7 @@ use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
+use crate::domain::metric_definitions::builtin::{builtin_metrics, builtin_sources};
 use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat, MetricOrigin};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{fetch_dimensions, fetch_tags};
@@ -67,6 +68,13 @@ pub struct MetricDefinitionView {
     /// signal, orthogonal to `schema_status`. Not maintained for `custom`
     /// metrics (see `origin`).
     pub last_observed_date: Option<chrono::NaiveDate>,
+    /// How many days back from `last_observed_date` the suppliers may still
+    /// revise. Absent where the source declares none, and for `custom` metrics,
+    /// which read no managed source — absence means "settles on arrival", not
+    /// "revised forever". Registry knowledge, not tenant state, so it is read
+    /// from the seed rather than stored per row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_window_days: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drilldown: Option<MetricDrilldownCapability>,
 }
@@ -157,6 +165,7 @@ fn build_views(
     mut tags: HashMap<Uuid, Vec<String>>,
 ) -> Result<Vec<MetricDefinitionView>, CanonicalError> {
     let mut metrics = Vec::with_capacity(selected.len());
+    let revision_windows = revision_window_by_metric();
     for row in selected {
         let format = MetricFormat::from_db(&row.format)
             .ok_or_else(|| config_error(&row.metric_key, "format", &row.format))?;
@@ -174,6 +183,7 @@ fn build_views(
                     .ok_or_else(|| config_error(&row.metric_key, "schema_error_code", code))
             })
             .transpose()?;
+        let revision_window_days = revision_windows.get(row.metric_key.as_str()).copied();
         metrics.push(MetricDefinitionView {
             metric_key: row.metric_key,
             label: row.label,
@@ -191,10 +201,37 @@ fn build_views(
             schema_status,
             schema_error_code,
             last_observed_date: row.last_observed_date,
+            revision_window_days,
             drilldown: None,
         });
     }
     Ok(metrics)
+}
+
+/// Each builtin metric's revision window, taken from the source it reads.
+///
+/// The window belongs to the supplier, not to the tenant, so it comes from the
+/// seed rather than from `metric_definitions` — a stored copy would be a second
+/// truth to keep in step with the registry. A custom metric reads no managed
+/// source and so appears here for no key.
+fn revision_window_by_metric() -> HashMap<&'static str, u16> {
+    let by_source: HashMap<&str, u16> = builtin_sources()
+        .iter()
+        .filter_map(|source| {
+            source
+                .source
+                .revision_window_days
+                .map(|days| (source.source.key.as_str(), days))
+        })
+        .collect();
+    builtin_metrics()
+        .iter()
+        .filter_map(|metric| {
+            by_source
+                .get(metric.source_key.as_str())
+                .map(|days| (metric.metric_key.as_str(), *days))
+        })
+        .collect()
 }
 
 async fn fetch_listing_rows(

@@ -47,6 +47,12 @@ export interface MetricDefinition {
   schema_error_code: MetricSchemaErrorCode | null;
   /** ISO date of the newest observation ever seen; null = no data yet. */
   last_observed_date: string | null;
+  /**
+   * How many days back from `last_observed_date` the suppliers may still
+   * revise. Absent where nothing revises — never read absence as "revised
+   * forever".
+   */
+  revision_window_days?: number | null;
   drilldown?: MetricDrilldownCapability;
 }
 

@@ -21,7 +21,10 @@
 --
 -- Lifecycle comes from class_task_statuses.status_category ('done' = closed)
 -- joined on the status id — never match status display names; issue type is the
--- same shape, via class_task_issuetypes.issue_kind. Attribution:
+-- same shape, via class_task_issuetypes.issue_kind.
+-- Fields are matched by ROLE, not by vendor field id: `field_id` is documented
+-- as vendor-specific, so a literal here would only ever be Jira's name for the
+-- thing. `task_field_roles_current` carries the binding. Attribution:
 -- assignee account id → lowercased email via class_task_users; only
 -- email-shaped keys pass (unresolvable accounts are excluded, not carried).
 -- Class reads keep FINAL: RMT parts are not duplicate-immune and argMax over
@@ -38,30 +41,58 @@ task_users AS (
     WHERE email LIKE '%@%'
 ),
 -- Per-issue scalar pivot; created = first synthetic_initial event.
+history AS (
+    SELECT
+        fh.insight_source_id                                                  AS insight_source_id,
+        fh.data_source                                                        AS data_source,
+        fh.issue_id                                                           AS issue_id,
+        fh.event_at                                                           AS event_at,
+        fh.event_kind                                                         AS event_kind,
+        fh.delta_action                                                       AS delta_action,
+        fh.value_ids                                                          AS value_ids,
+        fh.value_displays                                                     AS value_displays,
+        fh._version                                                           AS _version,
+        -- Null-proof under EITHER join_use_nulls setting: an unbound field must
+        -- read as "no role", never as NULL propagating through the filter.
+        ifNull(r.role, '')                                                    AS role,
+        -- Only a convertible unit is scaled. An estimate stated in a unit that
+        -- is not commensurable with time must produce nothing rather than a
+        -- plausible number.
+        if(r.value_unit IN ('seconds', 'minutes', 'hours', 'days', 'man_days'),
+           ifNull(r.unit_multiplier, 1), CAST(NULL AS Nullable(Float64)))     AS unit_multiplier
+    FROM {{ ref('class_task_field_history') }} AS fh FINAL
+    LEFT JOIN {{ ref('task_field_roles_current') }} AS r
+        ON r.insight_source_id = fh.insight_source_id
+        AND r.data_source = fh.data_source
+        AND r.field_id = fh.field_id
+    WHERE ifNull(r.role, '') != '' OR fh.event_kind = 'synthetic_initial'
+),
 issue_pivot AS (
     SELECT
         insight_source_id,
         issue_id,
         argMaxIf(value_ids[1], (event_at, _version),
-                 field_id = 'status' AND delta_action = 'set')               AS status_id,
+                 role = 'status' AND delta_action = 'set')               AS status_id,
         argMaxIf(value_ids[1], (event_at, _version),
-                 field_id = 'assignee' AND delta_action = 'set')             AS assignee_account_id,
+                 role = 'assignee' AND delta_action = 'set')             AS assignee_account_id,
         argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'issuetype' AND delta_action = 'set')            AS issue_type,
+                 role = 'issuetype' AND delta_action = 'set')            AS issue_type,
         argMaxIf(value_ids[1], (event_at, _version),
-                 field_id = 'issuetype' AND delta_action = 'set')            AS issue_type_id,
+                 role = 'issuetype' AND delta_action = 'set')            AS issue_type_id,
         argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'duedate' AND delta_action = 'set')              AS due_date_str,
+                 role = 'duedate' AND delta_action = 'set')              AS due_date_str,
         toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'timeoriginalestimate' AND delta_action = 'set')) AS time_estimate_seconds,
+                 role = 'estimate' AND delta_action = 'set'))
+            * argMaxIf(unit_multiplier, (event_at, _version),
+                 role = 'estimate' AND delta_action = 'set')                 AS time_estimate_seconds,
         toFloat64OrNull(argMaxIf(value_displays[1], (event_at, _version),
-                 field_id = 'timespent' AND delta_action = 'set'))           AS time_spent_seconds,
+                 role = 'spent' AND delta_action = 'set'))
+            * argMaxIf(unit_multiplier, (event_at, _version),
+                 role = 'spent' AND delta_action = 'set')                    AS time_spent_seconds,
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
-        maxIf(event_at, field_id = 'status' AND delta_action = 'set')        AS last_status_event_at
-    FROM {{ ref('class_task_field_history') }} FINAL
-    WHERE field_id IN ('status', 'assignee', 'issuetype', 'duedate',
-                       'timeoriginalestimate', 'timespent')
-       OR event_kind = 'synthetic_initial'
+        maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
+        any(data_source)                                                     AS data_source
+    FROM history
     GROUP BY insight_source_id, issue_id
 ),
 -- Close time: the last transition into a done-category status. OrNull so a
@@ -72,17 +103,18 @@ issue_close AS (
         fh.insight_source_id                                                 AS insight_source_id,
         fh.issue_id                                                          AS issue_id,
         maxIfOrNull(fh.event_at, st.status_category = 'done')                AS final_close_at
-    FROM {{ ref('class_task_field_history') }} AS fh FINAL
+    FROM history AS fh
     LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
         ON st.insight_source_id = fh.insight_source_id
         AND st.status_id = fh.value_ids[1]
-    WHERE fh.field_id = 'status' AND fh.delta_action = 'set'
+    WHERE fh.role = 'status' AND fh.delta_action = 'set'
     GROUP BY fh.insight_source_id, fh.issue_id
 )
 SELECT
     u.tenant_id                                                              AS tenant_id,
     u.email                                                                  AS entity_id,
     p.insight_source_id                                                      AS insight_source_id,
+    p.data_source                                                            AS data_source,
     p.issue_id                                                               AS issue_id,
     cur.status_category                                                      AS status_category,
     p.issue_type                                                             AS issue_type,
