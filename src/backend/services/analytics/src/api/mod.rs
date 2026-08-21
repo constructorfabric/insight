@@ -1,10 +1,13 @@
 //! HTTP API layer — routes and handlers.
 
+mod date_window;
 pub(crate) mod error;
+pub(crate) mod feedback;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
 mod metrics;
+mod person_names;
 mod saved_queries;
 pub(crate) mod usage;
 
@@ -176,6 +179,36 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(usage::get_usage_summary)
+        .register(router, openapi);
+
+    // Sending is open to any signed-in caller; the listing is admin-gated
+    // inside the handler, not here.
+    router = OperationBuilder::post("/v1/feedback")
+        .operation_id("analytics_api.feedback.submit")
+        .summary("Send product feedback")
+        .authenticated()
+        .no_license_required()
+        .json_request::<feedback::FeedbackRequest>(openapi, "A feedback submission")
+        .no_content_response(StatusCode::NO_CONTENT, "Recorded")
+        .standard_errors(openapi)
+        .error_415(openapi)
+        .handler(feedback::submit_feedback)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/feedback")
+        .operation_id("analytics_api.feedback.list")
+        .summary("Feedback sent in a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .json_response_with_schema::<feedback::FeedbackListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Feedback entries, newest first",
+        )
+        .standard_errors(openapi)
+        .handler(feedback::list_feedback)
         .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")
