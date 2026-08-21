@@ -435,10 +435,7 @@ function AccountRow({
       </div>
       {/* Who decided this binding is the first thing to know before changing
           it: undoing automation is routine, overruling a colleague is not. */}
-      <Badge
-        variant={entry.bound_by_operator ? "secondary" : "outline"}
-        className="justify-self-start font-normal"
-      >
+      <Badge variant="outline" className="justify-self-start font-normal">
         {entry.bound_by_operator
           ? t("identities.person_accounts.by_operator")
           : t("identities.person_accounts.by_automation")}

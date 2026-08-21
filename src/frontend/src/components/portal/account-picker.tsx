@@ -209,7 +209,7 @@ function AccountOption({
       {item.person ? (
         <PersonCell person={item.person} />
       ) : item.excluded ? (
-        <Badge variant="secondary" className="justify-self-start font-normal">
+        <Badge variant="outline" className="justify-self-start font-normal">
           {t("identities.accounts.excluded")}
         </Badge>
       ) : (

@@ -289,7 +289,7 @@ function AccountRow({
       {item.person ? (
         <PersonCell person={item.person} />
       ) : item.excluded ? (
-        <Badge variant="secondary" className="justify-self-start font-normal">
+        <Badge variant="outline" className="justify-self-start font-normal">
           {t("identities.accounts.excluded")}
         </Badge>
       ) : (
@@ -297,10 +297,9 @@ function AccountRow({
           {t("identities.accounts.unbound")}
         </span>
       )}
-      <Badge
-        variant={item.bound_by_operator ? "secondary" : "outline"}
-        className="justify-self-start font-normal"
-      >
+      {/* Who decided the binding, as a line: the two answers are two states
+          of one fact, and only one of them used to carry a shape. */}
+      <Badge variant="outline" className="justify-self-start font-normal">
         {item.bound_by_operator
           ? t("identities.person_accounts.by_operator")
           : t("identities.person_accounts.by_automation")}
