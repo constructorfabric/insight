@@ -471,7 +471,7 @@ models:
       this holds the readings that led to it, so a vendor reporting only a
       cumulative month-to-date figure can still be resolved to a day's spend:
       the difference between consecutive readings, computed in gold. Readings
-      begin at claude-team 3.1.0, when Bronze started keying a seat by the day
+      begin at claude-team 3.2.0, when Bronze started keying a seat by the day
       it was read; earlier readings were overwritten within their month and are
       not recoverable.
     columns:

@@ -20,9 +20,10 @@ description: >
   NOTE alice has closes but ZERO reopens, so the query_ref numerator
   sumIf(metric_value < 0) is a sum over NO rows = NULL (not 0) → alice's rate is
   NULL and she drops OUT of the distribution. The cohort is therefore the 4 people
-  {20,40,60,80} (an even set: ClickHouse quantileExact returns the upper-middle).
-  The IC case requests erin (5): value=80, median=60, range_min=20, range_max=80,
-  p25=40, p75=80. Empty window 2026-06 -> no items.
+  {20,40,60,80}. Four is below MIN_PEER_N, so the peer view reports n=4 and
+  withholds every percentile — quartiles over a handful of people would be noise
+  presented as signal. The IC case requests erin (5): value=80, percentiles null.
+  Empty window 2026-06 -> no items.
 
 bronze:
   bronze_bamboohr.employees:
@@ -132,14 +133,23 @@ cases:
       - metric: tasks.reopen_rate
         view: period
         find: { entity_id: erin@example.com }
-        equal: { value: 100 }
+        equal: { value: 80 }
       - metric: tasks.reopen_rate
         view: peer
         find: { entity_id: erin@example.com }
-        equal: { target_value: 100, p25: 100, median: 100, p75: 100, min: 100, max: 100, n: 5 }
+        # Alice closes without ever reopening, so her rate is NULL and she
+        # leaves the pool — four people is below MIN_PEER_N, so every
+        # percentile is withheld while `n` still reports the pool size.
+        equal: { target_value: 80, p25: null, median: null, p75: null, min: null, max: null, n: 4 }
       - metric: tasks.reopen_rate
         view: timeseries
+        # Per day, not per period: each of erin's first four closes is reopened
+        # the next day, so those buckets are 100% while the period is 80%. The
+        # last close is never undone, so its bucket is 0%.
         assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 100.0))"
+      - metric: tasks.reopen_rate
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, double(p.value) == 0.0))"
 
   - name: tasks.reopen_rate empty window
     request:

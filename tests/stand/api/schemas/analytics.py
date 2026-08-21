@@ -719,6 +719,7 @@ class MetricDefinitionView(BaseModel):
     last_observed_date: date_aliased | None = Field(None, description="Newest `metric_date` ever observed across the definition's input\nmeasures; absent when no observation has ever been seen. Freshness\nsignal, orthogonal to `schema_status`. Not maintained for `custom`\nmetrics (see `origin`).")
     metric_key: str
     origin: MetricOrigin = Field(..., description='`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as "never measured" for custom metrics.')
+    revision_window_days: int | None = Field(None, description='How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means "settles on arrival", not\n"revised forever". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.', ge=0)
     schema_error_code: MetricSchemaErrorCode | None = None
     schema_status: SchemaStatus
     short_label: str | None = Field(None, description='Compact label for dense surfaces; absent when the full label is\nalready compact enough.')

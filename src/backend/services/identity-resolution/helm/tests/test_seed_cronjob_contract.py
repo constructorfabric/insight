@@ -280,16 +280,7 @@ def test_job_pod_labels_never_match_the_service_selector(default_docs, job: str)
 # ── umbrella: the tenant render guard ─────────────────────────────────────
 
 
-@pytest.fixture(scope="module")
-def umbrella_deps() -> Path:
-    subprocess.run(  # noqa: S603, S607 — refresh the vendored subcharts
-        ["helm", "dependency", "update", str(UMBRELLA)],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=True,
-    )
-    return UMBRELLA
+# `umbrella_deps` is session-scoped in conftest.py — one vendor per run.
 
 
 def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:

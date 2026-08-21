@@ -25,6 +25,8 @@ feeds the shared `class_git_*` silver models.
 | pull_request_review_comments | `/repos/{r}/pulls/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
+| issue_fields | GraphQL `organization.issueFields` | full refresh |
+| issue_types | GraphQL `organization.issueTypes` | full refresh |
 | workflow_runs | `/repos/{r}/actions/runs` | created_at, weekly step windows |
 | deployments | `/repos/{r}/deployments` | created_at, newest-first data feed |
 | deployment_statuses | `/deployments/{id}/statuses` | windowed deployments parent |
@@ -35,6 +37,20 @@ feeds the shared `class_git_*` silver models.
 **org_members is deliberately absent**: the deployed `git/github-directory`
 connector already syncs the org roster for identity resolution. Folding it in
 here is a separate migration.
+
+**The two catalogue streams answer for identity, not volume.** A timeline event
+names the native issue field it changed by node id, and the issue payload names
+its type by display name only. Without `issue_fields` and `issue_types` neither
+identifier resolves to anything an operator can read, and a rename silently
+orphans whatever was bound to the old name. Both are organization-scoped, so
+they cost one paginated query per configured organization per sync.
+
+**Re-syncing an existing deployment.** `issues` gained the hoisted
+`issue_field_values_json` column and `issue_timeline_events` gained the field
+and type identifiers. Both are cursored, so an item nobody touches again is
+never re-read and would keep the old, emptier shape forever — clear the state
+of those two streams once the new descriptor is live. The catalogue streams
+have no state and need nothing.
 
 ## What `github_start_date` bounds
 

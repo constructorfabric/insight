@@ -13,12 +13,12 @@
 --
 -- INVARIANT: full_refresh=false, for the same reason the monthly sibling
 -- carries it. Bronze keys a reading by seat and day only since claude-team
--- 3.1.0; readings taken before that were overwritten within their month and
+-- 3.2.0; readings taken before that were overwritten within their month and
 -- cannot be reproduced, so a rebuild from Bronze would silently shorten the
 -- series rather than restore it.
 --
 -- INVARIANT: the Bronze read below carries no FINAL, and its dedup is scoped to
--- the DAY rather than to Bronze's own key. Both are deliberate. Before 3.1.0 the
+-- the DAY rather than to Bronze's own key. Both are deliberate. Before 3.2.0 the
 -- key held the month, so every reading of a seat in a month is one row to the
 -- table and ReplacingMergeTree keeps only the newest — but it collapses on merge,
 -- not on insert, so readings that have not merged yet are still there to be read.
@@ -51,7 +51,7 @@ WITH latest_per_seat_day AS (
     -- can hold the same account_uuid under different tenant_id/source_id, and
     -- keying on the seat alone would drop those as false duplicates. The day
     -- comes from the extraction timestamp rather than from snapshot_date so
-    -- rows written before 3.1.0 carried it in their key still land on a day.
+    -- rows written before 3.2.0 carried it in their key still land on a day.
     LIMIT 1 BY tenant_id, source_id, account_uuid, toDate(_airbyte_extracted_at)
 )
 

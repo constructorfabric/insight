@@ -170,6 +170,30 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_github.issue_fields
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `org` Nullable(String),
+    `field_id` Nullable(String),
+    `field_database_id` Nullable(String),
+    `field_name` Nullable(String),
+    `data_type` Nullable(String),
+    `is_multi` Nullable(Bool),
+    `options_json` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
 (
     `_airbyte_raw_id` String,
@@ -192,9 +216,36 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
     `target_id` Nullable(Int64),
     `label_name` Nullable(String),
     `state_reason` Nullable(String),
+    `field_id` Nullable(String),
     `field_name` Nullable(String),
     `prev_value` Nullable(String),
-    `new_value` Nullable(String)
+    `new_value` Nullable(String),
+    `prev_value_id` Nullable(String),
+    `new_value_id` Nullable(String),
+    `prev_options_json` Nullable(String),
+    `new_options_json` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_github.issue_types
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `org` Nullable(String),
+    `issue_type_id` Nullable(String),
+    `issue_type_name` Nullable(String),
+    `description` Nullable(String),
+    `is_enabled` Nullable(Bool)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -227,6 +278,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.issues
     `assignee_ids` Nullable(String),
     `label_names` Nullable(String),
     `issue_type` Nullable(String),
+    `issue_type_id` Nullable(String),
     `milestone_title` Nullable(String),
     `milestone_number` Nullable(Int64),
     `closed_by_login` Nullable(String),
@@ -236,7 +288,8 @@ CREATE TABLE IF NOT EXISTS bronze_github.issues
     `comments` Nullable(Int64),
     `created_at` Nullable(String),
     `updated_at` Nullable(String),
-    `closed_at` Nullable(String)
+    `closed_at` Nullable(String),
+    `issue_field_values_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

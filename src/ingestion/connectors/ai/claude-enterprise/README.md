@@ -97,9 +97,8 @@ Routing is tag-driven via `dbt_select: "tag:claude-enterprise+"` in `descriptor.
 ## Operational Constraints
 
 - **Rate limits**: organization-level, default values not documented; adjustable via Anthropic CSM. The connector honours `Retry-After` on HTTP 429 with exponential backoff, and retries on 5xx.
-- **Reporting lag**: 3 days. The connector's effective upper bound is `today − 3 days`; later dates are deferred to the next run.
+- **Reporting lag**: a day keeps being revised for about 3 days after it closes. The streams read up to today and re-read that tail on every run (`lookback_window: P3D`) rather than waiting for it to settle: a revised day returns with a later `_airbyte_extracted_at`, and `ReplacingMergeTree(_version)` keeps it. Reading recent days late instead left them absent until they settled, which reads downstream as no activity rather than as no data (#2682).
 - **Minimum date**: 2026-01-01. Earlier `start_date` values are silently clamped.
-- **`start_date` edge case**: if `start_date` is within the 3-day lag window (e.g. yesterday), the cursor window is empty (`start > end`). Airbyte's `DatetimeBasedCursor` skips empty windows silently — no error, zero records. Set `start_date` to at least 4 days in the past to guarantee data on first run.
 - **`/summaries`**: uses P1D step with `starting_date` only (no `ending_date`). The API supports 31-day ranges, but `ending_date` is exclusive — P31D would silently skip boundary days. One request per day is safe and fast (tiny payload).
 - **Concurrency**: `default_concurrency: 1` (sequential streams). Intentional to avoid rate-limit exhaustion during backfill; can be bumped to 2-3 after observing real API behavior.
 
