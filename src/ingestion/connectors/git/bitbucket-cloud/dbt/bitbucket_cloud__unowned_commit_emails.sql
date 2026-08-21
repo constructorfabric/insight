@@ -67,11 +67,16 @@ SELECT
     -- The name from their most recent commit: one person spells it several
     -- ways, and the freshest spelling is the one an operator will recognise.
     assumeNotNull(argMax(c.author_name, c.seen_at)) AS author_name,
-    any(c.tenant_id) AS tenant_id,
-    any(c.source_id) AS source_id,
+    c.tenant_id AS tenant_id,
+    c.source_id AS source_id,
     assumeNotNull(max(c.seen_at)) AS last_committed_at,
     sum(1) AS commit_idents
 FROM candidates AS c
+-- Scoped to the connection, not the address: several Bitbucket connections
+-- share this bronze namespace, and an account claiming an e-mail in one says
+-- nothing about the same e-mail in another.
 LEFT ANTI JOIN {{ ref('bitbucket_cloud__account_emails') }} AS owned
-    ON owned.email = c.email
-GROUP BY c.email
+    ON  owned.email     = c.email
+    AND owned.tenant_id = c.tenant_id
+    AND owned.source_id = c.source_id
+GROUP BY c.email, c.tenant_id, c.source_id

@@ -14,9 +14,12 @@ error_ignore (403), error_retry (429), transformations (None-guard).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import unquote_plus
 
 import freezegun
+from airbyte_cdk.models import AirbyteMessage
 from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
 
 from connector_tests import (
@@ -33,13 +36,13 @@ _REPOS_URL = f"{BB_URL}/repositories/acme"
 _FROZEN = "2026-07-01T00:00:00Z"
 
 
-def _no_literal_none(records) -> None:
+def _no_literal_none(records: Iterable[AirbyteMessage]) -> None:
     for r in records:
         for key, value in r.record.data.items():
             assert value != "None", f"literal 'None' leaked into {key}"
 
 
-def _repo() -> dict:
+def _repo() -> dict[str, Any]:
     return {
         "uuid": "{r-1}",
         "full_name": "acme/app",
@@ -51,7 +54,7 @@ def _repos_page() -> HttpResponse:
     return HttpResponse(body=json.dumps({"values": [_repo()]}), status_code=200)
 
 
-def _pr(pr_id: int, *, author: dict | None) -> dict:
+def _pr(pr_id: int, *, author: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "id": pr_id,
         "title": f"PR {pr_id}",
@@ -97,6 +100,13 @@ def test_pull_requests_four_states_and_none_guard(http_mocker: HttpMocker) -> No
     )
 
     output = read_stream(_CONNECTOR, "pull_requests", config)
+
+    # The four states ride on the path because request_parameters cannot repeat
+    # a key; ANY_QUERY_PARAMS would match a request carrying none of them.
+    pr_urls = [r.url for r in http_mocker._mocker.request_history if "pullrequests" in r.url]
+    assert pr_urls, "no pull request call was made"
+    for state in ("OPEN", "MERGED", "DECLINED", "SUPERSEDED"):
+        assert f"state={state}" in pr_urls[0], pr_urls[0]
 
     assert not output.errors
     assert len(output.records) == 2
@@ -389,30 +399,81 @@ def test_workspace_members_stamping(http_mocker: HttpMocker) -> None:
     assert rec["workspace"] == "acme"
     assert rec["account_id"] == "aid-1"
     _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "workspace_members", strict=True)
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_pipelines_empty_page(http_mocker: HttpMocker) -> None:
+def test_pipelines_row_conforms_and_an_empty_page_is_not_an_error(
+    http_mocker: HttpMocker,
+) -> None:
+    """A repository with pipelines disabled answers an empty page, which is a
+    defined answer rather than a failure — but the declared schema still has to
+    hold for a repository that has them."""
     config = BitbucketCloudConfigBuilder().build()
     http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
     http_mocker.get(
         HttpRequest(f"{BB_URL}/repositories/acme/app/pipelines/", query_params=ANY_QUERY_PARAMS),
-        HttpResponse(body=json.dumps({"values": []}), status_code=200),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "values": [
+                        {
+                            "uuid": "{p-1}",
+                            "build_number": 42,
+                            "state": {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+                            "created_on": "2026-06-25T10:00:00.000000+00:00",
+                            "completed_on": "2026-06-25T10:05:00.000000+00:00",
+                            "target": {"ref_name": "main"},
+                            "trigger": {"name": "PUSH"},
+                        }
+                    ]
+                }
+            ),
+            status_code=200,
+        ),
     )
 
     output = read_stream(_CONNECTOR, "pipelines", config)
 
     assert not output.errors
-    assert len(output.records) == 0
+    assert len(output.records) == 1
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "pipelines", strict=True)
 
 
-def _authors_page(*rows: dict) -> HttpResponse:
+@freezegun.freeze_time(_FROZEN)
+def test_a_429_is_retried_rather_than_failing_the_stream(http_mocker: HttpMocker) -> None:
+    """Bitbucket meters the API, and a refusal is transient by nature: the
+    stream must wait it out and still deliver the page."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(
+            f"{BB_URL}/repositories/acme/app/pullrequests",
+            query_params=ANY_QUERY_PARAMS,
+        ),
+        [
+            HttpResponse(body="", status_code=429, headers={"Retry-After": "0"}),
+            HttpResponse(
+                body=json.dumps({"values": [_pr(1, author={"uuid": "{u-1}", "display_name": "Alice"})]}),
+                status_code=200,
+            ),
+        ],
+    )
+
+    output = read_stream(_CONNECTOR, "pull_requests", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+
+
+def _authors_page(*rows: dict[str, Any]) -> HttpResponse:
     return HttpResponse(
         body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
     )
 
 
-def _author_row(email: str, sha: str) -> dict:
+def _author_row(email: str, sha: str) -> dict[str, Any]:
     return {
         "author_email": email,
         "author_name": "Dev",
@@ -422,7 +483,7 @@ def _author_row(email: str, sha: str) -> dict:
     }
 
 
-def _repo_with_clone() -> dict:
+def _repo_with_clone() -> dict[str, Any]:
     return _repo() | {
         "links": {"clone": [{"name": "https", "href": "https://bot@bitbucket.org/acme/app.git"}]}
     }

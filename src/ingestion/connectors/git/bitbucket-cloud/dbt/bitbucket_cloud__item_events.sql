@@ -68,7 +68,7 @@ SELECT
     COALESCE(actor_display_name, '') AS actor_name,
     multiIf(
         kind IN ('approval', 'changes_requested'), 'reviewer',
-        status_new != '', 'state',
+        status_new != '' OR COALESCE(update_state, '') != '', 'state',
         ''
     ) AS field_id,
     multiIf(

@@ -48,11 +48,6 @@ jobs:
           - insight-jira-enrich
           # Python connectors
           - source-active-directory-insight
-<<<<<<< HEAD
-          - source-bitbucket-cloud-insight
-=======
-          - source-github-v2-insight
->>>>>>> 6d54c016 (feat(bitbucket-cloud): replace the CDK Bitbucket connector)
           - source-gitlab-insight
           # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.
           - source-hubspot-insight # trufflehog:ignore
