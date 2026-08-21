@@ -124,7 +124,9 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.file_changes
     `changes` Nullable(Int64),
     `is_binary` Nullable(Bool),
     `patch` Nullable(String),
-    `patch_truncated` Nullable(Bool)
+    `patch_truncated` Nullable(Bool),
+    `pre_image_oid` Nullable(String),
+    `post_image_oid` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -250,7 +252,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_commits
     `message` Nullable(String),
     `committed_date` Nullable(String),
     `parent_shas` Nullable(String),
-    `is_merge` Nullable(Bool)
+    `is_merge` Nullable(Bool),
+    `pr_updated_on` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -274,7 +277,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.pull_request_diffstat
     `old_path` Nullable(String),
     `status` Nullable(String),
     `lines_added` Nullable(Int64),
-    `lines_removed` Nullable(Int64)
+    `lines_removed` Nullable(Int64),
+    `pr_updated_on` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
