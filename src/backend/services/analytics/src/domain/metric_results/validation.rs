@@ -277,6 +277,9 @@ fn validate_request_shape(
         super::dto::MetricResultsEntity::Tenant {} => {
             ValidatedEntitySelection::Tenant { id: tenant_id }
         }
+        super::dto::MetricResultsEntity::Unknown => {
+            return invalid("entity.type", "unsupported entity type");
+        }
     };
     if entity.is_tenant()
         && req

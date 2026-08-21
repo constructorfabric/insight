@@ -24,8 +24,12 @@ pub const EVIDENCE_QUERY_RESULT_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MetricDrilldownEntity {
-    Person { id: String },
+    Person {
+        id: String,
+    },
     Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
 }
 
 impl MetricDrilldownEntity {
@@ -33,13 +37,14 @@ impl MetricDrilldownEntity {
         match self {
             Self::Person { .. } => "person",
             Self::Tenant {} => "tenant",
+            Self::Unknown => "unknown",
         }
     }
 
     pub(crate) fn person_id(&self) -> Option<&str> {
         match self {
             Self::Person { id } => Some(id),
-            Self::Tenant {} => None,
+            Self::Tenant {} | Self::Unknown => None,
         }
     }
 }
@@ -162,6 +167,18 @@ mod tests {
         }));
 
         assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "team", "id": "team" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_ok());
     }
 }
 

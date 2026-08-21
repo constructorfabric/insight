@@ -133,6 +133,9 @@ async fn validate_common(
             }
         }
         MetricDrilldownEntity::Tenant {} => MetricDrilldownEntity::Tenant {},
+        MetricDrilldownEntity::Unknown => {
+            return invalid("entity.type", "unsupported entity type");
+        }
     };
     let entity_type = entity.entity_type();
     if limit == 0 || limit > max_limit {

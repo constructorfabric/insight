@@ -14,15 +14,19 @@ pub struct MetricResultsRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MetricResultsEntity {
-    Person { ids: Vec<String> },
+    Person {
+        ids: Vec<String>,
+    },
     Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
 }
 
 impl MetricResultsEntity {
     pub(crate) fn is_tenant(&self) -> bool {
         match self {
-            Self::Person { .. } => false,
             Self::Tenant {} => true,
+            Self::Person { .. } | Self::Unknown => false,
         }
     }
 }
@@ -267,5 +271,16 @@ mod tests {
         }));
 
         assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "team", "ids": ["team"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_ok());
     }
 }

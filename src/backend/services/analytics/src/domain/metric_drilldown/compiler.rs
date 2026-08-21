@@ -151,6 +151,7 @@ fn entity_predicate(entity: &super::dto::MetricDrilldownEntity) -> &'static str 
     match entity {
         super::dto::MetricDrilldownEntity::Person { .. } => "evidence.entity_id = ?",
         super::dto::MetricDrilldownEntity::Tenant {} => "evidence.entity_id = evidence.tenant_id",
+        super::dto::MetricDrilldownEntity::Unknown => "1 = 0",
     }
 }
 

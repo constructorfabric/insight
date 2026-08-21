@@ -126,6 +126,11 @@ async fn authorize_metric_entity(
     if matches!(entity, MetricDrilldownEntity::Tenant {}) {
         return authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled);
     }
+    if matches!(entity, MetricDrilldownEntity::Unknown) {
+        return Err(MetricError::invalid_argument()
+            .with_field_violation("entity.type", "unsupported entity type", "INVALID")
+            .create());
+    }
 
     let (_, person_id) = parse_person_entity(entity)?;
 
