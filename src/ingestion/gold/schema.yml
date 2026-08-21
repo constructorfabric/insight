@@ -120,7 +120,8 @@ models:
       amount on the invoice's subscription lines; extra_usage_usd is the money
       the vendor billed once that seat exhausted the usage included in its fee;
       extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
-      only as the utilisation denominator.
+      only as the utilisation denominator; daily_extra_usage_usd is the same
+      billed money as extra_usage_usd, stepped across the days it was spent.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -162,8 +163,10 @@ models:
           - accepted_values:
               arguments:
                 values:
+                  - seat_cost_usd
                   - extra_usage_usd
                   - extra_usage_limit_usd
+                  - daily_extra_usage_usd
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
