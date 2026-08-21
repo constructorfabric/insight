@@ -34,9 +34,12 @@ pub enum ItemKind {
     /// only an operator can say which it is.
     MintedFromRoster,
     /// The account has evidence to match on, but no connector states an id for
-    /// it, so no seed run can write it a binding however well its address
-    /// matches. Only an operator — or a sign-in through the account — can bind
-    /// it, which is why it belongs on the queue rather than in `pending`.
+    /// it AND no bound account shares its address — so no seed run can reach it
+    /// from either side. Only an operator, or a sign-in through the account,
+    /// can decide it, which is why it belongs on the queue rather than in
+    /// `pending`. An id-less account whose address IS already held stays in
+    /// `pending`: the seed folds it into that person, and its activity resolves
+    /// through the sibling's binding.
     NoSourceId,
     /// The account carries no identity evidence automation can match on —
     /// e-mail is the only matching key today, so a username-only account is
@@ -154,17 +157,18 @@ pub fn build(
                 if candidates.len() > 1 {
                     rates.pending += 1;
                     items.push(item(ItemKind::Contested, account, None, candidates));
-                } else if !account.states_binding_id {
-                    // No source-stated id, so the seed has nothing to write a
-                    // binding from — however well the address matches, no run
-                    // will ever bind it. Surfaced with whatever candidate the
-                    // address does name, so the decision is one click.
+                } else if !account.states_binding_id && candidates.is_empty() {
+                    // Neither route to a person exists: the source states no id
+                    // to write a binding from, and no bound account shares the
+                    // address to fold it into. Every later run answers the same,
+                    // so an operator is the only way out.
                     rates.no_source_id += 1;
                     items.push(item(ItemKind::NoSourceId, account, None, candidates));
                 } else {
-                    // The source states an id and the address names at most one
-                    // person, so the next seed run binds it — not the
-                    // operator's problem yet.
+                    // Automation still has a route: either the source states an
+                    // id it can bind, or one person already holds the address and
+                    // the seed folds this account into them. Not the operator's
+                    // problem yet.
                     rates.pending += 1;
                 }
             }
@@ -536,6 +540,24 @@ mod tests {
         assert!(review.items.is_empty());
         assert_eq!(review.rates.pending, 1);
         assert_eq!(review.rates.no_source_id, 0);
+    }
+
+    #[test]
+    fn an_id_less_account_whose_address_is_already_held_stays_with_automation() {
+        // The seed folds it into the person holding the address, and its
+        // activity resolves through that person's own binding — so showing it
+        // would ask an operator to confirm what automation already did, forever.
+        let held = observed("bamboohr", "e-1", Some("sam@corp.com"));
+        let claim = without_source_id("github-commit-email", "sam@corp.com", Some("sam@corp.com"));
+
+        let mut bindings = HashMap::new();
+        bindings.insert(held.account.clone(), seed_bound(17));
+
+        let review = build(vec![held, claim], &bindings);
+
+        assert!(review.items.is_empty(), "got {:?}", review.items);
+        assert_eq!(review.rates.no_source_id, 0);
+        assert_eq!(review.rates.pending, 1, "the claim waits on the next run");
     }
 
     #[test]

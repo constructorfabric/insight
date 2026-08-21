@@ -105,11 +105,14 @@ Three things to know before deploying:
   accounts, and a member with no published e-mail can end up as two persons.
   The id comes from the Secret's `insight.cyberfabric.com/source-id`
   annotation, so this is a deployment decision, not a code one.
-- **An unmatched active account is minted as a new person.** An outside
-  contributor, or a member committing under an address no roster carries,
-  becomes a fresh person and shows up in the seed's `accounts_minted_new`
-  counter. Merging a minted person into the right one (or excluding it) is the
-  operator's manual-resolution workflow, and an operator-authored binding wins
+- **An unmatched active account is not minted a person — it is queued.** This
+  connector states no account id (see the last point), so the seed has nothing
+  to write a binding from: minting here would create a person no account can
+  ever belong to. An outside contributor, or a member committing under an
+  address no roster carries, is instead counted under
+  `accounts_skipped_no_source_id` and surfaced on the operator's review queue
+  as `no_source_id`. Binding it to the right person (or excluding it as a bot)
+  is the manual-resolution workflow, and an operator-authored binding wins
   every later seed.
 - **Only `value_type='email'` rows are emitted, never the `value_type='id'`
   binding.** Bindings are the seed's decision to make; emitting them here

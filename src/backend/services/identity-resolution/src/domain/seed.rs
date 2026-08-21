@@ -300,28 +300,31 @@ pub fn resolve_assignments(
             continue;
         }
 
-        // 3/4. No binding, no email match — mint only if some account here
-        //      states an id the seed can bind. Without one the person would be a
-        //      bag of observations no account belongs to, and no later run could
-        //      fix that: the queue surfaces the account for an operator instead.
+        // 3/4. No binding and no email match. A wholly-closed group creates no
+        //      person — tested first, because a closed account never reaches the
+        //      review queue and counting it as unbindable would promise operator
+        //      work that never appears there.
+        if !group.profiles.iter().any(|p| !p.is_closed) {
+            out.skipped_closed += group.profiles.len();
+            continue;
+        }
+
+        //      Mint only if some account here states an id the seed can bind.
+        //      Without one the person would be a bag of observations no account
+        //      belongs to, and no later run could fix that: the queue surfaces
+        //      the account for an operator instead.
         if !group.profiles.iter().any(states_a_bindable_id) {
             out.skipped_no_source_id += group.profiles.len();
             continue;
         }
 
-        //      Mint only if at least one profile is active; a wholly-closed
-        //      group creates no person.
-        if group.profiles.iter().any(|p| !p.is_closed) {
-            out.minted += group.profiles.len();
-            let person_id = mint();
-            out.assignments.push(PersonAssignment {
-                person_id,
-                kind: AssignmentKind::Minted,
-                profiles: group.profiles,
-            });
-        } else {
-            out.skipped_closed += group.profiles.len();
-        }
+        out.minted += group.profiles.len();
+        let person_id = mint();
+        out.assignments.push(PersonAssignment {
+            person_id,
+            kind: AssignmentKind::Minted,
+            profiles: group.profiles,
+        });
     }
 
     out
@@ -1321,6 +1324,28 @@ mod tests {
         assert_eq!(out.minted, 0, "no person for an account nothing can bind");
         assert_eq!(out.skipped_no_source_id, 1);
         assert!(out.assignments.is_empty());
+    }
+
+    #[test]
+    fn a_closed_id_less_group_is_counted_closed_not_unbindable() {
+        // Closed accounts never reach the review queue, so counting one as
+        // unbindable would promise operator work that never shows up there.
+        let mut gone = claim_only("github-commit-email", "gone@corp.com", "gone@corp.com");
+        gone.is_closed = true;
+
+        let out = resolve_without_roster(
+            group_by_email(vec![gone]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.skipped_closed, 1);
+        assert_eq!(
+            out.skipped_no_source_id, 0,
+            "closure is the reason, not the id"
+        );
+        assert_eq!(out.minted, 0);
     }
 
     #[test]
