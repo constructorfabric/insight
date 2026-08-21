@@ -4,13 +4,15 @@ use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::date_window::{self, WINDOW, Window};
 use super::error::UsageError;
+use super::person_names::NAMED_PERSONS;
 use super::{AppState, is_admin_caller};
 
 /// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
@@ -33,13 +35,6 @@ const PAGE_VIEW: &str = "page_view";
 const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
-
-const DEFAULT_WINDOW_DAYS: i64 = 29;
-
-const MAX_WINDOW_DAYS: i64 = 400;
-
-const WINDOW: &str =
-    "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
 /// A record carrying no session id stores `''`, and every such row across every
 /// person and day is that same value — one phantom visit if counted naively.
@@ -282,21 +277,7 @@ fn people_sql() -> String {
            FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
            GROUP BY person ORDER BY visits DESC, page_views DESC \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
-         LEFT JOIN (\
-           SELECT person_id, \
-           coalesce(\
-             nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'display_name'), ''), \
-             nullIf(trimBoth(concat(\
-               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'first_name'), ''), \
-               ' ', \
-               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'last_name'), '') \
-             )), '') \
-           ) AS display_name, \
-           nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'username'), '') AS username \
-           FROM identity.identity_persons \
-           WHERE value_type IN ('display_name', 'first_name', 'last_name', 'username') \
-           AND insight_tenant_id = toUUID(?) \
-           GROUP BY person_id) AS p ON p.person_id = u.person \
+         LEFT JOIN {NAMED_PERSONS} AS p ON p.person_id = u.person \
          ORDER BY u.visits DESC, u.page_views DESC"
     )
 }
@@ -329,27 +310,13 @@ pub struct UsageRangeQuery {
     pub until: Option<String>,
 }
 
-struct Window {
-    since: NaiveDate,
-    until: NaiveDate,
-}
-
 impl UsageRangeQuery {
     fn window(&self) -> Result<Window, CanonicalError> {
-        let until =
-            parse_day("until", self.until.as_deref())?.unwrap_or_else(|| Utc::now().date_naive());
-        let since = parse_day("since", self.since.as_deref())?
-            .unwrap_or_else(|| until - Duration::days(DEFAULT_WINDOW_DAYS));
-        if since > until {
-            return Err(range_violation("since", "since must not be after until"));
-        }
-        if (until - since).num_days() >= MAX_WINDOW_DAYS {
-            return Err(range_violation(
-                "since",
-                "the window must not exceed 400 days",
-            ));
-        }
-        Ok(Window { since, until })
+        date_window::parse_window(
+            self.since.as_deref(),
+            self.until.as_deref(),
+            range_violation,
+        )
     }
 }
 
@@ -357,15 +324,6 @@ fn range_violation(field: &str, description: &str) -> CanonicalError {
     UsageError::invalid_argument()
         .with_field_violation(field, description, "INVALID")
         .create()
-}
-
-fn parse_day(field: &str, value: Option<&str>) -> Result<Option<NaiveDate>, CanonicalError> {
-    value
-        .map(|day| {
-            NaiveDate::parse_from_str(day, "%Y-%m-%d")
-                .map_err(|_| range_violation(field, "date must use YYYY-MM-DD"))
-        })
-        .transpose()
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
