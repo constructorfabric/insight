@@ -25,7 +25,28 @@
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123  (selects the HTTP backend)
 #   CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
 #   CLICKHOUSE_DATABASE  the Insight app database
+#
+# Options:
+#   --full-refresh   rebuild the selected dbt models from source instead of
+#                    appending to them. The deploy Hook never passes it; the
+#                    seed's silver step does, because a seed REPLACES the org
+#                    and the incremental identity feeders would otherwise
+#                    carry the previous roster forward (see below).
 set -euo pipefail
+
+FULL_REFRESH=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --full-refresh) FULL_REFRESH=1; shift ;;
+    -h|--help)
+      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"
+      exit 0 ;;
+    *)
+      echo "apply-ch-migrations.sh: unknown argument: $1" >&2
+      echo "usage: apply-ch-migrations.sh [--full-refresh]" >&2
+      exit 2 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -254,7 +275,13 @@ else
 # DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
 # the seed's silver step adds +identity_inputs, deploys leave it unset.
 read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
-echo "=== Building gold models (dbt run --select ${_dbt_select[*]}) ==="
+# INVARIANT: never export DBT_FULL_REFRESH — reconcile-connectors owns that
+# name, and env reaches every child.
+_dbt_flags=()
+if [[ "$FULL_REFRESH" == "1" ]]; then
+  _dbt_flags+=(--full-refresh)
+fi
+echo "=== Building gold models (dbt run --select ${_dbt_select[*]} ${_dbt_flags[*]:-}) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
 # an observation view is missing, which blanks those metrics for every
@@ -307,7 +334,7 @@ profile = {
 with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as f:
     yaml.safe_dump(profile, f)
 PY
-(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}")
+(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
 rm -rf "$DBT_PROFILES_DIR"
 fi
 

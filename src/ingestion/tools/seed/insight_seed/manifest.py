@@ -19,11 +19,13 @@ of committed bytes rather than of whoever last ran it.
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
+import gzip
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -88,19 +90,30 @@ CANONICAL_ENV: dict[str, str] = {
 # Literals that must never reach the manifest. Checked before the file is
 # written, so a future field that accidentally carries a secret fails loudly
 # instead of shipping.
-_FORBIDDEN_LITERALS = frozenset(
+_STATIC_FORBIDDEN_LITERALS = frozenset(
     {
         "insight-dev",  # keycloak_realm dev password (the default)
-        # The runtime persona password too, when a stand overrides the default —
-        # mirrors keycloak_realm.DEV_PASSWORD without importing it (no cycle).
-        os.environ.get(
-            "INSIGHT_SEED_PERSONA_PASSWORD", "insight-dev"
-        ),  # RULE-DEFAULTS-OK: same tagged default as keycloak_realm.DEV_PASSWORD
         "insight-authenticator-dev-secret",  # keycloak_realm client secret
         "insight-local",  # MariaDB / ClickHouse dev password
         "root-local",  # MariaDB root password
     }
 )
+
+
+def _forbidden_literals(env: Mapping[str, str]) -> frozenset[str]:
+    """The dev credentials, plus the persona password when a stand overrides it.
+
+    SAFETY: an empty override is dropped rather than added. The scan is a
+    substring test, so `""` matches every document — and it runs after every
+    database write, in a Job with `backoffLimit: 0`, where refusing reports a
+    correctly seeded stand as a failure that cannot be retried.
+    """
+    override = (env.get(config.PERSONA_PASSWORD_ENV) or "").strip()
+    if not override:
+        return _STATIC_FORBIDDEN_LITERALS
+    return _STATIC_FORBIDDEN_LITERALS | {override}
+
+
 _FORBIDDEN_KEY_SUBSTRINGS = ("password", "secret", "token", "credential", "passwd")
 
 
@@ -268,7 +281,7 @@ def build_manifest(
     # wrote them (`identity.py` reads the same switch). Advertising a fixture
     # whose row does not exist would turn every test that declares
     # `requires_seed("other_tenant_lead")` from a skip into a failure.
-    roster = list(profiles.build_roster(dev_email))
+    roster = list(profiles.build_seeded_roster(dev_email, config.parse_org_headcount(env)))
     if config.cross_tenant_fixture_enabled(env):
         roster += profiles.build_other_tenant_roster()
 
@@ -312,10 +325,10 @@ def build_manifest(
     }
 
 
-def assert_no_credentials(doc: dict[str, Any]) -> None:
+def assert_no_credentials(doc: dict[str, Any], env: Mapping[str, str] | None = None) -> None:
     """Fail loudly if a secret ever reaches the document."""
     blob = json.dumps(doc, ensure_ascii=False)
-    for literal in _FORBIDDEN_LITERALS:
+    for literal in _forbidden_literals(os.environ if env is None else env):
         if literal in blob:
             raise RuntimeError(
                 f"manifest would contain the credential literal {literal!r}; "
@@ -345,23 +358,95 @@ def render_manifest(doc: dict[str, Any]) -> str:
 #: A single physical line, so the pod-log transport needs no parser.
 SENTINEL_PREFIX = "SEED_MANIFEST_JSON: "
 
+#: The chunked fallback, for a manifest too big to survive as one log line:
+#: `SEED_MANIFEST_GZ: <i>/<n> <base64(gzip(compact json))>`, 1-based, in order.
+#: `manifest-from-log.sh` turns either form back into one plain sentinel line.
+GZ_SENTINEL_PREFIX = "SEED_MANIFEST_GZ: "
+
 #: CRI reassembles a container's log line up to this many bytes; longer and
 #: `grep -m1` on the far side would capture a fragment, not the document.
 _SENTINEL_MAX_BYTES = 16 * 1024
 
+#: Payload per chunk, inside that bound once prefix and counter are added.
+_GZ_CHUNK_BYTES = 12 * 1024
+
 
 def emit_manifest_sentinel(doc: dict[str, Any]) -> None:
-    """Print the compact-JSON sentinel line the CI capture step greps for."""
-    line = SENTINEL_PREFIX + json.dumps(
-        doc, separators=(",", ":"), sort_keys=True, ensure_ascii=False
-    )
-    size = len(line.encode("utf-8"))
-    if size > _SENTINEL_MAX_BYTES:
-        raise RuntimeError(
-            f"manifest sentinel line is {size} bytes, over the {_SENTINEL_MAX_BYTES}-byte "
-            "CRI line-reassembly bound"
+    """Print the manifest to stdout as sentinel lines a log reader can recover.
+
+    One plain `SEED_MANIFEST_JSON:` line while the document fits the CRI
+    line-reassembly bound — which the committed roster does, at ~9 KB — and
+    gzipped base64 chunks when it does not.
+
+    Refusing an oversized manifest was the alternative, and it is the wrong one:
+    this runs at the END of a seed, after every database write, in a Job with
+    `backoffLimit: 0`. A 250-person stand would have been seeded correctly and
+    then reported as a failure, with nothing to retry and nothing to fix. The
+    personas array is not trimmed either — the stand suite resolves its fixtures
+    out of it, so a shortened manifest is a broken one.
+    """
+    compact = json.dumps(doc, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    line = SENTINEL_PREFIX + compact
+    if len(line.encode("utf-8")) <= _SENTINEL_MAX_BYTES:
+        print(line)
+        return
+
+    # INVARIANT: mtime=0 keeps the sentinel a function of the document only.
+    blob = base64.b64encode(gzip.compress(compact.encode("utf-8"), mtime=0)).decode("ascii")
+    chunks = [blob[i : i + _GZ_CHUNK_BYTES] for i in range(0, len(blob), _GZ_CHUNK_BYTES)]
+    for index, chunk in enumerate(chunks, start=1):
+        print(f"{GZ_SENTINEL_PREFIX}{index}/{len(chunks)} {chunk}")
+
+
+def decode_manifest_sentinel(lines: Iterable[str]) -> dict[str, Any]:
+    """Recover the manifest from log lines carrying either sentinel form.
+
+    The Python half of `manifest-from-log.sh`, kept beside the emitter so the
+    two halves of one format cannot drift. Chunks may arrive in any order and
+    interleaved with other output, and an identical line read twice (a re-read
+    log) is tolerated. Everything else is an error rather than a best-effort
+    splice — a missing chunk, a conflicting total or a differing duplicate all
+    mean the input mixes two emissions, and a spliced document is not a
+    manifest.
+    """
+    chunks: dict[int, str] = {}
+    total: int | None = None
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if line.startswith(SENTINEL_PREFIX):
+            plain: dict[str, Any] = json.loads(line[len(SENTINEL_PREFIX) :])
+            return plain
+        if not line.startswith(GZ_SENTINEL_PREFIX):
+            continue
+        counter, _, payload = line[len(GZ_SENTINEL_PREFIX) :].partition(" ")
+        index_text, _, total_text = counter.partition("/")
+        index, chunk_total = int(index_text), int(total_text)
+        if total is None:
+            total = chunk_total
+        elif chunk_total != total:
+            raise ValueError(
+                f"chunk lines advertise conflicting totals {total} and {chunk_total}; "
+                "the input mixes two emissions"
+            )
+        if not 1 <= index <= chunk_total:
+            raise ValueError(f"chunk index {index} is outside 1..{chunk_total}")
+        if index in chunks and chunks[index] != payload:
+            raise ValueError(
+                f"chunk {index} appears twice with different payloads; "
+                "the input mixes two emissions"
+            )
+        chunks[index] = payload
+
+    if total is None:
+        raise ValueError(
+            f"no '{SENTINEL_PREFIX.strip()}' or '{GZ_SENTINEL_PREFIX.strip()}' line in the input"
         )
-    print(line)
+    missing = sorted(set(range(1, total + 1)) - set(chunks))
+    if missing:
+        raise ValueError(f"manifest chunks {missing} are missing; got {len(chunks)} of {total}")
+    blob = "".join(chunks[i] for i in range(1, total + 1))
+    document: dict[str, Any] = json.loads(gzip.decompress(base64.b64decode(blob)).decode("utf-8"))
+    return document
 
 
 def write_manifest(doc: dict[str, Any], path: Path | None = None) -> Path:

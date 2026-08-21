@@ -77,8 +77,9 @@ stand it exists only in the seed Job's log — recover it from there while the
 Job survives:
 
 ```bash
-kubectl -n <namespace> logs job/<the seed job> \
-  | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- > stand-manifest.json
+kubectl -n <namespace> logs job/<the seed job> --tail=-1 \
+  | src/ingestion/tools/seed/manifest-from-log.sh \
+  | cut -d' ' -f2- > stand-manifest.json
 ```
 
 It names personas and in-cluster addresses, so it stays on the machine that

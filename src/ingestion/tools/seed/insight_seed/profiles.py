@@ -13,6 +13,12 @@ so the admin-gated API surface has a caller, and it is kept outside the
 org so that granting it cannot move a single metric or change what any
 other person can see. See `build_roster`.
 
+That roster is a fixture, so it is also FIXED: `build_roster` is the
+committed one and nothing may renumber it. A stand that needs a bigger
+organisation asks for one with `SEED_ORG_HEADCOUNT`, and
+`build_seeded_roster` appends the extra people (see `scale.py`) after the
+committed 26 rather than rebuilding them.
+
 `TEAM_PROFILES` below maps a per-team source-type to a numeric
 multiplier (0 = no rows; 1 = baseline; >1 = heavier). The row
 generators consult these weights to decide which silver rows a given
@@ -23,6 +29,8 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, replace
+
+from . import config
 
 # ─── Fixed UUIDs ────────────────────────────────────────────────────────
 # The dev lead's UUID matches the value the original dev-compose.sh seed
@@ -351,6 +359,36 @@ def build_roster(dev_user_email: str) -> list[Person]:
         for i, p in enumerate([ceo, *leads, *ics, admin_operator])
         for fn, ln in [_name_at(i)]
     ]
+
+
+#: What `build_roster` returns; re-exported from `config`, which owns it.
+CANONICAL_ROSTER_SIZE = config.CANONICAL_ROSTER_SIZE
+
+
+def build_seeded_roster(dev_user_email: str, headcount: int) -> list[Person]:
+    """The roster a seed run writes: the committed one, or a grown one.
+
+    This is the entry point every WRITER uses (identity, silver, the realm, the
+    manifest); each parses `SEED_ORG_HEADCOUNT` at its own boundary with
+    `config.parse_org_headcount` and passes the resulting int here, so raw
+    environment state never crosses into roster construction. `build_roster`
+    stays what it always was and is still the right call for anything asserting
+    on the committed fixtures.
+
+    The default path returns `build_roster`'s own object, and `scale` is not
+    even imported: growing the roster is opt-in via `SEED_ORG_HEADCOUNT`, and a
+    stand that did not ask for it must get byte-identical data to the one CI
+    asserts against.
+    """
+    base = build_roster(dev_user_email)
+    if headcount in (config.DEFAULT_ORG_HEADCOUNT, CANONICAL_ROSTER_SIZE):
+        return base
+
+    # INVARIANT: imported inside the branch — the committed path must not run
+    # scale.py's import-time work.
+    from .scale import extend_roster
+
+    return extend_roster(base, headcount)
 
 
 def build_other_tenant_roster() -> list[Person]:
