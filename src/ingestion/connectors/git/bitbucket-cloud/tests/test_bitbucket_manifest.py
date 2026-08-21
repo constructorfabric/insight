@@ -119,3 +119,32 @@ def test_no_hoisted_field_is_deleted_by_a_later_remove() -> None:
     assert not clashes, (
         f"RemoveFields deletes a value AddFields just wrote: {clashes}"
     )
+
+
+def test_the_call_budget_meters_only_the_vendor() -> None:
+    """The proxy is ours and admits work on its own terms; metering it against
+    Bitbucket's hourly allowance would throttle traffic that allowance does not
+    cover."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    budget = manifest["api_budget"]
+    matchers = [m for p in budget["policies"] for m in p["matchers"]]
+    assert matchers, "the budget must scope itself with matchers"
+    assert all(m.get("url_base") == "https://api.bitbucket.org" for m in matchers), matchers
+    # Bitbucket reports the reset as seconds remaining; the CDK reads that header
+    # with fromtimestamp(). Naming a header it never sends leaves the value unread.
+    assert budget["ratelimit_reset_header"] != "x-ratelimit-reset"
+    assert budget["ratelimit_remaining_header"] == "x-ratelimit-remaining"
+
+
+def test_the_call_budget_limit_survives_a_string_valued_config() -> None:
+    """A Secret's values reach the source config as strings, so the budget's
+    limit has to be declared and interpolated as one."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    field = manifest["spec"]["connection_specification"]["properties"][
+        "bitbucket_api_calls_per_hour"
+    ]
+    assert field["type"] == "string", "an integer here rejects every value a Secret can carry"
+    assert isinstance(field["default"], str)
+    rate = manifest["api_budget"]["policies"][0]["rates"][0]
+    # The fallback covers the key being absent entirely, which is the default path.
+    assert "or 1000" in rate["limit"]

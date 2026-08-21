@@ -3437,6 +3437,38 @@ streams:
           - [date]
           - [message]
 
+# Bitbucket meters repository data on a one-hour ROLLING window, so the budget
+# is a moving window rather than a fixed one: a fixed policy needs a reset
+# instant to roll on, and the only one Bitbucket offers cannot supply it.
+#
+# x-ratelimit-reset carries SECONDS REMAINING, while the CDK reads that header
+# with fromtimestamp(), which would place the reset in 1970. It is deliberately
+# not named here — pointing the setting at a header Bitbucket never sends keeps
+# the value unread. x-ratelimit-remaining is a plain count and is read: the
+# moving window syncs its bucket to it once the vendor reports nothing left.
+#
+# The limit is what the vendor grants the token, not what the connector wants.
+# Bitbucket scales it per endpoint and per plan and publishes no way to read the
+# ceiling before spending it, so the default is the documented floor for
+# repository data — correct everywhere, and raisable where the token is known to
+# have more.
+#
+# Only calls to Bitbucket are metered. The proxy is ours and has its own
+# admission control, so a matcher on the vendor host keeps proxy traffic out of
+# the budget.
+api_budget:
+  type: HTTPAPIBudget
+  ratelimit_reset_header: x-ratelimit-reset-unreadable-see-comment
+  ratelimit_remaining_header: x-ratelimit-remaining
+  status_codes_for_ratelimit_hit: [429]
+  policies:
+    - type: MovingWindowCallRatePolicy
+      rates:
+        - limit: "{{ config['bitbucket_api_calls_per_hour'] or 1000 }}"
+          interval: PT1H
+      matchers:
+        - url_base: https://api.bitbucket.org
+
 concurrency_level:
   type: ConcurrencyLevel
   # Never 1: the concurrent CDK self-deadlocks at a single worker once a sync
@@ -3510,6 +3542,17 @@ spec:
         title: API Base URL
         default: "https://api.bitbucket.org/2.0"
         order: 9
+      bitbucket_api_calls_per_hour:
+        # A string, not an integer: a Secret's values reach the source config as
+        # strings, and the spec is validated against them, so an integer here
+        # would reject every value an operator can actually supply.
+        type: string
+        pattern: "^[1-9][0-9]*$"
+        description: >-
+          Requests per hour the connector may spend against the Bitbucket API, paced so the vendor never has to refuse one. The default is the documented floor for repository data; Bitbucket grants more to some endpoints and plans, and raising this to what the token actually has shortens a sync. Calls to the git-cli-proxy are not counted.
+        title: API Calls Per Hour
+        default: "1000"
+        order: 10
       bitbucket_start_date:
         type: string
         description: >-
