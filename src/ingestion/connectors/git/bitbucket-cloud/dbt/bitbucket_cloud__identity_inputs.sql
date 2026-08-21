@@ -13,6 +13,22 @@
 -- roster and every actor field resolve to (ADR-0002). `uuid` identifies the
 -- same person but is not what the roster keys on.
 --
+-- Two kinds of account, distinguished by source_type:
+--
+--   `bitbucket`              — a real account, keyed on the account_id the
+--                              workspace roster and every actor field resolve
+--                              to (ADR-0002).
+--   `bitbucket-commit-email` — an e-mail no account claims, keyed on the e-mail
+--                              itself. Not a vendor account and never matched
+--                              at sign-in: it exists so an operator can see the
+--                              address in the console and merge it into the
+--                              person it belongs to, which is the only way
+--                              those commits ever attribute. A separate
+--                              source_type keeps ADR-0002's account_id contract
+--                              intact and keeps e-mail-shaped ids out of the
+--                              (source_type, external_id) space the account
+--                              lookup treats as unique.
+--
 -- Two value types, from two different questions:
 --   `email`        — which addresses an account has committed under, the edge
 --                    that lets an e-mail-keyed commit fact reach a person
@@ -66,6 +82,40 @@ WITH observations AS (
     FROM {{ source('bronze_bitbucket_cloud', 'workspace_members') }} FINAL
     WHERE COALESCE(account_id, '') != ''
       AND COALESCE(display_name, '') != ''
+
+    UNION ALL
+
+    -- The unowned e-mail claims itself, so the console has an account to show
+    -- and a value to search on.
+    SELECT
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
+        'bitbucket-commit-email' AS insight_source_type,
+        email AS source_account_id,
+        'email' AS value_type,
+        email AS value,
+        'bronze_bitbucket_cloud.commits.author_email' AS value_field_name,
+        'UPSERT' AS operation_type,
+        now64(3) AS _synced_at
+    FROM {{ ref('bitbucket_cloud__unowned_commit_emails') }}
+
+    UNION ALL
+
+    -- The git author name, so the operator recognises whose address it is
+    -- rather than deciding on an e-mail alone. The persons-seed also names the
+    -- person it mints from this.
+    SELECT
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
+        'bitbucket-commit-email' AS insight_source_type,
+        email AS source_account_id,
+        'display_name' AS value_type,
+        author_name AS value,
+        'bronze_bitbucket_cloud.commits.author_name' AS value_field_name,
+        'UPSERT' AS operation_type,
+        now64(3) AS _synced_at
+    FROM {{ ref('bitbucket_cloud__unowned_commit_emails') }}
+    WHERE author_name != ''
 )
 
 SELECT
@@ -89,7 +139,7 @@ LEFT ANTI JOIN {{ this }} AS existing
     ON  o.value_type                 = existing.value_type
     AND o.value                      = existing.value
     AND o.source_account_id          = existing.source_account_id
-    AND existing.insight_source_type = 'bitbucket'
+    AND existing.insight_source_type = o.insight_source_type
     AND existing.insight_tenant_id   = o.insight_tenant_id
     AND existing.insight_source_id   = o.insight_source_id
 {% endif %}
