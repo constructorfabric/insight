@@ -6,7 +6,7 @@ SELECT
     entity_id,
     measure_key,
     count() AS row_count
-FROM {{ ref('wiki_metric_observations') }}
+FROM {{ ref('ai_cost_metric_observations') }}
 WHERE entity_id != lower(trimBoth(entity_id))
    OR entity_id = ''
 GROUP BY entity_id, measure_key

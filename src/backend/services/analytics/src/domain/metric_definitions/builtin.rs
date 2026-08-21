@@ -299,7 +299,7 @@ mod tests {
                     .copied()
                     .unwrap_or_default();
                 assert!(
-                    matches!(collapse, AliasCollapse::Sum),
+                    !collapse.needs_pre_collapse(),
                     "{} is {:?} but binds {}, which declares alias_collapse: {}",
                     metric.metric_key,
                     metric.computation,

@@ -1140,7 +1140,7 @@ def test_drilldown_refuses_a_wrong_version_cursor(
     """
     response = api.post(
         DRILLDOWN,
-        json_body=_seeded_request(stand_manifest, cursor=_tampered(issued_cursor, version=2)),
+        json_body=_seeded_request(stand_manifest, cursor=_tampered(issued_cursor, version=3)),
     )
     _refusal(response, 400, "cursor version is unsupported")
 

@@ -1,7 +1,7 @@
 spec_version: 1
 description: >
-  One person, two source accounts — the shape the identity cutover creates and
-  the one that silently doubles day-flag metrics if gold does not collapse it.
+  One person, two source accounts — the shape that silently doubles day-flag
+  metrics if the runtime does not collapse the accounts while it resolves them.
 
   alice has a second Cursor account under alice.dev@example.com. Both are
   active on the SAME day (2026-01-05), and `identity_aliases` binds them to one
@@ -10,10 +10,10 @@ description: >
   What must hold:
     • ai.active_days = 1, not 2. It is a DAY FLAG: each account contributes
       value=1 for that day, so summing across accounts counts one day twice.
-      Gold collapses the aliases with max().
-    • ai.accepted_lines = 30, the SUM of both accounts (10 + 20). Additive
-      measures must keep adding across accounts — collapsing them would lose
-      the second account's work.
+      The runtime collapses the accounts with max() before it sums the days.
+    • ai.accepted_lines = 35, the SUM of all three accounts (10 + 20 + 5).
+      Additive measures must keep adding across accounts — collapsing them
+      would lose the other accounts' work.
     • the peer pool counts alice ONCE (n = 3, not 4): a person with two
       accounts is one peer.
 
@@ -35,6 +35,14 @@ bronze:
       userId: cursor-alice-dev
       date: 1767571200000
       acceptedLinesAdded: 20
+    # Third account of alice, recorded with different case and surrounding
+    # space: both sides must normalize or its work goes unattributed.
+    - $ref: templates/cursor_usage.yaml#/templates/cursor_usage
+      unique_key: cursor-alice-caps-20260105
+      email: "  Alice.Caps@Example.COM "
+      userId: cursor-alice-caps
+      date: 1767571200000
+      acceptedLinesAdded: 5
     - $ref: templates/cursor_usage.yaml#/templates/bob
       unique_key: cursor-bob-20260105
       date: 1767571200000
@@ -47,6 +55,7 @@ bronze:
 identity_aliases:
   alice@example.com:
     - alice.dev@example.com
+    - alice.caps@example.com
 
 cases:
   - name: Two accounts of one person count as one active day
@@ -80,8 +89,9 @@ cases:
       - metric: ai.active_days
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-01-05' && double(p.value) == 1.0))"
-      # Additive measures still add across the accounts: 10 + 20.
+      # 10 + 20 + 5 — the third account contributes only if normalization
+      # matched its spelling.
       - metric: ai.accepted_lines
         view: period
         find: { entity_id: alice@example.com }
-        equal: { value: 30 }
+        equal: { value: 35 }

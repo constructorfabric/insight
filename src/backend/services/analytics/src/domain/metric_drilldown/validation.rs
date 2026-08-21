@@ -3,7 +3,7 @@ use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;
-use crate::domain::metric_definitions::definition::MetricInputRole;
+use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 use crate::domain::metric_definitions::{
     EvidenceGranularity, MetricDefinition, load_definitions_with_ids,
 };
@@ -207,8 +207,8 @@ async fn load_evidence_plan(
 ) -> Result<EvidencePlan, CanonicalError> {
     let rows = EvidenceInputRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
-        "SELECT i.input_role, m.measure_key, m.evidence_granularity, s.source_key, \
-                s.evidence_ref, s.evidence_schema_status \
+        "SELECT i.input_role, m.measure_key, m.alias_collapse, m.evidence_granularity, \
+                s.source_key, s.evidence_ref, s.evidence_schema_status \
          FROM metric_definition_inputs i \
          INNER JOIN metric_source_measures m ON m.id = i.source_measure_id \
          INNER JOIN metric_sources s ON s.id = m.source_id \
@@ -235,8 +235,11 @@ async fn load_evidence_plan(
                 .as_deref()
                 .and_then(EvidenceGranularity::from_db)
                 .ok_or_else(config_error)?;
+            let alias_collapse =
+                AliasCollapse::from_db(&row.alias_collapse).ok_or_else(config_error)?;
             Ok(EvidenceInput {
                 role,
+                alias_collapse,
                 presentation: evidence_presentation(&source_key, &row.measure_key, granularity),
                 measure_key: row.measure_key,
             })

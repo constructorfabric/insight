@@ -1,4 +1,5 @@
 {% set evidence_models = [
+    'ai_cost_metric_evidence',
     'ai_metric_evidence',
     'collab_metric_evidence',
     'git_metric_evidence',

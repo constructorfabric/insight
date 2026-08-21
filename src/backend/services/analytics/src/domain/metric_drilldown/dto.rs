@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::metric_definitions::definition::MetricInputRole;
+use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 
 use super::cursor::CursorKey;
 use crate::domain::metric_definitions::{EvidenceGranularity, EvidenceRelation, MetricDefinition};
@@ -145,6 +145,9 @@ pub struct EvidencePlan {
 pub struct EvidenceInput {
     pub role: MetricInputRole,
     pub measure_key: String,
+    /// Must match the rule the metric being explained applied, or the drilldown
+    /// shows a different ratio than the tile it was opened from.
+    pub alias_collapse: AliasCollapse,
     pub presentation: EvidencePresentation,
 }
 
@@ -157,6 +160,9 @@ pub struct EvidencePresentation {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvidenceQueryRow {
     pub role: String,
+    /// Source identity the row was recorded under; closes the ordering key when
+    /// two of a person's identities tie on every other column.
+    pub entity_id: String,
     pub metric_date: String,
     pub observed_at: String,
     pub source_key: String,

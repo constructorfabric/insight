@@ -58,6 +58,7 @@ pub(super) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> Evidenc
 
 pub(super) fn row() -> EvidenceQueryRow {
     EvidenceQueryRow {
+            entity_id: "person@example.com".to_owned(),
             role: "value".to_owned(),
             metric_date: "2026-07-01".to_owned(),
             observed_at: "2026-07-01 10:00:00".to_owned(),

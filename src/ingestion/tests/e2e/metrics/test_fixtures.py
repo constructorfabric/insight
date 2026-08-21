@@ -70,18 +70,19 @@ def _person_ids_for(emails: list[str], aliases: dict[str, list[str]]) -> dict[st
 
 def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> None:
     """Give each persona an account that carries their email and is bound to
-    their person id — the shape resolve_person_id() reads.
+    their person id — the shape `identity.person_map` resolves through.
 
     Resolution is account-derived: `identity_inputs` says which account carries
     an email, `identity_persons` says who that account belongs to. The rig plays
     both producers (the connector models and the service's persons-sync), one
     synthetic account per persona.
 
-    Runs BEFORE the gold dbt build so every observation row resolves.
+    The runtime resolves while it serves, so these rows only have to exist
+    before the requests run — not before the gold build.
     """
-    # NOT worker-scoped: the resolve_person_id macro names `identity` literally,
-    # so a per-worker suffix here would leave gold reading an unseeded table.
-    # Enabling xdist for this suite has to make the macro schema-aware first.
+    # NOT worker-scoped: the map models name the `identity` schema literally, so
+    # a per-worker suffix would leave the map reading an unseeded table. xdist
+    # needs them schema-aware first.
     clickhouse.ensure_database(cfg, "identity")
     clickhouse.execute(
         cfg,
@@ -246,9 +247,9 @@ def test_metric_smoke(
         ch_seeder.ledger.record("silver", "class_focus_metrics")
         dbt_runner.run("class_focus_metrics", worker_ctx=worker_ctx, full_refresh=True)
 
-    # 4. Identity bindings for the personas the cases address, BEFORE the
-    #    gold build — the resolve macro joins them into person_id during the
-    #    build (the rig plays the persons-sync role here).
+    # 4. Identity bindings for the personas the cases address (the rig plays the
+    #    persons-sync role). Read per request, so only the map relation has to
+    #    exist before the gold build.
     persona_emails = _all_persona_emails(test_yaml)
     all_person_ids = _person_ids_for(persona_emails, test_yaml.identity_aliases)
     to_person_id = {email: all_person_ids[email] for email in _requested_persona_emails(test_yaml)}
