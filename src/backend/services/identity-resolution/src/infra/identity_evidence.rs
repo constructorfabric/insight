@@ -29,6 +29,10 @@ pub struct AccountEvidence {
     /// The account's latest event is a closure signal — it is deactivated at
     /// the source and must not be surfaced for review.
     pub is_closed: bool,
+    /// A connector states an account id for it, so the persons-seed can write
+    /// a binding. False means no seed run ever will: the only paths left are an
+    /// operator decision and a sign-in through the account.
+    pub states_binding_id: bool,
 }
 
 /// The whole evidence read, with the one fact about the read itself a consumer
@@ -101,7 +105,11 @@ const FOLD_SQL: &str = r"
         argMaxIf(
             ifNull(value, ''), (_synced_at, _version),
             value_type = 'parent_email' AND operation_type = 'UPSERT' AND value != ''
-        )                                               AS manager_email
+        )                                               AS manager_email,
+        argMaxIf(
+            ifNull(value, ''), (_synced_at, _version),
+            value_type = 'id' AND operation_type = 'UPSERT' AND value != ''
+        )                                               AS binding_id
     FROM identity.identity_inputs
     WHERE source_account_id IS NOT NULL AND source_account_id != ''
     GROUP BY source_type, source_id, account_id
@@ -111,7 +119,8 @@ const FOLD_SQL: &str = r"
 /// decoded positionally, so a reordered or added fold column would otherwise
 /// mis-decode in silence.
 const FOLD_COLUMNS: &str = "source_type, source_id, account_id, latest_op, email, username, \
-     display_name, first_name, last_name, job_title, department, status, manager_email";
+     display_name, first_name, last_name, job_title, department, status, manager_email, \
+     binding_id";
 
 /// The name a source sends in parts, as [`compose_name`] assembles it. The
 /// order key needs it because a row described by parts alone still shows one.
@@ -197,6 +206,9 @@ struct FoldedRow {
     department: String,
     status: String,
     manager_email: String,
+    /// The `value_type='id'` value the source itself states for this account
+    /// (ADR-0002's binding row). Empty when no connector emits one.
+    binding_id: String,
     /// The listing's order key, computed by the query so no second definition
     /// of it can drift from the one that sorted the rows. Empty on reads that
     /// do not order (the whole-tenant fold).
@@ -401,6 +413,7 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
         username: non_empty(row.username),
         description,
         is_closed: row.latest_op == "DELETE",
+        states_binding_id: !row.binding_id.trim().is_empty(),
     })
 }
 
@@ -613,6 +626,7 @@ mod tests {
             department: String::new(),
             status: String::new(),
             manager_email: String::new(),
+            binding_id: "gh-1".to_owned(),
             order_label: String::new(),
         }
     }

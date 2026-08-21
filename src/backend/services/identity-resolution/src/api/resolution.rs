@@ -679,7 +679,7 @@ pub struct AttentionParams {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
     /// `contested` | `binding_conflict` | `provisioned_at_login` |
-    /// `minted_from_roster` | `no_evidence`.
+    /// `minted_from_roster` | `no_source_id` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -773,6 +773,7 @@ pub struct ResolutionRatesResponse {
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
+    pub no_source_id: usize,
     pub no_evidence: usize,
     pub excluded: usize,
 }
@@ -860,6 +861,7 @@ pub async fn attention(
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,
+            no_source_id: review.rates.no_source_id,
             no_evidence: review.rates.no_evidence,
             excluded: review.rates.excluded,
         },
@@ -1304,6 +1306,7 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::BindingConflict => "binding_conflict",
         ItemKind::ProvisionedAtLogin => "provisioned_at_login",
         ItemKind::MintedFromRoster => "minted_from_roster",
+        ItemKind::NoSourceId => "no_source_id",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -1343,6 +1346,7 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
             username: e.username,
             description: e.description,
             is_closed: e.is_closed,
+            states_binding_id: e.states_binding_id,
         })
         .collect();
 
@@ -1401,6 +1405,7 @@ mod tests {
             (ItemKind::BindingConflict, "binding_conflict"),
             (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
             (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoSourceId, "no_source_id"),
             (ItemKind::NoEvidence, "no_evidence"),
         ] {
             assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");

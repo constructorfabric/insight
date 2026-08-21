@@ -123,7 +123,7 @@ export interface PersonSummary {
 /** One account awaiting an operator decision. */
 export interface AttentionItem {
   /** `contested` | `binding_conflict` | `provisioned_at_login` |
-   *  `minted_from_roster` | `no_evidence` — open vocabulary. */
+   *  `minted_from_roster` | `no_source_id` | `no_evidence` — open vocabulary. */
   kind: string;
   source: string;
   source_id: string;
@@ -149,6 +149,8 @@ export interface ResolutionRates {
   observed: number;
   bound: number;
   pending: number;
+  /** Unbound accounts no seed run can bind — an operator decides, or nobody. */
+  no_source_id: number;
   no_evidence: number;
   excluded: number;
 }

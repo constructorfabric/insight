@@ -1214,7 +1214,7 @@
             ]
           },
           "kind": {
-            "description": "`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_evidence`.",
+            "description": "`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_source_id` | `no_evidence`.",
             "type": "string"
           },
           "manager_email": {
@@ -1267,6 +1267,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "no_source_id": {
+            "minimum": 0,
+            "type": "integer"
+          },
           "observed": {
             "minimum": 0,
             "type": "integer"
@@ -1280,6 +1284,7 @@
           "observed",
           "bound",
           "pending",
+          "no_source_id",
           "no_evidence",
           "excluded"
         ],

@@ -33,6 +33,11 @@ pub enum ItemKind {
     /// may duplicate one already on the roster under a different account, and
     /// only an operator can say which it is.
     MintedFromRoster,
+    /// The account has evidence to match on, but no connector states an id for
+    /// it, so no seed run can write it a binding however well its address
+    /// matches. Only an operator — or a sign-in through the account — can bind
+    /// it, which is why it belongs on the queue rather than in `pending`.
+    NoSourceId,
     /// The account carries no identity evidence automation can match on —
     /// e-mail is the only matching key today, so a username-only account is
     /// here too (shown with its username). Visible, never hidden: nothing
@@ -79,6 +84,9 @@ pub struct ResolutionRates {
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
+    /// Unbound accounts no seed run can bind — an operator decision is the only
+    /// way out. Counted apart from `pending`, which promises the opposite.
+    pub no_source_id: usize,
     pub no_evidence: usize,
     pub excluded: usize,
 }
@@ -98,6 +106,11 @@ pub struct EvidenceAccount {
     pub username: Option<String>,
     pub description: AccountDescription,
     pub is_closed: bool,
+    /// A connector states an account id for it — the seed's only route to a
+    /// binding. See [`AccountEvidence::states_binding_id`].
+    ///
+    /// [`AccountEvidence::states_binding_id`]: crate::infra::identity_evidence::AccountEvidence::states_binding_id
+    pub states_binding_id: bool,
 }
 
 /// Build the review from folded evidence and current bindings.
@@ -141,9 +154,16 @@ pub fn build(
                 if candidates.len() > 1 {
                     rates.pending += 1;
                     items.push(item(ItemKind::Contested, account, None, candidates));
+                } else if !account.states_binding_id {
+                    // No source-stated id, so the seed has nothing to write a
+                    // binding from — however well the address matches, no run
+                    // will ever bind it. Surfaced with whatever candidate the
+                    // address does name, so the decision is one click.
+                    rates.no_source_id += 1;
+                    items.push(item(ItemKind::NoSourceId, account, None, candidates));
                 } else {
-                    // One candidate or none: the account has an e-mail, so
-                    // automation will bind it on its next run — not the
+                    // The source states an id and the address names at most one
+                    // person, so the next seed run binds it — not the
                     // operator's problem yet.
                     rates.pending += 1;
                 }
@@ -294,6 +314,9 @@ mod tests {
         }
     }
 
+    /// The ordinary case: a connector states an id for the account, so the seed
+    /// can bind it. The accounts that state none are built by
+    /// [`without_source_id`].
     fn observed(source_type: &str, id: &str, email: Option<&str>) -> EvidenceAccount {
         EvidenceAccount {
             account: account(source_type, id),
@@ -301,6 +324,14 @@ mod tests {
             username: None,
             description: AccountDescription::default(),
             is_closed: false,
+            states_binding_id: true,
+        }
+    }
+
+    fn without_source_id(source_type: &str, id: &str, email: Option<&str>) -> EvidenceAccount {
+        EvidenceAccount {
+            states_binding_id: false,
+            ..observed(source_type, id, email)
         }
     }
 
@@ -427,6 +458,9 @@ mod tests {
         let newcomer = observed("slack", "slk-1", Some("shared@example.com"));
         let login = observed("github", "gh-9", None);
         let roster = observed("bamboohr", "e-1", None);
+        // Addressed, unbound, and its source states no id: the seed can never
+        // bind it, so it ranks above the accounts nothing describes at all.
+        let unbindable = without_source_id("gitlab", "gl-1", Some("solo@example.com"));
         let orphan = observed("zoom", "z-1", None);
 
         let mut bindings = HashMap::new();
@@ -436,7 +470,15 @@ mod tests {
         bindings.insert(roster.account.clone(), roster_bound(37));
 
         let review = build(
-            vec![contested_a, contested_b, newcomer, login, roster, orphan],
+            vec![
+                contested_a,
+                contested_b,
+                newcomer,
+                login,
+                roster,
+                unbindable,
+                orphan,
+            ],
             &bindings,
         );
 
@@ -455,9 +497,76 @@ mod tests {
                 ItemKind::BindingConflict,
                 ItemKind::ProvisionedAtLogin,
                 ItemKind::MintedFromRoster,
+                ItemKind::NoSourceId,
                 ItemKind::NoEvidence,
             ],
         );
+    }
+
+    #[test]
+    fn an_account_whose_source_states_no_id_is_queued_not_left_to_automation() {
+        // `pending` promises the next seed run will bind it. Nothing can: the
+        // binding row is written from a source-stated id, and this account has
+        // none — so leaving it there hides it from the only party who can
+        // resolve it, forever.
+        let review = build(
+            vec![without_source_id(
+                "github-commit-email",
+                "sam@corp.com",
+                Some("sam@corp.com"),
+            )],
+            &HashMap::new(),
+        );
+
+        assert_eq!(review.items.len(), 1);
+        assert_eq!(review.items[0].kind, ItemKind::NoSourceId);
+        assert_eq!(review.rates.no_source_id, 1);
+        assert_eq!(review.rates.pending, 0, "it is not waiting on automation");
+    }
+
+    #[test]
+    fn a_source_stated_id_keeps_an_unbound_account_off_the_queue() {
+        // The counterpart: the seed WILL bind this one, so showing it would ask
+        // the operator for a decision automation is about to make.
+        let review = build(
+            vec![observed("bamboohr", "e-1", Some("sam@corp.com"))],
+            &HashMap::new(),
+        );
+
+        assert!(review.items.is_empty());
+        assert_eq!(review.rates.pending, 1);
+        assert_eq!(review.rates.no_source_id, 0);
+    }
+
+    #[test]
+    fn a_contested_address_outranks_a_missing_source_id() {
+        // Both conditions hold; the operator needs the more specific one — which
+        // person claims it — and the candidate list that comes with it.
+        let a = observed("github", "gh-1", Some("shared@example.com"));
+        let b = observed("jira", "jr-1", Some("shared@example.com"));
+        let claim = without_source_id(
+            "github-commit-email",
+            "shared@example.com",
+            Some("shared@example.com"),
+        );
+
+        let mut bindings = HashMap::new();
+        bindings.insert(a.account.clone(), seed_bound(17));
+        bindings.insert(b.account.clone(), seed_bound(23));
+
+        let review = build(vec![a, b, claim.clone()], &bindings);
+
+        let claim_items: Vec<ItemKind> = review
+            .items
+            .iter()
+            .filter(|i| i.account == claim.account)
+            .map(|i| i.kind)
+            .collect();
+        assert!(
+            claim_items.contains(&ItemKind::Contested),
+            "expected the contested kind for the claim-only account, got {claim_items:?}"
+        );
+        assert_eq!(review.rates.no_source_id, 0);
     }
 
     #[test]

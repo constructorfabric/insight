@@ -78,6 +78,7 @@ const KIND_ORDER = [
   "binding_conflict",
   "provisioned_at_login",
   "minted_from_roster",
+  "no_source_id",
   "no_evidence",
 ] as const;
 
