@@ -38,10 +38,12 @@ stringData:
   bitbucket_username: "CHANGE_ME"
   bitbucket_token: "CHANGE_ME"
   bitbucket_workspaces: '["acme"]'
-  git_proxy_url: "http://insight-git-cli-proxy:8085"
-  git_proxy_token: "CHANGE_ME"
   bitbucket_start_date: "2026-01-01"
 ```
+
+The proxy's address and bearer token are absent by design: the chart owns both
+and reconcile injects them, so nothing here tracks the proxy's port or rotates
+with its token.
 
 `bitbucket_start_date` is the one bound: no stream fetches anything older, and a
 repository nobody has touched since it is never listed, so never cloned.
@@ -53,8 +55,6 @@ repository nobody has touched since it is never listed, so never cloned.
 | `bitbucket_username` | No | Atlassian account email/username. Set for personal API tokens (Basic `username:token`); leave empty for workspace/repository access tokens (Bearer). The clone username the proxy presents is derived from the same choice |
 | `bitbucket_token` | Yes | API token with `repository:read` |
 | `bitbucket_workspaces` | Yes | JSON array of workspace slugs |
-| `git_proxy_url` | Yes | git-cli-proxy base URL. No default — a wrong value must fail `check`, not fall back |
-| `git_proxy_token` | Yes | Bearer token the proxy requires on every `/v1` request |
 | `bitbucket_api_base_url` | No | API base URL (default `https://api.bitbucket.org/2.0`) |
 | `bitbucket_start_date` | Yes | Earliest date fetched, by every stream (YYYY-MM-DD); bounds the first-sync cost |
 

@@ -157,8 +157,8 @@ stringData:
 ```yaml
 # Declarative Bitbucket Cloud connector on the git-cli-proxy: commit-level data
 # comes from a bare clone served by the proxy instead of one vendor API call per
-# commit. Needs a reachable git-cli-proxy deployment, with git_proxy_token equal
-# to the proxy's own configured token.
+# commit. Needs a deployed git-cli-proxy (gitCliProxy.deploy); its address and
+# token are injected by reconcile, so this Secret carries neither.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -172,8 +172,6 @@ stringData:
   bitbucket_username:   ""             # required only for an App Password / personal API token
   bitbucket_workspaces: '["acme"]'     # JSON array of workspace slugs
   bitbucket_start_date: "2026-01-01"
-  git_proxy_url:        "http://insight-git-cli-proxy:8085"
-  git_proxy_token:      "CHANGE_ME"    # must match the proxy's own Secret
 ```
 
 ```yaml
