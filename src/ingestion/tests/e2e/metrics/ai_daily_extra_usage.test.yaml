@@ -50,7 +50,7 @@ bronze:
     - $ref: templates/people.yaml#/templates/erin
 
   # One row per seat per day, each with its own unique_key — the grain the
-  # connector writes since claude-team 3.1.0. Keyed by seat and month these
+  # connector writes since claude-team 3.2.0. Keyed by seat and month these
   # would be one row and every step below would be unmeasurable.
   bronze_claude_team.claude_team_overage_spend:
     - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-alice-2026-12-05, snapshot_date: "2026-12-05", used_credits: 100, monthly_credit_limit: 1000 }
