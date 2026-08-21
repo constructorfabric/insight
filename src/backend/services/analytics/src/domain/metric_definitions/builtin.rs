@@ -3,8 +3,8 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::domain::metric_definitions::definition::{
-    EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
-    SourceKind, ValueTransform,
+    AliasCollapse, EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat,
+    MetricInputRole, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -95,6 +95,10 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
+    /// Declared per (source, measure): `active_day` is a per-day flag in
+    /// `ai_usage` and a distinct-count subject in `collab`.
+    #[serde(default)]
+    pub alias_collapse: AliasCollapse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -255,6 +259,53 @@ mod tests {
             for dimension_key in &builtin_source.dimensions {
                 assert!(is_snake_case(dimension_key));
                 assert!(dimensions.insert(dimension_key.as_str()));
+            }
+        }
+    }
+
+    // INVARIANT: only additive computations may declare a collapse. Median is
+    // event-grain (collapsing moves the quantile) and distinct counts collapse
+    // through `uniqExact(subject_key)`, so neither has a correct rendering.
+    #[test]
+    fn alias_collapse_is_declared_only_on_additive_computations() {
+        let collapse_by_source: HashMap<&str, HashMap<&str, AliasCollapse>> = builtin_sources()
+            .iter()
+            .map(|builtin_source| {
+                (
+                    builtin_source.source.key.as_str(),
+                    builtin_source
+                        .measures
+                        .iter()
+                        .map(|measure| (measure.key.as_str(), measure.alias_collapse))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let collapses = collapse_by_source
+                .get(metric.source_key.as_str())
+                .unwrap_or_else(|| panic!("unknown source for {}", metric.metric_key));
+            let additive = matches!(
+                metric.computation,
+                SeedComputation::Sum | SeedComputation::Ratio { .. }
+            );
+            if additive {
+                continue;
+            }
+            for input in &metric.inputs {
+                let collapse = collapses
+                    .get(input.measure_key.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                assert!(
+                    matches!(collapse, AliasCollapse::Sum),
+                    "{} is {:?} but binds {}, which declares alias_collapse: {}",
+                    metric.metric_key,
+                    metric.computation,
+                    input.measure_key,
+                    collapse.as_db(),
+                );
             }
         }
     }
