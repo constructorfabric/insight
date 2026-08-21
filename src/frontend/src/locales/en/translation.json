@@ -463,16 +463,14 @@
       "merge": "Merged",
       "detach": "Detached",
       "exclude": "Excluded",
-      "automatic": "Automatic",
+      "linked": "Linked",
+      "auto_seed_link": "Linked by address",
       "to": "to",
       "by_operator": "by an operator",
       "login_bootstrap": "First sign-in",
       "roster_mint": "Added from the roster",
-      "by": "by",
       "by_name": "by {{name}}",
-      "accounts_touched_one": "{{count}} account in this call",
-      "accounts_touched_other": "{{count}} accounts in this call",
-      "call": "the call"
+      "by_automation": "by automation"
     },
     "actions": {
       "bind": "Bind",
