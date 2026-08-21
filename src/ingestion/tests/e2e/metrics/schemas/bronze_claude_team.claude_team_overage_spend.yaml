@@ -18,7 +18,7 @@ schemas:
       tenant_id: { type: [string, "null"] }
       source_id: { type: [string, "null"] }
       unique_key: { type: string }
-      snapshot_date: { type: [string, "null"] }
+      snapshot_date: { type: [string, "null"], format: date }
       collected_at: { type: [string, "null"] }
       data_source: { type: [string, "null"] }
       account_uuid: { type: [string, "null"] }

@@ -130,12 +130,8 @@ seat_day_source AS (
       AND email != ''
       AND snapshot_date IS NOT NULL
 ),
--- A cumulative total may not fall. Where it does the vendor has corrected the
--- month downwards, and the correction belongs to the days already reported
--- rather than to the day it arrived: taking the minimum of a reading and every
--- later one rewrites those days to the corrected figure. Three properties come
--- out of it — no step is negative, the series only rises, and the steps still
--- add up to the month's final reading, which is what the monthly metric serves.
+-- INVARIANT: the suffix minimum is what keeps every step non-negative and makes
+-- the steps add up to the month's final reading, which the monthly metric serves.
 seat_day_corrected AS (
     SELECT
         *,
@@ -151,9 +147,8 @@ seat_day_step AS (
         *,
         corrected_cents - lagInFrame(corrected_cents, 1, toUInt32(0)) OVER w
                                                 AS step_cents,
-        -- What the step actually spans. A month's first reading covers the days
-        -- since the 1st, and a missed run makes the next one cover the gap — the
-        -- money is real, the single day it lands on is not.
+        -- INVARIANT: covers_days spans from the previous reading, or from the 1st
+        -- for a month's first one — above 1 the step is not one day's spend.
         toUInt16(dateDiff(
             'day',
             lagInFrame(metric_date, 1, toDate(period_month) - 1) OVER w,
