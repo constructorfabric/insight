@@ -179,6 +179,32 @@ describe("PlatformUsage", () => {
     expect(mocks.counts).toContain(300);
   });
 
+  it("draws a day the service left out of its answer as a zero", () => {
+    // The service returns rows, not a calendar: a day nobody opened the product
+    // has nothing to group and simply does not come back. Dropping it from the
+    // chart would redraw the range shorter than it is and slide every remaining
+    // bar left, so a quiet Sunday reads as a busy one.
+    mocks.summary = {
+      ...SUMMARY,
+      by_day: [
+        { day: "2026-08-01", visits: 3, visitors: 2 },
+        { day: "2026-08-03", visits: 2, visitors: 1 },
+      ],
+    };
+
+    render(<PlatformUsage />);
+
+    const rows = JSON.parse(
+      screen.getByTestId("plot").getAttribute("data-rows") ?? "[]",
+    ) as Array<{ day: string; visits: number; visitors: number }>;
+    expect(rows.map((row) => row.day)).toEqual([
+      "2026-08-01",
+      "2026-08-02",
+      "2026-08-03",
+    ]);
+    expect(rows[1]).toEqual({ day: "2026-08-02", visits: 0, visitors: 0 });
+  });
+
   it("plots visits against the day they happened", () => {
     render(<PlatformUsage />);
 
