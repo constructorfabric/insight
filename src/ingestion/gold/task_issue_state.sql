@@ -46,6 +46,8 @@ history AS (
         fh.insight_source_id                                                  AS insight_source_id,
         fh.data_source                                                        AS data_source,
         fh.issue_id                                                           AS issue_id,
+        fh.id_readable                                                        AS id_readable,
+        fh.title                                                              AS title,
         fh.event_at                                                           AS event_at,
         fh.event_kind                                                         AS event_kind,
         fh.delta_action                                                       AS delta_action,
@@ -90,6 +92,10 @@ issue_pivot AS (
             * argMaxIf(unit_multiplier, (event_at, _version),
                  role = 'spent' AND delta_action = 'set')                    AS time_spent_seconds,
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
+        -- The key the tracker itself shows a human ('owner/repo#12', 'PROJ-7');
+        -- the only field an issue's own page can be addressed from.
+        any(id_readable)                                                     AS id_readable,
+        any(title)                                                           AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
         any(data_source)                                                     AS data_source
     FROM history
@@ -116,6 +122,8 @@ SELECT
     p.insight_source_id                                                      AS insight_source_id,
     p.data_source                                                            AS data_source,
     p.issue_id                                                               AS issue_id,
+    p.id_readable                                                            AS id_readable,
+    p.title                                                                  AS title,
     cur.status_category                                                      AS status_category,
     p.issue_type                                                             AS issue_type,
     ifNull(it.issue_kind, 'unknown')                                         AS issue_kind,

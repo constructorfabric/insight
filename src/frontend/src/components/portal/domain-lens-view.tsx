@@ -49,7 +49,7 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { githubRepoUrl } from "@/lib/metrics/git-links";
+import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";

@@ -1,5 +1,5 @@
 /**
- * When a git metric's evidence addresses something outside the product.
+ * When a metric's evidence addresses something outside the product.
  *
  * The rule these pin is that a link is only ever built from what a row
  * actually says. Every case below is a way of NOT knowing: a provider whose
@@ -12,12 +12,15 @@ import { describe, expect, it } from "vitest";
 
 import type { MetricEvidenceSelection } from "@/api/metric-drilldown-client";
 import {
+  activityEventLabel,
   evidenceRecordLinks,
+  evidenceRefText,
+  githubIssueUrl,
   githubRecordUrl,
   githubRepoUrl,
   isGitMetric,
-  withGitSourceDimension,
-} from "@/lib/metrics/git-links";
+  withSourceDimension,
+} from "@/lib/metrics/provider-links";
 
 const SHA1 = "e0f4823a55ac28276cf068f066ebf66f872a059c";
 const SHA256 = `${SHA1}${SHA1.slice(0, 24)}`;
@@ -125,7 +128,7 @@ describe("isGitMetric", () => {
   );
 });
 
-describe("withGitSourceDimension", () => {
+describe("withSourceDimension", () => {
   function selection(
     metricKey: string,
     displayDimensions: string[] = []
@@ -140,7 +143,7 @@ describe("withGitSourceDimension", () => {
   }
 
   it("asks for the source a git metric declares", () => {
-    const result = withGitSourceDimension(
+    const result = withSourceDimension(
       selection("git.commits"),
       new Set(["repository", "source"])
     );
@@ -149,7 +152,7 @@ describe("withGitSourceDimension", () => {
   });
 
   it("keeps the requested dimensions sorted, so one selection is one query key", () => {
-    const result = withGitSourceDimension(
+    const result = withSourceDimension(
       selection("git.commits", ["repository"]),
       new Set(["repository", "source"])
     );
@@ -162,28 +165,34 @@ describe("withGitSourceDimension", () => {
   it("leaves a git metric that declares no source untouched", () => {
     const original = selection("git.commits_per_active_day");
 
-    expect(withGitSourceDimension(original, new Set())).toBe(original);
+    expect(withSourceDimension(original, new Set())).toBe(original);
   });
 
   it("leaves everything untouched while the catalogue is unknown", () => {
     const original = selection("git.commits");
 
-    expect(withGitSourceDimension(original, null)).toBe(original);
-    expect(withGitSourceDimension(original, undefined)).toBe(original);
+    expect(withSourceDimension(original, null)).toBe(original);
+    expect(withSourceDimension(original, undefined)).toBe(original);
   });
 
-  it("leaves a metric of another family untouched", () => {
+  it("leaves a metric of a family that links nothing untouched", () => {
+    const original = selection("wiki.pages_created");
+
+    expect(withSourceDimension(original, new Set(["source"]))).toBe(original);
+  });
+
+  it("asks for source on a task metric too, since its ref links out", () => {
     const original = selection("tasks.closed");
 
-    expect(withGitSourceDimension(original, new Set(["source"]))).toBe(
-      original
-    );
+    expect(
+      withSourceDimension(original, new Set(["source"])).display_dimensions
+    ).toContain("source");
   });
 
   it("does not ask twice for a source the caller already wanted", () => {
     const original = selection("git.commits", ["source"]);
 
-    expect(withGitSourceDimension(original, new Set(["source"]))).toBe(
+    expect(withSourceDimension(original, new Set(["source"]))).toBe(
       original
     );
   });
@@ -253,5 +262,87 @@ describe("evidenceRecordLinks", () => {
         ref: SHA1,
       })
     ).toEqual({});
+  });
+});
+
+describe("githubIssueUrl", () => {
+  it("addresses the issue's own page from the readable key", () => {
+    expect(githubIssueUrl("github", "constructorfabric/insight#2717")).toBe(
+      "https://github.com/constructorfabric/insight/issues/2717"
+    );
+  });
+
+  it("accepts the label form the drilldown projects", () => {
+    expect(githubIssueUrl("GitHub", "owner/repo#1")).toBe(
+      "https://github.com/owner/repo/issues/1"
+    );
+  });
+
+  it("refuses a tracker whose address is not derivable", () => {
+    expect(githubIssueUrl("jira", "PROJ-7")).toBeNull();
+    expect(githubIssueUrl("youtrack", "owner/repo#1")).toBeNull();
+  });
+
+  it("refuses a key that does not name a repository and a number", () => {
+    for (const ref of ["PROJ-7", "4884190007", "owner/repo", "#12", ""]) {
+      expect(githubIssueUrl("github", ref)).toBeNull();
+    }
+  });
+});
+
+describe("evidenceRefText", () => {
+  it("drops the repository prefix a whole drilldown shares", () => {
+    expect(evidenceRefText("tasks.closed", "constructorfabric/insight#2717")).toBe(
+      "#2717"
+    );
+  });
+
+  it("leaves a ref of another shape alone", () => {
+    expect(evidenceRefText("tasks.closed", "PROJ-7")).toBe("PROJ-7");
+  });
+
+  it("leaves other families alone, pull request numbers included", () => {
+    expect(evidenceRefText("git.prs", "2717")).toBe("2717");
+  });
+});
+
+describe("evidenceRecordLinks for task evidence", () => {
+  it("links both the ref and the title at the issue", () => {
+    const issue = "https://github.com/owner/repo/issues/12";
+
+    expect(
+      evidenceRecordLinks("tasks.closed", {
+        source: "github",
+        ref: "owner/repo#12",
+      })
+    ).toEqual({ ref: issue, title: issue });
+  });
+
+  it("says nothing when the row does not carry its source", () => {
+    expect(evidenceRecordLinks("tasks.closed", { ref: "owner/repo#12" })).toEqual(
+      {}
+    );
+  });
+});
+
+describe("activityEventLabel", () => {
+  it("names an issue by number and summary", () => {
+    expect(
+      activityEventLabel("tasks.closed", "owner/repo#12", "Fix the importer")
+    ).toBe("#12: Fix the importer");
+  });
+
+  it("falls back to whichever half the row has", () => {
+    expect(activityEventLabel("tasks.closed", "owner/repo#12", null)).toBe("#12");
+    expect(activityEventLabel("tasks.closed", null, "Fix the importer")).toBe(
+      "Fix the importer"
+    );
+    expect(activityEventLabel("tasks.closed", null, null)).toBeNull();
+  });
+
+  it("leaves other families reading as they did", () => {
+    expect(activityEventLabel("git.commits", "e0f4823", "Fix the importer")).toBe(
+      "Fix the importer"
+    );
   });
 });

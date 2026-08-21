@@ -29,9 +29,10 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import {
+  activityEventLabel,
   evidenceRecordLinks,
-  withGitSourceDimension,
-} from "@/lib/metrics/git-links";
+  withSourceDimension,
+} from "@/lib/metrics/provider-links";
 import { RecordLink } from "@/components/record-link";
 import { useMetricDetail } from "@/queries/metric-detail";
 import {
@@ -74,7 +75,7 @@ export function MetricActivity({
   // makes a link safe, and asking for it where a metric does not declare it is
   // rejected outright, so the read waits for the catalogue.
   const selection = base
-    ? withGitSourceDimension(base, declared.byMetricKey?.get(base.metric_key))
+    ? withSourceDimension(base, declared.byMetricKey?.get(base.metric_key))
     : null;
   const detail = useMetricDetail(
     selection,
@@ -205,6 +206,7 @@ function EventList({
       <ul className="flex flex-col">
         {shown.map((event, index) => {
           const links = evidenceRecordLinks(metricKey, event.values);
+          const label = activityEventLabel(metricKey, event.ref, event.title);
           return (
             <li
               key={event.ref ?? `${event.date}-${index}`}
@@ -214,8 +216,8 @@ function EventList({
                 {formatDate(event.date)}
               </span>
               <span className="min-w-0 flex-1 truncate">
-                {event.title ? (
-                  <RecordLink href={links.title}>{event.title}</RecordLink>
+                {label ? (
+                  <RecordLink href={links.title}>{label}</RecordLink>
                 ) : (
                   <span className="text-muted-foreground">—</span>
                 )}
