@@ -78,6 +78,20 @@ Once the token is expired or revoked the SPA takes a `401` and heads for `/auth/
 
 `VITE_API_PROXY_SESSION` is a live session on a real stand. `.env.local` is gitignored — keep it there.
 
+### Which build a stand is running
+
+Subchart `appVersion`s are bumped per service, so a stand is normally a mix of
+build tags rather than one release. From the browser console:
+
+```js
+window.__INSIGHT_BUILD__.frontend        // the tag this bundle was built from
+await window.__INSIGHT_BUILD__.backend() // { analytics, identity }
+```
+
+`backend()` reads each service's `/version` through the gateway's authenticated
+`/api/*` prefixes, so it answers only for a signed-in session. A service that
+refuses the caller or cannot be reached reads `unreachable`.
+
 ## Scripts
 
 | Script | Description |

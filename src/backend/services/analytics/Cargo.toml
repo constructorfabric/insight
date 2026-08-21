@@ -12,6 +12,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+insight-build-version = { workspace = true }
 insight-clickhouse = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client

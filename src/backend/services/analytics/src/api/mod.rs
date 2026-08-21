@@ -94,7 +94,9 @@ pub fn register_routes(
 ) -> Router {
     let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
-    host_router.merge(api)
+    host_router
+        .merge(insight_build_version::router("analytics"))
+        .merge(api)
 }
 
 /// `OpenAPI` document metadata — the stable API-contract identity baked into

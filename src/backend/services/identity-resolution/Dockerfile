@@ -18,6 +18,7 @@ WORKDIR /build
 # Every workspace member's manifest must be present for cargo to resolve the
 # workspace, even the ones this image never builds or ships.
 COPY Cargo.toml Cargo.lock ./
+COPY libs/insight-build-version/Cargo.toml ./libs/insight-build-version/Cargo.toml
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
@@ -26,7 +27,8 @@ COPY services/identity-resolution/Cargo.toml ./services/identity-resolution/Carg
 COPY services/git-cli-proxy/Cargo.toml ./services/git-cli-proxy/Cargo.toml
 COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
-RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
+RUN mkdir -p libs/insight-build-version/src && echo "" > libs/insight-build-version/src/lib.rs && \
+    mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
@@ -37,10 +39,12 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
 RUN cargo build --release --bin identity-resolution 2>/dev/null || true
 
 # --- Source layer ---
-RUN rm -rf libs/insight-clickhouse/src services/identity-resolution/src \
+RUN rm -rf libs/insight-build-version/src libs/insight-clickhouse/src services/identity-resolution/src \
     target/release/identity-resolution target/release/deps/identity_resolution* \
+    target/release/deps/insight_build_version* target/release/deps/libinsight_build_version* \
     target/release/deps/insight_clickhouse* target/release/deps/libinsight_clickhouse*
 
+COPY libs/insight-build-version/src/ ./libs/insight-build-version/src/
 COPY libs/insight-clickhouse/src/ ./libs/insight-clickhouse/src/
 COPY services/identity-resolution/src/ ./services/identity-resolution/src/
 COPY services/identity-resolution/config/ ./services/identity-resolution/config/
@@ -84,6 +88,11 @@ COPY --from=builder /build/services/identity-resolution/config/ /app/config/
 RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
+
+# CI passes the image tag; an unset build arg leaves the service reporting
+# `unknown` rather than a tag it cannot vouch for.
+ARG INSIGHT_BUILD_VERSION
+ENV INSIGHT_BUILD_VERSION=${INSIGHT_BUILD_VERSION}
 
 EXPOSE 8082
 

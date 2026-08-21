@@ -54,7 +54,9 @@ pub fn register_routes(
 ) -> Router {
     let api = build_operations(Router::new(), openapi).layer(Extension(state));
 
-    host_router.merge(api)
+    host_router
+        .merge(insight_build_version::router("identity-resolution"))
+        .merge(api)
 }
 
 /// Title/version/description of the emitted document. Kept in step with the

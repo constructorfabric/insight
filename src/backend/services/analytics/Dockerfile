@@ -20,6 +20,7 @@ WORKDIR /build
 
 # --- Dependency caching layer ---
 COPY Cargo.toml Cargo.lock ./
+COPY libs/insight-build-version/Cargo.toml ./libs/insight-build-version/Cargo.toml
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
@@ -32,7 +33,8 @@ COPY services/git-cli-proxy/Cargo.toml ./services/git-cli-proxy/Cargo.toml
 # to resolve the workspace even though this image never builds it.
 COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
-RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
+RUN mkdir -p libs/insight-build-version/src && echo "" > libs/insight-build-version/src/lib.rs && \
+    mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
@@ -43,10 +45,12 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
 RUN cargo build --release --bin analytics 2>/dev/null || true
 
 # --- Source layer ---
-RUN rm -rf libs/insight-clickhouse/src services/analytics/src \
+RUN rm -rf libs/insight-build-version/src libs/insight-clickhouse/src services/analytics/src \
     target/release/analytics target/release/deps/analytics* \
+    target/release/deps/insight_build_version* target/release/deps/libinsight_build_version* \
     target/release/deps/insight_clickhouse* target/release/deps/libinsight_clickhouse*
 
+COPY libs/insight-build-version/src/ ./libs/insight-build-version/src/
 COPY libs/insight-clickhouse/src/ ./libs/insight-clickhouse/src/
 COPY services/analytics/src/ ./services/analytics/src/
 COPY services/analytics/config/ ./services/analytics/config/
@@ -90,6 +94,11 @@ COPY --from=builder /build/services/analytics/config/ /app/config/
 RUN useradd -U -u 1000 -m appuser && \
     chown -R 1000:1000 /app
 USER 1000
+
+# CI passes the image tag; an unset build arg leaves the service reporting
+# `unknown` rather than a tag it cannot vouch for.
+ARG INSIGHT_BUILD_VERSION
+ENV INSIGHT_BUILD_VERSION=${INSIGHT_BUILD_VERSION}
 
 EXPOSE 8081
 
