@@ -94,8 +94,11 @@ issue_pivot AS (
         minIf(event_at, event_kind = 'synthetic_initial')                    AS created_at,
         -- The key the tracker itself shows a human ('owner/repo#12', 'PROJ-7');
         -- the only field an issue's own page can be addressed from.
-        any(id_readable)                                                     AS id_readable,
-        any(title)                                                           AS title,
+        -- INVARIANT: argMax, never any() — `id_readable` is part of `unique_key`,
+        -- so a renamed repository or an issue moved between projects leaves rows
+        -- under BOTH keys and FINAL collapses neither. The latest event wins.
+        argMax(id_readable, (event_at, _version))                            AS id_readable,
+        argMax(title, (event_at, _version))                                  AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
         any(data_source)                                                     AS data_source
     FROM history
