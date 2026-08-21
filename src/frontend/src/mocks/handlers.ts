@@ -848,7 +848,80 @@ export const handlers = [
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
   ...usageHandlers(),
+  ...feedbackHandlers(),
 ];
+
+// ── Product feedback (`/v1/feedback`) ──────────────────────────
+// An in-memory store, so the dialog's send and the usage surface's listing
+// round-trip in mock, Storybook, and `VITE_ENABLE_MOCKS=true` dev runs.
+
+interface MockFeedback {
+  feedback_id: string;
+  ts: string;
+  person_id: string;
+  display_name: string;
+  username: string;
+  category: string;
+  message: string;
+  path: string;
+}
+
+const feedbackStore: MockFeedback[] = [
+  {
+    feedback_id: "22222222-2222-2222-2222-222222222222",
+    ts: "2026-08-20 09:14:00",
+    person_id: PEOPLE[1]?.person_id ?? "",
+    display_name: PEOPLE[1]?.name ?? "",
+    username: PEOPLE[1]?.email.split("@")[0] ?? "",
+    category: "confusing",
+    message: "The cohort control does not say what it compares against.",
+    path: "/portal/overview",
+  },
+  {
+    feedback_id: "33333333-3333-3333-3333-333333333333",
+    ts: "2026-08-19 16:02:00",
+    person_id: PEOPLE[2]?.person_id ?? "",
+    display_name: PEOPLE[2]?.name ?? "",
+    username: PEOPLE[2]?.email.split("@")[0] ?? "",
+    category: "idea",
+    message: "Let me export the people table to a spreadsheet.",
+    path: "/portal/people",
+  },
+];
+
+function feedbackHandlers() {
+  return [
+    http.post("/api/analytics/v1/feedback", async ({ request }) => {
+      const body = (await request.json().catch(() => null)) as {
+        category?: string;
+        message?: string;
+        path?: string;
+      } | null;
+      if (!body?.category || !body.message?.trim()) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      feedbackStore.unshift({
+        feedback_id: `mock-${feedbackStore.length + 1}`,
+        ts: new Date().toISOString().replace("T", " ").slice(0, 19),
+        person_id: defaultPerson?.person_id ?? "",
+        display_name: defaultPerson?.name ?? "",
+        username: defaultPerson?.email.split("@")[0] ?? "",
+        category: body.category,
+        message: body.message.trim(),
+        path: body.path ?? "",
+      });
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get("/api/analytics/v1/feedback", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      return HttpResponse.json({
+        since: params.get("since") ?? "",
+        until: params.get("until") ?? "",
+        items: feedbackStore,
+      });
+    }),
+  ];
+}
 
 // ── Platform usage (`/v1/usage/*`) ─────────────────────────────
 

@@ -1,8 +1,9 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpenText, Megaphone, type LucideIcon } from "lucide-react";
+import { BookOpenText, Megaphone, MessageSquare, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
+import { useFeedbackDialog } from "@/components/feedback-context";
 import { SidebarSettings } from "@/components/sidebar-settings";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -24,13 +25,14 @@ import { useIcPerson } from "@/queries/ic-dashboard";
  * identity block. Extracted from AppSidebar so the portal shell can surface
  * the same controls (from the rail's settings popover) without duplicating them.
  *
- * `onNavigate` fires for the first two entries only: their destination renders
- * behind the popover the portal mounts this in, so the opener has to dismiss
- * it. The toggles stay silent — a menu that shut on every flip would need
- * reopening each time.
+ * `onNavigate` fires for the three navigating entries only: their destination
+ * renders behind the popover the portal mounts this in, so the opener has to
+ * dismiss it. The toggles stay silent — a menu that shut on every flip would
+ * need reopening each time.
  */
 export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
+  const { openFeedback } = useFeedbackDialog();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
@@ -56,6 +58,17 @@ export function AppSidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
           label={t("whats_new.nav_label")}
           onNavigate={onNavigate}
         />
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            onClick={() => {
+              openFeedback();
+              onNavigate?.();
+            }}
+          >
+            <MessageSquare />
+            <span>{t("feedback.nav_label")}</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
       </SidebarMenu>
       <SidebarSettings />
       <ThemeSwitcher />
