@@ -4,9 +4,9 @@
  * identity-console surface (queue candidates, detail panel, picker) so the
  * same person always reads the same way.
  *
- * Field precedence mirrors the backend card: `display_name`, else email, else
- * a source-native username — a git-only identity is recognisable by its
- * handle. A `terminated` status is marked so nobody merges INTO a leaver by
+ * Field precedence mirrors the backend card: `display_name`, else a
+ * source-native username, else email — a git-only identity is recognisable
+ * by its handle, and a generated address is not what anybody calls them. A `terminated` status is marked so nobody merges INTO a leaver by
  * accident.
  *
  * A person minted at a first sign-in is marked wherever they appear: the

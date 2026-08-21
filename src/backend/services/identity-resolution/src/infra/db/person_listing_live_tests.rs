@@ -278,6 +278,41 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
 }
 
 #[tokio::test]
+async fn the_handle_labels_a_person_the_source_gave_no_name() -> TestResult {
+    // A source that hides a member's e-mail still reports one for their
+    // commits, and it is generated from the account rather than chosen by the
+    // human: `<id>+<handle>@…` names nobody. The handle does, so it labels the
+    // row and the address only breaks a tie nothing else can.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // The address sorts LAST and the handle FIRST, so only the handle winning
+    // produces this order — an address-labelled row would come back second.
+    let handled = f.person("zzz-generated@users.noreply.example").await?;
+    f.observed(handled, "username", "aaa-handle").await?;
+    let addressed = f.person("mmm-address-only@listing.test").await?;
+
+    let rows = list_persons(
+        &f.db,
+        f.tenant,
+        &[],
+        &[handled, addressed],
+        Restrict::EVERY_IDENTITY,
+        None,
+        PAGE,
+    )
+    .await?;
+    let order: Vec<Uuid> = rows.into_iter().map(|r| r.person_id).collect();
+
+    assert_eq!(
+        order,
+        vec![handled, addressed],
+        "the handle labels and orders the row, not the generated address"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());

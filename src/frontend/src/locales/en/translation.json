@@ -419,6 +419,7 @@
       "binding_conflict": "Binding conflicts — evidence disagrees with the current binding",
       "provisioned_at_login": "Given a person at first sign-in — not yet confirmed",
       "minted_from_roster": "Added from the roster without an address — not yet confirmed",
+      "no_source_id": "The source names no account of its own — only an operator can bind these",
       "no_evidence": "No address to match on — only an operator can bind these",
       "other": "Needs review"
     },

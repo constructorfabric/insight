@@ -23,6 +23,7 @@ import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
+import { personName } from "@/lib/identities/person-display";
 import { cn } from "@/lib/utils";
 
 // Mirrors the rail: a person with neither display name nor email is still a row.
@@ -68,19 +69,15 @@ function collectEmployees(root: IdentityPerson): EmployeeRow[] {
 
 /**
  * Rows for an organisation with no reporting lines: the roster as identity
- * serves it. A person the journal knows only by a handle is listed under it —
- * `person-display` stops at the id on purpose, so a blank name here would be a
- * row nobody can tell apart.
+ * serves it. Named through `personName` so the precedence has one definition,
+ * with its own last resort — `person-display` stops at the id on purpose, and a
+ * raw id in this column is a row nobody can tell apart.
  */
 function rosterEmployees(roster: readonly PersonSummary[]): EmployeeRow[] {
   return roster
     .map((person) => ({
       personId: person.person_id,
-      displayName:
-        person.display_name?.trim() ||
-        person.email?.trim() ||
-        person.username?.trim() ||
-        UNNAMED_PERSON,
+      displayName: personName(person) ?? UNNAMED_PERSON,
       jobTitle: person.job_title ?? "",
       // No reporting lines, and `PersonSummary` carries no org attributes.
       department: "",

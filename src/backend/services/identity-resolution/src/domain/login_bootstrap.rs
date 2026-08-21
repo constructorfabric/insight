@@ -153,6 +153,13 @@ pub fn decide(
     // person minted first takes the binding, and the seed then reads the group
     // as a conflict between two persons with no operator decision to settle it
     // — it keeps both, so one human stays split until somebody merges by hand.
+    //
+    // The deferral is to the batch OR to the operator, not to the batch alone:
+    // where the account's source states no id, no seed run can bind it either
+    // (`seed::resolve_assignments`), and it waits on the review queue as
+    // `no_source_id` instead. Refusing here is still right — a login may not
+    // decide who a claimed address belongs to — but nothing about the refusal
+    // promises automation will.
     if observed.email.is_some() {
         return Err(Refusal::Addressed);
     }

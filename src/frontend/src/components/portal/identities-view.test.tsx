@@ -96,7 +96,7 @@ import { portalRouter } from "@/test/portal-router";
 
 import { IdentitiesView } from "./identities-view";
 
-const RATES = { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
+const RATES = { observed: 60, bound: 55, pending: 3, no_source_id: 1, no_evidence: 1, excluded: 1 };
 
 function item(over: Partial<AttentionItem>): AttentionItem {
   return {
@@ -623,6 +623,31 @@ describe("IdentitiesView", () => {
     ).toBeInTheDocument();
     // Its own group, not the catch-all: an unknown kind falls into "Needs
     // review", which is exactly what dropping it from KIND_ORDER would do.
+    expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
+  });
+
+  it("gives an account no source states an id for its own group", () => {
+    // It is not waiting on automation — nothing will ever bind it — so it must
+    // read as the operator's work, not fall into the catch-all.
+    attention.q.data = {
+      items: [
+        item({
+          kind: "no_source_id",
+          account_id: "sam@example.com",
+          email: "sam@example.com",
+          username: null,
+          display_name: "Sam Rivera",
+          bound_to: null,
+          candidates: [],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getByText(/the source names no account of its own/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
   });
 
