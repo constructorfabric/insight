@@ -570,6 +570,19 @@ def service_client(service_session: ServiceTokenSession) -> ApiClient:
 
 
 @pytest.fixture
+def gateway_service_client(stand_base_url: str, service_session: ServiceTokenSession) -> ApiClient:
+    """A service principal addressing the EDGE, which should refuse it.
+
+    The other two service clients exist to reach a service; this one exists to
+    be turned away. The gateway authorizes a session cookie, so bearer traffic
+    has no address here — and a test that means to assert that has to send the
+    bearer to the gateway, rather than to a service that happens not to serve
+    the route.
+    """
+    return ApiClient(base_url=stand_base_url, session=service_session)
+
+
+@pytest.fixture
 def analytics_service_client(service_session: ServiceTokenSession) -> ApiClient:
     """A service principal addressing ANALYTICS directly, past the browser edge.
 

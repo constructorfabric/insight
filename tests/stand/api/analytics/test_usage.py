@@ -505,3 +505,56 @@ def test_a_visit_that_names_nobody_is_counted_but_not_listed(
     assert not nameless, "the visitor list carries a row that names nobody: " + ", ".join(
         f"{person.person_id} ({person.page_views} pages)" for person in nameless
     )
+
+
+@pytest.mark.requires_service_principal
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.security
+def test_the_edge_refuses_a_bearer_carrying_beacon(
+    gateway_service_client: ApiClient,
+    lead_session: PersonaSession,
+    admin_operator_session: PersonaSession,
+) -> None:
+    """The gateway is a browser BFF, and usage ingest is behind it like the rest.
+
+    Worth its own case because ingest answers 204 whatever becomes of the write:
+    if bearer traffic ever reached it through the edge, rows nobody can
+    attribute would start accumulating and nothing would say so. This is the
+    half of that boundary the edge is responsible for.
+
+    Sent to the GATEWAY deliberately. A bearer aimed at a service that does not
+    serve the route answers 404, which satisfies "refused" while proving
+    nothing about the edge.
+    """
+    if not _config(lead_session.client).enabled:
+        pytest.skip("this instance does not record usage")
+
+    admin = admin_operator_session.client
+    day = _today()
+    before = _summary(admin, day).totals
+
+    path = _tag("edge-bearer")
+    refused = gateway_service_client.post(
+        EVENTS,
+        content=json.dumps(
+            {
+                "meta": {},
+                "records": [
+                    _page_view(path, f"{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}-edge-bearer")
+                ],
+            }
+        ),
+        headers={"Content-Type": SDK_CONTENT_TYPE},
+    )
+
+    assert refused.status_code == 401, (
+        f"the edge answered {refused.status_code} to a bearer-carrying beacon, expected 401: "
+        f"{refused.text[:300]}"
+    )
+
+    after = _summary(admin, day)
+    assert path not in {page.path for page in after.by_page}, "a refused beacon was recorded anyway"
+    assert after.totals.page_views == before.page_views, (
+        f"the day's page count moved on a refused beacon: "
+        f"{before.page_views} -> {after.totals.page_views}"
+    )
