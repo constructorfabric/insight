@@ -24,7 +24,11 @@ SELECT
     'commit' AS source_type,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
+    _airbyte_extracted_at,
+    -- The proxy names both sides of a change by object id, so a change that
+    -- reverts to content already seen is recognisable as the same content.
+    pre_image_oid,
+    post_image_oid
 FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }}
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
