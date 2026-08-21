@@ -52,17 +52,16 @@ export function AccountDetail({
   queueItem,
   observed = false,
   holder,
-  bindTo,
   onDecided,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
    *  source of hydrated candidate cards and observed evidence. */
   queueItem: AttentionItem | undefined;
-  /** The caller vouches the account exists (a queue row, a search hit, a
-   *  person's account list). Without a voucher, an account with no binding
-   *  and no history reads as a stale link — offering verbs there would let a
-   *  mistyped `?acct=` pre-register a typo as a real account. */
+  /** The caller vouches the account exists (a queue row, a search hit).
+   *  Without a voucher, an account with no binding and no history reads as a
+   *  stale link — offering verbs there would let a mistyped `?acct=`
+   *  pre-register a typo as a real account. */
   observed?: boolean;
   /**
    * Whoever holds the account, for the surfaces that know it without having any
@@ -71,8 +70,6 @@ export function AccountDetail({
    * queue's candidates.
    */
   holder?: PersonSummary | null;
-  /** Bind straight to the person the surface has open. See `AccountActions`. */
-  bindTo?: PersonSummary | null;
   /** A verb decided every account it named. See `AccountActions`. */
   onDecided?: () => void;
 }) {
@@ -129,10 +126,9 @@ export function AccountDetail({
           binding={binding.data}
           candidates={candidates}
           holder={boundCard ?? null}
-          // The accounts and persons modes reuse this window for settled
-          // accounts, and their rows carry a kind of the console's own making.
+          // The accounts mode reuses this window for settled accounts, and its
+          // rows carry a kind of the console's own making.
           queued={queueItem != null && isQueueItem(queueItem.kind)}
-          bindTo={bindTo}
           onDecided={onDecided}
         />
       </div>

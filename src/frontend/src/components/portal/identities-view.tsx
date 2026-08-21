@@ -59,6 +59,7 @@ import {
 } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { MODES, resolveMode } from "@/lib/portal/identity-modes";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
@@ -82,15 +83,6 @@ const KIND_ORDER = [
   "no_evidence",
 ] as const;
 
-/** A click selects the case — unless it pressed a control or ended a selection. */
-function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
-  if (event.target instanceof Element && event.target.closest("button, a")) {
-    return false;
-  }
-  const selection = window.getSelection();
-  return !selection || selection.isCollapsed;
-}
-
 export function IdentitiesView() {
   const { t } = useTranslation();
   const { mode } = usePortalSearch();
@@ -110,11 +102,11 @@ export function IdentitiesView() {
       <Tabs
         className="shrink-0"
         value={active}
-        // A mode change drops the open account: a case picked in one mode
-        // means nothing in another, and carrying it would open a window the
-        // list behind it does not contain.
+        // A mode change closes whatever was open: a case or a person picked in
+        // one mode means nothing in another, and carrying either would open a
+        // window over a list that does not contain it.
         onValueChange={(next) =>
-          setSearch({ mode: String(next), acct: undefined })
+          setSearch({ mode: String(next), acct: undefined, person: undefined })
         }
       >
         <TabsList>
@@ -640,11 +632,10 @@ function CaseBlock({
               tabIndex={0}
               data-queue-row={key}
               onClick={(event) => {
-                if (opensTheCase(event)) onSelect(key);
+                if (activatesRow(event)) onSelect(key);
               }}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                if (event.target !== event.currentTarget) return;
+                if (!activatesRowByKey(event)) return;
                 event.preventDefault();
                 onSelect(key);
               }}

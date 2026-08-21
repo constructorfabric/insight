@@ -17,10 +17,10 @@ import { itemKey, parseAccountKey } from "@/lib/identities/account-key";
  * A row this window can open.
  *
  * `candidates` is a QUEUE concept — the persons the evidence says could own the
- * account, which is a question only an undecided account has. The surfaces that
- * list settled accounts have no such question, so they carry `holder` instead:
- * the card of whoever holds it, which the binding read answers with an id alone.
- * Without that channel those surfaces had to pass the holder AS a candidate, and
+ * account, which is a question only an undecided account has. The accounts mode
+ * lists settled accounts and has no such question, so it carries `holder`
+ * instead: the card of whoever holds it, which the binding read answers with an
+ * id alone. Without that channel it had to pass the holder AS a candidate, and
  * the window then offered to bind the account to the person already holding it.
  * That offer belongs in the queue: re-asserting a binding the resolver made is
  * the confirm act, and the accounts it matters for are queued for exactly that.
@@ -56,7 +56,6 @@ export function CaseDialog({
   acct,
   items,
   ordered,
-  bindTo,
   onSelect,
   onClose,
 }: {
@@ -64,9 +63,6 @@ export function CaseDialog({
   items: CaseRow[];
   /** Account keys in the order the queue renders them. */
   ordered: string[];
-  /** The person the surface behind this window has open, when it has one:
-   *  binding to them is then one press rather than a search. */
-  bindTo?: PersonSummary | null;
   onSelect: (key: string) => void;
   onClose: () => void;
 }) {
@@ -147,7 +143,6 @@ export function CaseDialog({
             queueItem={queueItem}
             observed={observed}
             holder={queueItem?.holder ?? null}
-            bindTo={bindTo}
             // A decided account has nothing left to answer here: its candidate
             // list and its binding are both reads the server has moved past.
             // The surface behind re-reads (see `useCorrection`), so handing the
