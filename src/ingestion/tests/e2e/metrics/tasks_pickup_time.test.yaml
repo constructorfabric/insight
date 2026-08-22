@@ -104,6 +104,26 @@ cases:
         view: breakdown
         assert: "size(items.filter(v, v.entity_id == 'erin@example.com')) == 1"
 
+  - name: tasks.pickup_time by issue type
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - metric_key: tasks.pickup_time
+            views:
+              - { view: breakdown, dimensions: [type] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.pickup_time
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Task') && double(v.value) == 5.0)"
+      - metric: tasks.pickup_time
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'erin@example.com')) == 1"
+
   - name: tasks.pickup_time empty window
     request:
       url: /v1/metric-results

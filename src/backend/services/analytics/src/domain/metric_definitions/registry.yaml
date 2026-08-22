@@ -1205,6 +1205,7 @@ metrics:
       - input_role: value
         measure_key: dev_time_hours
     dimensions:
+      - type
       - source
   - metric_key: tasks.resolution_time
     source_key: task
@@ -1226,6 +1227,7 @@ metrics:
       - input_role: value
         measure_key: resolution_days
     dimensions:
+      - type
       - source
   - metric_key: tasks.pickup_time
     source_key: task
@@ -1247,6 +1249,7 @@ metrics:
       - input_role: value
         measure_key: pickup_days
     dimensions:
+      - type
       - source
   - metric_key: tasks.flow_efficiency
     source_key: task

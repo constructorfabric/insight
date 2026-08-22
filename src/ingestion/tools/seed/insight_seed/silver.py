@@ -42,7 +42,7 @@ import clickhouse_connect
 from . import config
 from .generators import ai, ai_cost, collab, crm, git, hr, people, support, task, wiki
 from .generators.base import seed_days
-from .profiles import build_roster, get_dev_user_email
+from .profiles import build_seeded_roster, get_dev_user_email
 
 LOG = logging.getLogger("seed.silver")
 
@@ -118,7 +118,7 @@ IDENTITY_INPUTS_SELECT = "+identity_inputs"
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
 
-def apply_ch_migrations(dbt_select: str | None = None) -> None:
+def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
 
     Runs the ingestion repo's apply-ch-migrations.sh — the exact script the
@@ -127,6 +127,18 @@ def apply_ch_migrations(dbt_select: str | None = None) -> None:
     `dbt run --select tag:gold` (widened by `dbt_select` when given). Must
     run AFTER seeding so the materialized gold model reflects seeded silver
     (see module docstring).
+
+    `full_refresh` rebuilds the selected models from source rather than
+    appending to them. It is a GLOBAL dbt flag, so it reaches every selected
+    model that is incremental — every `*__identity_inputs` feeder, not only
+    the two named here. The silver step needs it whenever the roster can
+    differ from the one already on the stand: a seed REPLACES the org, but
+    the identity feeders are incremental (bamboohr__employees_snapshot
+    appends; identity_inputs admits only rows past the current max _version),
+    so people who are new to this stand never cross that boundary. The
+    failure is silent — bronze holds the new roster, identity_inputs keeps
+    describing the previous accounts, persons-seed resolves that stale set,
+    and gold serves the old org with no error at any layer.
     """
     script = _ingestion_scripts_dir() / "apply-ch-migrations.sh"
     if not script.is_file():
@@ -143,7 +155,12 @@ def apply_ch_migrations(dbt_select: str | None = None) -> None:
         env.pop("DBT_GOLD_SELECT", None)
     else:
         env["DBT_GOLD_SELECT"] = dbt_select
-    subprocess.run(["bash", str(script)], env=env, check=True)
+    # INVARIANT: a flag, never DBT_FULL_REFRESH — that name is
+    # reconcile-connectors' and env reaches every child.
+    argv = ["bash", str(script)]
+    if full_refresh:
+        argv.append("--full-refresh")
+    subprocess.run(argv, env=env, check=True)
     LOG.info("migrations + gold: %s applied", script.name)
 
 
@@ -153,7 +170,7 @@ def generate_rows(
     """Populate silver tables with per-team activity for the demo roster."""
     tenant_uuid = config.parse_tenant_id(os.environ)
     dev_email = get_dev_user_email()
-    roster = build_roster(dev_email)
+    roster = build_seeded_roster(dev_email, config.parse_org_headcount(os.environ))
     # The generators' own reader, not a second copy of it: they date every row
     # from this window, and a `SEED_DAYS` the two disagreed on would put rows
     # outside the range this function logs. It also treats an empty value as
@@ -198,7 +215,10 @@ def run() -> None:
         # 3. Real deploy mechanism: migrations + gold + identity inputs. Gold
         #    builds unresolved here — the orchestrator runs the persons-seed/
         #    sync pair and then the `gold` subcommand to rebuild it.
-        apply_ch_migrations(dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}")
+        apply_ch_migrations(
+            dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}",
+            full_refresh=True,
+        )
     finally:
         client.close()
     LOG.info("DONE: silver rows seeded + gold layer built via deploy scripts.")

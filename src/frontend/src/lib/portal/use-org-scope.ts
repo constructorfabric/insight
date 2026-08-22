@@ -9,6 +9,11 @@ import {
   type RosterEntry,
 } from "@/lib/insight/identity-tree";
 import {
+  reportPeopleInFlatScope,
+  reportPeopleInScope,
+  type ReportPerson,
+} from "@/lib/identities/report-person";
+import {
   type OrgScope,
 } from "@/lib/portal/portal-store";
 import {
@@ -36,6 +41,7 @@ export interface ResolvedScope {
   pivot: IdentityPerson | null;
   /** Everyone inside the scope (subtree or direct reports). */
   roster: RosterEntry[] | null;
+  reportPeople: ReportPerson[] | null;
   label: string;
   count: number;
   /** All manager nodes of the viewer's tree, for the ScopeSelect picker. */
@@ -62,6 +68,7 @@ export function flatOrgScope(
     return {
       pivot: null,
       roster: null,
+      reportPeople: null,
       label: WHOLE_ORG_LABEL,
       count: 0,
       managerNodes: [],
@@ -82,6 +89,7 @@ export function flatOrgScope(
   return {
     pivot: null,
     roster: members,
+    reportPeople: reportPeopleInFlatScope(roster),
     label: WHOLE_ORG_LABEL,
     count: members.length,
     managerNodes: [],
@@ -100,7 +108,15 @@ export function resolveScopeRoster(
   scope: OrgScope,
 ): ResolvedScope {
   if (!tree) {
-    return { pivot: null, roster: null, label: "", count: 0, managerNodes: [], canDirectOnly: false };
+    return {
+      pivot: null,
+      roster: null,
+      reportPeople: null,
+      label: "",
+      count: 0,
+      managerNodes: [],
+      canDirectOnly: false,
+    };
   }
   // Person id, not email: since the identity cutover that is the only key the
   // tree, the routes and the metric entity ids agree on.
@@ -140,6 +156,7 @@ export function resolveScopeRoster(
   return {
     pivot,
     roster,
+    reportPeople: reportPeopleInScope(pivot, roster),
     label: personDisplayName(pivot),
     count: roster?.length ?? 0,
     managerNodes,

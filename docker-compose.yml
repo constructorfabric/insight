@@ -734,6 +734,11 @@ services:
       # a test asking about "the seeded period" must clamp — see
       # tests/stand/api/analytics/query_window.
       SEED_DAYS: "${SEED_DAYS:-730}"
+      # Organisation size; empty is the committed 26-person roster. Listed
+      # because compose's `environment` is an allowlist.
+      SEED_ORG_HEADCOUNT: "${SEED_ORG_HEADCOUNT:-}"
+      # Preflight's documented escape hatch; unreachable unless listed here.
+      SEED_FORCE: "${SEED_FORCE:-}"
       # The issuer the authenticator resolved for this run. `test-stand up`
       # persists it after cmd_up so the manifest
       # records the real IdP instead of assuming the default.

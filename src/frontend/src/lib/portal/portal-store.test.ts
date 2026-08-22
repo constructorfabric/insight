@@ -18,9 +18,19 @@ beforeEach(() => {
 });
 
 describe("portal preferences", () => {
-  it("show-planned defaults ON when the key is absent", () => {
+  it("show-planned defaults OFF when the key is absent", async () => {
     window.localStorage.removeItem("insight.portal.showPlanned");
-    const { result } = renderHook(() => usePortalShowPlanned());
+    vi.resetModules();
+    const fresh = await import("./portal-store");
+    const { result } = renderHook(() => fresh.usePortalShowPlanned());
+    expect(result.current).toBe(false);
+  });
+
+  it("an explicit opt-in is what a fresh load reads back", async () => {
+    window.localStorage.setItem("insight.portal.showPlanned", "true");
+    vi.resetModules();
+    const fresh = await import("./portal-store");
+    const { result } = renderHook(() => fresh.usePortalShowPlanned());
     expect(result.current).toBe(true);
   });
 

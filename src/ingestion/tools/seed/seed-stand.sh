@@ -16,6 +16,11 @@ STEP="all"
 DEADLINE_SECONDS="3600"
 
 NAMESPACE=""
+# The durable copy of the manifest; deliberately outside the chart's name
+# prefix so a future chart template cannot fail to adopt it.
+MANIFEST_CONFIGMAP="seed-stand-manifest"
+SEED_MANIFEST_SENTINEL=""
+LOCAL_MANIFEST=""
 CONTEXT=""
 RELEASE=""
 DEV_EMAIL=""
@@ -28,6 +33,8 @@ PULL_SECRETS=""
 IDP_SOURCE_TYPE=""
 WINDOW_DAYS=""
 ANCHOR_DATE=""
+ORG_HEADCOUNT=""
+MANIFEST_OUT=""
 CROSS_TENANT="0"
 FORCE="0"
 DRY_RUN=0
@@ -72,6 +79,12 @@ Seed options:
                            alone just rebuilds over the map as it stands now.
       --days <n>           activity-window length in days
       --anchor <date>      last day carrying activity (YYYY-MM-DD)
+      --org-headcount <n>  seed an organisation of n people instead of the
+                           committed 26-person demo roster. Opt-in and additive:
+                           the committed people keep their uuids, emails and
+                           names, and the extra ones are appended in squads under
+                           the existing team leads. 27..3000; omit it (or 0) for
+                           the committed roster, which is what CI asserts against.
       --cross-tenant       also write the second-tenant refusal fixture
       --force              seed a tenant that already holds foreign person rows
       --deadline <secs>    pod wall-clock ceiling                  [default: 3600]
@@ -80,6 +93,10 @@ Output:
       --dry-run            print the rendered Job manifest and exit
       --no-follow          apply the Job without following its logs
   -h, --help               this text
+
+      --manifest-out <path>  write the run's manifest here
+  A completed --step all run also publishes the manifest to
+  configmap/seed-stand-manifest, which outlives the Job's log.
 
 Examples:
   seed-stand.sh -n insight --dry-run
@@ -127,6 +144,8 @@ while [[ $# -gt 0 ]]; do
     --step)              STEP="${2:?--step needs a value}"; shift 2 ;;
     --days)              WINDOW_DAYS="${2:?--days needs a value}"; shift 2 ;;
     --anchor)            ANCHOR_DATE="${2:?--anchor needs a value}"; shift 2 ;;
+    --org-headcount)     ORG_HEADCOUNT="${2:?--org-headcount needs a value}"; shift 2 ;;
+    --manifest-out)      MANIFEST_OUT="${2:?--manifest-out needs a value}"; shift 2 ;;
     --deadline)          DEADLINE_SECONDS="${2:?--deadline needs a value}"; shift 2 ;;
     --cross-tenant)      CROSS_TENANT="1"; shift ;;
     --force)             FORCE="1"; shift ;;
@@ -139,8 +158,14 @@ done
 
 need kubectl
 need envsubst
+# The manifest is computed from this tree before the Job is created; a
+# render-only run does none of that.
+need jq
+[[ "$DRY_RUN" -eq 1 ]] || need uv
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
+[[ -z "$MANIFEST_OUT" || "$DRY_RUN" -eq 0 ]] \
+  || die "--manifest-out has nothing to write with --dry-run."
 # --email is NOT gated here: discovery below needs the cluster first. `all` and
 # `silver` finish by running the projection + gold rebuild themselves (see tail).
 case "$STEP" in
@@ -150,6 +175,9 @@ esac
 # Also the poll loop's own budget; a non-numeric value would silently zero it.
 [[ "$DEADLINE_SECONDS" =~ ^[0-9]+$ && "$DEADLINE_SECONDS" -gt 0 ]] \
   || die "--deadline must be a positive whole number of seconds (got '$DEADLINE_SECONDS')."
+# Shape only; the seeder's own contract owns the range and reports it.
+[[ -z "$ORG_HEADCOUNT" || "$ORG_HEADCOUNT" =~ ^[0-9]+$ ]] \
+  || die "--org-headcount must be a whole number of people (got '$ORG_HEADCOUNT')."
 
 # Assumed from the namespace; every value below is verified, so a wrong
 # guess fails naming --release.
@@ -479,7 +507,29 @@ export SEED_CROSS_TENANT="$CROSS_TENANT"
 export SEED_FORCE="$FORCE"
 # Allowed to be empty: the seeder has its own default window.
 export SEED_WINDOW_DAYS="$WINDOW_DAYS"
+
+# INVARIANT: an unpinned anchor is resolved once per process, so the Job is
+# TOLD the date rather than picking its own — otherwise this script and the pod
+# disagree across a UTC midnight and the manifest describes a window the rows
+# do not sit in. The anchor derives from this one variable and nothing else, so
+# resolving it needs no other environment.
+resolve_anchor_date() {
+  # RULE-DEFAULTS-OK: a fallback for a HOME-less shell, not a config input.
+  env -i PATH="$PATH" HOME="${HOME:-/tmp}" SEED_ANCHOR_DATE="$ANCHOR_DATE" \
+    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest | jq -r '.anchor_date'
+}
+
+# --dry-run renders and exits, so it neither needs nor should require a working
+# uv project; the anchor it shows is then whatever the caller passed.
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  ANCHOR_DATE="$(resolve_anchor_date)" \
+    || die "could not resolve the seed anchor; uv and the seeder package are required."
+fi
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
+# Empty means the committed roster. Resolved here rather than in the template:
+# WORKAROUND: GNU envsubst emits `${VAR:-default}` verbatim, so a default
+# written in the template would reach the cluster as that literal.
+export SEED_ORG_HEADCOUNT="$ORG_HEADCOUNT"
 export SEED_PULL_SECRETS="$PULL_SECRETS"
 
 # Renders the Job manifest for the step in $SEED_STEP / name in $SEED_JOB_NAME.
@@ -494,18 +544,106 @@ render_seed_manifest() {
     ${SEED_CLICKHOUSE_DATABASE}
     ${SEED_TENANT_ID} ${SEED_DEV_USER_EMAIL} ${SEED_IDP_SOURCE_TYPE}
     ${SEED_CROSS_TENANT} ${SEED_FORCE} ${SEED_WINDOW_DAYS} ${SEED_ANCHOR_DATE}
+    ${SEED_ORG_HEADCOUNT}
     ${SEED_PULL_SECRETS}
   ' < "$JOB_TEMPLATE"
 }
 
-# print_manifest_sentinel NAME — re-read the finished Job's log and print the
-# one manifest line, or nothing for a step that writes no manifest. Read from
-# the completed Job rather than taken from the stream below, because the
-# seeder prints it last and `logs -f` can end without the container's final
-# lines; a consumer that lost it cannot tell a seeded stand from an attempt.
+# recover_manifest_sentinel NAME — re-read the finished Job's log and print the
+# manifest, or nothing for a step that writes none. Read from the finished
+# Job: `logs -f` can end without the container's final lines, and a consumer
+# that lost the manifest cannot tell a seeded stand from an attempt.
+recover_manifest_sentinel() {
+  local log
+  log="$(kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null || true)"
+  if grep -m1 '^SEED_MANIFEST_JSON: ' <<<"$log"; then
+    return 0
+  fi
+  grep -q '^SEED_MANIFEST_GZ: ' <<<"$log" || return 0
+
+  local chunks
+  chunks="$(grep -c '^SEED_MANIFEST_GZ: ' <<<"$log")"
+  echo "==> manifest emitted in $chunks gzipped chunk(s); reassembling" >&2
+  if printf '%s\n' "$log" | "$SCRIPT_DIR/manifest-from-log.sh"; then
+    return 0
+  fi
+  echo "ERROR: the Job's $chunks gzipped manifest chunk(s) could not be reassembled." >&2
+  return 1
+}
+
+# INVARIANT: only a step that produced a manifest may overwrite the remembered
+# one — wait_for_job runs this for the gold and persons-seed jobs too.
 print_manifest_sentinel() {
-  kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null \
-    | grep -m1 '^SEED_MANIFEST_JSON: ' || true
+  local line
+  line="$(recover_manifest_sentinel "$1")" || return 1
+  [[ -n "$line" ]] || return 0
+  SEED_MANIFEST_SENTINEL="$line"
+  printf '%s\n' "$line"
+}
+
+# clear_manifest_configmap / publish_manifest_configmap — the durable copy of
+# the manifest. The Job's log carries it for one hour (ttlSecondsAfterFinished);
+# the stand it describes lives until someone tears it down.
+# SAFETY: fatal, and it runs before the first write — a clear that fails after
+# the seed replaces the data would leave the previous manifest describing rows
+# that no longer exist, which is worse for a reader than no manifest at all.
+clear_manifest_configmap() {
+  # Only a step that will publish one may clear it; `gold` writes no manifest
+  # and `identity` alone must not blank the whole stand's description.
+  [[ "$STEP" == "all" ]] || return 0
+  kube -n "$NAMESPACE" delete configmap "$MANIFEST_CONFIGMAP" --ignore-not-found >/dev/null 2>&1 \
+    || die "could not clear configmap/$MANIFEST_CONFIGMAP; refusing to seed over a manifest that would outlive its data."
+}
+
+# The one document every consumer gets. The pod's wins when the run emitted
+# one — it describes the code that actually ran; the locally computed document
+# stands in when it did not, and a difference between them means the image is
+# not built from this checkout.
+resolve_manifest() {
+  local pod=""
+  [[ -z "$SEED_MANIFEST_SENTINEL" ]] || pod="${SEED_MANIFEST_SENTINEL#SEED_MANIFEST_JSON: }"
+  if [[ -z "$pod" ]]; then
+    echo "ERROR: the seed Job emitted no manifest; using the one computed from this tree." >&2
+    echo "       It describes the environment the Job was given, not what it wrote." >&2
+    printf '%s' "$LOCAL_MANIFEST"
+    return 0
+  fi
+  # `catalogue` and `seeded` are facts about the RUN, not about the code — the
+  # local computation opens no database and cannot know them, so comparing them
+  # would make this fire on every healthy run.
+  local drifted
+  drifted="$(diff <(jq -S 'del(.catalogue, .seeded)' <<<"$LOCAL_MANIFEST") \
+                  <(jq -S 'del(.catalogue, .seeded)' <<<"$pod") \
+             | grep -oE '^[<>] *"[a-z_]+"' | grep -oE '"[a-z_]+"' | sort -u | tr '\n' ' ')" || true
+  if [[ -n "$drifted" ]]; then
+    echo "ERROR: this tree computes a different manifest than the seed Job emitted" >&2
+    echo "       ($drifted) — the image it ran is not built from this checkout." >&2
+    echo "       Using the Job's document." >&2
+  fi
+  printf '%s' "$pod"
+}
+
+publish_manifest_configmap() {
+  local tmp status=0
+  [[ "$STEP" == "all" ]] || return 0
+  [[ -n "$LOCAL_MANIFEST$SEED_MANIFEST_SENTINEL" ]] || return 0
+  tmp="$(mktemp)"
+  resolve_manifest >"$tmp"
+  # WORKAROUND: --from-file needs a path, not a stream. --server-side because a
+  # client-side apply stamps last-applied-configuration, whose 256 KiB cap the
+  # document crosses well inside the supported roster range.
+  kube -n "$NAMESPACE" create configmap "$MANIFEST_CONFIGMAP" \
+        --from-file=manifest="$tmp" --dry-run=client -o yaml \
+    | kube -n "$NAMESPACE" apply --server-side --force-conflicts \
+        --field-manager=seed-stand.sh -f - >/dev/null || status=$?
+  rm -f "$tmp"
+  if [[ "$status" -ne 0 ]]; then
+    echo "ERROR: could not publish the manifest to configmap/$MANIFEST_CONFIGMAP in $NAMESPACE." >&2
+    echo "       The stand IS seeded; only the durable copy is missing. The document is on" >&2
+    echo "       stdout above and in the Job's log until it is reaped." >&2
+    return 0
+  fi
+  echo "==> manifest published: configmap/$MANIFEST_CONFIGMAP"
 }
 
 # wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
@@ -523,9 +661,9 @@ wait_for_job() {
     sleep 2
   done
 
-  # The sentinel is filtered out here and re-emitted from the finished Job on
-  # success, so the log carries it exactly once and never a truncated copy.
-  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -v '^SEED_MANIFEST_JSON: ' || true
+  # Filtered here and re-emitted from the finished Job, so the log carries
+  # the manifest once and never truncated.
+  kube -n "$NAMESPACE" logs -f "job/$job_name" | grep -Ev '^SEED_MANIFEST_(JSON|GZ): ' || true
 
   # Polled, not `kubectl wait --for=condition=complete`, which only waits for
   # success. `|| true`: a transient apiserver hiccup must not kill the loop.
@@ -582,7 +720,8 @@ run_seed_step() {
   job_name="insight-seed-${step}-$(date -u +%Y%m%d%H%M%S)"
   export SEED_STEP="$step"
   export SEED_JOB_NAME="$job_name"
-  render_seed_manifest | kube apply -f -
+  render_seed_manifest | kube apply -f - \
+    || die "kubectl apply failed for step $step; no Job was created."
   echo "==> applied Job $SEED_JOB_NAME (step: $step)"
   wait_for_job "$SEED_JOB_NAME"
 }
@@ -610,7 +749,10 @@ project_identity() {
   fi
   job_name="${cronjob}-ci-$(date -u +%Y%m%d%H%M%S)"
   echo "==> identity projection: $component (job/$job_name from cronjob/$cronjob)"
-  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name"
+  kube -n "$NAMESPACE" create job --from="cronjob/$cronjob" "$job_name" || {
+    echo "ERROR: could not create $job_name from cronjob/$cronjob." >&2
+    return 1
+  }
   wait_for_job "$job_name" || {
     echo "ERROR: $component did not complete; gold would stay unresolved." >&2
     return 1
@@ -645,10 +787,43 @@ if [[ "$FOLLOW" -eq 0 ]]; then
   exit 0
 fi
 
+# The manifest is a pure function of the seeder's environment, and the rendered
+# Job is where that environment is decided — so it is read back from the render
+# rather than restated here, which cannot drift from the template.
+compute_local_manifest() {
+  local -a job_env=()
+  local kv
+  while IFS= read -r kv; do
+    [[ -z "$kv" ]] || job_env+=("$kv")
+  done < <(render_seed_manifest | awk '
+    /^          env:$/                   { inenv = 1; next }
+    inenv && /^          [^ -]/          { inenv = 0 }
+    inenv && /^            - name: /     { key = $3; next }
+    inenv && /^              valueFrom:/ { key = ""; next }
+    inenv && key != "" && /^              value: / {
+      sub(/^              value: /, ""); sub(/^"/, ""); sub(/"$/, "")
+      print key "=" $0; key = ""
+    }')
+  local declared
+  declared="$(render_seed_manifest | grep -c '^            - name: ' || true)"
+  # SAFETY: the extractor is anchored on the template's indentation, so a
+  # reformat would silently drop variables and build a manifest from defaults.
+  [[ ${#job_env[@]} -gt 0 ]] || die "read no environment from the rendered Job manifest."
+  [[ $(( ${#job_env[@]} + $(render_seed_manifest | grep -c '^              valueFrom:' || true) )) -eq "$declared" ]] \
+    || die "read ${#job_env[@]} of $declared Job environment variables; the template's shape changed."
+  # RULE-DEFAULTS-OK: a fallback for a HOME-less shell, not a config input; the
+  # Job's own HOME follows in job_env and wins, which is the point.
+  env -i PATH="$PATH" "${job_env[@]}" HOME="${HOME:-/tmp}" \
+    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest
+}
+
+LOCAL_MANIFEST="$(compute_local_manifest)" || die "could not compute the seed manifest."
+
 # Run the requested step. For the steps that build gold (all, silver), refresh
 # the identity projection and rebuild gold, so the stand serves resolved metrics
 # instead of a null for every person — the k8s analogue of dev-compose.sh's
 # cmd_seed, which does the same for the compose stand.
+clear_manifest_configmap
 run_seed_step "$STEP" || exit 1
 
 case "$STEP" in
@@ -658,6 +833,14 @@ case "$STEP" in
     run_seed_step gold || exit 1
     ;;
 esac
+
+# After the projection and the gold rebuild: the manifest says "this stand is
+# seeded", so it must not appear while gold is still unresolved.
+publish_manifest_configmap
+if [[ -n "$MANIFEST_OUT" ]]; then
+  resolve_manifest >"$MANIFEST_OUT" || die "could not write the manifest to $MANIFEST_OUT."
+  echo "==> manifest written: $MANIFEST_OUT"
+fi
 
 echo "==> seed complete: namespace=$NAMESPACE step=$STEP"
 exit 0

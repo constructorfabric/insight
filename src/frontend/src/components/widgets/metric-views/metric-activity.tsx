@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 
-import { evidenceSelection } from "@/api/metric-drilldown-client";
+import {
+  evidenceSelection,
+  type MetricEvidenceSelection,
+} from "@/api/metric-drilldown-client";
 import {
   useEvidenceScope,
   useMetricEvidenceOptional,
@@ -31,7 +34,9 @@ import {
 import {
   activityEventLabel,
   evidenceRecordLinks,
+  TYPE_DIMENSION,
   withSourceDimension,
+  withTypeDimension,
 } from "@/lib/metrics/provider-links";
 import { RecordLink } from "@/components/record-link";
 import { useMetricDetail } from "@/queries/metric-detail";
@@ -72,10 +77,17 @@ export function MetricActivity({
     ? evidenceSelection(metric.selection, entityId)
     : null;
   // INVARIANT: the same gate the evidence dialog applies — `source` is what
-  // makes a link safe, and asking for it where a metric does not declare it is
-  // rejected outright, so the read waits for the catalogue.
+  // makes a link safe, `type` is what says which kind of issue a row is, and
+  // asking for either where a metric does not declare it is rejected outright,
+  // so the read waits for the catalogue.
+  const declaredForMetric = base
+    ? declared.byMetricKey?.get(base.metric_key)
+    : null;
   const selection = base
-    ? withSourceDimension(base, declared.byMetricKey?.get(base.metric_key))
+    ? withTypeDimension(
+        withSourceDimension(base, declaredForMetric),
+        declaredForMetric
+      )
     : null;
   const detail = useMetricDetail(
     selection,
@@ -121,7 +133,12 @@ export function MetricActivity({
           </div>
         </div>
       </header>
-      <Body grain={grain} metric={metric} entityId={entityId} detail={detail} />
+      <Body
+        grain={grain}
+        metric={metric}
+        selection={selection}
+        detail={detail}
+      />
     </section>
   );
 }
@@ -129,12 +146,13 @@ export function MetricActivity({
 function Body({
   grain,
   metric,
-  entityId,
+  selection,
   detail,
 }: {
   grain: ReturnType<typeof finestGrain>;
   metric: NormalizedMetricResult;
-  entityId: string;
+  /** The read's own selection — the dialog opens on exactly what was listed. */
+  selection: MetricEvidenceSelection | null;
   detail: ReturnType<typeof useMetricDetail>;
 }) {
   if (grain == null) {
@@ -179,27 +197,29 @@ function Body({
     );
   }
   if (grain === "event") {
-    return <EventList metric={metric} entityId={entityId} rows={rows} />;
+    return <EventList metric={metric} selection={selection} rows={rows} />;
   }
   return <DayStrip metric={metric} rows={rows} columns={columns} />;
 }
 
 function EventList({
   metric,
-  entityId,
+  selection,
   rows,
 }: {
   metric: NormalizedMetricResult;
-  entityId: string;
+  selection: MetricEvidenceSelection | null;
   rows: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["rows"];
 }) {
   const evidence = useMetricEvidenceOptional();
   const scope = useEvidenceScope();
-  const selection = evidenceSelection(metric.selection, entityId);
   const metricKey = metric.selection?.metric_key ?? "";
   const events = useMemo(() => activityEvents(rows), [rows]);
   const shown = events.slice(0, EVENTS_SHOWN);
   const rest = events.length - shown.length;
+  // A column only where the rows have one to fill it: a metric whose records
+  // carry no type would otherwise reserve width for a strip of dashes.
+  const typed = events.some((event) => eventType(event.values) != null);
 
   return (
     <div className="flex flex-col gap-1">
@@ -215,6 +235,14 @@ function EventList({
               <span className="w-14 shrink-0 text-muted-foreground tabular-nums">
                 {formatDate(event.date)}
               </span>
+              {typed ? (
+                <span
+                  className="w-24 shrink-0 truncate text-muted-foreground"
+                  title={eventType(event.values) ?? undefined}
+                >
+                  {eventType(event.values) ?? "—"}
+                </span>
+              ) : null}
               <span className="min-w-0 flex-1 truncate">
                 {label ? (
                   <RecordLink href={links.title}>{label}</RecordLink>
@@ -250,6 +278,14 @@ function EventList({
       ) : null}
     </div>
   );
+}
+
+/** What kind of thing a row is, when the row says — "Bug", "Story". */
+function eventType(values: Readonly<Record<string, unknown>>): string | null {
+  const value = values[TYPE_DIMENSION];
+  if (typeof value !== "string") return null;
+  const type = value.trim();
+  return type === "" ? null : type;
 }
 
 /** A ratio's daily value is a fraction; the metric says what to scale it by. */

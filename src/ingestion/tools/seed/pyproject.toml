@@ -25,6 +25,9 @@ requires-python = ">=3.12"
 dependencies = [
     "PyMySQL==1.2.0",
     "clickhouse-connect==1.7.1",
+    # INVARIANT: exact pin — Faker's en_US pool changes between releases, and a
+    # float pin would rename a stand's whole growth population on a rebuild.
+    "Faker==40.1.2",
 ]
 
 [project.optional-dependencies]
