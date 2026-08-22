@@ -1,23 +1,22 @@
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
+use sea_orm::{ColumnTrait, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect, Set};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::date_window::{self, WINDOW};
+use super::date_window;
 use super::error::FeedbackError;
 use super::person_names::NAMED_PERSONS;
 use super::{AppState, is_admin_caller};
-
-/// DDL owned by `scripts/migrations/20260821000000_product-feedback.sql`; the
-/// service holds INSERT and SELECT here, never CREATE.
-const TABLE: &str = "product_usage.feedback";
+use crate::infra::db::entities::feedback;
 
 const MAX_MESSAGE: usize = 4000;
 
@@ -25,34 +24,31 @@ const MAX_PATH: usize = 512;
 
 const MAX_FIELD: usize = 128;
 
-/// The `LowCardinality` column, where an unbounded value blows the dictionary.
 const MAX_NAME: usize = 64;
 
-const LIST_LIMIT: u32 = 200;
+const LIST_LIMIT: u64 = 200;
 
+/// Which of the two things the sender is doing: a bug is a claim that something
+/// is broken, anything else is feedback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum FeedbackCategory {
+pub enum FeedbackKind {
     Bug,
-    Idea,
-    Confusing,
-    Other,
+    Feedback,
 }
 
-impl FeedbackCategory {
+impl FeedbackKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::Bug => "bug",
-            Self::Idea => "idea",
-            Self::Confusing => "confusing",
-            Self::Other => "other",
+            Self::Feedback => "feedback",
         }
     }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct FeedbackRequest {
-    pub category: FeedbackCategory,
+    pub kind: FeedbackKind,
     pub message: String,
     /// The screen the sender was on. Empty when the SPA cannot name one.
     #[serde(default)]
@@ -64,23 +60,7 @@ pub struct FeedbackRequest {
 }
 impl toolkit::api::api_dto::RequestApiDto for FeedbackRequest {}
 
-/// INVARIANT: `feedback_id` is omitted so the table's DEFAULT applies.
-#[derive(Debug, Serialize, clickhouse::Row)]
-struct FeedbackRow {
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    ts: DateTime<Utc>,
-    #[serde(with = "clickhouse::serde::uuid")]
-    tenant_id: Uuid,
-    #[serde(with = "clickhouse::serde::uuid")]
-    person_id: Uuid,
-    category: String,
-    message: String,
-    path: String,
-    app_name: String,
-    app_version: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct FeedbackEntry {
     pub feedback_id: String,
     pub ts: String,
@@ -89,7 +69,7 @@ pub struct FeedbackEntry {
     pub display_name: String,
     /// The account handle, empty when no identity row carries one.
     pub username: String,
-    pub category: String,
+    pub kind: String,
     pub message: String,
     pub path: String,
 }
@@ -117,10 +97,13 @@ pub async fn submit_feedback(
 ) -> Result<impl IntoResponse, CanonicalError> {
     let row = to_row(&req, ctx.subject_tenant_id(), ctx.subject_id(), Utc::now())?;
 
-    insert_feedback(&state, &row).await.map_err(|error| {
-        tracing::error!(error = %error, "feedback write failed");
-        CanonicalError::internal("failed to record feedback").create()
-    })?;
+    feedback::Entity::insert(row)
+        .exec(&state.db)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, "feedback write failed");
+            CanonicalError::internal("failed to record feedback").create()
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -135,25 +118,24 @@ pub async fn list_feedback(
 
     let window =
         date_window::parse_window(range.since.as_deref(), range.until.as_deref(), violation)?;
-    let tenant = ctx.subject_tenant_id().to_string();
-    let since = window.since.to_string();
-    let until = window.until.to_string();
+    let tenant = ctx.subject_tenant_id();
 
-    let items = state
-        .ch
-        .query(&list_sql())
-        .bind(tenant.clone())
-        .bind(since.clone())
-        .bind(until.clone())
-        .bind(tenant)
-        .fetch_all::<FeedbackEntry>()
+    let rows = feedback::Entity::find()
+        .filter(feedback::Column::InsightTenantId.eq(tenant))
+        .filter(feedback::Column::CreatedAt.gte(day_start(window.since)))
+        .filter(feedback::Column::CreatedAt.lte(day_end(window.until)))
+        .order_by(feedback::Column::CreatedAt, Order::Desc)
+        .limit(LIST_LIMIT)
+        .all(&state.db)
         .await
         .map_err(read_error)?;
 
+    let names = person_names(&state, tenant, &rows).await;
+
     Ok(Json(FeedbackListResponse {
-        since,
-        until,
-        items,
+        since: window.since.to_string(),
+        until: window.until.to_string(),
+        items: rows.into_iter().map(|row| entry(row, &names)).collect(),
     }))
 }
 
@@ -162,48 +144,105 @@ fn to_row(
     tenant_id: Uuid,
     person_id: Uuid,
     now: DateTime<Utc>,
-) -> Result<FeedbackRow, CanonicalError> {
+) -> Result<feedback::ActiveModel, CanonicalError> {
     let message = req.message.trim();
     if message.is_empty() {
         return Err(violation("message", "message must not be empty"));
     }
 
-    Ok(FeedbackRow {
-        ts: now,
-        tenant_id,
-        person_id,
-        category: req.category.as_str().to_owned(),
-        message: clip(message, MAX_MESSAGE),
-        path: clip(&req.path, MAX_PATH),
-        app_name: clip(&req.app_name, MAX_NAME),
-        app_version: clip(&req.app_version, MAX_FIELD),
+    Ok(feedback::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        insight_tenant_id: Set(tenant_id),
+        person_id: Set(person_id),
+        kind: Set(req.kind.as_str().to_owned()),
+        message: Set(clip(message, MAX_MESSAGE)),
+        path: Set(clip(&req.path, MAX_PATH)),
+        app_name: Set(clip(&req.app_name, MAX_NAME)),
+        app_version: Set(clip(&req.app_version, MAX_FIELD)),
+        created_at: Set(now),
     })
 }
 
-async fn insert_feedback(state: &AppState, row: &FeedbackRow) -> anyhow::Result<()> {
-    // Not `insert`: it escapes the name as one identifier, and `TABLE` is qualified.
-    let mut insert = state
-        .ch
-        .inner()
-        .insert_unescaped::<FeedbackRow>(TABLE)
-        .await?;
-    insert.write(row).await?;
-    insert.end().await?;
-    Ok(())
+fn entry(row: feedback::Model, names: &HashMap<String, PersonName>) -> FeedbackEntry {
+    let person_id = row.person_id.to_string();
+    let sender = names.get(&person_id);
+
+    FeedbackEntry {
+        feedback_id: row.id.to_string(),
+        ts: row.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        display_name: sender.map(|n| n.display_name.clone()).unwrap_or_default(),
+        username: sender.map(|n| n.username.clone()).unwrap_or_default(),
+        person_id,
+        kind: row.kind,
+        message: row.message,
+        path: row.path,
+    }
 }
 
-fn list_sql() -> String {
-    format!(
-        "SELECT toString(f.feedback_id) AS feedback_id, toString(f.ts) AS ts, \
-         toString(f.person_id) AS person_id, \
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct PersonName {
+    person_id: String,
+    display_name: String,
+    username: String,
+}
+
+/// The rows are service-DB content and the names are in the identity mirror, so
+/// naming a sender is a second read rather than a join, asking only for the
+/// people on this page.
+///
+/// A failed lookup leaves them unnamed rather than failing the listing: the
+/// feedback itself is what is being read.
+async fn person_names(
+    state: &AppState,
+    tenant: Uuid,
+    rows: &[feedback::Model],
+) -> HashMap<String, PersonName> {
+    let ids: Vec<String> = rows
+        .iter()
+        .map(|row| row.person_id.to_string())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let sql = format!(
+        "SELECT toString(p.person_id) AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
-         coalesce(p.username, '') AS username, \
-         f.category AS category, f.message AS message, f.path AS path \
-         FROM {TABLE} AS f \
-         LEFT JOIN {NAMED_PERSONS} AS p ON p.person_id = f.person_id \
-         WHERE {WINDOW} \
-         ORDER BY f.ts DESC LIMIT {LIST_LIMIT}"
-    )
+         coalesce(p.username, '') AS username \
+         FROM {NAMED_PERSONS} AS p WHERE toString(p.person_id) IN ?"
+    );
+
+    match state
+        .ch
+        .query(&sql)
+        .bind(tenant.to_string())
+        .bind(ids)
+        .fetch_all::<PersonName>()
+        .await
+    {
+        Ok(found) => found
+            .into_iter()
+            .map(|name| (name.person_id.clone(), name))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(error = %error, "naming feedback senders failed");
+            HashMap::new()
+        }
+    }
+}
+
+fn day_start(day: NaiveDate) -> DateTime<Utc> {
+    Utc.from_utc_datetime(&day.and_time(NaiveTime::MIN))
+}
+
+/// INVARIANT: the window is a pair of whole UTC days, so the upper bound has to
+/// reach the end of `until` — comparing against its midnight drops that day.
+fn day_end(day: NaiveDate) -> DateTime<Utc> {
+    let last = NaiveTime::from_hms_opt(23, 59, 59).unwrap_or(NaiveTime::MIN);
+    Utc.from_utc_datetime(&day.and_time(last))
 }
 
 fn clip(value: &str, max: usize) -> String {
@@ -217,7 +256,7 @@ fn violation(field: &str, description: &str) -> CanonicalError {
 }
 
 #[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
-fn read_error(error: clickhouse::error::Error) -> CanonicalError {
+fn read_error(error: sea_orm::DbErr) -> CanonicalError {
     tracing::error!(error = %error, "feedback listing query failed");
     CanonicalError::internal("failed to read feedback").create()
 }

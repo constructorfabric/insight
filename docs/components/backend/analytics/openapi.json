@@ -334,26 +334,16 @@
         ],
         "type": "object"
       },
-      "FeedbackCategory": {
-        "description": "What the sender is telling us, chosen in the dialog. A closed set: the\ncolumn is `LowCardinality`, and an admin triages by it.",
-        "enum": [
-          "bug",
-          "idea",
-          "confusing",
-          "other"
-        ],
-        "type": "string"
-      },
       "FeedbackEntry": {
         "properties": {
-          "category": {
-            "type": "string"
-          },
           "display_name": {
             "description": "Empty when the sender has not been mirrored into the identity rows yet.",
             "type": "string"
           },
           "feedback_id": {
+            "type": "string"
+          },
+          "kind": {
             "type": "string"
           },
           "message": {
@@ -379,11 +369,19 @@
           "person_id",
           "display_name",
           "username",
-          "category",
+          "kind",
           "message",
           "path"
         ],
         "type": "object"
+      },
+      "FeedbackKind": {
+        "description": "Which of the two things the sender is doing: a bug is a claim that something\nis broken, anything else is feedback.",
+        "enum": [
+          "bug",
+          "feedback"
+        ],
+        "type": "string"
       },
       "FeedbackListResponse": {
         "properties": {
@@ -415,8 +413,8 @@
           "app_version": {
             "type": "string"
           },
-          "category": {
-            "$ref": "#/components/schemas/FeedbackCategory"
+          "kind": {
+            "$ref": "#/components/schemas/FeedbackKind"
           },
           "message": {
             "type": "string"
@@ -427,7 +425,7 @@
           }
         },
         "required": [
-          "category",
+          "kind",
           "message"
         ],
         "type": "object"
