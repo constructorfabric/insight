@@ -20,6 +20,7 @@ NAMESPACE=""
 # prefix so a future chart template cannot fail to adopt it.
 MANIFEST_CONFIGMAP="seed-stand-manifest"
 SEED_MANIFEST_SENTINEL=""
+LOCAL_MANIFEST=""
 CONTEXT=""
 RELEASE=""
 DEV_EMAIL=""
@@ -501,32 +502,20 @@ export SEED_FORCE="$FORCE"
 # Allowed to be empty: the seeder has its own default window.
 export SEED_WINDOW_DAYS="$WINDOW_DAYS"
 
-# The manifest is a pure function of this environment, so it is computed HERE
-# and the Job is told the same anchor rather than resolving one of its own.
-# INVARIANT: an unpinned anchor resolves per process — the pod and this script
-# would disagree across a UTC midnight and the manifest would describe a window
-# the rows do not sit in.
-# INVARIANT: these are the manifest-relevant variables seed-job.yaml.tpl gives
-# the container, and must track it; publish_manifest_configmap re-checks the
-# result against what the pod emitted.
-compute_local_manifest() {
+# INVARIANT: an unpinned anchor is resolved once per process, so the Job is
+# TOLD the date rather than picking its own — otherwise this script and the pod
+# disagree across a UTC midnight and the manifest describes a window the rows
+# do not sit in. The anchor derives from this one variable and nothing else, so
+# resolving it needs no other environment.
+resolve_anchor_date() {
   need uv
   need jq
-  env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
-    DEV_USER_EMAIL="$DEV_EMAIL" \
-    TENANT_DEFAULT_ID="$TENANT" \
-    IDP_SOURCE_TYPE="$IDP_SOURCE_TYPE" \
-    SEED_CROSS_TENANT_FIXTURE="$CROSS_TENANT" \
-    SEED_SERVICE_PRINCIPALS="false" \
-    SEED_DAYS="$WINDOW_DAYS" \
-    SEED_ANCHOR_DATE="$ANCHOR_DATE" \
-    SEED_ORG_HEADCOUNT="$ORG_HEADCOUNT" \
-    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest
+  env -i PATH="$PATH" HOME="${HOME:-/tmp}" SEED_ANCHOR_DATE="$ANCHOR_DATE" \
+    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest | jq -r '.anchor_date'
 }
 
-LOCAL_MANIFEST="$(compute_local_manifest)" \
-  || die "could not compute the seed manifest from this tree; uv and the seeder package are required."
-ANCHOR_DATE="$(jq -r '.anchor_date' <<<"$LOCAL_MANIFEST")"
+ANCHOR_DATE="$(resolve_anchor_date)" \
+  || die "could not resolve the seed anchor; uv and the seeder package are required."
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
 # Empty means the committed roster. Resolved here rather than in the template:
 # WORKAROUND: GNU envsubst emits `${VAR:-default}` verbatim, so a default
@@ -776,6 +765,30 @@ fi
 # the identity projection and rebuild gold, so the stand serves resolved metrics
 # instead of a null for every person — the k8s analogue of dev-compose.sh's
 # cmd_seed, which does the same for the compose stand.
+# The manifest is a pure function of the seeder's environment, and the rendered
+# Job is where that environment is decided — so it is read back from the render
+# rather than restated here, which cannot drift from the template.
+compute_local_manifest() {
+  local -a job_env=()
+  local kv
+  while IFS= read -r kv; do
+    [[ -z "$kv" ]] || job_env+=("$kv")
+  done < <(render_seed_manifest | awk '
+    /^          env:$/                   { inenv = 1; next }
+    inenv && /^          [^ -]/          { inenv = 0 }
+    inenv && /^            - name: /     { key = $3; next }
+    inenv && /^              valueFrom:/ { key = ""; next }
+    inenv && key != "" && /^              value: / {
+      sub(/^              value: /, ""); sub(/^"/, ""); sub(/"$/, "")
+      print key "=" $0; key = ""
+    }')
+  [[ ${#job_env[@]} -gt 0 ]] || die "read no environment from the rendered Job manifest."
+  env -i PATH="$PATH" HOME="${HOME:-/tmp}" "${job_env[@]}" \
+    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest
+}
+
+LOCAL_MANIFEST="$(compute_local_manifest)" || die "could not compute the seed manifest."
+
 case "$STEP" in all) clear_manifest_configmap ;; esac
 run_seed_step "$STEP" || exit 1
 case "$STEP" in all) publish_manifest_configmap ;; esac
