@@ -72,6 +72,27 @@ function forgetRetiredPreference(): void {
 
 forgetRetiredPreference();
 
+/**
+ * Test-only door back to the screens the portal replaced.
+ *
+ * NOT a preference: nothing in the product writes it, no surface offers it,
+ * and `insight.portal` — the key that used to — is deleted above. It exists
+ * because the deployed-stand UI journeys are written against the legacy shell
+ * (`tests/stand/ui/conftest.py` sets this before any app code runs); migrating
+ * them is its own piece of work, and this is what keeps them running until
+ * then. It goes when they do.
+ *
+ * Read ONCE, at load: the suite's init script precedes the first read and
+ * nothing changes it afterwards, so there is nothing to subscribe to.
+ */
+const LEGACY_SHELL_KEY = "insight.legacyShell";
+const legacyShell = readKey(LEGACY_SHELL_KEY) === "true";
+
+/** Whether this document was told to render the pre-portal shell. */
+export function readLegacyShell(): boolean {
+  return legacyShell;
+}
+
 let state: PortalState = {
   showPlanned: readOptInPref(SHOW_PLANNED_KEY),
 };

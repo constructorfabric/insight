@@ -1,10 +1,11 @@
-import { createFileRoute, retainSearchParams } from "@tanstack/react-router";
+import { Navigate, createFileRoute, retainSearchParams } from "@tanstack/react-router";
 
 import { PortalLayout } from "@/components/portal/portal-layout";
 import {
   PORTAL_SEARCH_KEYS,
   validatePortalSearch,
 } from "@/lib/portal/portal-search";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 
 /**
  * The portal's org zones (Overview / Directions / AI & Cost / Manage).
@@ -22,5 +23,13 @@ export const Route = createFileRoute("/portal")({
     // missed, and the scope silently resets.
     middlewares: [retainSearchParams(PORTAL_SEARCH_KEYS)],
   },
-  component: PortalLayout,
+  component: PortalRoute,
 });
+
+function PortalRoute() {
+  // The root shell swaps in PortalLayout for this route, so this component
+  // only mounts under the legacy-shell hatch — a pasted /portal URL from a
+  // document told to render the other shell. Send it the app it does have.
+  if (readLegacyShell()) return <Navigate to="/" replace />;
+  return <PortalLayout />;
+}

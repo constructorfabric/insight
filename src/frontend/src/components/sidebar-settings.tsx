@@ -11,6 +11,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useSettings } from "@/hooks/use-settings";
 import type { FocusMode } from "@/lib/peers";
 import {
+  readLegacyShell,
   setPortalShowPlanned,
   usePortalShowPlanned,
 } from "@/lib/portal/portal-store";
@@ -30,25 +31,28 @@ export function SidebarSettings() {
 
   return (
     <SidebarMenu>
-      {/* Shows the zones and views we have scaffolded but not built. */}
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={() => setPortalShowPlanned(!showPlanned)}
-          aria-pressed={showPlanned}
-          className="justify-between"
-        >
-          <span className="flex items-center gap-2">
-            <Wrench className="size-4" />
-            <span>Show planned sections</span>
-          </span>
-          <Switch
-            checked={showPlanned}
-            onCheckedChange={setPortalShowPlanned}
-            size="sm"
-            tabIndex={-1}
-          />
-        </SidebarMenuButton>
-      </SidebarMenuItem>
+      {/* Shows the zones and views we have scaffolded but not built — a
+          portal-only idea, so it stays out of the shell that has no zones. */}
+      {readLegacyShell() ? null : (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            onClick={() => setPortalShowPlanned(!showPlanned)}
+            aria-pressed={showPlanned}
+            className="justify-between"
+          >
+            <span className="flex items-center gap-2">
+              <Wrench className="size-4" />
+              <span>Show planned sections</span>
+            </span>
+            <Switch
+              checked={showPlanned}
+              onCheckedChange={setPortalShowPlanned}
+              size="sm"
+              tabIndex={-1}
+            />
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      )}
       <SidebarMenuItem className="flex flex-col items-stretch gap-1.5 p-1">
         <span className="px-1 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/60">
           {t("settings.focus_mode.label")}

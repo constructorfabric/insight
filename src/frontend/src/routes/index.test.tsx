@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 /**
- * "/" is a redirect, not a page. The portal is the interface now, so there is
- * no second thing for this route to weigh up and nothing for it to render.
+ * "/" is a redirect into the portal for everyone except a document carrying
+ * the legacy-shell hatch the stand's UI journeys set — that one still gets the
+ * dashboard.
  */
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
@@ -13,29 +14,52 @@ vi.mock("@tanstack/react-router", async () => {
     createFileRoute: () => (options: Record<string, unknown>) => options,
   };
 });
+vi.mock("@/auth", () => ({
+  useViewer: () => ({ personId: "person-1" }),
+}));
+vi.mock("@/screens/dashboard", () => ({
+  DashboardScreen: () => <div data-testid="dashboard" />,
+}));
 
-import { describe, expect, it, vi } from "vitest";
+let legacyShell = false;
+vi.mock("@/lib/portal/portal-store", () => ({
+  readLegacyShell: () => legacyShell,
+}));
+
+import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Route } from "./index";
 
 const route = Route as unknown as {
   beforeLoad: () => void;
-  component?: unknown;
+  component: () => React.ReactNode;
 };
+
+function thrownByBeforeLoad(): unknown {
+  try {
+    route.beforeLoad();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
+beforeEach(() => {
+  legacyShell = false;
+});
 
 describe("/", () => {
   it("sends every reader into the portal", () => {
-    let thrown: unknown;
-    try {
-      route.beforeLoad();
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toEqual({ redirect: { to: "/portal" } });
+    expect(thrownByBeforeLoad()).toEqual({ redirect: { to: "/portal" } });
   });
 
-  it("has nothing to render — the redirect is the whole route", () => {
-    expect(route.component).toBeUndefined();
+  it("lets a legacy-shell document through to the dashboard", () => {
+    legacyShell = true;
+
+    expect(thrownByBeforeLoad()).toBeUndefined();
+    const Component = route.component;
+    render(<Component />);
+    expect(screen.getByTestId("dashboard")).toBeInTheDocument();
   });
 });
