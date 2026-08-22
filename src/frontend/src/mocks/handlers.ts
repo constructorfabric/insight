@@ -865,6 +865,9 @@ interface MockFeedback {
   path: string;
 }
 
+/** Mirrors the service's own cap. */
+const MOCK_FEEDBACK_LIMIT = 200;
+
 function mockSender(person: (typeof PEOPLE)[number] | undefined) {
   return {
     person_id: person?.person_id ?? "",
@@ -911,11 +914,18 @@ function feedbackHandlers() {
     }),
     http.get("/api/analytics/v1/feedback", ({ request }) => {
       const params = new URL(request.url).searchParams;
-      return HttpResponse.json({
-        since: params.get("since") ?? "",
-        until: params.get("until") ?? "",
-        items: feedbackStore,
-      });
+      const since = params.get("since") ?? "";
+      const until = params.get("until") ?? "";
+      // Answering the window the caller asked for, as the service does: a mock
+      // that ignores it hides every date-range regression from mock runs.
+      const items = feedbackStore
+        .filter((row) => {
+          const day = row.ts.slice(0, 10);
+          return (!since || day >= since) && (!until || day <= until);
+        })
+        .slice(0, MOCK_FEEDBACK_LIMIT);
+
+      return HttpResponse.json({ since, until, items });
     }),
   ];
 }
