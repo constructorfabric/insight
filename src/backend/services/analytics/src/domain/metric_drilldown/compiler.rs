@@ -215,7 +215,7 @@ pub fn decode_evidence_rows(bytes: &[u8]) -> Result<Vec<EvidenceQueryRow>, serde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::metric_definitions::EvidenceGranularity;
+    use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
     use crate::domain::metric_drilldown::dto::EvidencePresentation;
     use crate::domain::metric_drilldown::presentation::evidence_presentation;
     use crate::domain::metric_drilldown::test_support::{
@@ -324,6 +324,7 @@ mod tests {
                 numerator: numerator.clone(),
                 denominator: denominator.clone(),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
             vec![
                 EvidenceInput {

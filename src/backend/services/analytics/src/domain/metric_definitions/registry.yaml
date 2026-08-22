@@ -45,10 +45,14 @@ sources:
       - key: commit_count
         evidence_granularity: event
       - key: commit_day
-        evidence_granularity: source_summary
+        evidence_granularity: derived_population
       - key: commit_change_size
         evidence_granularity: event
       - key: code_lines_added
+        evidence_granularity: source_summary
+      - key: test_lines_added
+        evidence_granularity: source_summary
+      - key: test_and_code_lines_added
         evidence_granularity: source_summary
       - key: lines_added
         evidence_granularity: source_summary
@@ -58,11 +62,29 @@ sources:
         evidence_granularity: event
       - key: pr_created_merged
         evidence_granularity: event
+      - key: pr_abandoned
+        evidence_granularity: event
+      - key: pr_reviewed
+        evidence_granularity: event
+      - key: pr_reviewer_count
+        evidence_granularity: event
+      - key: pr_multi_reviewed
+        evidence_granularity: event
       - key: pr_merged
+        evidence_granularity: event
+      - key: pr_merged_without_approval
         evidence_granularity: event
       - key: pr_cycle_hours
         evidence_granularity: event
       - key: pr_change_size
+        evidence_granularity: event
+      - key: pr_first_review_hours
+        evidence_granularity: event
+      - key: pr_review_wait_share
+        evidence_granularity: event
+      - key: pr_review_to_merge_hours
+        evidence_granularity: event
+      - key: pr_approval_to_merge_hours
         evidence_granularity: event
     dimensions:
       - category
@@ -573,6 +595,32 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.test_change_share
+    source_key: git
+    subject: code_changes
+    tags:
+      - rate
+    label: Test change share
+    short_label: Test share
+    description: Share of implementation and test additions made in test files
+    explanation: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
+    format: percent
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: test_lines_added
+      - input_role: denominator
+        measure_key: test_and_code_lines_added
+    dimensions:
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
   - metric_key: git.lines_removed
     source_key: git
     subject: code_changes
@@ -667,6 +715,157 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.pr_abandonment_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+    label: PR abandonment rate
+    short_label: Abandoned
+    description: Share of created pull requests closed without merging
+    explanation: Of pull requests created in the period, the share now closed without merging. Open requests are not abandoned. Requests created near the period end can still change outcome later.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_abandoned
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_coverage
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Review coverage
+    short_label: Reviewed
+    description: Share of created pull requests with at least one acting reviewer
+    explanation: >-
+      Of pull requests created in the period, the share with at least one
+      submitted review or approval. Assigned reviewers who never act do not
+      count. Some sources provide approvals without review timestamps.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_reviewed
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.reviewers_per_pr
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Reviewers per PR
+    description: Average number of acting reviewers per created pull request
+    explanation: Distinct reviewers who submitted a review or approval, divided by pull requests created in the period. Pull requests without review contribute zero, so read this with review coverage to separate breadth from coverage.
+    format: decimal
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_reviewer_count
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.multi_reviewer_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Multi-reviewer rate
+    short_label: Multi-review
+    description: Share of reviewed pull requests with more than one acting reviewer
+    explanation: Of pull requests with at least one submitted review or approval, the share with two or more distinct acting reviewers. This measures review breadth without conflating it with unreviewed pull requests.
+    format: percent
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_multi_reviewed
+      - input_role: denominator
+        measure_key: pr_reviewed
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.merges_without_approval_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Merges without approval
+    short_label: No approval
+    description: Share of merged pull requests with no reported approval
+    explanation: Of pull requests merged in the period, the share with no approval reported by the connected source. This can reveal missing approval gates, but source configuration and incomplete review history can also affect it.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_merged_without_approval
+      - input_role: denominator
+        measure_key: pr_merged
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.active_days
+    source_key: git
+    subject: commits
+    label: Active commit days
+    short_label: Active days
+    description: Distinct days with at least one authored commit
+    explanation: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
+    unit: days
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: commit_day
+    dimensions:
+      - project
+      - repository
+      - source
   - metric_key: git.commits_per_active_day
     source_key: git
     subject: commits
@@ -681,13 +880,17 @@ metrics:
     entity_type: person
     computation: !ratio
       scale: 1.0
+      denominator_aggregation: distinct_count
     peer_cohort_key: org_unit
     inputs:
       - input_role: numerator
         measure_key: commit_count
       - input_role: denominator
         measure_key: commit_day
-    dimensions: []
+    dimensions:
+      - project
+      - repository
+      - source
   - metric_key: git.commit_size
     source_key: git
     subject: commits
@@ -754,6 +957,105 @@ metrics:
     inputs:
       - input_role: value
         measure_key: pr_cycle_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.first_review_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Time to first review
+    short_label: First review
+    description: Typical hours from pull request creation to first review
+    explanation: Median hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_first_review_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_wait_share
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Review wait share
+    short_label: Review wait
+    description: Typical share of pull request cycle time spent waiting for first review
+    explanation: Median percentage of open-to-merge time elapsed before the first submitted review, over merged pull requests in the period. Sources without review timestamps contribute no value. High values suggest first review is the main cycle-time constraint.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_review_wait_share
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_to_merge_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Review-to-merge time
+    short_label: Review to merge
+    description: Typical hours from first review to merge
+    explanation: Median hours from first submitted review to merge, over merged pull requests in the period. Sources without review timestamps contribute no value. Read with time to first review to locate delay before or after review starts.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_review_to_merge_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.approval_to_merge_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Approval-to-merge time
+    short_label: Approval to merge
+    description: Typical hours from latest timestamped approval to merge
+    explanation: Median hours from the latest reported approval with a timestamp to merge, over merged pull requests in the period. Sources that expose approvals without per-approval timestamps contribute no value. High values can identify delay after review gates clear.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_approval_to_merge_hours
     dimensions:
       - destination_branch
       - project

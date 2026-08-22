@@ -302,6 +302,23 @@ pr_commit_emails AS (
     WHERE email_count = max_count
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
+pull_request_review_summary AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        pr_id,
+        uniqExactIf(
+            reviewer_uuid,
+            reviewer_uuid != '' AND (reviewed_at IS NOT NULL OR approved = 1)
+        ) AS reviewer_count,
+        max(approved) AS has_approval,
+        minIfOrNull(reviewed_at, reviewed_at IS NOT NULL) AS first_reviewed_at,
+        maxIfOrNull(reviewed_at, approved = 1 AND reviewed_at IS NOT NULL) AS last_approved_at
+    FROM {{ ref('class_git_pull_requests_reviewers') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+),
 pull_requests_source AS (
     SELECT
         prs.tenant_id AS tenant_id,
@@ -318,6 +335,10 @@ pull_requests_source AS (
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
+        coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
+        coalesce(review_summary.has_approval, 0) AS has_approval,
+        review_summary.first_reviewed_at AS first_reviewed_at,
+        review_summary.last_approved_at AS last_approved_at,
         prs.lines_added + prs.lines_removed AS change_size,
         if(
             prs.state = 'MERGED'
@@ -327,6 +348,29 @@ pull_requests_source AS (
             dateDiff('second', prs.created_on, prs.closed_on) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS cycle_hours,
+        if(
+            prs.created_on IS NOT NULL
+                AND review_summary.first_reviewed_at IS NOT NULL
+                AND review_summary.first_reviewed_at >= prs.created_on,
+            dateDiff('second', prs.created_on, review_summary.first_reviewed_at) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS first_review_hours,
+        if(
+            prs.state = 'MERGED'
+                AND prs.closed_on IS NOT NULL
+                AND review_summary.first_reviewed_at IS NOT NULL
+                AND prs.closed_on >= review_summary.first_reviewed_at,
+            dateDiff('second', review_summary.first_reviewed_at, prs.closed_on) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS review_to_merge_hours,
+        if(
+            prs.state = 'MERGED'
+                AND prs.closed_on IS NOT NULL
+                AND review_summary.last_approved_at IS NOT NULL
+                AND prs.closed_on >= review_summary.last_approved_at,
+            dateDiff('second', review_summary.last_approved_at, prs.closed_on) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS approval_to_merge_hours,
         if(coalesce(prs.project_key, '') = '', '__unknown__', concat(coalesce(toString(prs.source_id), ''), ':', prs.project_key)) AS project_value,
         if(coalesce(prs.project_key, '') = '', 'Unknown', prs.project_key) AS project_label,
         concat(coalesce(toString(prs.source_id), ''), ':', coalesce(prs.project_key, ''), '/', coalesce(prs.repo_slug, '')) AS repository_value,
@@ -351,6 +395,12 @@ pull_requests_source AS (
         AND pr_commit_emails.project_key = prs.project_key
         AND pr_commit_emails.repo_slug = prs.repo_slug
         AND pr_commit_emails.pr_id = prs.pr_id
+    LEFT JOIN pull_request_review_summary AS review_summary
+        ON review_summary.tenant_id = prs.tenant_id
+        AND review_summary.source_id = prs.source_id
+        AND review_summary.project_key = prs.project_key
+        AND review_summary.repo_slug = prs.repo_slug
+        AND review_summary.pr_id = prs.pr_id
 ),
 pull_request_measures AS (
     SELECT
@@ -384,6 +434,26 @@ pull_request_measures AS (
             []
         ),
         if(
+            created_on IS NOT NULL,
+            [tuple('pr_abandoned', toFloat64(closed_on IS NOT NULL AND state != 'MERGED'), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_reviewed', toFloat64(reviewer_count > 0), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_reviewer_count', toFloat64(reviewer_count), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_multi_reviewed', toFloat64(reviewer_count > 1), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
             created_on IS NOT NULL AND ifNull(change_size, 0) > 0,
             [tuple('pr_change_size', toFloat64(ifNull(change_size, 0)), toDateTime64(assumeNotNull(created_on), 3))],
             []
@@ -394,8 +464,36 @@ pull_request_measures AS (
             []
         ),
         if(
+            state = 'MERGED' AND closed_on IS NOT NULL,
+            [tuple('pr_merged_without_approval', toFloat64(has_approval = 0), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
             cycle_hours IS NOT NULL AND closed_on IS NOT NULL,
             [tuple('pr_cycle_hours', toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            first_review_hours IS NOT NULL AND first_reviewed_at IS NOT NULL,
+            [tuple('pr_first_review_hours', toFloat64(assumeNotNull(first_review_hours)), toDateTime64(assumeNotNull(first_reviewed_at), 3))],
+            []
+        ),
+        if(
+            review_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
+            [tuple('pr_review_to_merge_hours', toFloat64(assumeNotNull(review_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            approval_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
+            [tuple('pr_approval_to_merge_hours', toFloat64(assumeNotNull(approval_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            first_review_hours IS NOT NULL
+                AND cycle_hours IS NOT NULL
+                AND cycle_hours > 0
+                AND closed_on IS NOT NULL,
+            [tuple('pr_review_wait_share', 100.0 * toFloat64(assumeNotNull(first_review_hours)) / toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
             []
         )
     ) AS Array(Tuple(measure_key String, contribution Float64, observed_at DateTime64(3)))) AS pr_measure
@@ -426,6 +524,16 @@ file_change_measures AS (
             category = 'code' AND lines_added IS NOT NULL,
             [tuple('code_lines_added', toFloat64(assumeNotNull(lines_added)), file_source_dimensions)],
             []
+        ),
+        if(
+            category IN ('code', 'test') AND lines_added IS NOT NULL,
+            [tuple('test_lines_added', if(category = 'test', toFloat64(assumeNotNull(lines_added)), 0.0), file_source_dimensions)],
+            []
+        ),
+        if(
+            category IN ('code', 'test') AND lines_added IS NOT NULL,
+            [tuple('test_and_code_lines_added', toFloat64(assumeNotNull(lines_added)), file_source_dimensions)],
+            []
         )
     ) AS Array(Tuple(
         measure_key String,
@@ -434,10 +542,6 @@ file_change_measures AS (
     ))) AS file_measure
 ),
 measure_observations AS (
-    {{ presence_measure('commit_day', ['commits_source']) }}
-
-    UNION ALL
-
     SELECT
         tenant_id,
         entity_id,
@@ -474,6 +578,34 @@ FROM measure_observations
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'git' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    assumeNotNull(metric_date) AS metric_date,
+    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    'commit_day' AS measure_key,
+    concat(
+        toString(metric_date),
+        ':commit_day:',
+        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), source_dimensions))))
+    ) AS record_id,
+    'commit_day' AS record_kind,
+    'derived_population' AS granularity,
+    'commit day' AS record_label,
+    toNullable(toFloat64(1)) AS contribution,
+    toNullable(toString(metric_date)) AS subject_key,
+    source_dimensions AS dimensions,
+    CAST(map() AS Map(String, String)) AS details
+FROM commits_source
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+GROUP BY tenant_id, entity_id, metric_date, source_dimensions
 
 UNION ALL
 

@@ -78,8 +78,9 @@ models:
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
-      Median inputs retain event grain; additive measures retain their
-      established daily and dimension summaries.
+      Median inputs retain event grain; additive measures retain daily and
+      dimension summaries. Active commit days retain their date subject and
+      dimensions for exact distinct counts at every supported breakdown.
     columns: *metric_evidence_columns
 
   - name: collab_metric_evidence
@@ -267,13 +268,13 @@ models:
     description: >
       Source measure observations for the unified metrics runtime, git
       family. Day-grain measures emit one row per (tenant, entity, day,
-      measure, dimension tuple); event-grain measures (commit_change_size,
-      pr_cycle_hours, pr_change_size) intentionally emit one row per source
-      event, so multiple rows per that key are valid — they feed median
-      metrics, which aggregate over events at query time. The column set is
-      the same published contract the analytics service schema validator
-      probes (`OBSERVATION_COLUMNS`); changing it requires a coordinated
-      backend change.
+      measure, dimension tuple); commit_day emits one row per dimensioned
+      active-date subject. Duration and size measures intentionally retain one
+      row per source event, so multiple rows per that key are valid — they
+      feed median metrics, which aggregate over events at query time. The
+      column set is the same published contract the analytics service schema
+      validator probes (`OBSERVATION_COLUMNS`); changing it requires a
+      coordinated backend change.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -306,8 +307,8 @@ models:
       - name: metric_date
         description: >
           Observation date: commit date for commit-derived measures,
-          created_on for pr_created/pr_change_size, close (merge) date for
-          pr_merged/pr_cycle_hours.
+          created_on for created-PR measures, first review for time to first
+          review, and close date for merged-PR measures.
         tests:
           - not_null
       - name: observed_at
@@ -325,13 +326,24 @@ models:
                   - commit_day
                   - commit_change_size
                   - code_lines_added
+                  - test_lines_added
+                  - test_and_code_lines_added
                   - lines_added
                   - lines_removed
                   - pr_created
                   - pr_created_merged
+                  - pr_abandoned
+                  - pr_reviewed
+                  - pr_reviewer_count
+                  - pr_multi_reviewed
                   - pr_merged
+                  - pr_merged_without_approval
                   - pr_cycle_hours
                   - pr_change_size
+                  - pr_first_review_hours
+                  - pr_review_wait_share
+                  - pr_review_to_merge_hours
+                  - pr_approval_to_merge_hours
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -342,7 +354,7 @@ models:
       - name: subject_key
         description: >
           Distinct-count subject for future distinct-count semantics. NULL
-          for measures without distinct-count support.
+          except on commit_day, where it contains the active calendar date.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `source` carries the git source

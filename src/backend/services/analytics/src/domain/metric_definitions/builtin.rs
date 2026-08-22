@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
     EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
-    SourceKind, ValueTransform,
+    RatioDenominatorAggregation, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
@@ -49,7 +49,11 @@ impl CohortKey {
 #[serde(rename_all = "snake_case")]
 pub enum SeedComputation {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+        #[serde(default)]
+        denominator_aggregation: RatioDenominatorAggregation,
+    },
     Median,
     DistinctCount,
 }
@@ -67,7 +71,17 @@ impl SeedComputation {
     pub fn scale(self) -> Option<f64> {
         match self {
             Self::Sum | Self::Median | Self::DistinctCount => None,
-            Self::Ratio { scale } => Some(scale),
+            Self::Ratio { scale, .. } => Some(scale),
+        }
+    }
+
+    pub fn denominator_aggregation(self) -> RatioDenominatorAggregation {
+        match self {
+            Self::Ratio {
+                denominator_aggregation,
+                ..
+            } => denominator_aggregation,
+            Self::Sum | Self::Median | Self::DistinctCount => RatioDenominatorAggregation::Sum,
         }
     }
 }
@@ -202,9 +216,27 @@ mod tests {
     }
 
     #[test]
+    fn ratio_denominator_aggregation_defaults_to_sum_and_accepts_distinct_count() {
+        let default: SeedComputation = serde_yaml::from_str("!ratio\nscale: 1")
+            .unwrap_or_else(|error| panic!("default ratio must parse: {error}"));
+        let distinct: SeedComputation =
+            serde_yaml::from_str("!ratio\nscale: 1\ndenominator_aggregation: distinct_count")
+                .unwrap_or_else(|error| panic!("distinct ratio must parse: {error}"));
+
+        assert_eq!(
+            default.denominator_aggregation(),
+            RatioDenominatorAggregation::Sum
+        );
+        assert_eq!(
+            distinct.denominator_aggregation(),
+            RatioDenominatorAggregation::DistinctCount
+        );
+    }
+
+    #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 66, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 77, "builtin metric count");
     }
 
     #[test]

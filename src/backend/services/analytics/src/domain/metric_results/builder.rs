@@ -395,7 +395,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::metric_definitions::definition::ValueTransform;
+    use crate::domain::metric_definitions::definition::{
+        RatioDenominatorAggregation, ValueTransform,
+    };
     use chrono::NaiveDate;
     use serde_json::json;
 
@@ -451,6 +453,7 @@ mod tests {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
     }

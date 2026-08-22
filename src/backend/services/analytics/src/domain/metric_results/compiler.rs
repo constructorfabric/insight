@@ -11,7 +11,7 @@ use super::validation::{
 };
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
-    CohortSource, ComputationSpec, MetricDefinition, ObservationSource,
+    CohortSource, ComputationSpec, MetricDefinition, ObservationSource, RatioDenominatorAggregation,
 };
 
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
@@ -558,9 +558,20 @@ fn compile_capped_rollup_query(
 fn grouped_value_expr(def: &MetricDefinition) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
-        ComputationSpec::Ratio { scale, .. } => format!(
-            "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
-        ),
+        ComputationSpec::Ratio {
+            scale,
+            denominator_aggregation,
+            ..
+        } => {
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "measure_key = ? AND value IS NOT NULL",
+                "measure_key = ? AND subject_key IS NOT NULL",
+            );
+            format!(
+                "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
+            )
+        }
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
@@ -904,20 +915,26 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             numerator,
             denominator,
             scale,
+            denominator_aggregation,
         } => {
             // Ratio inputs share one source (enforced at definition load:
             // "ratio inputs must share one source"), so the numerator's
             // source_key scopes both halves. The numerator is OrNull: a tool
             // that reports the denominator but never the numerator measure
             // must read NULL (unknown split), not a fabricated 0. The
-            // denominator needs no OrNull — no rows sum to 0 and nullIf
-            // already turns that into NULL.
+            // denominator needs no OrNull — both supported aggregations yield
+            // 0 for no rows and nullIf already turns that into NULL.
             params.push(numerator.source_key.clone());
             params.push(numerator.measure_key.clone());
             params.push(numerator.source_key.clone());
             params.push(denominator.measure_key.clone());
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "source_key = ? AND measure_key = ? AND value IS NOT NULL",
+                "source_key = ? AND measure_key = ? AND subject_key IS NOT NULL",
+            );
             format!(
-                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL), 0)"
+                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
             )
         }
         ComputationSpec::Median { value } => {
@@ -942,6 +959,19 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             // OrNull is preserved through the cast (NULL stays NULL).
             "toFloat64(uniqExactIfOrNull(subject_key, source_key = ? AND measure_key = ? AND subject_key IS NOT NULL))"
                 .to_owned()
+        }
+    }
+}
+
+fn ratio_denominator_expr(
+    aggregation: RatioDenominatorAggregation,
+    sum_condition: &str,
+    distinct_condition: &str,
+) -> String {
+    match aggregation {
+        RatioDenominatorAggregation::Sum => format!("sumIf(value, {sum_condition})"),
+        RatioDenominatorAggregation::DistinctCount => {
+            format!("uniqExactIf(subject_key, {distinct_condition})")
         }
     }
 }
@@ -1373,8 +1403,32 @@ mod tests {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
+    }
+
+    #[test]
+    fn ratio_can_count_distinct_denominator_subjects() {
+        let mut metric = ratio_metric();
+        let ComputationSpec::Ratio {
+            denominator_aggregation,
+            ..
+        } = &mut metric.spec
+        else {
+            panic!("fixture must be ratio");
+        };
+        *denominator_aggregation = RatioDenominatorAggregation::DistinctCount;
+
+        let query = compile_timeseries_query(&metric, &request(), Bucket::Week, &[], &[], None);
+
+        assert!(
+            query
+                .sql
+                .contains("uniqExactIf(subject_key, measure_key = ? AND subject_key IS NOT NULL)")
+        );
+        assert_eq!(query.params[0], "accepted_edit_actions");
+        assert_eq!(query.params[1], "tool_use_offered");
     }
 
     const TEST_TENANT: uuid::Uuid = uuid::Uuid::from_u128(0x1967);

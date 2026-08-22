@@ -317,6 +317,7 @@ fn humanize_field_name(key: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::domain::metric_definitions::RatioDenominatorAggregation;
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{input, plan, row, validated};
@@ -409,6 +410,7 @@ mod tests {
                 numerator: numerator.clone(),
                 denominator: denominator.clone(),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
             vec![
                 EvidenceInput {

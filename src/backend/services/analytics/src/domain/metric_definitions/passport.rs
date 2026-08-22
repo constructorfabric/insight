@@ -88,12 +88,22 @@ fn formula(metric: &MetricSeed) -> String {
         SeedComputation::DistinctCount => {
             format!("distinct_count({})", measure(MetricInputRole::Value))
         }
-        SeedComputation::Ratio { scale } => {
-            let ratio = format!(
-                "{} / {}",
-                measure(MetricInputRole::Numerator),
-                measure(MetricInputRole::Denominator)
-            );
+        SeedComputation::Ratio {
+            scale,
+            denominator_aggregation,
+        } => {
+            let denominator = match denominator_aggregation {
+                crate::domain::metric_definitions::definition::RatioDenominatorAggregation::Sum => {
+                    measure(MetricInputRole::Denominator).to_owned()
+                }
+                crate::domain::metric_definitions::definition::RatioDenominatorAggregation::DistinctCount => {
+                    format!(
+                        "distinct_count({})",
+                        measure(MetricInputRole::Denominator)
+                    )
+                }
+            };
+            let ratio = format!("{} / {}", measure(MetricInputRole::Numerator), denominator);
             if (scale - 1.0).abs() < f64::EPSILON {
                 ratio
             } else {
@@ -179,7 +189,7 @@ mod tests {
         // A ratio with scale 1.0 renders as a bare division; a scaled ratio
         // carries its multiplier.
         let rendered = render_passports();
-        assert!(rendered.contains("Formula: commit_count / commit_day"));
+        assert!(rendered.contains("Formula: commit_count / distinct_count(commit_day)"));
         assert!(rendered.contains("Formula: 100 * (accepted_edit_actions / tool_use_offered)"));
     }
 

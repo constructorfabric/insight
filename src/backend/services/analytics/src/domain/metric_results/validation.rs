@@ -749,7 +749,7 @@ mod tests {
     use super::*;
     use crate::domain::metric_definitions::definition::{
         ComputationSpec, MetricBase, MetricDefinition, MetricDirection, MetricFormat, MetricInput,
-        MetricInputRole, ObservationRelation, ObservationSource,
+        MetricInputRole, ObservationRelation, ObservationSource, RatioDenominatorAggregation,
     };
 
     fn shape_request(
@@ -825,6 +825,7 @@ mod tests {
             numerator: fixture_input("accepted_edit_actions", MetricInputRole::Numerator),
             denominator: fixture_input("tool_use_offered", MetricInputRole::Denominator),
             scale: 100.0,
+            denominator_aggregation: RatioDenominatorAggregation::Sum,
         };
         def
     }
