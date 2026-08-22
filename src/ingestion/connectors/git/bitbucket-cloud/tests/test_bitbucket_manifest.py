@@ -148,3 +148,49 @@ def test_the_call_budget_limit_survives_a_string_valued_config() -> None:
     rate = manifest["api_budget"]["policies"][0]["rates"][0]
     # The fallback covers the key being absent entirely, which is the default path.
     assert "or 1000" in rate["limit"]
+
+
+_REPO_LISTING_PATH = "/repositories/{{ stream_partition.workspace }}"
+
+
+def _repository_listings(streams: list[dict]) -> list[tuple[str, str]]:
+    """(owner, fields) for every requester that lists a workspace's repositories.
+
+    Eleven of the twelve are fan-out parents inlined inside a substream's
+    partition router — the Builder's strict validator rejects a whole-object
+    `$ref` for a substream parent — so they cannot share one definition and
+    have to be audited instead.
+    """
+    found: list[tuple[str, str]] = []
+
+    def walk(node: object, owner: str | None) -> None:
+        if isinstance(node, dict):
+            name = node.get("name") if isinstance(node.get("name"), str) else owner
+            requester = node.get("requester")
+            if isinstance(requester, dict) and requester.get("path") == _REPO_LISTING_PATH:
+                params = requester.get("request_parameters") or {}
+                found.append((name or "?", str(params.get("fields", ""))))
+            for value in node.values():
+                walk(value, name)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, owner)
+
+    walk(streams, None)
+    return found
+
+
+def test_every_repository_listing_projects_the_field_the_exclusion_reads() -> None:
+    """`bitbucket_exclude_repositories` matches on `slug`, and Bitbucket's
+    `fields` is an exact projection. A listing that omits it hands the filter an
+    absent key: the Jinja render aborts, the condition evaluates to the raw
+    template string, and a truthy string keeps the record — so the exclusion is
+    silently ignored for that stream and its repositories are cloned anyway.
+    """
+    listings = _repository_listings(_streams())
+    assert listings, "no repository listing found — the audit is not looking at anything"
+    missing = sorted(owner for owner, fields in listings if "values.slug" not in fields)
+    assert not missing, (
+        "these repository listings do not project values.slug, so the exclusion "
+        f"filter cannot see it: {missing}"
+    )
