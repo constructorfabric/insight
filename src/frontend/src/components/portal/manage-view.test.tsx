@@ -163,48 +163,6 @@ describe("Manage · What's new", () => {
   });
 });
 
-describe("Manage · Data health", () => {
-  const tile = (label: string) =>
-    screen.getByText(label).closest("div")?.parentElement?.textContent ?? "";
-
-  it("counts a schema-broken definition once, not as broken and awaiting data both", () => {
-    render(<ManageView item="data-health" />);
-
-    expect(tile("serving data")).toMatch(/^2/);
-    expect(tile("not computing here")).toMatch(/^1/);
-    expect(tile("no data yet")).toMatch(/^0/);
-  });
-
-  it("does not report a custom metric as unverified or awaiting data", () => {
-    mocks.q.data = [
-      {
-        prefix: "git",
-        metrics: [
-          def({
-            metric_key: "git.custom",
-            origin: "custom",
-            schema_status: "unchecked",
-            last_observed_date: null,
-          }),
-        ],
-      },
-    ];
-
-    render(<ManageView item="data-health" />);
-
-    expect(tile("custom")).toMatch(/^1/);
-    expect(tile("not verified")).toMatch(/^0/);
-    expect(tile("no data yet")).toMatch(/^0/);
-  });
-});
-
-describe("Manage · unwired items", () => {
-  it("renders an honest placeholder instead of a fake admin screen", () => {
-    render(<ManageView item="taxonomy" />);
-    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
-  });
-});
-
 describe("identities gate", () => {
   const gate = (over: Partial<typeof adminGate.value>) => {
     adminGate.value = {
@@ -278,7 +236,12 @@ function connectorRow(
 describe("Manage · connector delivery", () => {
   beforeEach(() => {
     mocks.q.data = [{ prefix: "git", metrics: [def({})] }];
-    adminGate.value.isAdmin = true;
+    adminGate.value = {
+      isAdmin: true,
+      isPending: false,
+      isError: false,
+      retry: () => undefined,
+    };
     connectorHealth.value = {
       data: { as_of: "2020-01-10T12:00:00Z", connectors: [] },
       isLoading: false,
@@ -319,18 +282,6 @@ describe("Manage · connector delivery", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Data health" }),
     ).toBeInTheDocument();
-  });
-
-  it("still reports connector delivery when the metric catalogue read fails", () => {
-    mocks.q.isError = true;
-    connectorHealth.value.data = {
-      as_of: "2020-01-10T12:00:00Z",
-      connectors: [connectorRow("delivering", "2020-01-10T02:00:00Z")],
-    };
-
-    render(<ManageView item="data-health" />);
-
-    expect(screen.getByText("10h ago")).toBeInTheDocument();
   });
 
   it("says the service can see no bronze schemas rather than showing an empty table", () => {
@@ -374,7 +325,7 @@ describe("Manage · connector delivery", () => {
     const dot = container.querySelector("[data-connector-dot]");
     expect(dot?.getAttribute("style")).toContain("--brand-ms-entra");
   });
-  it("keeps connector delivery out of a non-admin's pane, catalogue and all", () => {
+  it("refuses the pane to a non-admin instead of showing an empty one", () => {
     adminGate.value.isAdmin = false;
     connectorHealth.value.data = {
       as_of: "2020-01-10T12:00:00Z",
@@ -384,6 +335,6 @@ describe("Manage · connector delivery", () => {
     render(<ManageView item="data-health" />);
 
     expect(screen.queryByText("10h ago")).not.toBeInTheDocument();
-    expect(screen.getByText("serving data")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 });

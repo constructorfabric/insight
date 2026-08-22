@@ -26,7 +26,6 @@ import {
   elapsedSince,
   orderByAttention,
 } from "@/lib/portal/connector-health";
-import { catalogueHealth } from "@/lib/portal/catalogue-health";
 import { seriesColors } from "@/lib/series-colors";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
@@ -56,7 +55,12 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  */
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
-  if (item === "data-health") return <DataHealth />;
+  if (item === "data-health")
+    return (
+      <AdminGate>
+        <DataHealth />
+      </AdminGate>
+    );
   if (item === "identities")
     return (
       <AdminGate>
@@ -222,58 +226,7 @@ function DataHealth() {
         {t("data_health.heading")}
       </h1>
 
-      <AdminOnly>
-        <ConnectorDelivery />
-      </AdminOnly>
-      <MetricCatalogueHealth />
-    </div>
-  );
-}
-
-function AdminOnly({ children }: { children: ReactNode }) {
-  const { isAdmin, isPending } = useIsAdmin();
-  if (isPending || !isAdmin) return null;
-  return children;
-}
-
-function MetricCatalogueHealth() {
-  const { t } = useTranslation();
-  const { metrics, isLoading, isError, refetch } = useFlatDefinitions();
-  if (isLoading) return <CenteredSpinner className="min-h-[12rem]" />;
-  if (isError)
-    return (
-      <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
-      </div>
-    );
-
-  const catalogue = catalogueHealth(metrics);
-  const tiles = [
-    { key: "serving", value: catalogue.serving, tone: "text-success" },
-    { key: "awaiting_data", value: catalogue.awaitingData, tone: "" },
-    { key: "unverified", value: catalogue.unverified, tone: "" },
-    { key: "broken", value: catalogue.broken, tone: "text-destructive" },
-    { key: "custom", value: catalogue.custom, tone: "" },
-    { key: "disabled", value: catalogue.disabled, tone: "" },
-  ] as const;
-
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          {t("catalogue_health.heading")}
-        </h2>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-          {tiles.map((tile) => (
-            <div key={tile.key} className="rounded-lg border bg-card p-4">
-              <div className={cn(TEXT_FIGURE, tile.tone)}>{tile.value}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {t(`catalogue_health.${tile.key}`)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <ConnectorDelivery />
     </div>
   );
 }

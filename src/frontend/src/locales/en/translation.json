@@ -609,15 +609,6 @@
     },
     "empty": "No connectors are visible to this service — either none are configured, or its database user cannot read the bronze schemas."
   },
-  "catalogue_health": {
-    "heading": "Metric catalog",
-    "serving": "serving data",
-    "awaiting_data": "no data yet",
-    "unverified": "not verified",
-    "broken": "not computing here",
-    "custom": "custom",
-    "disabled": "disabled"
-  },
   "feedback": {
     "nav_label": "Send feedback",
     "title": "Submit feedback / bug report",
