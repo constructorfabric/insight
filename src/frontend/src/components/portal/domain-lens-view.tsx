@@ -166,8 +166,8 @@ export function DomainLensView({
     [config]
   );
   const trendBucket = useMemo(
-    () => pickTrendBucket(memberIds.length, trendKeys.length, dateRange),
-    [memberIds.length, trendKeys.length, dateRange]
+    () => pickTrendBucket(memberIds.length, dateRange),
+    [memberIds.length, dateRange]
   );
   const trendCollection = useMemo<MetricCollectionConfig>(
     () => ({
