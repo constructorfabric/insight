@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 
+import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
 import type {
   CustomMetric,
@@ -924,15 +925,16 @@ function feedbackHandlers() {
         message?: string;
         path?: string;
       } | null;
-      if (!body?.message?.trim()) {
+      const message = body?.message?.trim();
+      if (!message || message.length > FEEDBACK_MESSAGE_MAX) {
         return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
       }
       feedbackStore.unshift({
         feedback_id: `mock-${feedbackStore.length + 1}`,
         ts: new Date().toISOString().replace("T", " ").slice(0, 19),
         ...mockSender(defaultPerson),
-        message: body.message.trim(),
-        path: body.path ?? "",
+        message,
+        path: body?.path ?? "",
       });
       return new HttpResponse(null, { status: 204 });
     }),
