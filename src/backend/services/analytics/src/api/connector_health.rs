@@ -1,47 +1,42 @@
-//! `GET /v1/connector-health` HTTP handler.
-//!
-//! Serves no verdict: the warn/error windows connectors declare are not
-//! readable from this service.
-
 use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::Extension;
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 
-use super::AppState;
+use super::{ADMIN_ONLY, AppState, require_admin};
+use crate::api::error::ConnectorHealthError;
 use crate::domain::connector_health;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ConnectorHealthResponse {
+pub(crate) struct ConnectorHealthResponse {
     pub as_of: DateTime<Utc>,
     pub connectors: Vec<ConnectorRow>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for ConnectorHealthResponse {}
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct ConnectorRow {
+pub(crate) struct ConnectorRow {
     pub connector: String,
     pub namespace: String,
     pub streams: usize,
     pub streams_with_data: usize,
-    /// Physical rows across active parts: on a deduplicating engine this
-    /// sizes a stream and does not count entities.
+    // INVARIANT: physical rows across active parts — on a deduplicating engine
+    // this sizes a stream and does not count entities.
     pub rows: u64,
     pub last_write: Option<DateTime<Utc>>,
 }
 
-/// `GET /v1/connector-health` handler.
-///
-/// # Errors
-///
-/// - `500 internal` — the catalogue or extract read failed.
-pub async fn get_connector_health(
+pub(crate) async fn get_connector_health(
     Extension(state): Extension<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, CanonicalError> {
+    require_admin(&state, &headers, admin_only).await?;
+
     let streams = connector_health::read_stream_states(&state.ch)
         .await
         .map_err(|error| {
@@ -65,4 +60,10 @@ pub async fn get_connector_health(
         as_of: Utc::now(),
         connectors,
     }))
+}
+
+fn admin_only() -> CanonicalError {
+    ConnectorHealthError::permission_denied()
+        .with_reason(ADMIN_ONLY)
+        .create()
 }

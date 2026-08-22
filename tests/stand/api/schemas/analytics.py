@@ -94,7 +94,7 @@ class ConnectorRow(BaseModel):
     connector: str
     last_write: UnzonedDatetime | None = None
     namespace: str
-    rows: int = Field(..., description='Physical rows across active parts: on a deduplicating engine this\nsizes a stream and does not count entities.', ge=0)
+    rows: int = Field(..., ge=0)
     streams: int = Field(..., ge=0)
     streams_with_data: int = Field(..., ge=0)
 

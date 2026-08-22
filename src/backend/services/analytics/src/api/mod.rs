@@ -414,7 +414,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(metric_definitions::list_metric_definitions)
         .register(router, openapi);
 
-    // Not tenant-scoped: bronze schemas are not partitioned by tenant.
+    // INVARIANT: bronze schemas are not tenant-partitioned, so this read is
+    // instance-wide and the handler gates on the admin role instead.
     router = OperationBuilder::get("/v1/connector-health")
         .operation_id("analytics_api.connector_health.get")
         .summary("Report per-connector ingestion state")
@@ -425,8 +426,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::OK,
             "Connector health",
         )
-        .error_401(openapi)
-        .error_500(openapi)
+        .standard_errors(openapi)
         .handler(connector_health::get_connector_health)
         .register(router, openapi);
 

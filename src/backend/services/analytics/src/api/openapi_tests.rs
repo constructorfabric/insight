@@ -81,3 +81,15 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn the_instance_wide_connector_read_is_declared_admin_only() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let responses = &json["paths"]["/v1/connector-health"]["get"]["responses"];
+
+    assert!(
+        responses.get("403").is_some(),
+        "an instance-wide read must declare the role refusal, got {responses:?}"
+    );
+    Ok(())
+}
