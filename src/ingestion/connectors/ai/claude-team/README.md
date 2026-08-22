@@ -92,6 +92,7 @@ Silver transformations are out of scope for this MVP (Phase 6+). `dbt_select` in
 - **Token rotation**: `proxy_auth_token` rotation requires updating both the K8s Secret here and the `PROXY_AUTH_TOKEN` env on the proxy container. Coordinate via the customer.
 - **One proxy = one org**: the proxy container is bound to a single `CLAUDE_ORG_ID`. Multiple claude organisations require multiple proxy deployments and multiple Insight connector instances.
 - **Reporting lag**: a day keeps being revised for a while after it closes. The daily-metrics streams read up to today and re-read that tail on every run (`lookback_window: P2D`) rather than waiting for it to settle: a revised day returns with a later `_airbyte_extracted_at`, and `ReplacingMergeTree(_version)` keeps it. Reading recent days late instead left them absent until they settled, which reads downstream as no activity rather than as no data (#2682).
+- **Month-end reads**: a billing month's figure is whatever its last read inside that month said, and `claude_team_overage_spend` is Full refresh with no cursor and no `lookback_window`, so nothing re-reads a day that was missed — a single nightly run makes the final day of a month a single point of failure. The schedule therefore adds 09:00, 15:00 and 21:00 UTC on days 28-31. Standard cron cannot express "last day of month", so the window covers 28-31 and a short month simply takes extra readings. Those hours stay clear of both the UTC month rollover and every other connector's slot.
 
 ## Validation
 

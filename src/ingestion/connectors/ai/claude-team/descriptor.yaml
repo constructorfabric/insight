@@ -70,7 +70,13 @@ version: "3.2.0"
 # Still off-peak vs other connectors, which occupy 02:00 to 06:00 and 11:00:
 # the customer's proxy runs a single browser instance, so claude-team is not
 # scheduled next to anything else that may hit it.
-schedule: '50 23 * * *'
+#
+# Plus 09:00, 15:00 and 21:00 UTC on days 28-31, so a missed nightly run does
+# not cost a month its final day — nothing re-reads it. Cron cannot say "last
+# day of month"; see README "Operational Constraints".
+schedule:
+  - '50 23 * * *'
+  - '0 9,15,21 28-31 * *'
 workflow: sync
 
 dbt_select: 'tag:claude-team+'
