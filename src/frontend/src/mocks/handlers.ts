@@ -926,7 +926,7 @@ function feedbackHandlers() {
         path?: string;
       } | null;
       const message = body?.message?.trim();
-      if (!message || message.length > FEEDBACK_MESSAGE_MAX) {
+      if (!message || [...message].length > FEEDBACK_MESSAGE_MAX) {
         return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
       }
       feedbackStore.unshift({
