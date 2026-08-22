@@ -12,6 +12,7 @@ import {
 import {
   buildMetricCollectionRequest,
   chunkEntityIds,
+  filterCollectionByKey,
   filterCollectionToAvailable,
   entityChunkSize,
   mergeNormalizedResults,
@@ -21,8 +22,28 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { metricVisible } from "@/lib/portal/nav-policy";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useAvailableMetricKeys } from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
+
+/**
+ * The install's metric gate, as a predicate over metric keys.
+ *
+ * Applied to every collection request, so a metric this install hides — or
+ * marks planned while the reader has planned sections off — reaches no surface
+ * at all: not a tile, not an attention row, not a heatmap column, not a
+ * drilldown block. Surfaces already render only the keys that came back, so
+ * they need no gate of their own; the ones that draw a shell around a missing
+ * metric (a section title, a card) gate their own composition instead.
+ */
+function useMetricGate(): (metricKey: string) => boolean {
+  const showPlanned = usePortalShowPlanned();
+  return useMemo(
+    () => (metricKey: string) => metricVisible(metricKey, showPlanned),
+    [showPlanned]
+  );
+}
 
 export interface MetricCollectionOptions {
   /**
@@ -82,7 +103,11 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
-  const asked = filterCollectionToAvailable(collection, catalog.keys);
+  const gate = useMetricGate();
+  const asked = filterCollectionByKey(
+    filterCollectionToAvailable(collection, catalog.keys),
+    gate
+  );
   const request = buildMetricCollectionRequest(
     asked,
     { type: entity.type, ids },
@@ -196,6 +221,7 @@ export function useMetricCollectionSet(
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const gate = useMetricGate();
   const enabled =
     ids.length > 0 && !catalog.isPending && Boolean(range.from && range.to);
 
@@ -203,8 +229,11 @@ export function useMetricCollectionSet(
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
   // results merge back into one collection result per key.
   const requests = collections.flatMap(({ key, collection: raw }) => {
-    // Same catalog gate as `useMetricCollection` — see the note there.
-    const collection = filterCollectionToAvailable(raw, catalog.keys);
+    // Same catalog and install gates as `useMetricCollection` — see the notes there.
+    const collection = filterCollectionByKey(
+      filterCollectionToAvailable(raw, catalog.keys),
+      gate
+    );
     const chunkSize = entityChunkSize(collection);
     const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
     return chunks.map((chunkIds) => {

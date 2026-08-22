@@ -1,9 +1,12 @@
 import {
   directionHidden,
   directionPlanned,
+  gatesAnyMetric,
   lensHidden,
   lensPlanned,
+  metricVisible,
   navPolicy,
+  visibleMetricKeys,
   type InstanceNavPolicy,
 } from "@/lib/portal/nav-policy";
 import {
@@ -168,6 +171,58 @@ export function sectionMetricKeys(config: LensConfig): string[] {
     }
   }
   return [...keys];
+}
+
+/**
+ * The lens as this install shows it: sections lose the metrics it gates, and a
+ * section left with none of its own is dropped rather than drawn empty.
+ *
+ * The data layer already refuses to fetch a gated metric, so a tile or a row
+ * would simply not appear — but a section that draws its own frame (a title, a
+ * participation card counting people rather than reading a value) would keep
+ * standing over the hole. Composition is where that is settled.
+ */
+export function visibleSections(
+  config: LensConfig,
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): LensConfig {
+  if (!gatesAnyMetric(policy)) return config;
+
+  const sections: SectionSpec[] = [];
+  for (const s of config.sections) {
+    switch (s.kind) {
+      case "headline":
+      case "stat-tiles":
+      case "trend":
+      case "concentration":
+      case "participation":
+      case "attention": {
+        const metrics = visibleMetricKeys(s.metrics, showPlanned, policy);
+        if (metrics.length) sections.push({ ...s, metrics });
+        break;
+      }
+      case "distribution":
+      case "composition":
+      case "event-histogram":
+        if (metricVisible(s.metric, showPlanned, policy)) sections.push(s);
+        break;
+      case "direction-cards":
+      case "coverage-levels":
+        // Neither names a metric of its own: the cards read each direction's
+        // own Overview lens (gated where that lens is composed) and coverage
+        // counts sections.
+        sections.push(s);
+        break;
+      default: {
+        const _exhaustive: never = s;
+        throw new Error(
+          `Unhandled section kind: ${JSON.stringify(_exhaustive)}`
+        );
+      }
+    }
+  }
+  return { ...config, sections };
 }
 
 /* ── Development ─────────────────────────────────────────────────────── */

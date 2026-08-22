@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { visibleDirections, visibleLenses } from "./lens-configs";
+import { GROUPS, visibleGroups } from "@/lib/insight/groups";
+import { visibleDirections, visibleLenses, visibleSections } from "./lens-configs";
+import { DEFAULT_OVERVIEW_ITEM, OVERVIEW_ITEMS } from "./overview-configs";
 import { landingDecision } from "./landing-zone";
 import { parseNavPolicy, visiblePersonSections } from "./nav-policy";
 import {
@@ -239,5 +241,63 @@ describe("landing under nav.hide", () => {
     });
 
     expect(decision.kind).toBe("pin-overview");
+  });
+});
+
+describe("metric gating across the surfaces a metric reaches", () => {
+  // The shape an install takes when a metric family is declared but not yet
+  // trusted: the family and three individual keys under the reader's toggle.
+  const policy = planned([
+    "metric:ai.*",
+    "metric:tasks.resolution_time",
+    "metric:tasks.pickup_time",
+    "metric:tasks.on_time_delivery",
+  ]);
+
+  it("takes the participation card off the Overview with its own section", () => {
+    const overview = OVERVIEW_ITEMS[DEFAULT_OVERVIEW_ITEM]!;
+
+    const kinds = visibleSections(overview, false, policy).sections.map(
+      (s) => s.kind
+    );
+
+    expect(kinds).not.toContain("participation");
+    expect(kinds).toContain("headline");
+  });
+
+  it("leaves the headline with only the metrics the install still shows", () => {
+    const overview = OVERVIEW_ITEMS[DEFAULT_OVERVIEW_ITEM]!;
+    const headline = visibleSections(overview, false, policy).sections.find(
+      (s) => s.kind === "headline"
+    );
+
+    expect(headline).toBeDefined();
+    expect(headline && "metrics" in headline ? headline.metrics : []).not.toContain(
+      "ai.cost"
+    );
+  });
+
+  it("stops the attention scan from ranking a gated metric", () => {
+    const overview = OVERVIEW_ITEMS["attention"]!;
+    const attention = visibleSections(overview, false, policy).sections.find(
+      (s) => s.kind === "attention"
+    );
+    const keys = attention && "metrics" in attention ? attention.metrics : [];
+
+    expect(keys).not.toContain("tasks.resolution_time");
+    expect(keys.length).toBeGreaterThan(0);
+  });
+
+  it("drops the section a coverage count would otherwise call a gap", () => {
+    expect(visibleGroups(false, policy).map((g) => g.id)).not.toContain(
+      "ai_adoption"
+    );
+  });
+
+  it("gives the reader everything back with planned sections on", () => {
+    const overview = OVERVIEW_ITEMS[DEFAULT_OVERVIEW_ITEM]!;
+
+    expect(visibleSections(overview, true, policy)).toEqual(overview);
+    expect(visibleGroups(true, policy)).toEqual(GROUPS);
   });
 });
