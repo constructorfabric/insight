@@ -139,6 +139,10 @@ For the deeper grounding discipline (feature shapes, differential tags, per-sour
 matrices, deferred-behavior handling), read the sibling skill `scope-feature-tests` — this skill
 reuses its reasoning and only differs in the **output format and location**.
 
+To *run* the vectors against a change that has already merged rather than write scenarios into an
+issue, hand over to `probe-merged-change`. It takes vector semantics from
+[vector-mapping.md](./references/vector-mapping.md) and owns execution.
+
 ### 3. Verify every tool you are about to name
 This is where drafts quietly lie. "Semgrep + Trivy in CI" is a sentence anyone can type; whether
 those scanners exist in this repo's pipeline is a fact you can check in about ten seconds. Run only
