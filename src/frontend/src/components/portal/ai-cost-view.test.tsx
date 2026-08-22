@@ -222,6 +222,18 @@ describe("AiCostView", () => {
     expect(screen.queryByText(/actual cost/)).not.toBeInTheDocument();
   });
 
+  it("omits the potential figure too when nobody has a reading for it", () => {
+    mocks.grid.byKey = new Map([
+      ...mocks.grid.byKey,
+      ["ai.cost", metric("ai.cost", [], { format: "currency", unit: "USD" } as never)],
+    ]);
+    render(<AiCostView item={null} />);
+    // Neither the total nor the per-user average may be conjured from no reading.
+    expect(screen.queryByText("$150")).not.toBeInTheDocument();
+    expect(screen.queryByText("$50")).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
   it("shows per-tool cards where untracked cost reads 'not tracked', never $0", () => {
     render(<AiCostView item={null} />);
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);

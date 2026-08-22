@@ -369,6 +369,9 @@ export function AiCostView({ item }: { item: string | null }) {
     );
   // Absent, not zero: a measured $0 is a reading and prints as one.
   const hasActual = observed(ACTUAL_COST_KEY);
+  const hasCost = observed(COST_KEY);
+  const costMoney = (value: number) =>
+    formatMetricValue(value, costR?.format ?? "currency", costR?.unit ?? "USD");
 
   const shownGridKeys = GRID_KEYS.filter((k) => {
     const r = grid.byKey.get(k);
@@ -394,7 +397,7 @@ export function AiCostView({ item }: { item: string | null }) {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         <Tile
           label="AI potential usage cost"
-          value={formatMetricValue(totalCost, costR?.format ?? "currency", costR?.unit ?? "USD")}
+          value={hasCost ? costMoney(totalCost) : "—"}
           note={hasActual ? `actual cost ${actualMoney(totalActual)}` : null}
           sub="Claude Code only"
         />
@@ -406,11 +409,7 @@ export function AiCostView({ item }: { item: string | null }) {
         />
         <Tile
           label="Avg potential cost / active user"
-          value={formatMetricValue(
-            avgCost,
-            costR?.format ?? "currency",
-            costR?.unit ?? null,
-          )}
+          value={hasCost ? costMoney(avgCost) : "—"}
           note={
             hasActual
               ? `avg actual ${actualMoney(avgActual)} / active user`

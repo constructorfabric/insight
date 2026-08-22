@@ -105,11 +105,11 @@ models:
 
   - name: ai_cost_metric_evidence
     description: >
-      Materialized MergeTree evidence serving table for AI cost measures. Seat
-      figures are monthly snapshots rather than daily activity, so a row is one
-      seat-month at source_summary granularity, dated at the day the snapshot
-      was last read. A separate family from ai_metric_evidence because one
-      evidence relation is bound per source.
+      Materialized MergeTree evidence serving table for AI cost measures, all
+      at source_summary granularity. A month-grain row is one seat-month, dated
+      at the first day of the month it bills for; a day-grain row is one reading
+      of a seat, dated at the day it was read. A separate family from
+      ai_metric_evidence because one evidence relation is bound per source.
     columns: *metric_evidence_columns
 
   - name: ai_cost_metric_observations
@@ -157,12 +157,13 @@ models:
           - not_null
       - name: metric_date
         description: >
-          The day the seat snapshot was last read, not the first of its billing
-          month — a date pinned to the 1st falls outside short rolling windows.
+          For a month-grain measure, the first day of the month it bills for, so
+          the date does not move with the sync schedule. For daily_extra_usage_usd,
+          the day the reading was taken.
         tests:
           - not_null
       - name: observed_at
-        description: "NULL — seat figures are month-grain aggregates."
+        description: "NULL here; the read timestamp lives on the evidence row."
       - name: measure_key
         description: "Source measure key registered in the metric registry"
         tests:
