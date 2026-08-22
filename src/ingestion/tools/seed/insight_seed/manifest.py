@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from . import config, profiles
-from .golden_metrics import GOLDEN_METRICS, GOLDEN_METRICS_NOTE
 from .manifest_sentinel import emit_manifest_sentinel
 
 
@@ -60,10 +59,6 @@ class Capabilities(TypedDict):
     idp: str
 
 
-class CatalogueRef(TypedDict):
-    definition_override: dict[str, Any] | None
-
-
 class Manifest(TypedDict):
     """The seeded stand's description, as it travels on the wire.
 
@@ -78,9 +73,6 @@ class Manifest(TypedDict):
     personas: list[PersonaEntry]
     service_urls: dict[str, str]
     fixtures: dict[str, PersonaEntry]
-    catalogue: CatalogueRef
-    golden_metrics: list[dict[str, Any]]
-    golden_metrics_note: str
     capabilities: Capabilities
     seed_revision: str
     data_window: str
@@ -88,7 +80,7 @@ class Manifest(TypedDict):
     seeded: list[str]
 
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 # Values shared with `keycloak_realm`, which builds the Keycloak realm from
 # this same roster. The two must agree exactly or a persona will authenticate
@@ -286,44 +278,11 @@ def _fixtures(personas: list[PersonaEntry]) -> dict[str, PersonaEntry]:
     return catalog
 
 
-#: Label written onto the overridden definition. Distinguishable on sight, so a
-#: listing that served the product default instead is obvious in a failure.
-OVERRIDE_LABEL = "Stand tenant override"
-
-
-def canonical_catalogue() -> dict[str, Any]:
-    """What `seed analytics` writes, minus what only a live run can know.
-
-    The table rows are static, so the committed PROFILE can name them. WHICH
-    definition gets overridden is resolved against the database at seed time, so
-    it stays absent here — a canonical page must not invent a metric_key.
-    """
-    return {"definition_override": None}
-
-
-def _catalogue(written: dict[str, Any] | None) -> CatalogueRef:
-    """Normalise the analytics seed's report into a stable manifest shape.
-
-    Always the same keys, so a consumer branches on emptiness rather than on a
-    key being absent — the difference between "not seeded" and "seeded nothing"
-    is not one a reader should have to infer from a KeyError.
-    """
-    written = written or {}
-    return {"definition_override": written.get("definition_override") or None}
-
-
 def build_manifest(
     env: Mapping[str, str],
     seeded: list[str] | None = None,
-    catalogue: dict[str, Any] | None = None,
 ) -> Manifest:
-    """Build the manifest document. Pure: no I/O beyond reading own sources.
-
-    `catalogue` carries what the analytics seed WROTE — the table names it
-    catalogued and which definition it overrode. Passed in rather than looked
-    up, because one of those facts (the overridden metric_key) is only knowable
-    against a live database and this function reads none.
-    """
+    """Build the manifest document. Pure: no I/O beyond reading own sources."""
     dev_email = (env.get("DEV_USER_EMAIL") or "").strip().lower()
     if not dev_email:
         dev_email = CANONICAL_ENV["DEV_USER_EMAIL"]
@@ -360,13 +319,6 @@ def build_manifest(
         "personas": personas,
         "service_urls": dict(SERVICE_URLS),
         "fixtures": _fixtures(personas),
-        # What the analytics seed catalogued, so a test names it instead of
-        # hardcoding a table or guessing which definition was overridden. Empty
-        # on a stand seeded without that step — which is a real state, not a
-        # bug, so consumers must treat it as "cannot assert" rather than fail.
-        "catalogue": _catalogue(catalogue),
-        "golden_metrics": list(GOLDEN_METRICS),
-        "golden_metrics_note": GOLDEN_METRICS_NOTE,
         "capabilities": {
             # Compose seeds silver/gold directly; no connector ever runs, so
             # the ingestion path is not exercised on this stand.

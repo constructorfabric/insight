@@ -100,7 +100,6 @@ def test_the_declared_model_is_the_document_that_is_built() -> None:
     assert set(doc["capabilities"]) == set(manifest.Capabilities.__annotations__)
     assert set(doc["realm"]) == set(manifest.RealmRef.__annotations__)
     assert set(doc["tenants"]) == set(manifest.TenantRefs.__annotations__)
-    assert set(doc["catalogue"]) == set(manifest.CatalogueRef.__annotations__)
 
 
 @pytest.mark.parametrize("headcount", [None, "250"])
@@ -133,9 +132,6 @@ _PUBLISHED_FIELDS = (
     "personas",
     "service_urls",
     "fixtures",
-    "catalogue",
-    "golden_metrics",
-    "golden_metrics_note",
     "capabilities",
     "seed_revision",
     "data_window",
