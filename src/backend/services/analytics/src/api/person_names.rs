@@ -45,15 +45,31 @@ pub(crate) async fn lookup(
         .fetch_all::<PersonName>()
         .await
     {
-        Ok(found) => found
-            .into_iter()
-            .map(|name| (name.person_id, name))
-            .collect(),
+        Ok(found) => by_person(found),
         Err(error) => {
             tracing::warn!(error = %error, "naming people from the identity rows failed");
             HashMap::new()
         }
     }
+}
+
+#[cfg(test)]
+impl PersonName {
+    /// The id is the map key, so a name a caller stands up carries none.
+    pub(crate) fn named(display_name: &str, username: &str) -> Self {
+        Self {
+            person_id: Uuid::nil(),
+            display_name: display_name.to_owned(),
+            username: username.to_owned(),
+        }
+    }
+}
+
+fn by_person(found: Vec<PersonName>) -> HashMap<Uuid, PersonName> {
+    found
+        .into_iter()
+        .map(|name| (name.person_id, name))
+        .collect()
 }
 
 /// INVARIANT: every selected name coalesces to `''`. A `nullIf` left uncovered
@@ -87,6 +103,50 @@ fn aggregate(person: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn offline_client() -> insight_clickhouse::Client {
+        insight_clickhouse::Client::new(insight_clickhouse::Config {
+            url: "http://127.0.0.1:1".to_owned(),
+            database: "identity".to_owned(),
+            user: None,
+            password: None,
+            query_timeout: None,
+            query_max_threads: None,
+            query_max_memory_bytes: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn nobody_to_name_asks_the_server_nothing() {
+        // The client points at a closed port: reaching the network here would
+        // fail rather than return empty.
+        let names = lookup(&offline_client(), Uuid::now_v7(), &[]).await;
+
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn a_name_is_keyed_by_the_person_it_belongs_to() {
+        let alice = Uuid::now_v7();
+        let bob = Uuid::now_v7();
+        let mut found = vec![
+            PersonName::named("Alice Example", "alice"),
+            PersonName::named("Bob Park", "bob"),
+        ];
+        found[0].person_id = alice;
+        found[1].person_id = bob;
+
+        let names = by_person(found);
+
+        assert_eq!(
+            names.get(&alice).map(|n| n.username.as_str()),
+            Some("alice")
+        );
+        assert_eq!(
+            names.get(&bob).map(|n| n.display_name.as_str()),
+            Some("Bob Park")
+        );
+    }
 
     #[test]
     fn the_relation_binds_the_tenant_and_nothing_else() {

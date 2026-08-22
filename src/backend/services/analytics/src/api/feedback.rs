@@ -101,13 +101,7 @@ pub async fn list_feedback(
         .await
         .map_err(read_error)?;
 
-    let senders: Vec<Uuid> = rows
-        .iter()
-        .map(|row| row.person_id)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let names = person_names::lookup(&state.ch, tenant, &senders).await;
+    let names = person_names::lookup(&state.ch, tenant, &senders(&rows)).await;
 
     Ok(Json(FeedbackListResponse {
         since: window.since.to_string(),
@@ -135,6 +129,16 @@ fn to_row(
         path: Set(clip(&req.path, feedback_schema::max_path())),
         created_at: Set(now),
     })
+}
+
+/// Who to ask the identity mirror about: one id per person on the page, not
+/// one per row.
+fn senders(rows: &[feedback::Model]) -> Vec<Uuid> {
+    rows.iter()
+        .map(|row| row.person_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn entry(row: feedback::Model, names: &HashMap<Uuid, PersonName>) -> FeedbackEntry {
