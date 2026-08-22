@@ -1,4 +1,4 @@
-import { MessageSquarePlus, Settings2 } from "lucide-react";
+import { Bug, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
@@ -318,7 +318,7 @@ function FeedbackButton() {
       onClick={openFeedback}
       className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
     >
-      <MessageSquarePlus className="size-[19px]" aria-hidden />
+      <Bug className="size-[19px]" aria-hidden />
       <span className="sr-only">Send feedback</span>
     </button>
   );

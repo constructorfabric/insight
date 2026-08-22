@@ -1,10 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import {
-  BookOpenText,
-  Megaphone,
-  MessageSquarePlus,
-  type LucideIcon,
-} from "lucide-react";
+import { BookOpenText, Bug, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
@@ -78,7 +73,7 @@ export function AppSidebarFooter({
                 onNavigate?.();
               }}
             >
-              <MessageSquarePlus />
+              <Bug />
               <span>{t("feedback.nav_label")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
