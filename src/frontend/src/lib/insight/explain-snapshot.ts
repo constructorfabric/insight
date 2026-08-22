@@ -1,42 +1,55 @@
 import type { MetricSnapshot } from "@/api/ai-client";
-import type { KpiTileData } from "@/lib/insight/kpi-row";
+import type {
+  SectionTrendPoint,
+  SectionTrendSeries,
+} from "@/components/portal/section-trend";
 
-export interface SnapshotContext {
-  periodNoun: string;
+export interface TrendSnapshotContext {
+  /** What the chart is called on screen. */
+  title: string;
+  /** "week" / "month" — what one point spans. */
+  bucket: string;
+  /** Inclusive start of the window, `YYYY-MM-DD`. */
   since: string;
+  /** Inclusive end of the window, `YYYY-MM-DD`. */
   until: string;
-  trend?: (number | null)[] | null;
+  /** How many people the rollup covers. */
+  people: number;
 }
 
 /**
- * The tile, as the reader sees it, in the shape the explain endpoint takes.
+ * The trend chart, as the reader sees it, in the shape the explain endpoint
+ * takes.
  *
- * Everything here is already on screen. Sending the rendered strings rather
- * than raw numbers is deliberate: the explanation then describes the same
- * "41%" and "Team median 48%" the reader is looking at, instead of a rounding
- * of its own.
+ * Every line goes over with its own points, because the reading worth
+ * explaining on this chart is how the lines move against each other — a single
+ * flattened series would lose exactly that.
  */
-export function metricSnapshot(
-  tile: KpiTileData,
-  { periodNoun, since, until, trend }: SnapshotContext
+export function trendSnapshot(
+  series: SectionTrendSeries[],
+  data: SectionTrendPoint[],
+  { title, bucket, since, until, people }: TrendSnapshotContext
 ): MetricSnapshot {
   return {
-    metric_key: tile.key,
-    label: tile.label,
-    value: tile.value,
-    period: periodNoun,
+    metric_key: series.map((s) => s.key).join(","),
+    label: title,
+    value: "",
+    period: bucket,
     since,
     until,
-    delta: tile.delta ? `${tile.delta.text} since last ${periodNoun}` : "",
-    peer: peerLine(tile),
-    help: tile.help?.description ?? "",
-    trend: trend ?? [],
+    delta: "",
+    peer: people > 0 ? `Totals across ${people} people` : "",
+    help: "",
+    trend: [],
+    scope: "organisation",
+    series: series.map((s) => ({
+      label: s.label,
+      points: data.map((row) => numberAt(row, s.key)),
+    })),
   };
 }
 
-function peerLine(tile: KpiTileData): string {
-  if (!tile.medianLabel) return "";
-  return tile.gapText
-    ? `Team ${tile.medianLabel} · ${tile.gapText}`
-    : `Team ${tile.medianLabel}`;
+function numberAt(row: SectionTrendPoint, key: string): number | null {
+  const value = row[key];
+  return typeof value === "number" ? value : null;
 }

@@ -1572,7 +1572,7 @@
         "type": "string"
       },
       "MetricSnapshot": {
-        "description": "The tile as the reader sees it, handed to the model as the thing to explain.",
+        "description": "The reading as the viewer sees it, handed to the model as the thing to explain.",
         "properties": {
           "delta": {
             "description": "The tile's own change line, empty when it has none.",
@@ -1597,6 +1597,17 @@
           "period": {
             "description": "What the period is called on screen, e.g. `month`.",
             "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SnapshotScope",
+            "description": "Whose reading this is. Absent means one person's."
+          },
+          "series": {
+            "description": "The chart's lines, when the reading is a chart rather than a tile.",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotSeries"
+            },
+            "type": "array"
           },
           "since": {
             "description": "Inclusive start of the window, `YYYY-MM-DD`.",
@@ -1999,6 +2010,38 @@
           "person"
         ],
         "type": "string"
+      },
+      "SnapshotScope": {
+        "description": "Whose reading this is.",
+        "enum": [
+          "person",
+          "organisation"
+        ],
+        "type": "string"
+      },
+      "SnapshotSeries": {
+        "description": "One line of a chart, as it is drawn.",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "points": {
+            "description": "Readings per bucket, oldest first; a gap is null.",
+            "items": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "points"
+        ],
+        "type": "object"
       },
       "TelemetryRecord": {
         "properties": {

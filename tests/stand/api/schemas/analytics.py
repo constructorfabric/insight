@@ -510,25 +510,6 @@ class MetricSchemaErrorCode(StrEnum):
     unknown = 'unknown'
 
 
-class MetricSnapshot(BaseModel):
-    """
-    The tile as the reader sees it, handed to the model as the thing to explain.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    delta: str | None = Field(None, description="The tile's own change line, empty when it has none.")
-    help: str | None = Field(None, description="The catalog's description of the metric, empty when it has none.")
-    label: str = Field(..., description='The label the tile shows.')
-    metric_key: str = Field(..., description='Catalog key, e.g. `tasks.closed`.')
-    peer: str | None = Field(None, description="The tile's peer-comparison line, empty when it has none.")
-    period: str = Field(..., description='What the period is called on screen, e.g. `month`.')
-    since: str = Field(..., description='Inclusive start of the window, `YYYY-MM-DD`.')
-    trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
-    until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
-    value: str = Field(..., description='The formatted value the tile shows.')
-
-
 class View5(StrEnum):
     period = 'period'
 
@@ -713,6 +694,25 @@ class Scope(StrEnum):
     """
     tenant = 'tenant'
     person = 'person'
+
+
+class SnapshotScope(StrEnum):
+    """
+    Whose reading this is.
+    """
+    person = 'person'
+    organisation = 'organisation'
+
+
+class SnapshotSeries(BaseModel):
+    """
+    One line of a chart, as it is drawn.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    label: str
+    points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
 
 
 class TelemetryRecord(BaseModel):
@@ -903,12 +903,6 @@ class CustomMetricSummary(BaseModel):
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
 
 
-class ExplainRequest(MetricSnapshot):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-
-
 class MetricDefinitionView(BaseModel):
     """
     One metric definition, display fields only.
@@ -1021,6 +1015,27 @@ class MetricResultsRequest(BaseModel):
     period: MetricResultsPeriod
 
 
+class MetricSnapshot(BaseModel):
+    """
+    The reading as the viewer sees it, handed to the model as the thing to explain.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    delta: str | None = Field(None, description="The tile's own change line, empty when it has none.")
+    help: str | None = Field(None, description="The catalog's description of the metric, empty when it has none.")
+    label: str = Field(..., description='The label the tile shows.')
+    metric_key: str = Field(..., description='Catalog key, e.g. `tasks.closed`.')
+    peer: str | None = Field(None, description="The tile's peer-comparison line, empty when it has none.")
+    period: str = Field(..., description='What the period is called on screen, e.g. `month`.')
+    scope: SnapshotScope | None = Field(None, description="Whose reading this is. Absent means one person's.")
+    series: list[SnapshotSeries] | None = Field(None, description="The chart's lines, when the reading is a chart rather than a tile.")
+    since: str = Field(..., description='Inclusive start of the window, `YYYY-MM-DD`.')
+    trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
+    until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
+    value: str = Field(..., description='The formatted value the tile shows.')
+
+
 class SavedQueryListResponse(BaseModel):
     """
     Response envelope for `GET /v1/queries` (`{ "items": [SavedQuerySummary] }`).
@@ -1098,6 +1113,12 @@ class CustomMetricListResponse(BaseModel):
         extra='forbid',
     )
     items: list[CustomMetricSummary]
+
+
+class ExplainRequest(MetricSnapshot):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
 
 
 class ExportCustomMetricsResponse(BaseModel):

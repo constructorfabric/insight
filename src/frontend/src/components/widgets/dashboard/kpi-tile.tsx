@@ -6,8 +6,6 @@ import {
   TrendingUpIcon,
 } from "lucide-react";
 
-import type { MetricSnapshot } from "@/api/ai-client";
-import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { MetricHelpTooltip } from "@/components/widgets/metric-help-tooltip";
 import { Sparkline } from "@/components/widgets/dashboard/sparkline";
 import {
@@ -35,11 +33,6 @@ export interface KpiTileProps {
    */
   trend?: (number | null)[] | null;
   onOpenGroup?: (id: GroupId) => void;
-  /**
-   * The tile as the AI assistant would be asked to explain it. Absent on
-   * surfaces that do not offer explanations, which then render no sparkle.
-   */
-  explain?: MetricSnapshot;
 }
 
 const CARD_SURFACE = "@container/card";
@@ -53,21 +46,17 @@ export function KpiTile({
   periodNoun,
   trend,
   onOpenGroup,
-  explain,
 }: KpiTileProps) {
   const { showExplanations } = useSettings();
   const primaryGroup = onOpenGroup ? tile.groupId : null;
   const interactive = primaryGroup != null;
 
-  const card = (
+  return (
     <MetricHelpTooltip help={tile.help}>
       <Card
         className={cn(
           CARD_SURFACE,
           "relative",
-          // A grid cell stretches its item; the wrapper below is a block, and a
-          // <button> inside one shrinks to its content instead.
-          explain && "h-full w-full",
           interactive && "text-left transition-colors hover:bg-accent/50"
         )}
         render={
@@ -167,18 +156,6 @@ export function KpiTile({
         </CardFooter>
       </Card>
     </MetricHelpTooltip>
-  );
-
-  // The card IS the drilldown button, so the sparkle cannot live inside it —
-  // a button nested in a button is invalid markup. It overlays the corner as a
-  // sibling instead, which also keeps the card's own click area whole.
-  if (!explain) return card;
-
-  return (
-    <div className="relative h-full">
-      {card}
-      <ExplainWithAi snapshot={explain} />
-    </div>
   );
 }
 

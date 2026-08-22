@@ -1,7 +1,6 @@
 /**
- * The sparkle is gated twice over, and it is a SIBLING of the tile card.
- * The card renders as a `<button>`; nesting the trigger inside it would be
- * invalid markup that browsers silently reparent.
+ * The sparkle is gated twice over: the deployment must offer explanations and
+ * the reader must have stored a key. It draws nothing at all otherwise.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -34,9 +33,7 @@ vi.mock("@/queries/ai", () => ({
 }));
 
 import { ExplainWithAi } from "./explain-with-ai";
-import { KpiTile } from "./kpi-tile";
 import type { MetricSnapshot } from "@/api/ai-client";
-import type { KpiTileData } from "@/lib/insight/kpi-row";
 
 const SNAPSHOT: MetricSnapshot = {
   metric_key: "tasks.closed",
@@ -51,17 +48,6 @@ const SNAPSHOT: MetricSnapshot = {
   trend: [],
 };
 
-const TILE: KpiTileData = {
-  key: "tasks.closed",
-  label: "Tasks closed",
-  value: "34",
-  delta: null,
-  medianLabel: "median 27",
-  gapText: null,
-  gapStatus: "neutral",
-  help: null,
-  groupId: null,
-};
 
 describe("ExplainWithAi", () => {
   it("draws nothing where the deployment does not offer explanations", () => {
@@ -146,19 +132,4 @@ describe("ExplainWithAi", () => {
     mocks.explain.isPending = false;
   });
 
-  it("keeps the sparkle outside the tile's own button", () => {
-    mocks.available = { featureOn: true, hasKey: true };
-
-    render(
-      <KpiTile
-        tile={TILE}
-        periodNoun="month"
-        onOpenGroup={() => {}}
-        explain={SNAPSHOT}
-      />
-    );
-
-    const sparkle = screen.getByLabelText("Explain Tasks closed with AI");
-    expect(sparkle.closest("button:not([aria-label^='Explain'])")).toBeNull();
-  });
 });

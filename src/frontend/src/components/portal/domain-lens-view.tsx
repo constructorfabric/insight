@@ -1,3 +1,6 @@
+import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
+import { trendSnapshot } from "@/lib/insight/explain-snapshot";
+import type { DateRange } from "@/api/period-to-date-range";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
@@ -346,6 +349,7 @@ export function DomainLensView({
           grid={grid}
           trend={trend}
           trendBucket={trendBucket}
+          dateRange={dateRange}
           compData={compData.byKey}
           compIsError={compData.isError}
           compRefetch={compData.refetch}
@@ -391,6 +395,7 @@ function Section({
   grid,
   trend,
   trendBucket,
+  dateRange,
   compData,
   compIsError,
   compRefetch,
@@ -406,6 +411,7 @@ function Section({
   grid: GridData;
   trend: TrendData;
   trendBucket: MetricBucket | null;
+  dateRange: DateRange;
   compData: Map<string, NormalizedMetricResult>;
   compIsError: boolean;
   compRefetch: () => void;
@@ -443,6 +449,7 @@ function Section({
           trend={trend}
           bucket={trendBucket}
           memberIds={memberIds}
+          dateRange={dateRange}
         />
       ) : (
         // Say which of the two dials to turn — a bare "no data" would read as
@@ -981,12 +988,14 @@ function TrendSection({
   trend,
   bucket,
   memberIds,
+  dateRange,
 }: {
   metrics: readonly string[];
   grid: GridData;
   trend: TrendData;
   bucket: MetricBucket;
   memberIds: readonly string[];
+  dateRange: DateRange;
 }) {
   const series = metrics
     .map((key) => {
@@ -1027,6 +1036,17 @@ function TrendSection({
       data={data}
       rightAxis={series.some((s) => s.yAxisId === "right")}
       isPending={trend.isPending}
+      action={
+        <ExplainWithAi
+          snapshot={trendSnapshot(series, data, {
+            title: "Activity over time",
+            bucket,
+            since: dateRange.from,
+            until: dateRange.to,
+            people: memberIds.length,
+          })}
+        />
+      }
     />
   );
 }

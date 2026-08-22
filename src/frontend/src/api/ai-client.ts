@@ -56,7 +56,16 @@ export interface UpdateContextRequest {
   body?: string;
 }
 
-/** The tile as it is on screen — what the model is asked to explain. */
+export type SnapshotScope = "person" | "organisation";
+
+/** One line of a chart, as it is drawn. */
+export interface SnapshotSeries {
+  label: string;
+  /** Readings per bucket, oldest first; a gap is null. */
+  points: (number | null)[];
+}
+
+/** The reading as it is on screen — what the model is asked to explain. */
 export interface MetricSnapshot {
   metric_key: string;
   label: string;
@@ -68,6 +77,9 @@ export interface MetricSnapshot {
   peer: string;
   help: string;
   trend: (number | null)[];
+  scope?: SnapshotScope;
+  /** The chart's lines, when the reading is a chart rather than a tile. */
+  series?: SnapshotSeries[];
 }
 
 export interface Explanation {

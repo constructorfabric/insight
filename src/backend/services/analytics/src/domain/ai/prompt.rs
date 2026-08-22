@@ -6,12 +6,13 @@ use crate::migration::ai_assist_schema;
 
 /// The instructions a tenant gets until an admin writes its own.
 pub const DEFAULT_SYSTEM_PROMPT: &str = "\
-You explain one workplace metric to the person it describes.
+You explain a workplace measurement to the person looking at it. The reading is \
+either one person's or an organisation-wide rollup; the payload says which.
 
-Say what the number is, how it moved, and how it sits against the team median. \
-Offer the most likely reading, and name what would confirm or rule it out. \
-Describe the system, never judge the person. If the data is too thin to support \
-a reading, say so and stop.
+Say what the reading is and how it moved. Where several series are shown, say \
+how they move against each other. Offer the most likely explanation, and name \
+what would confirm or rule it out. Describe the system, never judge a person. \
+If the data is too thin to support a reading, say so and stop.
 
 Four sentences at most. No headings, no bullet lists.";
 
@@ -65,7 +66,33 @@ pub fn build_system_prompt(base: &str, tenant: &[Entry], person: &[Entry]) -> St
     out
 }
 
-/// The tile as the reader sees it, handed to the model as the thing to explain.
+/// Whose reading this is.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotScope {
+    /// One person's own figure.
+    Person,
+    /// A rollup over a group of people.
+    Organisation,
+}
+
+impl Default for SnapshotScope {
+    fn default() -> Self {
+        Self::Person
+    }
+}
+
+/// One line of a chart, as it is drawn.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct SnapshotSeries {
+    pub label: String,
+    /// Readings per bucket, oldest first; a gap is null.
+    pub points: Vec<Option<f64>>,
+}
+
+/// The reading as the viewer sees it, handed to the model as the thing to explain.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 pub struct MetricSnapshot {
     /// Catalog key, e.g. `tasks.closed`.
@@ -92,13 +119,22 @@ pub struct MetricSnapshot {
     /// The sparkline's readings, oldest first.
     #[serde(default)]
     pub trend: Vec<Option<f64>>,
+    /// Whose reading this is. Absent means one person's.
+    #[serde(default)]
+    pub scope: SnapshotScope,
+    /// The chart's lines, when the reading is a chart rather than a tile.
+    #[serde(default)]
+    pub series: Vec<SnapshotSeries>,
 }
 
 /// Longest any one snapshot field may be once it reaches the prompt.
 const MAX_FIELD_CHARS: usize = 300;
 
-/// Most readings a sparkline can contribute.
+/// Most readings one line can contribute.
 const MAX_TREND_POINTS: usize = 64;
+
+/// Most lines one chart may hand over.
+const MAX_SERIES: usize = 8;
 
 /// The user message: the snapshot as JSON, with a one-line instruction so an
 /// empty context still produces an answer about this metric.
@@ -130,6 +166,16 @@ fn clip_snapshot(snapshot: &MetricSnapshot) -> MetricSnapshot {
             .take(MAX_TREND_POINTS)
             .copied()
             .collect(),
+        scope: snapshot.scope,
+        series: snapshot
+            .series
+            .iter()
+            .take(MAX_SERIES)
+            .map(|s| SnapshotSeries {
+                label: clip(&s.label),
+                points: s.points.iter().take(MAX_TREND_POINTS).copied().collect(),
+            })
+            .collect(),
     }
 }
 
@@ -160,6 +206,8 @@ mod tests {
             peer: "Team median 27".to_owned(),
             help: "Tasks moved to a closed state in the window.".to_owned(),
             trend: vec![Some(1.0), None, Some(3.0)],
+            scope: SnapshotScope::Person,
+            series: Vec::new(),
         }
     }
 
@@ -219,6 +267,33 @@ mod tests {
 
         assert_eq!(parsed["label"].as_str().map(str::len), Some(300));
         assert_eq!(parsed["trend"].as_array().map(Vec::len), Some(64));
+        Ok(())
+    }
+
+    #[test]
+    fn a_chart_hands_over_a_bounded_number_of_lines() -> Result<(), serde_json::Error> {
+        let mut chart = snapshot();
+        chart.scope = SnapshotScope::Organisation;
+        chart.series = (0..20)
+            .map(|i| SnapshotSeries {
+                label: format!("series {i}"),
+                points: vec![Some(1.0); 500],
+            })
+            .collect();
+
+        let message = snapshot_message(&chart);
+        let json = message
+            .split_once("\n\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(json)?;
+
+        assert_eq!(parsed["scope"], "organisation");
+        assert_eq!(parsed["series"].as_array().map(Vec::len), Some(8));
+        assert_eq!(
+            parsed["series"][0]["points"].as_array().map(Vec::len),
+            Some(64)
+        );
         Ok(())
     }
 
