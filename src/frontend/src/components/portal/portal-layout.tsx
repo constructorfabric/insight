@@ -12,6 +12,7 @@ import {
   usePortalZone,
 } from "@/lib/portal/portal-nav";
 import { landingDecision } from "@/lib/portal/landing-zone";
+import { zoneHidden } from "@/lib/portal/nav-hide";
 import { useShellLayout, type ShellLayout } from "@/lib/portal/use-shell-layout";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
@@ -46,6 +47,7 @@ export function PortalLayout() {
       // retries itself until an answer lands.
       adminPending: adminPending || adminError,
       isAdmin,
+      overviewHidden: zoneHidden("overview"),
     });
     if (decision.kind === "wait") return;
     landed.current = true;

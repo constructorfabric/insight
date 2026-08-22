@@ -1,18 +1,13 @@
 import * as Sentry from "@sentry/react";
 
+import { runtimeConfig } from "@/lib/runtime-config";
+
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-declare global {
-  interface Window {
-    __INSIGHT_CONFIG__?: { sentryDsn?: string };
-  }
-}
-
 export function initSentry(router: unknown): void {
-  // /config.js comes from the chart in a pod, from the built stub anywhere
-  // else. Nullish, not `||`: the chart renders "" to mean reporting off, and
-  // that has to outrank a build-time DSN rather than fall through to it.
-  const dsn = window.__INSIGHT_CONFIG__?.sentryDsn ?? import.meta.env.VITE_SENTRY_DSN;
+  // Nullish, not `||`: the chart renders "" to mean reporting off, and that
+  // has to outrank a build-time DSN rather than fall through to it.
+  const dsn = runtimeConfig().sentryDsn ?? import.meta.env.VITE_SENTRY_DSN;
   if (!dsn) return;
 
   // The DSN arrives from the deploy, so a malformed one is a config mistake,

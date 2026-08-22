@@ -1,5 +1,12 @@
 import {
+  directionHidden,
+  lensHidden,
+  navHidePolicy,
+  type NavHidePolicy,
+} from "@/lib/portal/nav-hide";
+import {
   DIRECTIONS,
+  lensSlug,
   type Direction,
   type Readiness,
 } from "@/lib/portal/nav-model";
@@ -86,12 +93,17 @@ export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
 }
 
-/** A direction's lenses in pane order, minus the roadmap ones a reader opted out of. */
+/**
+ * A direction's lenses in pane order, minus the roadmap ones a reader opted
+ * out of and the ones this install hides.
+ */
 export function visibleLenses(
   direction: Direction,
-  showPlanned: boolean
+  showPlanned: boolean,
+  policy: NavHidePolicy = navHidePolicy()
 ): string[] {
   return direction.lenses.filter((lens) => {
+    if (lensHidden(direction.id, lensSlug(lens), policy)) return false;
     const entry = lensEntry(direction.id, lens);
     return !entry || !("comingSoon" in entry) || showPlanned;
   });
@@ -101,8 +113,15 @@ export function visibleLenses(
  * Directions worth listing: a branch whose every lens is filtered out expands
  * into nothing, so it is a dead end rather than a place to look.
  */
-export function visibleDirections(showPlanned: boolean): Direction[] {
-  return DIRECTIONS.filter((d) => visibleLenses(d, showPlanned).length > 0);
+export function visibleDirections(
+  showPlanned: boolean,
+  policy: NavHidePolicy = navHidePolicy()
+): Direction[] {
+  return DIRECTIONS.filter(
+    (d) =>
+      !directionHidden(d.id, policy) &&
+      visibleLenses(d, showPlanned, policy).length > 0
+  );
 }
 
 /** Unique metric keys a config needs in its period+peer grid. */

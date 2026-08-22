@@ -48,11 +48,12 @@ import {
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
   resolveZoneItem,
-  ZONE_SECTIONS,
   zoneById,
+  zoneSections,
   type Direction,
   type PaneItem,
 } from "@/lib/portal/nav-model";
+import { personSectionHidden } from "@/lib/portal/nav-hide";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   usePortalDir,
@@ -266,7 +267,7 @@ function ThemeNav({
   zoneId: string;
   active: string | null;
 }) {
-  const groups = ZONE_SECTIONS[zoneId] ?? [];
+  const groups = zoneSections(zoneId);
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
   // under one demoted "Planned" group at the bottom, so the working menu reads
@@ -586,7 +587,7 @@ function PersonSectionsNav() {
   // react-query serves them from cache.
   const standings = usePersonSectionStandings(activePerson);
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
-  const groups = GROUPS;
+  const groups = GROUPS.filter((g) => !personSectionHidden(g.id));
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
   return (
