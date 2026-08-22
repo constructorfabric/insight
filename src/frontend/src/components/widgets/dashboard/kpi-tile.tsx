@@ -65,6 +65,9 @@ export function KpiTile({
         className={cn(
           CARD_SURFACE,
           "relative",
+          // A grid cell stretches its item; the wrapper below is a block, and a
+          // <button> inside one shrinks to its content instead.
+          explain && "h-full w-full",
           interactive && "text-left transition-colors hover:bg-accent/50"
         )}
         render={
