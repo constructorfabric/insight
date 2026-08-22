@@ -198,6 +198,21 @@ describe("AiCostView", () => {
     expect(screen.queryByText(/actual .* \/ active user/)).not.toBeInTheDocument();
   });
 
+  it("omits the actual figure when the metric is served but nobody has a reading", () => {
+    mocks.grid.byKey = new Map([
+      ...mocks.grid.byKey,
+      [
+        "ai.daily_approximate_extra_usage_cost",
+        metric("ai.daily_approximate_extra_usage_cost", [], {
+          format: "currency",
+          unit: "USD",
+        } as never),
+      ],
+    ]);
+    render(<AiCostView item={null} />);
+    expect(screen.queryByText(/actual cost/)).not.toBeInTheDocument();
+  });
+
   it("shows per-tool cards where untracked cost reads 'not tracked', never $0", () => {
     render(<AiCostView item={null} />);
     expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0);
@@ -261,6 +276,36 @@ describe("AiCostView", () => {
     expect(screen.getByText("Potential cost")).toBeInTheDocument();
     expect(screen.getByText("Actual cost")).toBeInTheDocument();
     expect(screen.getByText("$12")).toBeInTheDocument();
+    // Sales measured zero, and a measured zero is a reading. Column 4 is
+    // Actual cost: unit, people, AI users, potential, actual, lines.
+    const salesCells = screen.getByText("Sales").closest("tr")?.querySelectorAll("td");
+    expect(salesCells?.[4]?.textContent).toBe("$0");
+  });
+
+  it("says a unit has no billed figure rather than calling it $0", () => {
+    // c and d carry no reading at all: the daily metric has no point for a day
+    // nobody read. Their unit spent nothing we know of, which is not $0.
+    mocks.grid.byKey = new Map([
+      ...mocks.grid.byKey,
+      [
+        "ai.daily_approximate_extra_usage_cost",
+        metric(
+          "ai.daily_approximate_extra_usage_cost",
+          [[pid("a"), 8], [pid("b"), 4]],
+          { format: "currency", unit: "USD" } as never,
+        ),
+      ],
+    ]);
+    mocks.tree = person("boss", {}, [
+      person("a", { division: "R&D" } as never),
+      person("b", { division: "R&D" } as never),
+      person("c", { division: "Sales" } as never),
+      person("d", { division: "Sales" } as never),
+    ]);
+    act(() => portalRouter.set({ slice: "division" }));
+    render(<AiCostView item="by-unit-role" />);
+    const cells = screen.getByText("Sales").closest("tr")?.querySelectorAll("td");
+    expect(cells?.[4]?.textContent).toBe("—");
   });
 
   it("gates on an empty scope instead of rendering zero KPIs", () => {

@@ -299,7 +299,7 @@ metrics:
     subject: cost
     label: AI actual usage cost
     short_label: Actual cost
-    description: Exact monthly cost billed on top of the seat fee, part of the potential total
+    description: Exact monthly cost billed on top of the seat fee
     explanation: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted. The exact monthly amount, dated at the first day of its billing month, so a window inside a month returns nothing — read the per-day distribution instead. Never added to potential usage cost.
     format: currency
     direction: lower_is_better
@@ -317,7 +317,7 @@ metrics:
     subject: cost
     label: AI actual usage cost — approximate distribution
     short_label: Actual cost / day
-    description: Approximate distribution across days of the exact monthly billed cost
+    description: The monthly billed cost spread across its days
     explanation: The billed extra-usage cost placed on the days it was spent. Only a running month-to-date total is reported, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and no day is ever negative.
     format: currency
     direction: lower_is_better
@@ -336,7 +336,7 @@ metrics:
     label: Extra-usage ceiling used
     short_label: Ceiling used
     description: Share of the extra-usage ceiling consumed
-    explanation: Extra usage measured against the ceiling in force on the seat — the plan tier's default, or a different one set for that member. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator. Above 100 per cent means the ceiling was lowered below what the seat had already spent — the vendor reports the ceiling in force now against the whole month's spend, so a limit set or reduced mid-month is read against money that predates it.
+    explanation: Extra usage measured against the ceiling on the seat. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste. A seat with no ceiling returns no value, not a zero. Above 100 per cent, the ceiling was lowered below what the seat had spent.
     format: percent
     direction: lower_is_better
     entity_type: person

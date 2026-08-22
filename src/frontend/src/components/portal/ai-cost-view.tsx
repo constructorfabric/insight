@@ -169,13 +169,20 @@ export function AiCostView({ item }: { item: string | null }) {
 
   const teamName = orgScope.label;
 
+  const reading = (r: NormalizedMetricResult | undefined, id: string) => {
+    const v = r ? forEntity(r, id).value : null;
+    return v != null && Number.isFinite(v) ? v : null;
+  };
   const sum = (key: string) => {
     const r = grid.byKey.get(key);
     if (!r) return 0;
-    return memberIds.reduce((acc, id) => {
-      const v = forEntity(r, id).value;
-      return acc + (v != null && Number.isFinite(v) ? v : 0);
-    }, 0);
+    return memberIds.reduce((acc, id) => acc + (reading(r, id) ?? 0), 0);
+  };
+  // A metric can be served and still hold no reading for these people. A sum
+  // folds that to 0, and a printed $0 claims a measurement nobody made.
+  const observed = (key: string) => {
+    const r = grid.byKey.get(key);
+    return !!r && memberIds.some((id) => reading(r, id) != null);
   };
   const activeUsers = useMemo(() => {
     const r = grid.byKey.get(DAYS_KEY);
@@ -204,12 +211,11 @@ export function AiCostView({ item }: { item: string | null }) {
           users: (l?.users.size ?? 0) || (c?.users.size ?? 0),
           lines: l?.sum ?? 0,
           cost: c?.sum ?? 0,
-          costTracked: (c?.sum ?? 0) > 0,
+          // A bucket exists only where a reading did, so its absence is what
+          // "not tracked" means — a measured $0 stays $0.
+          costTracked: c != null,
           actual: a?.sum ?? 0,
-          // Only vendors that bill above a seat fee report this, so a tool
-          // without it says nothing rather than $0 — the rule the potential
-          // figure already follows.
-          actualTracked: (a?.sum ?? 0) > 0,
+          actualTracked: a != null,
         };
       })
       .sort((a, b) => b.lines - a.lines);
@@ -250,7 +256,7 @@ export function AiCostView({ item }: { item: string | null }) {
     const linesR = grid.byKey.get(LINES_KEY);
     const daysR = grid.byKey.get(DAYS_KEY);
     const val = (r: NormalizedMetricResult | undefined, id: string) =>
-      r ? (forEntity(r, id).value ?? 0) : 0;
+      reading(r, id) ?? 0;
     const map = new Map<
       string,
       {
@@ -258,7 +264,9 @@ export function AiCostView({ item }: { item: string | null }) {
         people: number;
         active: number;
         cost: number;
+        costSeen: boolean;
         actual: number;
+        actualSeen: boolean;
         lines: number;
       }
     >();
@@ -266,11 +274,29 @@ export function AiCostView({ item }: { item: string | null }) {
       const unit = attrByEntity.get(id)?.[slice]?.value ?? "—";
       const b =
         map.get(unit) ??
-        { unit, people: 0, active: 0, cost: 0, actual: 0, lines: 0 };
+        {
+          unit,
+          people: 0,
+          active: 0,
+          cost: 0,
+          costSeen: false,
+          actual: 0,
+          actualSeen: false,
+          lines: 0,
+        };
       b.people += 1;
       if (val(daysR, id) > 0) b.active += 1;
-      b.cost += val(costR, id);
-      b.actual += val(actualR, id);
+      // A unit whose members have no reading is not a unit that spent nothing.
+      const cost = reading(costR, id);
+      if (cost != null) {
+        b.cost += cost;
+        b.costSeen = true;
+      }
+      const actual = reading(actualR, id);
+      if (actual != null) {
+        b.actual += actual;
+        b.actualSeen = true;
+      }
       b.lines += val(linesR, id);
       map.set(unit, b);
     }
@@ -336,9 +362,8 @@ export function AiCostView({ item }: { item: string | null }) {
       actualR?.format ?? "currency",
       actualR?.unit ?? "USD",
     );
-  // Absent, not zero: `sum` folds nulls to 0, so a $0 total cannot be told from
-  // no seat data — and printing $0 would claim nothing was billed.
-  const hasActual = !!actualR && totalActual > 0;
+  // Absent, not zero: a measured $0 is a reading and prints as one.
+  const hasActual = observed(ACTUAL_COST_KEY);
 
   const shownGridKeys = GRID_KEYS.filter((k) => {
     const r = grid.byKey.get(k);
@@ -580,14 +605,20 @@ function UnitSection({
                   {r.active}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatMetricValue(r.cost, costR?.format ?? "currency", costR?.unit ?? "USD")}
+                  {r.costSeen
+                    ? formatMetricValue(
+                        r.cost,
+                        costR?.format ?? "currency",
+                        costR?.unit ?? "USD",
+                      )
+                    : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {actualR
+                  {r.actualSeen
                     ? formatMetricValue(
                         r.actual,
-                        actualR.format,
-                        actualR.unit ?? "USD",
+                        actualR?.format ?? "currency",
+                        actualR?.unit ?? "USD",
                       )
                     : "—"}
                 </TableCell>
