@@ -7,7 +7,7 @@
 
 use sea_orm_migration::prelude::*;
 
-/// The column budgets, read by the writer that clips to them.
+/// The column budgets, read by the writer that holds submissions to them.
 pub mod feedback_schema {
     /// `message` is TEXT; this is the product's own limit on one submission.
     pub const MESSAGE: u32 = 4000;
