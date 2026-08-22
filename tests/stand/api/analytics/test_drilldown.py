@@ -64,6 +64,8 @@ from ..schemas import (
 from ..schemas.analytics import (
     MetricDrilldownCapability,
     MetricDrilldownColumnType,
+    MetricDrilldownEntity,
+    MetricDrilldownEntity1,
     MetricDrilldownResponse,
 )
 from . import query_window
@@ -479,10 +481,16 @@ def _close(actual: float, expected: float) -> bool:
     return math.isclose(actual, expected, rel_tol=_REL_TOL, abs_tol=_ABS_TOL)
 
 
+def _person_entity_id(entity: MetricDrilldownEntity) -> str:
+    person = entity.root
+    assert isinstance(person, MetricDrilldownEntity1), f"expected person entity, got {person.type}"
+    return person.id
+
+
 def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None:
     selection = walk.first.selection
     assert selection.metric_key == expectation.metric_key
-    assert selection.entity.id == person_id
+    assert _person_entity_id(selection.entity) == person_id
     assert selection.filters == []
     assert selection.display_dimensions == []
 
@@ -894,7 +902,7 @@ def test_git_commit_drilldown_pages_and_reconciles(
     person_id = stand_manifest.fixture("dev_lead").uuid
 
     assert walk.first.selection.metric_key == GIT_COMMITS
-    assert walk.first.selection.entity.id == person_id
+    assert _person_entity_id(walk.first.selection.entity) == person_id
     assert walk.first.selection.display_dimensions == ["repository"]
     assert [(item.dimension, item.values) for item in walk.first.selection.filters] == [
         ("source", ["github"])

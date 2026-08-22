@@ -24,6 +24,11 @@ pub async fn list_metric_definitions(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let response = listing::list_definition_views(&state.db, ctx.subject_tenant_id()).await?;
+    let response = listing::list_definition_views(
+        &state.db,
+        ctx.subject_tenant_id(),
+        state.config.metric_catalog.tenant_metrics_enabled,
+    )
+    .await?;
     Ok(Json(response))
 }

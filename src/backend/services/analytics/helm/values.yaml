@@ -19,6 +19,9 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+metricCatalog:
+  tenantMetricsEnabled: false
+
 # Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__analytics__config__database_url

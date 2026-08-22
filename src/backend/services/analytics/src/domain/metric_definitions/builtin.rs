@@ -1,22 +1,32 @@
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
     EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
     SourceKind, ValueTransform,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
     Person,
+    Tenant,
 }
 
 impl EntityType {
     pub fn as_db(self) -> &'static str {
         match self {
             Self::Person => "person",
+            Self::Tenant => "tenant",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "person" => Some(Self::Person),
+            "tenant" => Some(Self::Tenant),
+            _ => None,
         }
     }
 }
@@ -195,6 +205,13 @@ mod tests {
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 6, "builtin source count");
         assert_eq!(builtin_metrics().len(), 66, "builtin metric count");
+    }
+
+    #[test]
+    fn entity_types_round_trip_through_storage_values() {
+        for entity_type in [EntityType::Person, EntityType::Tenant] {
+            assert_eq!(EntityType::from_db(entity_type.as_db()), Some(entity_type));
+        }
     }
 
     #[test]

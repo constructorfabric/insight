@@ -26,6 +26,7 @@ import { MetricDefinitionsScreen } from "./metric-definitions";
 function metric(over: Partial<MetricDefinition> = {}): MetricDefinition {
   return {
     metric_key: "git.commits",
+    entity_type: "person",
     label: "Commits",
     short_label: null,
     description: "Commits authored in the period.",

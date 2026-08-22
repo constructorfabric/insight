@@ -7,41 +7,20 @@ use crate::infra::identity::IdentityClient;
 
 const SERVICE_SUBJECT_TYPE: &str = "service";
 
-#[derive(Debug)]
-enum GatedEntity {
-    Person,
-    Unsupported,
-}
-
-impl GatedEntity {
-    fn parse(entity_type: &str) -> Self {
-        match entity_type {
-            "person" => Self::Person,
-            _ => Self::Unsupported,
-        }
-    }
-}
-
-pub(crate) async fn authorize_entity_ids(
+pub(crate) async fn authorize_person_ids(
     identity: &IdentityClient,
     ctx: &SecurityContext,
     authorization: Option<&str>,
-    entity_type: &str,
     person_ids: &[Uuid],
 ) -> Result<(), CanonicalError> {
     if ctx.subject_type() == Some(SERVICE_SUBJECT_TYPE) {
         return Ok(());
     }
 
-    match GatedEntity::parse(entity_type) {
-        GatedEntity::Person => {
-            authorize_person_ids(identity, ctx.subject_id(), authorization, person_ids).await
-        }
-        GatedEntity::Unsupported => Err(no_authorization_rule(entity_type)),
-    }
+    authorize_visible_person_ids(identity, ctx.subject_id(), authorization, person_ids).await
 }
 
-async fn authorize_person_ids(
+async fn authorize_visible_person_ids(
     identity: &IdentityClient,
     caller: Uuid,
     authorization: Option<&str>,
@@ -94,11 +73,6 @@ fn denied(caller: Uuid, unmatched: usize) -> CanonicalError {
     MetricError::permission_denied()
         .with_reason("entity_not_visible")
         .create()
-}
-
-fn no_authorization_rule(entity_type: &str) -> CanonicalError {
-    tracing::error!(entity_type, "no authorization rule for this entity type");
-    unavailable()
 }
 
 // `internal`, not `service_unavailable`: 500 is in the operation's declared
@@ -195,43 +169,16 @@ mod tests {
         ctx: &SecurityContext,
         person_ids: &[Uuid],
     ) -> StatusCode {
-        status_of(
-            authorize_entity_ids(identity, ctx, Some("Bearer tok"), "person", person_ids).await,
-        )
+        status_of(authorize_person_ids(identity, ctx, Some("Bearer tok"), person_ids).await)
     }
 
     #[tokio::test]
-    async fn an_entity_type_with_no_authorization_rule_fails_closed() {
-        let identity = spawn_identity(&[SELF_PERSON]).await;
-        let ctx = ctx_for("user", CALLER);
-
-        // Ids are parsed as person UUIDs for every entity type, but only
-        // `person` has a rule here. A first non-person type must land its own
-        // rule rather than inherit person semantics silently.
-        assert_eq!(
-            status_of(
-                authorize_entity_ids(
-                    &identity,
-                    &ctx,
-                    Some("Bearer tok"),
-                    "org_unit",
-                    &[SELF_PERSON]
-                )
-                .await,
-            ),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        );
-    }
-
-    #[tokio::test]
-    async fn a_service_principal_bypasses_the_gate_for_any_entity_type() {
+    async fn a_service_principal_bypasses_person_visibility() {
         let identity = spawn_identity(&[]).await;
         let ctx = ctx_for(SERVICE_SUBJECT_TYPE, CALLER);
 
         assert_eq!(
-            status_of(
-                authorize_entity_ids(&identity, &ctx, None, "org_unit", &[STRANGER_PERSON]).await,
-            ),
+            status_of(authorize_person_ids(&identity, &ctx, None, &[STRANGER_PERSON]).await),
             StatusCode::OK,
         );
     }
@@ -335,27 +282,11 @@ mod tests {
         let identity = spawn_identity(&[SELF_PERSON]).await;
         let ctx = ctx_for("user", CALLER);
 
-        let status =
-            status_of(authorize_entity_ids(&identity, &ctx, None, "person", &[SELF_PERSON]).await);
+        let status = status_of(authorize_person_ids(&identity, &ctx, None, &[SELF_PERSON]).await);
         assert_eq!(
             status,
             StatusCode::INTERNAL_SERVER_ERROR,
             "a broken authn path is not a visibility denial"
-        );
-    }
-
-    #[tokio::test]
-    async fn entity_type_without_an_authorization_rule_is_not_a_denial() {
-        let identity = spawn_identity(&[SELF_PERSON]).await;
-        let ctx = ctx_for("user", CALLER);
-
-        let status = status_of(
-            authorize_entity_ids(&identity, &ctx, Some("Bearer tok"), "team", &[SELF_PERSON]).await,
-        );
-        assert_eq!(
-            status,
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "an entity type with no authorization rule is a server-side gap"
         );
     }
 }

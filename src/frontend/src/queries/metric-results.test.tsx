@@ -36,6 +36,9 @@ function offers(...keys: string[]) {
 // Echo the requested metrics/entities back as a valid response so merges and
 // pairing have real data to operate on.
 function respond(req: MetricResultsRequest): MetricResultsResponse {
+  if (req.entity.type !== "person") throw new Error("person request expected");
+  const ids = req.entity.ids;
+
   return {
     metrics: req.metrics.map((m) => ({
       metric_key: m.metric_key,
@@ -48,7 +51,7 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
         v.view === "peer"
           ? {
               view: "peer",
-              values: req.entity.ids.map((id) => ({
+              values: ids.map((id) => ({
                 entity_id: id,
                 target_value: 1,
                 p25: 0,
@@ -61,7 +64,7 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
             }
           : {
               view: "period",
-              values: req.entity.ids.map((id) => ({ entity_id: id, value: 1 })),
+              values: ids.map((id) => ({ entity_id: id, value: 1 })),
             },
       ),
     })),

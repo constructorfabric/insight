@@ -16,7 +16,7 @@ use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
-use crate::domain::metric_definitions::builtin::{builtin_metrics, builtin_sources};
+use crate::domain::metric_definitions::builtin::{EntityType, builtin_metrics, builtin_sources};
 use crate::domain::metric_definitions::definition::{MetricDirection, MetricFormat, MetricOrigin};
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
 use crate::domain::metric_definitions::repository::{fetch_dimensions, fetch_tags};
@@ -34,6 +34,7 @@ pub struct MetricDefinitionListResponse {
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct MetricDefinitionView {
     pub metric_key: String,
+    pub entity_type: EntityType,
     pub label: String,
     /// Compact label for dense surfaces; absent when the full label is
     /// already compact enough.
@@ -86,6 +87,7 @@ struct ListingRow {
     definition_id: Uuid,
     tenant_id: Option<Uuid>,
     metric_key: String,
+    entity_type: String,
     label: String,
     short_label: Option<String>,
     subject: Option<String>,
@@ -104,11 +106,12 @@ struct ListingRow {
 pub async fn list_definition_views(
     db: &DatabaseConnection,
     tenant_id: Uuid,
+    tenant_metrics_enabled: bool,
 ) -> Result<MetricDefinitionListResponse, CanonicalError> {
     let rows = fetch_listing_rows(db, tenant_id)
         .await
         .map_err(|error| db_error(&error))?;
-    let selected = select_rows(rows);
+    let selected = select_rows(rows, tenant_metrics_enabled);
     let metric_keys = selected
         .iter()
         .map(|row| row.metric_key.clone())
@@ -142,7 +145,7 @@ pub async fn list_definition_views(
 /// Collapse the tenant + product rows per `metric_key` to the one that wins:
 /// a tenant-scoped row overrides the product default. Input order is
 /// irrelevant; output is sorted by `metric_key` (`BTreeMap` key order).
-fn select_rows(rows: Vec<ListingRow>) -> Vec<ListingRow> {
+fn select_rows(rows: Vec<ListingRow>, tenant_metrics_enabled: bool) -> Vec<ListingRow> {
     let mut grouped: BTreeMap<String, Vec<ListingRow>> = BTreeMap::new();
     for row in rows {
         grouped.entry(row.metric_key.clone()).or_default().push(row);
@@ -151,7 +154,10 @@ fn select_rows(rows: Vec<ListingRow>) -> Vec<ListingRow> {
     for (_, mut candidates) in grouped {
         // Tenant override (tenant_id = Some) sorts before the product default.
         candidates.sort_by_key(|row| row.tenant_id.is_none());
-        selected.push(candidates.remove(0));
+        let row = candidates.remove(0);
+        if row.entity_type != "tenant" || tenant_metrics_enabled {
+            selected.push(row);
+        }
     }
     selected
 }
@@ -169,6 +175,8 @@ fn build_views(
     for row in selected {
         let format = MetricFormat::from_db(&row.format)
             .ok_or_else(|| config_error(&row.metric_key, "format", &row.format))?;
+        let entity_type = EntityType::from_db(&row.entity_type)
+            .ok_or_else(|| config_error(&row.metric_key, "entity_type", &row.entity_type))?;
         let direction = MetricDirection::from_db(&row.direction)
             .ok_or_else(|| config_error(&row.metric_key, "direction", &row.direction))?;
         let origin = MetricOrigin::from_db(&row.origin)
@@ -186,6 +194,7 @@ fn build_views(
         let revision_window_days = revision_windows.get(row.metric_key.as_str()).copied();
         metrics.push(MetricDefinitionView {
             metric_key: row.metric_key,
+            entity_type,
             label: row.label,
             short_label: row.short_label,
             subject: row.subject,
@@ -244,6 +253,7 @@ async fn fetch_listing_rows(
             d.id AS definition_id, \
             d.tenant_id AS tenant_id, \
             d.metric_key AS metric_key, \
+            d.entity_type AS entity_type, \
             d.label AS label, \
             d.short_label AS short_label, \
             d.subject AS subject, \
@@ -290,6 +300,7 @@ mod tests {
             definition_id: Uuid::now_v7(),
             tenant_id,
             metric_key: metric_key.to_owned(),
+            entity_type: "person".to_owned(),
             label: label.to_owned(),
             short_label: None,
             subject: None,
@@ -314,7 +325,7 @@ mod tests {
             row("git.commits", Some(tenant), "override"),
             row("ai.cost", None, "product-ai"),
         ];
-        let selected = select_rows(rows);
+        let selected = select_rows(rows, false);
         assert_eq!(
             selected
                 .iter()
@@ -326,6 +337,18 @@ mod tests {
             panic!("git.commits must be selected");
         };
         assert_eq!(commits.label, "override");
+    }
+
+    #[test]
+    fn tenant_definitions_follow_the_installation_gate() {
+        let tenant_metric = || {
+            let mut metric = row("ci.runs", None, "CI runs");
+            metric.entity_type = "tenant".to_owned();
+            metric
+        };
+
+        assert!(select_rows(vec![tenant_metric()], false).is_empty());
+        assert_eq!(select_rows(vec![tenant_metric()], true).len(), 1);
     }
 
     #[test]
@@ -346,6 +369,7 @@ mod tests {
             panic!("one view");
         };
         assert_eq!(view.format, MetricFormat::Integer);
+        assert_eq!(view.entity_type, EntityType::Person);
         assert_eq!(view.direction, MetricDirection::HigherIsBetter);
         assert_eq!(view.origin, MetricOrigin::Builtin);
         assert_eq!(view.schema_status, SchemaStatus::Error);
@@ -356,6 +380,14 @@ mod tests {
         assert_eq!(view.dimensions, vec!["repo".to_owned()]);
         assert_eq!(view.subject.as_deref(), Some("commits"));
         assert_eq!(view.tags, vec!["rate".to_owned()]);
+    }
+
+    #[test]
+    fn build_views_rejects_unknown_entity_types() {
+        let mut r = row("git.commits", None, "Commits");
+        r.entity_type = "repository".to_owned();
+
+        assert!(build_views(vec![r], HashMap::new(), HashMap::new()).is_err());
     }
 
     #[test]

@@ -51,6 +51,23 @@ describe("queryMetricResults", () => {
     );
   });
 
+  it("sends tenant requests without a client-supplied identifier", async () => {
+    mockFetch.mockResolvedValue(
+      response({ ok: true, json: async () => ({ metrics: [] }) }),
+    );
+    const request: MetricResultsRequest = {
+      ...REQUEST,
+      entity: { type: "tenant" },
+    };
+
+    await queryMetricResults(request);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/metric-results"),
+      expect.objectContaining({ body: JSON.stringify(request) }),
+    );
+  });
+
   it("throws AnalyticsApiError with status + body on a non-ok response", async () => {
     mockFetch.mockResolvedValue(
       response({ ok: false, status: 400, json: async () => ({ error: "bad" }) }),
