@@ -1,55 +1,41 @@
 // @vitest-environment jsdom
 /**
- * The preview flag can flip while "/" is mounted, and the route's `beforeLoad`
- * guard does not run again for that — only the component can send the reader
- * into the portal without a reload.
+ * "/" is a redirect, not a page. The portal is the interface now, so there is
+ * no second thing for this route to weigh up and nothing for it to render.
  */
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
   return {
     ...portalRouterMock(),
-    redirect: vi.fn(),
+    // The real one throws its own control-flow object; this stands in for it so
+    // the test can read the destination back off what was thrown.
+    redirect: vi.fn((options: unknown) => ({ redirect: options })),
     createFileRoute: () => (options: Record<string, unknown>) => options,
   };
 });
-vi.mock("@/auth", () => ({
-  useViewer: () => ({ personId: "person-1" }),
-}));
-vi.mock("@/screens/dashboard", () => ({
-  DashboardScreen: () => <div data-testid="dashboard" />,
-}));
 
-import { act, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import { setPortalEnabled } from "@/lib/portal/portal-store";
-import { portalRouter } from "@/test/portal-router";
+import { describe, expect, it, vi } from "vitest";
 
 import { Route } from "./index";
 
-const Component = (Route as unknown as { component: () => React.ReactNode })
-  .component;
-
-beforeEach(() => {
-  act(() => {
-    setPortalEnabled(false);
-    portalRouter.reset("/");
-  });
-});
+const route = Route as unknown as {
+  beforeLoad: () => void;
+  component?: unknown;
+};
 
 describe("/", () => {
-  it("renders the dashboard while the preview is off", () => {
-    render(<Component />);
-    expect(screen.getByTestId("dashboard")).toBeInTheDocument();
-    expect(portalRouter.navigations).toEqual([]);
+  it("sends every reader into the portal", () => {
+    let thrown: unknown;
+    try {
+      route.beforeLoad();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toEqual({ redirect: { to: "/portal" } });
   });
 
-  it("enters the portal when the preview is turned on", () => {
-    render(<Component />);
-    act(() => setPortalEnabled(true));
-    expect(screen.queryByTestId("dashboard")).not.toBeInTheDocument();
-    expect(portalRouter.navigations).toEqual([
-      { to: "/portal", replace: true },
-    ]);
+  it("has nothing to render — the redirect is the whole route", () => {
+    expect(route.component).toBeUndefined();
   });
 });

@@ -36,11 +36,6 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: viewerEmail, personId: viewerPersonId }),
 }));
 
-// This sidebar is the shell the toggle falls back to.
-vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalEnabled: () => false,
-}));
-
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: viewerData }),
 }));
@@ -215,14 +210,16 @@ describe("AppSidebar", () => {
     ]);
   });
 
-  it("marks the what's-new entry active on its route", () => {
+  it("marks no entry from a standalone route the portal does not claim", () => {
     currentPath = "/whats-new";
     render(<AppSidebar />);
 
+    // The footer entries name the portal's Manage surfaces now, so a path
+    // outside the portal marks none of them.
     const whatsNew = screen
       .getByText("What's new")
       .closest('[data-testid="menu-button"]') as HTMLElement;
-    expect(whatsNew).toHaveAttribute("data-active", "true");
+    expect(whatsNew).toHaveAttribute("data-active", "false");
     // No /ic match and not "/" -> no person is active.
     expect(buttonFor("Alice")).toHaveAttribute("data-active", "false");
   });
@@ -243,13 +240,10 @@ describe("AppSidebar", () => {
     expect(buttonFor("Unnamed person")).toBeInTheDocument();
   });
 
-  it("shows the metric catalog entry, active on its route", () => {
+  it("shows the metric catalog entry", () => {
     currentPath = "/metrics";
     render(<AppSidebar />);
 
-    const entry = screen
-      .getByText("Metric catalog")
-      .closest('[data-testid="menu-button"]') as HTMLElement;
-    expect(entry).toHaveAttribute("data-active", "true");
+    expect(screen.getByText("Metric catalog")).toBeInTheDocument();
   });
 });

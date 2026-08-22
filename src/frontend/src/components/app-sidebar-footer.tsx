@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { BookOpenText, Bug, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -16,7 +16,6 @@ import {
 import { getInitials } from "@/lib/insight/get-initials";
 import { resolveZoneItem } from "@/lib/portal/nav-model";
 import { usePortalItem } from "@/lib/portal/portal-nav";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
@@ -54,14 +53,12 @@ export function AppSidebarFooter({
       <SidebarMenu>
         <MenuEntry
           surface="metric-catalog"
-          screen="/metrics"
           icon={BookOpenText}
           label={t("metric_definitions.nav_label")}
           onNavigate={onNavigate}
         />
         <MenuEntry
           surface="whats-new"
-          screen="/whats-new"
           icon={Megaphone}
           label={t("whats_new.nav_label")}
           onNavigate={onNavigate}
@@ -116,42 +113,30 @@ export function AppSidebarFooter({
  */
 function MenuEntry({
   surface,
-  screen,
   icon: Icon,
   label,
   onNavigate,
 }: {
   surface: string;
-  screen: "/metrics" | "/whats-new";
   icon: LucideIcon;
   label: string;
   onNavigate?: () => void;
 }) {
-  const portal = usePortalEnabled();
   const { activeZone } = useActiveZone();
   const item = resolveZoneItem(activeZone, usePortalItem());
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
-        isActive={
-          portal
-            ? activeZone === "manage" && item === surface
-            : pathname === screen
-        }
+        isActive={activeZone === "manage" && item === surface}
         render={
-          portal ? (
-            // `acct` is cleared, not omitted: `retainSearchParams` restores
-            // any portal key ABSENT from the target search.
-            <Link
-              to="/portal"
-              search={{ zone: "manage", item: surface, acct: undefined }}
-              onClick={onNavigate}
-            />
-          ) : (
-            <Link to={screen} onClick={onNavigate} />
-          )
+          // `acct` is cleared, not omitted: `retainSearchParams` restores any
+          // portal key ABSENT from the target search.
+          <Link
+            to="/portal"
+            search={{ zone: "manage", item: surface, acct: undefined }}
+            onClick={onNavigate}
+          />
         }
       >
         <Icon />

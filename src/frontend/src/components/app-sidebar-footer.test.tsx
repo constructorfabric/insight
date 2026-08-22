@@ -9,7 +9,6 @@ import type { PortalSearch } from "@/lib/portal/portal-search";
 
 let currentPath = "/";
 let currentSearch: PortalSearch = {};
-let portalEnabled = true;
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -56,10 +55,6 @@ vi.mock("@/components/sidebar-settings", () => ({
 
 vi.mock("@/components/theme-switcher", () => ({
   ThemeSwitcher: () => null,
-}));
-
-vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalEnabled: () => portalEnabled,
 }));
 
 const mocks = vi.hoisted(() => ({ openFeedback: vi.fn() }));
@@ -125,12 +120,11 @@ function linkOf(label: string): HTMLElement {
 beforeEach(() => {
   currentPath = "/";
   currentSearch = {};
-  portalEnabled = true;
   mocks.openFeedback.mockClear();
 });
 
 describe("AppSidebarFooter", () => {
-  it("names the portal's Manage surfaces while the portal is on", () => {
+  it("names the portal's Manage surfaces", () => {
     render(<AppSidebarFooter />);
 
     expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/portal");
@@ -143,14 +137,6 @@ describe("AppSidebarFooter", () => {
       "data-search",
       "zone=manage&item=whats-new&acct=undefined"
     );
-  });
-
-  it("names the standalone screens while the portal is off", () => {
-    portalEnabled = false;
-    render(<AppSidebarFooter />);
-
-    expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
-    expect(linkOf("What's new")).toHaveAttribute("data-to", "/whats-new");
   });
 
   it("marks the Manage surface the portal is showing", () => {
@@ -177,16 +163,7 @@ describe("AppSidebarFooter", () => {
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
-  it("marks the standalone screen it is standing on while the portal is off", () => {
-    portalEnabled = false;
-    currentPath = "/metrics";
-    render(<AppSidebarFooter />);
-
-    expect(entry("Metric catalog")).toHaveAttribute("data-active", "true");
-    expect(entry("What's new")).toHaveAttribute("data-active", "false");
-  });
-
-  it("reports a navigation from either destination", async () => {
+  it("reports a navigation from either entry", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
     render(<AppSidebarFooter onNavigate={onNavigate} />);

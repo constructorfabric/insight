@@ -1,11 +1,10 @@
-import { Navigate, createFileRoute, retainSearchParams } from "@tanstack/react-router";
+import { createFileRoute, retainSearchParams } from "@tanstack/react-router";
 
 import { PortalLayout } from "@/components/portal/portal-layout";
 import {
   PORTAL_SEARCH_KEYS,
   validatePortalSearch,
 } from "@/lib/portal/portal-search";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
 
 /**
  * The portal's org zones (Overview / Directions / AI & Cost / Manage).
@@ -23,14 +22,7 @@ export const Route = createFileRoute("/portal")({
     // missed, and the scope silently resets.
     middlewares: [retainSearchParams(PORTAL_SEARCH_KEYS)],
   },
-  component: PortalRoute,
+  // The root shell swaps in PortalLayout for every path it claims, this one
+  // included, so the route needs no component of its own.
+  component: PortalLayout,
 });
-
-function PortalRoute() {
-  // The root shell swaps in PortalLayout for this route while the portal is
-  // on, so this component only mounts with it OFF — a pasted /portal URL, or a
-  // viewer who opted out while standing here. Either way the portal must not
-  // render: send them to the app they do have.
-  if (!usePortalEnabled()) return <Navigate to="/" replace />;
-  return <PortalLayout />;
-}
