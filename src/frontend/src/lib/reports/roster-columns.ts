@@ -9,11 +9,14 @@ export type { ReportPerson } from "@/lib/identities/report-person";
  * people who share it — the same reason cohorts key `manager` on the
  * supervisor's email rather than their display name.
  */
-export const PERSON_COLUMNS: ReadonlyArray<{
+interface ReportPersonColumn {
   header: string;
   of: (person: ReportPerson) => string;
-}> = [
-  { header: "Person", of: (p) => p.name },
+  always?: boolean;
+}
+
+const PERSON_COLUMNS: readonly ReportPersonColumn[] = [
+  { header: "Person", of: (p) => p.name, always: true },
   { header: "Email", of: (p) => p.email },
   { header: "Division", of: (p) => p.division },
   { header: "Department", of: (p) => p.department },
@@ -22,3 +25,12 @@ export const PERSON_COLUMNS: ReadonlyArray<{
   { header: "Manager email", of: (p) => p.managerEmail },
   { header: "Status", of: (p) => p.status },
 ];
+
+export function reportPersonColumns(
+  people: readonly ReportPerson[],
+): readonly ReportPersonColumn[] {
+  return PERSON_COLUMNS.filter(
+    (column) =>
+      column.always || people.some((person) => column.of(person).trim() !== ""),
+  );
+}

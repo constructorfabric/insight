@@ -6,7 +6,7 @@ import {
   rollUp,
   type ReportGranularity,
 } from "@/lib/reports/rollup";
-import { PERSON_COLUMNS } from "@/lib/reports/roster-columns";
+import { reportPersonColumns } from "@/lib/reports/roster-columns";
 
 export type ReportCell = string | number | null;
 
@@ -40,6 +40,7 @@ const cellKey = (metricKey: string, entityId: string, bucket: string): string =>
  * for.
  */
 export function buildReportTable(input: ReportInput): ReportTable {
+  const personColumns = reportPersonColumns(input.people);
   const buckets = bucketsInRange(
     input.range.from,
     input.range.to,
@@ -68,7 +69,7 @@ export function buildReportTable(input: ReportInput): ReportTable {
 
   return {
     columns: [
-      ...PERSON_COLUMNS.map((column) => column.header),
+      ...personColumns.map((column) => column.header),
       "Period",
       "From",
       "To",
@@ -76,7 +77,7 @@ export function buildReportTable(input: ReportInput): ReportTable {
     ],
     rows: input.people.flatMap((person) =>
       buckets.map((bucket) => [
-        ...PERSON_COLUMNS.map((column) => column.of(person)),
+        ...personColumns.map((column) => column.of(person)),
         bucket,
         spans.get(bucket)?.from ?? "",
         spans.get(bucket)?.to ?? "",

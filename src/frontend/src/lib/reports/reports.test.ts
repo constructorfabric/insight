@@ -232,6 +232,43 @@ describe("buildReportTable", () => {
     ]);
   });
 
+  it("omits person columns absent from the selected roster", () => {
+    const table = buildReportTable({
+      people: [
+        person({
+          email: "",
+          division: "",
+          department: "",
+          jobTitle: "Engineer",
+          managerName: "",
+          managerEmail: "",
+          status: "",
+        }),
+      ],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map(),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.columns).toEqual([
+      "Person",
+      "Job title",
+      "Period",
+      "From",
+      "To",
+      "Commits",
+    ]);
+    expect(table.rows[0]).toEqual([
+      "Jane Doe",
+      "Engineer",
+      "2026-01",
+      "2026-01-01",
+      "2026-01-31",
+      null,
+    ]);
+  });
+
   it("leaves a cell empty where the metric said nothing", () => {
     const table = buildReportTable({
       people: [person()],
