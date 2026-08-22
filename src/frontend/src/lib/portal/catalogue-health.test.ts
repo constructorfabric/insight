@@ -7,6 +7,7 @@ import { catalogueHealth } from "./catalogue-health";
 function def(over: Partial<MetricDefinition>): MetricDefinition {
   return {
     metric_key: "git.commits",
+    entity_type: "person",
     label: "Commits",
     short_label: null,
     description: null,
