@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod contract_version;
 pub(crate) mod date_window;
 pub(crate) mod metric_access;
