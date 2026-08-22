@@ -51,7 +51,7 @@ describe("zoneSections under nav.hide", () => {
 });
 
 describe("zoneSections under nav.planned", () => {
-  it("demotes a marked item exactly as a readiness-marked one", () => {
+  it("demotes an item marked by the install policy", () => {
     const policy = planned(["zone:overview/item:trend"]);
     const items = zoneSections("overview", policy).flatMap((g) => g.items);
 
@@ -72,11 +72,11 @@ describe("zoneSections under nav.planned", () => {
     );
   });
 
-  it("keeps the code's tier when the code already marks the item", () => {
+  it("marks an item only through the install policy", () => {
     const policy = planned(["zone:aicost/item:per-tool"]);
     const items = zoneSections("aicost", policy).flatMap((g) => g.items);
 
-    expect(items.find((i) => i.id === "per-tool")?.readiness).toBe("unbuilt");
+    expect(items.find((i) => i.id === "per-tool")?.readiness).toBe("planned");
   });
 });
 

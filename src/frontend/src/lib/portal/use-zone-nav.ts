@@ -45,7 +45,7 @@ export function useZoneNav(): {
     (z) =>
       !zoneHidden(z.id) &&
       (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
-      ((z.readiness == null && !zonePlanned(z.id)) || showPlanned),
+      (!zonePlanned(z.id) || showPlanned),
   );
 
   function selectZone(zone: Zone) {

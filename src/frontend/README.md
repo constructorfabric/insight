@@ -147,10 +147,11 @@ nav:
 ```
 
 A hidden entry disappears from every menu and from default/deep-link
-resolution. A `planned` entry behaves exactly like a `readiness`-marked one
-in the code: demoted to the "Planned" menu group and toggled by the viewer's
-"Show planned sections" switch. A path in both lists is hidden; a path that
-matches nothing is ignored (malformed ones warn in the browser console).
+resolution. A `planned` entry is demoted to the "Planned" menu group and
+toggled by the viewer's "Show planned sections" switch. Planning is entirely
+deployment-owned: entries absent from `nav.planned` are treated as live. A path
+in both lists is hidden; a path that matches nothing is ignored (malformed ones
+warn in the browser console).
 This is presentation, not authorization — the API refuses on its own
 regardless of what the menu shows. Parsing and semantics live in
 [src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).

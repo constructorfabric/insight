@@ -10,7 +10,6 @@ import {
   DIRECTIONS,
   lensSlug,
   type Direction,
-  type Readiness,
 } from "@/lib/portal/nav-model";
 
 /**
@@ -76,15 +75,8 @@ export interface LensConfig {
   notIngested?: string;
 }
 
-/**
- * A lens that renders nothing yet, and WHY — the two causes must not look
- * alike. `planned`: the product does not model this metric family yet (same
- * for every tenant). `unbuilt`: the data path exists and the screen is ours to
- * build. See `Readiness` in nav-model.
- */
 export interface LensRoadmap {
   comingSoon: string;
-  readiness: Readiness;
 }
 
 /** Either a lens we render or one we only name — the pane treats the two differently. */
@@ -100,8 +92,6 @@ export function lensRoadmap(
   lens: string,
   policy: InstanceNavPolicy = navPolicy()
 ): boolean {
-  const entry = lensEntry(direction.id, lens);
-  if (entry && "comingSoon" in entry) return true;
   return (
     directionPlanned(direction.id, policy) ||
     lensPlanned(direction.id, lensSlug(lens), policy)
@@ -183,9 +173,8 @@ export function sectionMetricKeys(config: LensConfig): string[] {
 /* ── Development ─────────────────────────────────────────────────────── */
 
 /** Product-side gap: the metric family is not in the semantic layer yet. */
-const DEV_PLANNED = (what: string): LensRoadmap => ({
+const PRODUCT_GAP = (what: string): LensRoadmap => ({
   comingSoon: `${what} — not available yet.`,
-  readiness: "planned",
 });
 
 /**
@@ -193,9 +182,8 @@ const DEV_PLANNED = (what: string): LensRoadmap => ({
  * (repository / project / file_extension / change_type), so this is frontend
  * work we owe, not a data request. Worded so nobody schedules a metric task.
  */
-const DEV_UNBUILT = (what: string): LensRoadmap => ({
+const SCREEN_GAP = (what: string): LensRoadmap => ({
   comingSoon: `${what} — the data is there (git observations carry the dimensions); this view is still in development.`,
-  readiness: "unbuilt",
 });
 
 const DEV: Record<string, LensEntry> = {
@@ -308,11 +296,11 @@ const DEV: Record<string, LensEntry> = {
       },
     ],
   },
-  Activity: DEV_PLANNED("Per-person activity-day metrics"),
-  Quality: DEV_PLANNED("Review / reopen quality metrics"),
-  Continuity: DEV_PLANNED("Longitudinal continuity metrics"),
-  Repositories: DEV_UNBUILT("Repository-level rollups"),
-  Elements: DEV_UNBUILT("Element-level (file/module) analytics"),
+  Activity: PRODUCT_GAP("Per-person activity-day metrics"),
+  Quality: PRODUCT_GAP("Review / reopen quality metrics"),
+  Continuity: PRODUCT_GAP("Longitudinal continuity metrics"),
+  Repositories: SCREEN_GAP("Repository-level rollups"),
+  Elements: SCREEN_GAP("Element-level (file/module) analytics"),
 };
 
 /* ── Collaboration (ported unchanged from ModalityView configs) ──────── */
@@ -554,11 +542,9 @@ const WIKI: Record<string, LensEntry> = {
 
 const SALES_NOTE: LensRoadmap = {
   comingSoon: "HubSpot data is not available yet.",
-  readiness: "planned",
 };
 const SUPPORT_NOTE: LensRoadmap = {
   comingSoon: "Zendesk data is not available yet.",
-  readiness: "planned",
 };
 
 const SALES: Record<string, LensEntry> = Object.fromEntries(
