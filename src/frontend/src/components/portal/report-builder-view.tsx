@@ -29,12 +29,10 @@ import {
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
-import { normalizePersonId } from "@/lib/metrics/entity";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
-import { collectReportPeople } from "@/lib/reports/roster-columns";
 import { recordUsageEvent } from "@/telemetry";
 import {
   bucketsInRange,
@@ -107,13 +105,7 @@ export function ReportBuilderView() {
     [catalogue, computations.data, granularity],
   );
 
-  const people = useMemo(() => {
-    const attrs = collectReportPeople(scope.pivot);
-    return (scope.roster ?? []).flatMap((entry) => {
-      const person = attrs.get(normalizePersonId(entry.person_id));
-      return person ? [person] : [];
-    });
-  }, [scope.pivot, scope.roster]);
+  const people = scope.reportPeople ?? [];
 
   const selectedMetrics = useMemo(
     () =>

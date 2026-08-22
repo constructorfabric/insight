@@ -71,6 +71,18 @@ const person = {
   subordinates: [],
 };
 
+const reportPerson = {
+  entityId: "p1",
+  name: "Jane Doe",
+  email: "jane.doe@example.com",
+  division: "",
+  department: "",
+  jobTitle: "",
+  managerName: "",
+  managerEmail: "",
+  status: "",
+};
+
 beforeEach(() => {
   mocks.definitions = [
     definition({}),
@@ -88,6 +100,7 @@ beforeEach(() => {
   mocks.scope = {
     pivot: person,
     roster: [{ person_id: "P1" }],
+    reportPeople: [reportPerson],
     label: "Jane Doe",
     isLoading: false,
     isError: false,
@@ -142,7 +155,7 @@ describe("ReportBuilderView", () => {
 
   it("says when the scope is what blocks the build, once a metric is picked", async () => {
     const user = userEvent.setup();
-    mocks.scope = { ...mocks.scope, roster: [] };
+    mocks.scope = { ...mocks.scope, roster: [], reportPeople: [] };
     render(<ReportBuilderView />);
 
     await user.click(box("Commits"));
@@ -175,6 +188,27 @@ describe("ReportBuilderView", () => {
 
     await user.click(box("Commits"));
     expect(build).not.toBeDisabled();
+  });
+
+  it("builds from a flat scope without a tree pivot", async () => {
+    const user = userEvent.setup();
+    mocks.scope = {
+      ...mocks.scope,
+      pivot: null,
+      roster: [{ person_id: "P1" }],
+      reportPeople: [reportPerson],
+      label: "Whole organisation",
+    };
+    render(<ReportBuilderView />);
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+
+    await waitFor(() =>
+      expect(mocks.run).toHaveBeenCalledWith(
+        expect.objectContaining({ entityIds: ["p1"] }),
+      ),
+    );
   });
 
   it("offers the file once the run has finished, stamped with what made it", async () => {
@@ -226,6 +260,7 @@ describe("ReportBuilderView", () => {
       ...mocks.scope,
       pivot: { ...person, person_id: "P2", display_name: "Sam Smith" },
       roster: [{ person_id: "P2" }],
+      reportPeople: [{ ...reportPerson, entityId: "p2", name: "Sam Smith" }],
     };
     rerender(<ReportBuilderView />);
     await waitFor(() =>

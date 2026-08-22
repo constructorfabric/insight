@@ -19,7 +19,7 @@ import {
 import {
   collectReportPeople,
   type ReportPerson,
-} from "@/lib/reports/roster-columns";
+} from "@/lib/identities/report-person";
 import type { MetricResult } from "@/api/metric-results-client";
 
 const months = (...pairs: Array<[string, number | null]>) =>

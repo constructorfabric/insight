@@ -1,11 +1,12 @@
 import type { MetricResult, TimeseriesView } from "@/api/metric-results-client";
+import type { ReportPerson } from "@/lib/identities/report-person";
 import {
   bucketSpan,
   bucketsInRange,
   rollUp,
   type ReportGranularity,
 } from "@/lib/reports/rollup";
-import { PERSON_COLUMNS, type ReportPerson } from "@/lib/reports/roster-columns";
+import { PERSON_COLUMNS } from "@/lib/reports/roster-columns";
 
 export type ReportCell = string | number | null;
 
