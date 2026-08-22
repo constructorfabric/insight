@@ -42,7 +42,7 @@ this file and the registry disagree.
 - Reads: seat_cost_usd
 - Formula: sum(seat_cost_usd)
 - Shape: currency, lower_is_better
-- Notes: The invoiced price of one seat for a billing month, read from the per-seat amount on the invoice. A monthly figure, so a partial window returns the whole month and a window spanning two months returns both fees. A seat whose tier the invoice does not price returns no value rather than a share of the total. Add actual usage cost for the full cost of a seat.
+- Notes: The invoiced price of one seat for a billing month, read from the per-seat amount on the invoice. A monthly figure dated at the first day of its billing month — a window containing that day returns the whole month, a window falling inside a month returns nothing, and a window spanning two months returns both fees. A seat whose tier the invoice does not price returns no value rather than a share of the total. Add actual usage cost for the full cost of a seat.
 
 ## ai.extra_usage_cost — AI actual usage cost
 
@@ -50,7 +50,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted, priced at API rates. A monthly figure, so a window covering part of a month returns the whole month rather than a fraction. This is the exact billed amount; its per-day distribution approximates the same money, and neither adds to potential usage cost.
+- Notes: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted, priced at API rates. A monthly figure dated at the first day of its billing month — a window containing that day returns the whole month, and a window falling inside a month returns nothing, so read the per-day distribution for a window shorter than a month. This is the exact billed amount; its per-day distribution approximates the same money, and neither adds to potential usage cost.
 
 ## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
 

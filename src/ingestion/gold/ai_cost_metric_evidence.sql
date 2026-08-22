@@ -63,11 +63,10 @@ seat_month_source AS (
         account_id,
         lower(email)                            AS entity_id,
         seat_tier,
-        -- Dated at the day the snapshot was last read, NOT period_month. The
-        -- vendor re-reads only the month in progress, so a month's row freezes
-        -- at its final read; a date pinned to the 1st would fall outside short
-        -- rolling windows and the current month would vanish from them.
-        toDate(collected_at)                    AS metric_date,
+        -- INVARIANT: month-anchored, not read-anchored. A read-day date moves
+        -- with the sync schedule, so the row leaves any window ending before it.
+        -- `observed_at` beside it keeps the time of the reading.
+        toDate(period_month)                    AS metric_date,
         toDateTime64(collected_at, 3)           AS observed_at,
         period_month,
         CAST(
