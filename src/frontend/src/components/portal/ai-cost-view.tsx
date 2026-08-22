@@ -65,6 +65,18 @@ const TOOL_LABEL: Record<string, string> = {
   chatgpt: "ChatGPT",
 };
 
+/** One "By unit" row. `*Seen` says a reading existed, so a 0 is a measurement. */
+interface UnitRow {
+  unit: string;
+  people: number;
+  active: number;
+  cost: number;
+  costSeen: boolean;
+  actual: number;
+  actualSeen: boolean;
+  lines: number;
+}
+
 interface ToolRow {
   tool: string;
   users: number;
@@ -73,6 +85,15 @@ interface ToolRow {
   costTracked: boolean;
   actual: number;
   actualTracked: boolean;
+}
+
+/** A person's reading of a metric, or null where they have none. */
+function reading(
+  r: NormalizedMetricResult | undefined,
+  id: string,
+): number | null {
+  const v = r ? forEntity(r, id).value : null;
+  return v != null && Number.isFinite(v) ? v : null;
 }
 
 /** Sum a breakdown metric across members, grouped by the `tool` dimension. */
@@ -169,10 +190,6 @@ export function AiCostView({ item }: { item: string | null }) {
 
   const teamName = orgScope.label;
 
-  const reading = (r: NormalizedMetricResult | undefined, id: string) => {
-    const v = r ? forEntity(r, id).value : null;
-    return v != null && Number.isFinite(v) ? v : null;
-  };
   const sum = (key: string) => {
     const r = grid.byKey.get(key);
     if (!r) return 0;
@@ -257,19 +274,7 @@ export function AiCostView({ item }: { item: string | null }) {
     const daysR = grid.byKey.get(DAYS_KEY);
     const val = (r: NormalizedMetricResult | undefined, id: string) =>
       reading(r, id) ?? 0;
-    const map = new Map<
-      string,
-      {
-        unit: string;
-        people: number;
-        active: number;
-        cost: number;
-        costSeen: boolean;
-        actual: number;
-        actualSeen: boolean;
-        lines: number;
-      }
-    >();
+    const map = new Map<string, UnitRow>();
     for (const id of memberIds) {
       const unit = attrByEntity.get(id)?.[slice]?.value ?? "—";
       const b =
@@ -550,14 +555,7 @@ function UnitSection({
   linesR,
   dim,
 }: {
-  rows: {
-    unit: string;
-    people: number;
-    active: number;
-    cost: number;
-    actual: number;
-    lines: number;
-  }[];
+  rows: UnitRow[];
   costR: NormalizedMetricResult | undefined;
   actualR: NormalizedMetricResult | undefined;
   linesR: NormalizedMetricResult | undefined;
