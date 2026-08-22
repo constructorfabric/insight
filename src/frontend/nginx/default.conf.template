@@ -35,16 +35,20 @@ server {
         include /etc/nginx/snippets/security-headers.conf;
     }
 
-    # Exact match so it wins over the immutable-asset regex below — a cached
-    # copy would pin the browser to the DSN of an earlier deploy.
+    # Never cached: a stale copy would pin the browser to the DSN of an earlier
+    # deploy.
     location = /config.js {
         add_header Cache-Control "no-cache" always;
         # Re-include security headers — see comment above for why.
         include /etc/nginx/snippets/security-headers.conf;
     }
 
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
-        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    # Only content-hashed names may be immutable; a stable-named file pinned
+    # here goes stale for the full max-age.
+    location ^~ /assets/ {
+        # No `always`: nginx then limits the header to 2xx/3xx, keeping the
+        # immutable lifetime off the 404 a request mid-rollout can hit.
+        add_header Cache-Control "public, max-age=31536000, immutable";
         # Re-include security headers — see comment above for why.
         include /etc/nginx/snippets/security-headers.conf;
     }

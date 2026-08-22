@@ -346,6 +346,38 @@ describe("MetricEvidenceDialog", () => {
     ).not.toContain("source");
   });
 
+  it("asks for the issue type and exports it, since the reader can see it", async () => {
+    const user = userEvent.setup();
+    const taskSelection = { ...selection, metric_key: "tasks.closed" };
+    mocks.declaredDimensions = new Map([
+      ["tasks.closed", new Set(["source", "type"])],
+    ]);
+
+    render(
+      <MetricEvidenceDialog
+        state={{
+          targets: [{ selection: taskSelection, label: "Issues closed" }],
+          activeMetricKey: "tasks.closed",
+        }}
+        onMetricChange={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    const requested = (mocks.queryOptions?.queryKey as unknown[])[2] as {
+      display_dimensions: string[];
+    };
+    expect(requested.display_dimensions).toEqual(["source", "type"]);
+
+    await user.click(screen.getByRole("button", { name: /CSV/ }));
+    await waitFor(() => expect(mocks.downloadMetricDrilldown).toHaveBeenCalled());
+    const [exported] = mocks.downloadMetricDrilldown.mock.calls[0]!;
+    const dimensions = (exported as { display_dimensions: string[] })
+      .display_dimensions;
+    // The type is a column on screen; the source only backs a link.
+    expect(dimensions).toEqual(["type"]);
+  });
+
   describe("what the dialog is named", () => {
     const twoTargets = [
       { selection, label: "Commits" },

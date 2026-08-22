@@ -70,6 +70,7 @@ function define(metricKey: string, today: string): MetricDefinition {
 
   return {
     metric_key: metricKey,
+    entity_type: "person",
     label: meta.label,
     short_label: null,
     description: family

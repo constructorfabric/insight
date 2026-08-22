@@ -74,12 +74,26 @@ issue_facts AS (
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
                         minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
-        -- The duration measures carry no breakdown, but a row still has to
-        -- name its tracker: `source` is what makes its ref addressable.
+        -- The population measures taken off these rows carry no breakdown, but
+        -- a row still has to name its tracker: `source` is what makes its ref
+        -- addressable.
         CAST(
             [tuple('source', any(s.data_source), any(s.data_source))]
             AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS no_dimensions
+        ) AS no_dimensions,
+        -- The per-issue duration rows carry the issue's own type as well, so a
+        -- median reads the same way a count of closed issues does: which kinds
+        -- of work it was taken over.
+        CAST(
+            [
+                tuple(
+                    'type',
+                    ifNull(any(s.issue_type_key), '__unknown__'),
+                    ifNull(any(s.issue_type_name), 'Type unknown')
+                ),
+                tuple('source', any(s.data_source), any(s.data_source))
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS type_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
         ON i.insight_source_id = s.insight_source_id
@@ -318,7 +332,7 @@ SELECT
     id_readable AS record_label,
     toNullable(toFloat64(duration_measure.2)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
-    no_dimensions AS dimensions,
+    type_dimensions AS dimensions,
     map('ref', id_readable, 'title', ifNull(title, '')) AS details
 FROM issue_facts
 ARRAY JOIN arrayConcat(

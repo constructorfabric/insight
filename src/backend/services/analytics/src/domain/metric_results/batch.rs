@@ -18,6 +18,12 @@ use super::validation::{
 };
 use super::view::Bucket;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerPopulation {
+    DeclaredCohort,
+    Tenant,
+}
+
 #[derive(Debug)]
 pub struct BatchItem {
     pub metric_index: usize,
@@ -128,6 +134,7 @@ pub fn plan_rankings(req: &ValidatedMetricResultsRequest) -> Vec<PlannedRanking>
 pub fn plan_queries(
     req: &ValidatedMetricResultsRequest,
     rankings: &BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+    peer_population: PeerPopulation,
 ) -> Result<Vec<PlannedQuery>, CanonicalError> {
     let mut period_groups: BTreeMap<(String, Vec<ValidatedDimensionFilter>), Vec<BatchItem>> =
         BTreeMap::new();
@@ -208,7 +215,7 @@ pub fn plan_queries(
     }
     for ((_, cohort_key, filters), items) in peer_groups {
         let defs: Vec<&MetricDefinition> = items.iter().map(|item| &item.def).collect();
-        let query = compile_peer_batch_query(&defs, req, &cohort_key, &filters);
+        let query = compile_peer_batch_query(&defs, req, &cohort_key, peer_population, &filters);
         planned.push(PlannedQuery::PeerBatch { items, query });
     }
     planned.extend(singles);
@@ -475,7 +482,7 @@ mod tests {
                 })
                 .collect(),
         );
-        let planned = plan_queries(&req, &BTreeMap::new())?;
+        let planned = plan_queries(&req, &BTreeMap::new(), PeerPopulation::DeclaredCohort)?;
         assert_eq!(planned.len(), 5);
         let (mut period_batches, mut peer_batches, mut singles) = (0, 0, 0);
         for query in &planned {
@@ -533,7 +540,7 @@ mod tests {
                 "m_b",
             ),
         ]);
-        let planned = plan_queries(&req, &BTreeMap::new())?;
+        let planned = plan_queries(&req, &BTreeMap::new(), PeerPopulation::DeclaredCohort)?;
         assert_eq!(planned.len(), 2);
         assert!(
             planned

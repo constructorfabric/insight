@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
 
 import { IdentityApiError } from "@/api/identity-client";
+import {
+  personDisplayName,
+  personName,
+} from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { DashboardEmptyState } from "@/components/widgets/dashboard/dashboard-empty-state";
 import { DashboardHeader } from "@/components/widgets/dashboard/dashboard-header";
@@ -94,7 +98,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
   );
   // Never fall back to the raw id (a UUID) — the shell prefetches the viewer
   // tree, so the pivot resolves synchronously in practice.
-  const teamName = pivot?.display_name ?? "";
+  const teamName = pivot ? (personName(pivot) ?? "") : "";
 
   // The roster IS the member list: identity owns who is on the team, and
   // every metric for them comes from `/v1/metric-results` below. There is no
@@ -103,7 +107,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster],
   );

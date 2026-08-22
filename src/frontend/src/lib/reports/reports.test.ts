@@ -19,7 +19,7 @@ import {
 import {
   collectReportPeople,
   type ReportPerson,
-} from "@/lib/reports/roster-columns";
+} from "@/lib/identities/report-person";
 import type { MetricResult } from "@/api/metric-results-client";
 
 const months = (...pairs: Array<[string, number | null]>) =>
@@ -230,6 +230,82 @@ describe("buildReportTable", () => {
         1,
       ],
     ]);
+  });
+
+  it("omits person columns absent from the selected roster", () => {
+    const table = buildReportTable({
+      people: [
+        person({
+          email: "",
+          division: "",
+          department: "",
+          jobTitle: "Engineer",
+          managerName: "",
+          managerEmail: "",
+          status: "",
+        }),
+      ],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map(),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.columns).toEqual([
+      "Person",
+      "Job title",
+      "Period",
+      "From",
+      "To",
+      "Commits",
+    ]);
+    expect(table.rows[0]).toEqual([
+      "Jane Doe",
+      "Engineer",
+      "2026-01",
+      "2026-01-01",
+      "2026-01-31",
+      null,
+    ]);
+  });
+
+  it("rounds metric cells with the metric's declared format", () => {
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.cycle_time", label: "Cycle time" }],
+      results: new Map([
+        [
+          "git.cycle_time",
+          {
+            metric_key: "git.cycle_time",
+            label: "Cycle time",
+            format: "decimal",
+            views: [
+              {
+                view: "timeseries",
+                bucket: "month",
+                series: [
+                  {
+                    entity_id: "p1",
+                    dimensions: [],
+                    points: [
+                      {
+                        bucket_start: "2026-01-01",
+                        value: 1082.1594444444445,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          } as unknown as MetricResult,
+        ],
+      ]),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.rows[0]?.at(-1)).toBe(1082.2);
   });
 
   it("leaves a cell empty where the metric said nothing", () => {

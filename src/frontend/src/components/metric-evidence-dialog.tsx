@@ -14,6 +14,7 @@ import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import {
   SOURCE_DIMENSION,
   withSourceDimension,
+  withTypeDimension,
 } from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
 import { Button } from "@/components/ui/button";
@@ -65,14 +66,17 @@ export function MetricEvidenceDialog({
     ) ??
     state?.targets[0] ??
     null;
-  // INVARIANT: the catalog decides whether `source` may be asked for, so the
+  // INVARIANT: the catalog decides which dimensions may be asked for, so the
   // read waits for it — resolving later would change the selection mid-dialog
   // and refetch every row.
   const declaredDimensions = useDeclaredMetricDimensions();
+  const declared = activeTarget
+    ? declaredDimensions.byMetricKey?.get(activeTarget.selection.metric_key)
+    : null;
   const selection = activeTarget
-    ? withSourceDimension(
-        activeTarget.selection,
-        declaredDimensions.byMetricKey?.get(activeTarget.selection.metric_key)
+    ? withTypeDimension(
+        withSourceDimension(activeTarget.selection, declared),
+        declared
       )
     : null;
   const query = useInfiniteQuery({
@@ -176,11 +180,12 @@ export function MetricEvidenceDialog({
   }
 
   async function exportRows(format: "csv" | "xlsx") {
-    // INVARIANT: the export carries the caller's OWN selection, never the one
-    // widened for links. `source` rides along only so a row can be linked, and
-    // it is hidden from the table — exporting it would put a column in the file
-    // that is not on the screen it came from.
-    const exported = activeTarget?.selection;
+    // INVARIANT: the file holds the columns the screen holds. `source` rides
+    // along only so a row can be linked and is hidden from the table, so it is
+    // dropped here; `type` is a column the reader can see, so it is kept.
+    const exported = activeTarget
+      ? withTypeDimension(activeTarget.selection, declared)
+      : null;
     if (!exported) return;
     exportController.current?.abort();
     const controller = new AbortController();

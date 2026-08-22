@@ -12,6 +12,8 @@
  *     upstream of it, not as a client-side row filter.
  *   - the toggle is hidden when the team has no indirect reports, where it
  *     could never change the roster (#1756).
+ *   - a member with no display name is labelled by their username, then
+ *     their e-mail — never a blank row (#2711).
  *
  * Child widgets are stubbed: this file tests the roster/toggle wiring, not
  * widget render rules (those have their own component tests).
@@ -241,5 +243,23 @@ describe("TeamViewScreen direct-reports scoping", () => {
     expect(screen.getByTestId("heatmap")).toHaveTextContent("Fay,Gil");
 
     expect(heatmapFetchedIds()).toEqual([PERSON_IDS.fay, PERSON_IDS.gil]);
+  });
+});
+
+describe("TeamViewScreen member labels", () => {
+  it("labels a member with no display name by username, then e-mail (#2711)", () => {
+    trees[PERSON_IDS.alice] = person(PERSON_IDS.alice, "alice@x.io", "Alice", [
+      {
+        ...person(PERSON_IDS.bob, "42+bee@noreply.x.io", ""),
+        username: "bee",
+      },
+      person(PERSON_IDS.erin, "erin@x.io", ""),
+    ]);
+
+    renderScreen();
+
+    expect(screen.getByTestId("heatmap")).toHaveTextContent(
+      "bee,erin@x.io",
+    );
   });
 });

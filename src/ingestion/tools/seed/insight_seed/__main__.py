@@ -50,12 +50,27 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("analytics", help="MariaDB analytics catalogue seed")
     sub.add_parser("gold", help="rebuild the dbt gold models over the current identity map")
     sub.add_parser("all", help="run every step")
+    sub.add_parser(
+        "manifest",
+        help="print the manifest this environment describes; touches no database",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    if args.cmd == "manifest":
+        import os
+
+        from .manifest import assert_no_credentials, build_manifest, render_manifest
+
+        # No `seeded`: this command describes an environment, not a run.
+        doc = build_manifest(os.environ)
+        assert_no_credentials(doc)
+        print(render_manifest(doc))
+        return 0
 
     steps = STEPS if args.cmd == "all" else (args.cmd,)
 
@@ -74,7 +89,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     seeded: list[str] = []
-    catalogue: dict[str, object] | None = None
 
     if args.cmd in ("identity", "all"):
         from .identity import run as run_identity
@@ -94,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in ("analytics", "all"):
         from .analytics import run as run_analytics
 
-        catalogue = run_analytics()
+        run_analytics()
         seeded.append("analytics")
 
     # Emit the manifest only after every requested step returned without
@@ -111,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         write_manifest,
     )
 
-    doc = build_manifest(os.environ, seeded=seeded, catalogue=catalogue)
+    doc = build_manifest(os.environ, seeded=seeded)
 
     # A cluster Job's filesystem dies with the pod, so the log is the only
     # record of what a run seeded. Printed before the write, so it survives even

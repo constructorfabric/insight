@@ -17,8 +17,8 @@ builder that writes `manifest.json`, so the two cannot disagree.
 | realm | `insight` |
 | anchor_date | `2026-06-30` |
 | data_window | `2026-05-02..2026-06-30` |
-| seed_revision | `1f48ce4dd429d88d` |
-| manifest_version | 1 |
+| seed_revision | `11cb2c2fb83498bc` |
+| manifest_version | 2 |
 
 `anchor_date` is the last day carrying seeded activity. It is resolved
 once per run from `SEED_ANCHOR_DATE` (an ISO date, or the literal
@@ -91,28 +91,6 @@ renaming one breaks every test that declares it.
 | `sales_lead` | `email_sales_lead@company.nonpresent` | sales | lead | `aaaaaaaa-0000-0000-0000-000000000020` |
 | `support_ic` | `email_support_01@company.nonpresent` | support | ic | `bbbbbbbb-0000-0000-0000-000000040001` |
 | `support_lead` | `email_support_lead@company.nonpresent` | support | lead | `aaaaaaaa-0000-0000-0000-000000000040` |
-
-## Catalogue rows
-
-Rows the product provisions by operator or migration, so no endpoint
-creates them and no test fixture can either — the suite holds no
-database connection. Seeded by `insight_seed/analytics.py` and named
-here so a test reads the name rather than hardcoding one.
-
-**No tenant `metric_definitions` override.** Nothing proves the listing
-resolves a tenant's label over the product default.
-
-## Populated / golden metrics
-
-**None.** The golden set is empty, and that is a deliberate state
-rather than an oversight.
-
-> empty: no measured inventory records an exact expected value; see insight_seed/golden_metrics.py for the criteria to add one
-
-A test suite consuming this manifest therefore asserts no metric
-values. That is a visible gap; a populated-but-guessed set would be a
-silent wrong answer. See `insight_seed/golden_metrics.py` for the
-criteria an entry must meet before it is added.
 
 ## Capabilities
 

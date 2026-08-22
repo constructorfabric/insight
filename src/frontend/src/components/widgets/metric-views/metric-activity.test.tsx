@@ -96,6 +96,7 @@ function draw(m: ReturnType<typeof metric>) {
 }
 
 beforeEach(() => {
+  declared.byMetricKey = new Map();
   detail.calls = [];
   detail.collectedThrough = null;
   detail.revisionWindowDays = null;
@@ -149,6 +150,53 @@ describe("MetricActivity", () => {
     expect(rows[0]).toContain("Fix the thing");
     expect(rows[0]).not.toContain("body");
     expect(rows[1]).toContain("Another change");
+  });
+
+  it("names the kind of issue beside each one", () => {
+    // A count of closed issues reads differently once the bugs in it are
+    // visible, and the tracker's own type is the only thing on a row that says
+    // which is which.
+    declared.byMetricKey.set("tasks.closed", new Set(["source", "type"]));
+    detail.state.data = {
+      columns: [],
+      rows: [
+        {
+          values: {
+            date: "2026-03-04",
+            title: "Login fails on retry",
+            ref: "example/app#12",
+            type: "Bug",
+          },
+        },
+      ],
+    };
+    draw(metric("tasks.closed", ["event"], 1));
+    const row = screen.getAllByRole("listitem")[0]?.textContent ?? "";
+    expect(row).toContain("Bug");
+    expect(row).toContain("Login fails on retry");
+    // Asked for on the read itself, or the rows would never carry it.
+    const asked = detail.calls.at(-1) as {
+      selection: { display_dimensions: string[] };
+    };
+    expect(asked.selection.display_dimensions).toContain("type");
+  });
+
+  it("spends no width on a type where the records have none", () => {
+    detail.state.data = {
+      columns: [],
+      rows: [
+        {
+          values: {
+            date: "2026-03-04",
+            title: "Fix the thing",
+            repository: "example/app",
+            ref: "abc",
+          },
+        },
+      ],
+    };
+    draw(metric("git.commits", ["event"], 1));
+    expect(screen.getAllByRole("listitem")[0]?.textContent).not.toContain("—");
   });
 
   it("draws days at counter grain, and names the days with no reading", () => {

@@ -380,18 +380,42 @@ export const handlers = [
       .catch(() => null)) as MetricResultsRequest | null;
     if (
       !body ||
-      !Array.isArray(body.entity?.ids) ||
+      !body.entity ||
       !Array.isArray(body.metrics)
     ) {
       return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
     }
+
+    const entityType: unknown = (body.entity as { type?: unknown }).type;
+    if (entityType !== "person" && entityType !== "tenant") {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "entity.type" },
+        { status: 400 },
+      );
+    }
+
     // Mirror the real endpoint since the identity cutover: entity ids are
     // person UUIDs and an email is a 400. Without this the mock would happily
     // answer a stale email fixture and hide the very regression it exists to
     // catch.
-    if (!body.entity.ids.every((id) => typeof id === "string" && isPersonId(id))) {
+    if (
+      body.entity.type === "person" &&
+      (!Array.isArray(body.entity.ids) ||
+        !body.entity.ids.every((id) => typeof id === "string" && isPersonId(id)))
+    ) {
       return HttpResponse.json(
         { error: "invalid_argument", field: "entity.ids" },
+        { status: 400 },
+      );
+    }
+    if (
+      body.entity.type === "tenant" &&
+      body.metrics.some((metric) =>
+        metric.views.some((view) => view.view === "peer"),
+      )
+    ) {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "metrics.views" },
         { status: 400 },
       );
     }
@@ -848,7 +872,87 @@ export const handlers = [
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
   ...usageHandlers(),
+  ...feedbackHandlers(),
 ];
+
+// ── Product feedback (`/v1/feedback`) ──────────────────────────
+// An in-memory store, so the dialog's send and the usage surface's listing
+// round-trip in mock, Storybook, and `VITE_ENABLE_MOCKS=true` dev runs.
+
+interface MockFeedback {
+  feedback_id: string;
+  ts: string;
+  person_id: string;
+  display_name: string;
+  username: string;
+  message: string;
+  path: string;
+}
+
+/** Mirrors the service's own cap. */
+const MOCK_FEEDBACK_LIMIT = 200;
+
+function mockSender(person: (typeof PEOPLE)[number] | undefined) {
+  return {
+    person_id: person?.person_id ?? "",
+    display_name: person?.name ?? "",
+    username: person?.email.split("@")[0] ?? "",
+  };
+}
+
+const feedbackStore: MockFeedback[] = [
+  {
+    feedback_id: "22222222-2222-2222-2222-222222222222",
+    ts: "2026-08-20 09:14:00",
+    ...mockSender(PEOPLE[1]),
+    message: "The cohort control does not say what it compares against.",
+    path: "/portal/overview",
+  },
+  {
+    feedback_id: "33333333-3333-3333-3333-333333333333",
+    ts: "2026-08-19 16:02:00",
+    ...mockSender(PEOPLE[2]),
+    message: "Let me export the people table to a spreadsheet.",
+    path: "/portal/people",
+  },
+];
+
+function feedbackHandlers() {
+  return [
+    http.post("/api/analytics/v1/feedback", async ({ request }) => {
+      const body = (await request.json().catch(() => null)) as {
+        message?: string;
+        path?: string;
+      } | null;
+      if (!body?.message?.trim()) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      feedbackStore.unshift({
+        feedback_id: `mock-${feedbackStore.length + 1}`,
+        ts: new Date().toISOString().replace("T", " ").slice(0, 19),
+        ...mockSender(defaultPerson),
+        message: body.message.trim(),
+        path: body.path ?? "",
+      });
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get("/api/analytics/v1/feedback", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const since = params.get("since") ?? "";
+      const until = params.get("until") ?? "";
+      // Answering the window the caller asked for, as the service does: a mock
+      // that ignores it hides every date-range regression from mock runs.
+      const items = feedbackStore
+        .filter((row) => {
+          const day = row.ts.slice(0, 10);
+          return (!since || day >= since) && (!until || day <= until);
+        })
+        .slice(0, MOCK_FEEDBACK_LIMIT);
+
+      return HttpResponse.json({ since, until, items });
+    }),
+  ];
+}
 
 // ── Platform usage (`/v1/usage/*`) ─────────────────────────────
 

@@ -49,9 +49,21 @@ ANCHOR_ENV = "SEED_ANCHOR_DATE"
 MANIFEST_PATH_ENV = "SEED_MANIFEST_PATH"
 DAYS_ENV = "SEED_DAYS"
 DEV_USER_EMAIL_ENV = "DEV_USER_EMAIL"
+ORG_HEADCOUNT_ENV = "SEED_ORG_HEADCOUNT"
+PERSONA_PASSWORD_ENV = "INSIGHT_SEED_PERSONA_PASSWORD"
 
 #: Length of the seeded activity window when nobody pins one.
 DEFAULT_SEED_DAYS = 60
+
+#: Headcount sentinel meaning "the committed demo roster, untouched".
+DEFAULT_ORG_HEADCOUNT = 0
+
+#: How many people `profiles.build_roster` returns: 25 plus the operator.
+CANONICAL_ROSTER_SIZE = 26
+
+#: Blast-radius ceiling: the generators emit per-person rows for every day
+#: of the window, so a mistyped headcount is expensive.
+MAX_ORG_HEADCOUNT = 3000
 
 #: The clock is read once; see `parse_anchor_date`.
 _DERIVED_ANCHOR: _dt.date | None = None
@@ -244,6 +256,58 @@ def parse_seed_days(env: Mapping[str, str], default: int = DEFAULT_SEED_DAYS) ->
     if days < 1:
         raise EnvContractError((f"{DAYS_ENV}={days} must be at least 1.",))
     return days
+
+
+def parse_org_headcount(env: Mapping[str, str]) -> int:
+    """How many people the roster should hold. Opt-in; the default is inert.
+
+    Unset, empty, `0` or the canonical size all mean "the committed demo roster,
+    exactly as it is" — the roster CI and the compose stand suite assert
+    against. Only a value above it asks for a bigger organisation, and the
+    grown one is built by appending (`profiles.build_seeded_roster`), so the
+    committed 26 keep their uuids, emails, names and build order.
+
+    The roster never shrinks. A smaller number is refused rather than honoured
+    because the committed people are fixtures, not filler: `manifest._fixtures`
+    names them, and a stand missing one turns every test that declares it from
+    a skip into a failure.
+    """
+    raw = (env.get(ORG_HEADCOUNT_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_ORG_HEADCOUNT
+    try:
+        headcount = int(raw)
+    except ValueError as exc:
+        raise EnvContractError(
+            (
+                f"{ORG_HEADCOUNT_ENV}={raw!r} is not a whole number of people. Leave it "
+                f"unset (or 0) for the committed {CANONICAL_ROSTER_SIZE}-person demo "
+                f"roster, or ask for {CANONICAL_ROSTER_SIZE + 1}..{MAX_ORG_HEADCOUNT}.",
+            )
+        ) from exc
+    if headcount in (DEFAULT_ORG_HEADCOUNT, CANONICAL_ROSTER_SIZE):
+        return headcount
+    if headcount < CANONICAL_ROSTER_SIZE:
+        raise EnvContractError(
+            (
+                f"{ORG_HEADCOUNT_ENV}={headcount} is below the committed roster's "
+                f"{CANONICAL_ROSTER_SIZE} people, and the roster only grows: those people "
+                "are the named fixtures the test suites resolve by uuid. Use 0 (or leave "
+                f"it unset) for the committed roster, or {CANONICAL_ROSTER_SIZE + 1}"
+                f"..{MAX_ORG_HEADCOUNT} for a bigger one.",
+            )
+        )
+    if headcount > MAX_ORG_HEADCOUNT:
+        raise EnvContractError(
+            (
+                f"{ORG_HEADCOUNT_ENV}={headcount} is over the {MAX_ORG_HEADCOUNT}-person "
+                "ceiling. Every extra person multiplies the per-day rows the silver "
+                "generators write, so the ceiling is deliberate; raise "
+                "`config.MAX_ORG_HEADCOUNT` if a stand really needs more — and check the "
+                "manifest still fits a ConfigMap (see the seeder's tests).",
+            )
+        )
+    return headcount
 
 
 def parse_manifest_path(env: Mapping[str, str]) -> Path:

@@ -50,7 +50,7 @@ function collectEmployees(root: IdentityPerson): EmployeeRow[] {
       if (!byId.has(key)) {
         byId.set(key, {
           personId: node.person_id,
-          displayName: node.display_name || node.email || UNNAMED_PERSON,
+          displayName: personName(node) ?? UNNAMED_PERSON,
           jobTitle: node.job_title ?? "",
           department: node.department ?? "",
           division: node.division ?? "",

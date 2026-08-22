@@ -99,10 +99,45 @@ class CreateSavedQueryRequest(BaseModel):
     sql: str
 
 
+class EntityType(StrEnum):
+    person = 'person'
+    tenant = 'tenant'
+
+
 class EvidenceGranularity(StrEnum):
     event = 'event'
     source_summary = 'source_summary'
     derived_population = 'derived_population'
+
+
+class FeedbackEntry(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str = Field(..., description='Empty when the sender has not been mirrored into the identity rows yet.')
+    feedback_id: str
+    message: str
+    path: str
+    person_id: str
+    ts: str
+    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+
+
+class FeedbackListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[FeedbackEntry]
+    since: str
+    until: str
+
+
+class FeedbackRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    message: str
+    path: str | None = Field(None, description='The screen the sender was on. Empty when the SPA cannot name one.')
 
 
 class HistogramBinDto(BaseModel):
@@ -185,12 +220,31 @@ class MetricDrilldownColumnType(StrEnum):
     number = 'number'
 
 
-class MetricDrilldownEntity(BaseModel):
+class Type(StrEnum):
+    person = 'person'
+
+
+class MetricDrilldownEntity1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     id: str
-    type: str
+    type: Type
+
+
+class Type1(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricDrilldownEntity2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type1
+
+
+class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2]):
+    root: MetricDrilldownEntity1 | MetricDrilldownEntity2
 
 
 class MetricDrilldownExportFormat(StrEnum):
@@ -345,20 +399,58 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
-class MetricResultsEntity(BaseModel):
+class Type2(StrEnum):
+    person = 'person'
+
+
+class MetricResultsEntity1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    ids: list[str] = Field(..., description='Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).')
-    type: str
+    ids: list[str]
+    type: Type2
 
 
-class MetricResultsEntityDto(BaseModel):
+class Type3(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    ids: list[str] = Field(..., description='Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).')
-    type: str
+    type: Type3
+
+
+class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
+    root: MetricResultsEntity1 | MetricResultsEntity2
+
+
+class Type4(StrEnum):
+    person = 'person'
+
+
+class MetricResultsEntityDto1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[str]
+    type: Type4
+
+
+class Type5(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricResultsEntityDto2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type5
+
+
+class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
+    root: MetricResultsEntityDto1 | MetricResultsEntityDto2
 
 
 class MetricResultsPeriod(BaseModel):
@@ -712,6 +804,7 @@ class MetricDefinitionView(BaseModel):
     dimensions: list[str]
     direction: MetricDirection
     drilldown: MetricDrilldownCapability | None = None
+    entity_type: EntityType
     explanation: str | None = None
     format: MetricFormat
     is_enabled: bool

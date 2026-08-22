@@ -163,5 +163,20 @@ describe("metric drilldown client", () => {
       filters: [{ dimension: "repository", values: ["org/repo"] }],
       display_dimensions: ["category", "repository"],
     });
+
+    expect(
+      evidenceSelection({
+        metric_key: "ci.runs",
+        entity: { type: "tenant" },
+        period: selection.period,
+        filters: [],
+      }),
+    ).toEqual({
+      metric_key: "ci.runs",
+      entity: { type: "tenant" },
+      period: selection.period,
+      filters: [],
+      display_dimensions: [],
+    });
   });
 });

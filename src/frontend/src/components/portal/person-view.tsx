@@ -2,9 +2,9 @@ import { MetricGroupsView } from "@/components/portal/metric-groups-view";
 import { PersonHeader } from "@/components/portal/person-header";
 import { SingleGroupView } from "@/components/portal/single-group-view";
 import { GROUPS, type GroupId } from "@/lib/insight/groups";
+import { visiblePersonSections } from "@/lib/portal/nav-policy";
 import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
-
-const PERSON_GROUP_IDS: readonly GroupId[] = GROUPS.map((g) => g.id);
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 
 /**
  * Person zone: one specific person.
@@ -21,8 +21,11 @@ const PERSON_GROUP_IDS: readonly GroupId[] = GROUPS.map((g) => g.id);
 export function PersonView({ person }: { person: string }) {
   const item = usePortalItem();
   const { setItem } = usePortalNavActions();
-  const isSection =
-    item != null && (PERSON_GROUP_IDS as string[]).includes(item);
+  const showPlanned = usePortalShowPlanned();
+  const groupIds = visiblePersonSections(GROUPS, showPlanned).map(
+    (group) => group.id
+  );
+  const isSection = item != null && (groupIds as string[]).includes(item);
 
   return (
     <>
@@ -38,7 +41,7 @@ export function PersonView({ person }: { person: string }) {
         // screen that covers it.
         <MetricGroupsView
           personId={person}
-          groupIds={PERSON_GROUP_IDS}
+          groupIds={groupIds}
           showKpis
           onSelectGroup={(id) => setItem(id)}
         />

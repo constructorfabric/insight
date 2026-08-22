@@ -1,5 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useMemo, useState } from "react";
 import {
   addDays as addCalendarDays,
   differenceInCalendarDays,
@@ -33,26 +32,16 @@ import {
   YAxis,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { FeedbackTable } from "@/components/portal/platform-usage-feedback";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+  PersonName,
+  TruncatedCell,
+  VirtualTable,
+} from "@/components/portal/usage-table";
 import { useUsageSummary } from "@/queries/usage";
 import { formatDate, formatMetricNumber, formatUtcClock } from "@/lib/format";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { screenLabel } from "@/lib/portal/screen-label";
-import { visitorLabel } from "@/lib/portal/visitor-label";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
-import { cn } from "@/lib/utils";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
 function daysBetween(from: string, to: string): number {
@@ -92,14 +81,33 @@ export function PlatformUsage() {
     const shift = daysBetween(resolved.to, utcToday());
     return { since: addDays(resolved.from, shift), until: addDays(resolved.to, shift) };
   }, [period, customRange]);
-  const summary = useUsageSummary(range);
-
   // A custom range outranks the period in `resolveDateRange`, so leaving it set
   // makes every preset inert.
   const choosePeriod = (next: PeriodValue) => {
     setPeriod(next);
     setCustomRange(null);
   };
+
+  // The two reads are siblings, not a sequence: nesting the feedback section
+  // under the summary's pending branch delayed its request until the summary
+  // landed, and hid it entirely when the summary failed.
+  return (
+    <div className="flex w-full flex-col gap-6 p-6">
+      <PeriodSelectorBar
+        period={period}
+        customRange={customRange}
+        onPeriodChange={choosePeriod}
+        onRangeChange={setCustomRange}
+      />
+
+      <UsageSummary range={range} />
+      <FeedbackTable range={range} />
+    </div>
+  );
+}
+
+function UsageSummary({ range }: { range: UsageRange }) {
+  const summary = useUsageSummary(range);
 
   if (summary.isPending) return <CenteredSpinner />;
   if (summary.isError || !summary.data) {
@@ -117,14 +125,7 @@ export function PlatformUsage() {
   });
 
   return (
-    <div className="flex w-full flex-col gap-6 p-6">
-      <PeriodSelectorBar
-        period={period}
-        customRange={customRange}
-        onPeriodChange={choosePeriod}
-        onRangeChange={setCustomRange}
-      />
-
+    <>
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi label="visits" value={totals.visits} />
         <Kpi label="people" value={totals.visitors} />
@@ -139,7 +140,7 @@ export function PlatformUsage() {
       <PeopleTable rows={by_person} />
       <PagesTable rows={by_page} />
       <EventsTable rows={by_event} />
-    </div>
+    </>
   );
 }
 
@@ -179,96 +180,6 @@ function VisitsChart({ days }: { days: UsageDay[] }) {
   );
 }
 
-const ROW_HEIGHT = 40;
-
-interface Column<T> {
-  header: string;
-  width?: number;
-  align?: "left" | "right";
-  cell: (row: T, index: number) => ReactNode;
-}
-
-function VirtualTable<T>({
-  rows,
-  columns,
-  rowKey,
-  label,
-}: {
-  rows: T[];
-  columns: Column<T>[];
-  rowKey: (row: T, index: number) => string;
-  label: string;
-}) {
-  // State, not a ref: the virtualizer re-reads the scroll element once it
-  // exists, and a ref never re-renders to tell it.
-  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => viewport,
-    estimateSize: () => ROW_HEIGHT,
-    overscan: 8,
-  });
-  const bodyHeight = virtualizer.getTotalSize();
-
-  const cellClass = (column: Column<T>) =>
-    cn("truncate", column.align === "right" ? "text-right" : "");
-  const cellStyle = (column: Column<T>) => ({
-    flex: column.width ? `0 0 ${column.width}rem` : "1 1 0%",
-  });
-
-  return (
-    <Table
-      aria-label={label}
-      containerRef={setViewport}
-      containerClassName="max-h-90 overflow-auto rounded-md border"
-      className="grid min-w-full"
-      style={{
-        height: bodyHeight + ROW_HEIGHT,
-        gridTemplateRows: `${ROW_HEIGHT}px 1fr`,
-      }}
-    >
-      <TableHeader className="sticky top-0 z-10 grid bg-background">
-        <TableRow className="flex w-full">
-          {columns.map((column) => (
-            <TableHead
-              key={column.header}
-              className={cn(cellClass(column), "flex h-10 items-center")}
-              style={cellStyle(column)}
-            >
-              {column.header}
-            </TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody className="relative grid" style={{ height: bodyHeight }}>
-        {virtualizer.getVirtualItems().map((virtualRow) => {
-          const row = rows[virtualRow.index];
-          if (!row) return null;
-          return (
-            <TableRow
-              key={rowKey(row, virtualRow.index)}
-              data-index={virtualRow.index}
-              ref={virtualizer.measureElement}
-              className="absolute top-0 left-0 flex w-full"
-              style={{ transform: `translateY(${virtualRow.start}px)` }}
-            >
-              {columns.map((column) => (
-                <TableCell
-                  key={column.header}
-                  className={cn(cellClass(column), "flex items-center")}
-                  style={cellStyle(column)}
-                >
-                  {column.cell(row, virtualRow.index)}
-                </TableCell>
-              ))}
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
-}
-
 function Kpi({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-lg border p-4">
@@ -296,7 +207,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
           columns={[
             {
               header: "Person",
-              cell: (row) => <VisitorName row={row} />,
+              cell: (row) => <PersonName row={row} />,
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
@@ -305,19 +216,6 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
         />
       )}
     </section>
-  );
-}
-
-function VisitorName({ row }: { row: UsagePerson }) {
-  const { label, detail } = visitorLabel(row);
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate" />}>{label}</TooltipTrigger>
-        <TooltipContent className="font-mono text-xs">{detail}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
@@ -366,16 +264,9 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
             {
               header: "Page",
               cell: (row) => (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="truncate" />}>
-                      {screenLabel(row.path)}
-                    </TooltipTrigger>
-                    <TooltipContent className="font-mono text-xs">
-                      {row.path}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <TruncatedCell detail={row.path}>
+                  {screenLabel(row.path)}
+                </TruncatedCell>
               ),
             },
             { header: "Views", width: 6, align: "right", cell: (row) => row.views },
