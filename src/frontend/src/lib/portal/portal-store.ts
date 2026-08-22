@@ -27,12 +27,7 @@ const SHOW_PLANNED_KEY = "insight.portal.showPlanned";
 
 interface PortalState {
   enabled: boolean;
-  /**
-   * Whether navigation shows entries we have not built yet (`unbuilt` in the
-   * nav model). Default ON: for us and for demos the dead entries ARE the
-   * roadmap. Flip it before a reader has to tell our backlog apart from their
-   * own missing data.
-   */
+  /** Whether navigation shows entries we have not built yet (`unbuilt` in the nav model). */
   showPlanned: boolean;
 }
 
@@ -56,14 +51,18 @@ function readKey(key: string): string | null {
   }
 }
 
-/** Absent key = ON; both preferences are opt-OUT, so only "false" turns one off. */
+/** Absent key = ON; the portal is opt-OUT, so only "false" turns it off. */
 function readBoolPref(key: string): boolean {
   return readKey(key) !== "false";
 }
 
+function readOptInPref(key: string): boolean {
+  return readKey(key) === "true";
+}
+
 let state: PortalState = {
   enabled: readBoolPref(ENABLED_KEY),
-  showPlanned: readBoolPref(SHOW_PLANNED_KEY),
+  showPlanned: readOptInPref(SHOW_PLANNED_KEY),
 };
 
 const listeners = new Set<() => void>();
@@ -116,6 +115,6 @@ export function usePortalShowPlanned(): boolean {
   return useSyncExternalStore(
     subscribe,
     () => state.showPlanned,
-    () => true,
+    () => false,
   );
 }
