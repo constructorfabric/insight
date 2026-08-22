@@ -3,13 +3,18 @@
     materialized='incremental',
     unique_key='unique_key',
     order_by=['unique_key'],
+    on_schema_change='append_new_columns',
     settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['github', 'silver:class_git_commits']
 ) }}
 
 -- branch is '' by construction: the proxy walks a repository once rather than
--- once per branch, so a commit carries no branch name. Matches gitlab.
+-- once per branch, so a commit carries no branch name, only the membership
+-- flag below. Matches gitlab.
+-- INVARIANT: is_in_default_branch is reachability AT SYNC TIME. A commit first
+-- seen on a feature branch stays 0 unless a later sync re-reads it, so a merge
+-- outside the connector's lookback_window never corrects it.
 SELECT
     tenant_id,
     source_id,
@@ -18,6 +23,7 @@ SELECT
     replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\\.git$', '') AS repo_slug,
     COALESCE(sha, '') AS commit_hash,
     '' AS branch,
+    CAST(is_in_default_branch AS Nullable(UInt8)) AS is_default_branch,
     COALESCE(author_name, '') AS author_name,
     COALESCE(author_email, '') AS author_email,
     COALESCE(committer_name, '') AS committer_name,

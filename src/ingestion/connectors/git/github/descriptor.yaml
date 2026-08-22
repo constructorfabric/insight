@@ -1,5 +1,13 @@
 name: github
-version: "3.0.0"
+# Strict semver per ADR-0015. 4.0.0: dbt staging carries the proxy's
+#   is_in_default_branch into the class-contract column is_default_branch.
+#   MAJOR — on_schema_change=append_new_columns adds the column but leaves it
+#   NULL on rows already in staging, and staging is incremental on
+#   _airbyte_extracted_at, so Bronze is never re-read and the backfill would
+#   never happen. Only the one-shot scoped `dbt --full-refresh` a major bump
+#   dispatches re-materializes the history. Safe: every git staging model is a
+#   pure projection of Bronze, so the rebuild loses nothing.
+version: "4.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 
