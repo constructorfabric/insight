@@ -17,7 +17,10 @@ bytes rather than of whoever last ran the generator.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from . import manifest
 
 REGEN_COMMAND = "python3 -m insight_seed.render_profile"
 CHECK_COMMAND = "python3 -m insight_seed.render_profile --check"
@@ -49,7 +52,7 @@ def _cell(value: Any) -> str:
     return str(value)
 
 
-def render_profile(doc: dict[str, Any]) -> str:
+def render_profile(doc: manifest.Manifest) -> str:
     """Render the page. Pure function of `doc`; no clock, no env, no I/O."""
     lines: list[str] = [
         "<!-- GENERATED FILE — do not hand-edit.",
@@ -225,7 +228,7 @@ def render_profile(doc: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_profile(doc: dict[str, Any], path: Path | None = None) -> Path:
+def write_profile(doc: manifest.Manifest, path: Path | None = None) -> Path:
     target = path or profile_path()
     target.write_text(render_profile(doc), encoding="utf-8", newline="\n")
     return target

@@ -19,7 +19,6 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -284,7 +283,7 @@ def _env(headcount: str | None = None) -> dict[str, str]:
     return env
 
 
-def _emit(doc: dict[str, Any]) -> list[str]:
+def _emit(doc: manifest.Manifest) -> list[str]:
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         manifest.emit_manifest_sentinel(doc)
@@ -292,17 +291,17 @@ def _emit(doc: dict[str, Any]) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def default_manifest() -> dict[str, Any]:
+def default_manifest() -> manifest.Manifest:
     return manifest.build_manifest(_env())
 
 
 @pytest.fixture(scope="module")
-def grown_manifest() -> dict[str, Any]:
+def grown_manifest() -> manifest.Manifest:
     return manifest.build_manifest(_env(str(_GROWN)))
 
 
 def test_the_default_roster_still_emits_one_plain_line(
-    default_manifest: dict[str, Any],
+    default_manifest: manifest.Manifest,
 ) -> None:
     """The manifest is printed after every write, in a Job with backoffLimit 0.
 
@@ -319,7 +318,7 @@ def test_the_default_roster_still_emits_one_plain_line(
 
 
 def test_a_grown_roster_round_trips_through_the_chunked_form(
-    grown_manifest: dict[str, Any],
+    grown_manifest: manifest.Manifest,
 ) -> None:
     assert len(grown_manifest["personas"]) == _GROWN
 
@@ -333,7 +332,7 @@ def test_a_grown_roster_round_trips_through_the_chunked_form(
 
 
 def test_chunks_survive_reordering_and_surrounding_log_noise(
-    grown_manifest: dict[str, Any],
+    grown_manifest: manifest.Manifest,
 ) -> None:
     lines = [
         "2026-06-30 INFO seed.silver generating rows",
@@ -370,14 +369,14 @@ def test_input_without_a_sentinel_is_an_error() -> None:
         manifest.decode_manifest_sentinel(["nothing to see here"])
 
 
-def test_an_identical_line_read_twice_is_tolerated(grown_manifest: dict[str, Any]) -> None:
+def test_an_identical_line_read_twice_is_tolerated(grown_manifest: manifest.Manifest) -> None:
     """A re-read log repeats lines; the same bytes are the same chunk."""
     lines = _emit(grown_manifest)
 
     assert manifest.decode_manifest_sentinel(lines + lines) == grown_manifest
 
 
-def test_conflicting_totals_are_an_error_not_a_splice(grown_manifest: dict[str, Any]) -> None:
+def test_conflicting_totals_are_an_error_not_a_splice(grown_manifest: manifest.Manifest) -> None:
     """Two emissions in one log must fail, not decode whichever came last."""
     lines = _emit(grown_manifest)
     foreign = f"{manifest.GZ_SENTINEL_PREFIX}1/{len(lines) + 1} AAAA"
@@ -386,7 +385,7 @@ def test_conflicting_totals_are_an_error_not_a_splice(grown_manifest: dict[str, 
         manifest.decode_manifest_sentinel([foreign, *lines])
 
 
-def test_a_differing_duplicate_chunk_is_an_error(grown_manifest: dict[str, Any]) -> None:
+def test_a_differing_duplicate_chunk_is_an_error(grown_manifest: manifest.Manifest) -> None:
     lines = _emit(grown_manifest)
     forged = f"{manifest.GZ_SENTINEL_PREFIX}1/{len(lines)} AAAA"
 

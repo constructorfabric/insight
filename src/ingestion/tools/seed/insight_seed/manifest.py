@@ -27,10 +27,68 @@ import json
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from . import config, profiles
 from .golden_metrics import GOLDEN_METRICS, GOLDEN_METRICS_NOTE
+
+
+class PersonaEntry(TypedDict):
+    """One roster entry. `fixtures` names the same shape by the role it plays."""
+
+    email: str
+    display_name: str
+    team: str | None
+    role: str
+    uuid: str
+    org_unit: str
+    realm_roles: list[str]
+
+
+class RealmRef(TypedDict):
+    name: str
+    issuer: str
+
+
+class TenantRefs(TypedDict):
+    default: str
+    other: str
+
+
+class Capabilities(TypedDict):
+    ingestion: bool
+    service_principals: bool
+    idp: str
+
+
+class CatalogueRef(TypedDict):
+    definition_override: dict[str, Any] | None
+
+
+class Manifest(TypedDict):
+    """The seeded stand's description, as it travels on the wire.
+
+    INVARIANT: `tests/lib/insight_stand/manifest.py` parses this shape and is
+    version-gated on `manifest_version`; a field added or retyped here without
+    a version bump surfaces as a ManifestError in a stand run, not at build.
+    """
+
+    manifest_version: int
+    tenant: str
+    tenants: TenantRefs
+    realm: RealmRef
+    personas: list[PersonaEntry]
+    service_urls: dict[str, str]
+    fixtures: dict[str, PersonaEntry]
+    catalogue: CatalogueRef
+    golden_metrics: list[dict[str, Any]]
+    golden_metrics_note: str
+    capabilities: Capabilities
+    seed_revision: str
+    data_window: str
+    anchor_date: str
+    seeded: list[str]
+
 
 MANIFEST_VERSION = 1
 
@@ -153,7 +211,7 @@ def seed_revision() -> str:
     return digest.hexdigest()[:16]
 
 
-def _persona(person: profiles.Person) -> dict[str, Any]:
+def _persona(person: profiles.Person) -> PersonaEntry:
     """One roster entry. Fields are named explicitly, never spread from the
     Person object, so a future attribute cannot leak into the document."""
     # Mirrors `keycloak_realm._org_unit`: teamless people are the CEO
@@ -176,7 +234,7 @@ def _persona(person: profiles.Person) -> dict[str, Any]:
     }
 
 
-def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _fixtures(personas: list[PersonaEntry]) -> dict[str, PersonaEntry]:
     """Named catalog the test suite declares its data needs against.
 
     Names are stable contracts — renaming one breaks every test that declares
@@ -184,7 +242,7 @@ def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """
     by_uuid = {p["uuid"]: p for p in personas}
 
-    def ref(person: dict[str, Any]) -> dict[str, Any]:
+    def ref(person: PersonaEntry) -> PersonaEntry:
         return {
             "uuid": person["uuid"],
             "email": person["email"],
@@ -195,7 +253,7 @@ def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "realm_roles": person["realm_roles"],
         }
 
-    catalog: dict[str, dict[str, Any]] = {}
+    catalog: dict[str, PersonaEntry] = {}
     if profiles.DEV_LEAD_UUID in by_uuid:
         catalog["dev_lead"] = ref(by_uuid[profiles.DEV_LEAD_UUID])
     if profiles.CEO_UUID in by_uuid:
@@ -245,7 +303,7 @@ def canonical_catalogue() -> dict[str, Any]:
     return {"definition_override": None}
 
 
-def _catalogue(written: dict[str, Any] | None) -> dict[str, Any]:
+def _catalogue(written: dict[str, Any] | None) -> CatalogueRef:
     """Normalise the analytics seed's report into a stable manifest shape.
 
     Always the same keys, so a consumer branches on emptiness rather than on a
@@ -260,7 +318,7 @@ def build_manifest(
     env: Mapping[str, str],
     seeded: list[str] | None = None,
     catalogue: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> Manifest:
     """Build the manifest document. Pure: no I/O beyond reading own sources.
 
     `catalogue` carries what the analytics seed WROTE — the table names it
@@ -325,7 +383,7 @@ def build_manifest(
     }
 
 
-def assert_no_credentials(doc: dict[str, Any], env: Mapping[str, str] | None = None) -> None:
+def assert_no_credentials(doc: Mapping[str, Any], env: Mapping[str, str] | None = None) -> None:
     """Fail loudly if a secret ever reaches the document."""
     blob = json.dumps(doc, ensure_ascii=False)
     for literal in _forbidden_literals(os.environ if env is None else env):
@@ -349,7 +407,7 @@ def assert_no_credentials(doc: dict[str, Any], env: Mapping[str, str] | None = N
     walk(doc)
 
 
-def render_manifest(doc: dict[str, Any]) -> str:
+def render_manifest(doc: Manifest) -> str:
     """Serialise deterministically: sorted keys, fixed indent, LF, trailing newline."""
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
@@ -371,7 +429,7 @@ _SENTINEL_MAX_BYTES = 16 * 1024
 _GZ_CHUNK_BYTES = 12 * 1024
 
 
-def emit_manifest_sentinel(doc: dict[str, Any]) -> None:
+def emit_manifest_sentinel(doc: Manifest) -> None:
     """Print the manifest to stdout as sentinel lines a log reader can recover.
 
     One plain `SEED_MANIFEST_JSON:` line while the document fits the CRI
@@ -449,7 +507,7 @@ def decode_manifest_sentinel(lines: Iterable[str]) -> dict[str, Any]:
     return document
 
 
-def write_manifest(doc: dict[str, Any], path: Path | None = None) -> Path:
+def write_manifest(doc: Manifest, path: Path | None = None) -> Path:
     # The scrub gate runs before either transport touches `doc`: the sentinel
     # line and the file are two renderings of the one object it already cleared.
     assert_no_credentials(doc)
