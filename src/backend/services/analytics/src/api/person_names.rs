@@ -56,6 +56,10 @@ pub(crate) async fn lookup(
     }
 }
 
+/// INVARIANT: every selected name coalesces to `''`. A `nullIf` left uncovered
+/// makes the column `Nullable(String)`, which the row type refuses to decode —
+/// and the refusal surfaces only against a real server.
+///
 /// INVARIANT: `person` narrows the rows the aggregate runs over, so it belongs
 /// before the `GROUP BY` — after it, the argMax state is built for the whole
 /// tenant and then discarded. The identity log carries no index on the tenant,
@@ -69,9 +73,10 @@ fn aggregate(person: &str) -> String {
              coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'first_name'), ''), \
              ' ', \
              coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'last_name'), '') \
-           )), '') \
+           )), ''), \
+           '' \
          ) AS display_name, \
-         nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'username'), '') AS username \
+         coalesce(nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'username'), ''), '') AS username \
          FROM identity.identity_persons \
          WHERE value_type IN ('display_name', 'first_name', 'last_name', 'username') \
          AND insight_tenant_id = toUUID(?){person} \
@@ -91,6 +96,20 @@ mod tests {
     #[test]
     fn the_lookup_binds_the_tenant_and_the_person_set() {
         assert_eq!(aggregate(" AND person_id IN ?").matches('?').count(), 2);
+    }
+
+    /// A `nullIf` the outer `coalesce` does not cover leaves the column
+    /// `Nullable(String)`, and the row type decodes it as `String` — a mismatch
+    /// no offline test sees, because it is raised by the server.
+    #[test]
+    fn every_name_the_aggregate_selects_is_never_null() {
+        let sql: String = named_persons()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+
+        assert!(sql.contains(",'')ASdisplay_name"), "{sql}");
+        assert!(sql.contains(",'')ASusername"), "{sql}");
     }
 
     #[test]
