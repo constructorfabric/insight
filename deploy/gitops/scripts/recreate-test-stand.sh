@@ -329,6 +329,8 @@ fi
 
 if [ "$KEEP_DATABASES" != "1" ]; then
   hdr "database wipe"
+  # Unowned by helm, so `uninstall` leaves it describing rows this wipe drops.
+  "${KUBECTL[@]}" -n "$NAMESPACE" delete configmap seed-stand-manifest --ignore-not-found >/dev/null
   WIPE_JOB="recreate-wipe-$(date -u +%Y%m%d%H%M%S)"
   wipe_manifest() {
     cat <<YAML

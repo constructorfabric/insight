@@ -148,33 +148,46 @@ jobs:
           echo "KUBECONFIG=$target" >> "$GITHUB_ENV"
 
       # The stand is already seeded; what this needs is the manifest describing
-      # WHAT it was seeded with, and on a cluster stand that document exists
-      # only in the seed Job's log. Jobs are reaped an hour after they finish,
-      # so a stand seeded longer ago than that is still perfectly good and its
-      # manifest is simply gone — hence `reseed` rather than a silent re-seed,
-      # which would replace the data someone may be looking at.
+      # WHAT it was seeded with. A completed seed publishes that to a ConfigMap
+      # which outlives the Job, so a stand seeded days ago still carries one.
+      # The Job log is the fallback for a stand last seeded before that existed
+      # — and Jobs are reaped an hour after they finish, which is why a miss is
+      # `reseed` rather than a silent re-seed of data someone may be using.
       - name: Recover the seed manifest
         id: manifest
         if: ${{ !inputs.reseed }}
         run: |
           set -euo pipefail
-          job="$(
-            kubectl -n "$STAND_NAMESPACE" get jobs \
-              --sort-by=.metadata.creationTimestamp -o name 2>/dev/null \
-              | grep 'insight-seed-all-' | tail -1 || true
-          )"
-          if [ -z "$job" ]; then
-            echo "::error::no surviving seed Job in namespace $STAND_NAMESPACE to read a manifest from."
-            echo "The stand is probably seeded — Jobs are reaped an hour after they finish, the data is not."
-            echo "Re-run this workflow with reseed=true to seed it again and get a fresh manifest."
-            exit 1
+          # --ignore-not-found prints nothing and exits 0 when the object is
+          # absent, but still fails on a forbidden or unreachable read — so a
+          # missing manifest never reads as a permissions problem.
+          kubectl -n "$STAND_NAMESPACE" get configmap seed-stand-manifest \
+            --ignore-not-found -o 'go-template={{index .data "manifest"}}' \
+            > "$RUNNER_TEMP/stand-manifest.json"
+
+          if jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
+            echo "read the manifest from configmap/seed-stand-manifest"
+          else
+            echo "no seed-stand-manifest ConfigMap — falling back to the seed Job's log"
+            job="$(
+              kubectl -n "$STAND_NAMESPACE" get jobs \
+                --sort-by=.metadata.creationTimestamp -o name 2>/dev/null \
+                | grep 'insight-seed-all-' | tail -1 || true
+            )"
+            if [ -z "$job" ]; then
+              echo "::error::no seed-stand-manifest ConfigMap, and no surviving seed Job in $STAND_NAMESPACE."
+              echo "The stand is probably seeded — Jobs are reaped an hour after they finish, the data is not."
+              echo "Re-run this workflow with reseed=true to seed it again and get a fresh manifest."
+              exit 1
+            fi
+            echo "reading the manifest from $job"
+            kubectl -n "$STAND_NAMESPACE" logs "$job" --tail=-1 2>/dev/null \
+              | ./src/ingestion/tools/seed/manifest-from-log.sh | cut -d' ' -f2- \
+              > "$RUNNER_TEMP/stand-manifest.json" || true
           fi
-          echo "reading the manifest from $job"
-          kubectl -n "$STAND_NAMESPACE" logs "$job" --tail=-1 2>/dev/null \
-            | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- \
-            > "$RUNNER_TEMP/stand-manifest.json" || true
+
           if ! jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
-            echo "::error::$job carries no manifest sentinel — it did not reach the end of its run."
+            echo "::error::no usable manifest for $STAND_NAMESPACE — neither the ConfigMap nor a seed Job carries one."
             echo "Re-run with reseed=true."
             exit 1
           fi
@@ -192,9 +205,8 @@ jobs:
           seed_rc=0
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" --context "$kube_context" --days 730 \
+            --manifest-out "$RUNNER_TEMP/stand-manifest.json" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
-          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
-            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || true
           if [ "$seed_rc" -eq 0 ] && jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
             echo "personas=$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json") window=$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"
             exit 0

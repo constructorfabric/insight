@@ -1,10 +1,12 @@
 //! HTTP API layer — routes and handlers.
 
 pub(crate) mod error;
+mod feedback;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
 mod metrics;
+mod person_names;
 mod saved_queries;
 pub(crate) mod usage;
 
@@ -70,6 +72,27 @@ pub(crate) async fn is_admin_caller(
             tracing::error!(error = %error, "admin role check failed");
             CanonicalError::internal("failed to verify caller permissions").create()
         })
+}
+
+/// What a refused admin surface says. The builder is generic over its own
+/// resource, so each caller constructs the refusal in its namespace and this
+/// gate decides only whether to raise it.
+pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
+
+pub(crate) async fn require_admin(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    denied: fn() -> CanonicalError,
+) -> Result<(), CanonicalError> {
+    if is_admin_caller(state, headers).await? {
+        return Ok(());
+    }
+    Err(denied())
+}
+
+/// Clips to a CHARACTER budget: a byte slice would split a multi-byte value.
+pub(crate) fn clip(value: &str, max: usize) -> String {
+    value.chars().take(max).collect()
 }
 
 /// Register all analytics routes onto the host's stateless router.
@@ -176,6 +199,43 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(usage::get_usage_summary)
+        .register(router, openapi);
+
+    // Sending is open to any signed-in caller; the listing is admin-gated
+    // inside the handler, not here.
+    router = OperationBuilder::post("/v1/feedback")
+        .operation_id("analytics_api.feedback.submit")
+        .summary("Send product feedback")
+        .authenticated()
+        .no_license_required()
+        .json_request::<feedback::FeedbackRequest>(openapi, "A feedback submission")
+        .no_content_response(StatusCode::NO_CONTENT, "Recorded")
+        // Only what a submission can actually answer: it addresses no resource,
+        // so the standard bundle's 404/409/429 would promise cases with no path.
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(feedback::submit_feedback)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/feedback")
+        .operation_id("analytics_api.feedback.list")
+        .summary("Feedback sent in a date range")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("since", false, "Inclusive first day, YYYY-MM-DD", "string")
+        .query_param_typed("until", false, "Inclusive last day, YYYY-MM-DD", "string")
+        .json_response_with_schema::<feedback::FeedbackListResponse>(
+            openapi,
+            StatusCode::OK,
+            "Feedback entries, newest first",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .handler(feedback::list_feedback)
         .register(router, openapi);
 
     router = OperationBuilder::post("/v1/metric-results")

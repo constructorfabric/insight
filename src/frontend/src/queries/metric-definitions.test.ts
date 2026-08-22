@@ -28,6 +28,7 @@ function wrapper() {
 function metric(metric_key: string): MetricDefinition {
   return {
     metric_key,
+    entity_type: "person",
     label: metric_key,
     short_label: null,
     description: null,

@@ -136,7 +136,10 @@ const AI_ADOPTION_COLLECTION: MetricCollectionConfig = {
     { key: "ai.active_days", views: [{ view: "period" }, { view: "peer" }] },
     { key: "ai.cost", views: [{ view: "period" }, { view: "peer" }] },
     {
-      key: "ai.extra_usage_cost",
+      // The daily distribution, not the month's running total: this section
+      // reads a metric one day at a time, and a cumulative figure repeated on
+      // every day of the month is not a day's reading.
+      key: "ai.daily_approximate_extra_usage_cost",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -472,7 +475,7 @@ export const GROUPS: readonly MetricGroup[] = [
       preview: [
         "ai.active_days",
         "ai.cost",
-        "ai.extra_usage_cost",
+        "ai.daily_approximate_extra_usage_cost",
         "ai.accepted_lines",
       ],
     },

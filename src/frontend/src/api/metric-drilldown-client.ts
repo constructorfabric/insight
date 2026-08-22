@@ -11,7 +11,7 @@ const BASE =
 
 export interface MetricEvidenceSelection {
   metric_key: string;
-  entity: { type: "person"; id: string };
+  entity: { type: "person"; id: string } | { type: "tenant" };
   period: { from: string; to: string };
   filters: MetricDimensionFilter[];
   display_dimensions: string[];
@@ -107,15 +107,23 @@ export async function downloadMetricDrilldown(
 
 export function evidenceSelection(
   canonical: MetricCanonicalSelection | undefined,
-  entityId: string,
+  entityId?: string,
   period?: { from: string; to: string },
   filters?: MetricDimensionFilter[],
   displayDimensions: string[] = []
 ): MetricEvidenceSelection | null {
   if (!canonical) return null;
+  const entity =
+    canonical.entity.type === "tenant"
+      ? ({ type: "tenant" } as const)
+      : entityId
+        ? ({ type: "person", id: entityId } as const)
+        : null;
+  if (!entity) return null;
+
   return {
     metric_key: canonical.metric_key,
-    entity: { type: "person", id: entityId },
+    entity,
     period: period ?? canonical.period,
     filters: filters ?? canonical.filters,
     display_dimensions: [...new Set(displayDimensions)].sort(),

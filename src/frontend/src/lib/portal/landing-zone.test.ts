@@ -10,10 +10,18 @@ import { landingDecision, type LandingDecision } from "./landing-zone";
 const resolved = { mgrPending: false, adminPending: false };
 
 describe("landingDecision", () => {
-  it.each<[string, Parameters<typeof landingDecision>[0], LandingDecision["kind"]]>([
+  it.each<
+    [string, Parameters<typeof landingDecision>[0], LandingDecision["kind"]]
+  >([
     [
       "waits while manager status resolves",
-      { zone: "manage", mgrPending: true, canSeeOthers: false, adminPending: false, isAdmin: false },
+      {
+        zone: "manage",
+        mgrPending: true,
+        canSeeOthers: false,
+        adminPending: false,
+        isAdmin: false,
+      },
       "wait",
     ],
     [
@@ -24,6 +32,17 @@ describe("landingDecision", () => {
     [
       "manager keeps whatever zone they picked",
       { zone: "directions", ...resolved, canSeeOthers: true, isAdmin: false },
+      "keep",
+    ],
+    [
+      "manager stays route-driven when Overview is absent from navigation",
+      {
+        zone: null,
+        ...resolved,
+        canSeeOthers: true,
+        isAdmin: false,
+        overviewVisible: false,
+      },
       "keep",
     ],
     [
@@ -38,7 +57,13 @@ describe("landingDecision", () => {
     ],
     [
       "a non-manager on manage WAITS for the admin answer instead of resetting",
-      { zone: "manage", mgrPending: false, canSeeOthers: false, adminPending: true, isAdmin: false },
+      {
+        zone: "manage",
+        mgrPending: false,
+        canSeeOthers: false,
+        adminPending: true,
+        isAdmin: false,
+      },
       "wait",
     ],
     [

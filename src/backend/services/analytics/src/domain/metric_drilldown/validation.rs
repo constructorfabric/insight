@@ -7,7 +7,7 @@ use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{
     EvidenceGranularity, MetricDefinition, load_definitions_with_ids,
 };
-use crate::domain::metric_results::{normalize_entity_type, normalize_key, normalize_metric_key};
+use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
 use super::capability::EvidenceInputRow;
 use super::capability::healthy_evidence;
@@ -96,20 +96,16 @@ pub async fn validate_export_request(
 pub(crate) fn parse_person_entity(
     entity: &MetricDrilldownEntity,
 ) -> Result<(String, Uuid), CanonicalError> {
-    let entity_type = normalize_entity_type(&entity.r#type)?;
-    if entity_type != "person" {
-        return Err(invalid_error(
-            "entity.type",
-            "only person entities are supported",
-        ));
-    }
+    let Some(id) = entity.person_id() else {
+        return Err(invalid_error("entity.type", "entity must select a person"));
+    };
 
-    let person_id = Uuid::parse_str(entity.id.trim())
+    let person_id = Uuid::parse_str(id.trim())
         .ok()
         .filter(|id| !id.is_nil())
         .ok_or_else(|| invalid_error("entity.id", "entity.id must be a person UUID"))?;
 
-    Ok((entity_type, person_id))
+    Ok(("person".to_owned(), person_id))
 }
 
 async fn validate_common(
@@ -129,8 +125,19 @@ async fn validate_common(
         cursor,
     } = request;
     let metric_key = normalize_metric_key("metric_key", &metric_key)?;
-    let (entity_type, person_id) = parse_person_entity(&entity)?;
-    let entity_id = person_id.to_string();
+    let entity = match entity {
+        MetricDrilldownEntity::Person { id } => {
+            let (_, person_id) = parse_person_entity(&MetricDrilldownEntity::Person { id })?;
+            MetricDrilldownEntity::Person {
+                id: person_id.to_string(),
+            }
+        }
+        MetricDrilldownEntity::Tenant {} => MetricDrilldownEntity::Tenant {},
+        MetricDrilldownEntity::Unknown => {
+            return invalid("entity.type", "unsupported entity type");
+        }
+    };
+    let entity_type = entity.entity_type();
     if limit == 0 || limit > max_limit {
         return invalid("limit", format!("limit must be between 1 and {max_limit}"));
     }
@@ -161,10 +168,7 @@ async fn validate_common(
     let snapshot_id = evidence_snapshot_id(ch, &plan.relation).await?;
     let selection = MetricDrilldownSelection {
         metric_key,
-        entity: MetricDrilldownEntity {
-            r#type: entity_type,
-            id: entity_id,
-        },
+        entity,
         period: MetricDrilldownPeriod {
             from: from.to_string(),
             to: to.to_string(),

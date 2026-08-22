@@ -1,6 +1,6 @@
 """Generate the `insight` Keycloak realm from the seeded 25-person org.
 
-Built from the SAME roster the database seed writes (`profiles.build_roster`),
+Built from the SAME roster the database seed writes (`profiles.build_seeded_roster`),
 so every user in the realm matches a row in `identity.persons`, and emits an
 importable Keycloak realm JSON: 26 users (the 25-person org plus the admin
 operator), the `insight` + `insight-authenticator` clients, their 5 shared
@@ -30,14 +30,17 @@ from .profiles import (
     TENANT_OTHER,
     Person,
     build_other_tenant_roster,
-    build_roster,
+    build_seeded_roster,
     get_dev_user_email,
 )
 
 REALM_NAME = "insight"
 # Every seeded user's login credential. An internet-reachable stand MUST set
 # INSIGHT_SEED_PERSONA_PASSWORD here, and TEST_STAND_PERSONA_PASSWORD in CI.
-_ENV_PASSWORD = os.environ.get("INSIGHT_SEED_PERSONA_PASSWORD")
+_RAW_ENV_PASSWORD = os.environ.get(config.PERSONA_PASSWORD_ENV)
+# SAFETY: absent means "local stand, use the default"; set-but-unusable means the operator
+# meant to supply one and did not — that must refuse, not fall back to a committed literal.
+_ENV_PASSWORD = None if _RAW_ENV_PASSWORD is None else _RAW_ENV_PASSWORD.strip()
 if _ENV_PASSWORD is not None and len(_ENV_PASSWORD) < 16:
     # A short/common value would also poison the manifest's substring scrub
     # (_FORBIDDEN_LITERALS) and fail every seed at its final write.
@@ -237,8 +240,9 @@ def build_realm(
     tenant_id: str,
     authenticator_redirects: list[str],
     authenticator_secret: str,
+    headcount: int,
 ) -> dict[str, Any]:
-    roster = build_roster(dev_user_email)
+    roster = build_seeded_roster(dev_user_email, headcount)
     # The second tenant's single person, in the SAME realm. One realm because
     # the authenticator is configured with one issuer and one client — a second
     # realm would need a second authenticator. Tenancy is a claim, not an
@@ -299,13 +303,15 @@ def main() -> None:
     # parser. A default here could mint realm users whose tenant claim matches
     # nothing the seed then writes: they would authenticate and resolve to
     # nobody, which is the failure this whole roster-sharing exists to avoid.
+    # INVARIANT: the realm must describe the same roster the seed writes.
     try:
         tenant_id = config.parse_tenant_id(os.environ)
+        headcount = config.parse_org_headcount(os.environ)
     except config.EnvContractError as exc:
         raise SystemExit(f"ERROR: cannot generate the realm.\n{exc}") from exc
 
     redirects = args.authenticator_redirects or DEFAULT_AUTHENTICATOR_REDIRECTS
-    realm = build_realm(dev_user_email, tenant_id, redirects, args.authenticator_secret)
+    realm = build_realm(dev_user_email, tenant_id, redirects, args.authenticator_secret, headcount)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,7 @@ import {
   githubRepoUrl,
   isGitMetric,
   withSourceDimension,
+  withTypeDimension,
 } from "@/lib/metrics/provider-links";
 
 const SHA1 = "e0f4823a55ac28276cf068f066ebf66f872a059c";
@@ -128,20 +129,20 @@ describe("isGitMetric", () => {
   );
 });
 
-describe("withSourceDimension", () => {
-  function selection(
-    metricKey: string,
-    displayDimensions: string[] = []
-  ): MetricEvidenceSelection {
-    return {
-      metric_key: metricKey,
-      entity: { type: "person", id: "person-1" },
-      period: { from: "2026-01-01", to: "2026-01-31" },
-      filters: [],
-      display_dimensions: displayDimensions,
-    };
-  }
+function selection(
+  metricKey: string,
+  displayDimensions: string[] = []
+): MetricEvidenceSelection {
+  return {
+    metric_key: metricKey,
+    entity: { type: "person", id: "person-1" },
+    period: { from: "2026-01-01", to: "2026-01-31" },
+    filters: [],
+    display_dimensions: displayDimensions,
+  };
+}
 
+describe("withSourceDimension", () => {
   it("asks for the source a git metric declares", () => {
     const result = withSourceDimension(
       selection("git.commits"),
@@ -195,6 +196,51 @@ describe("withSourceDimension", () => {
     expect(withSourceDimension(original, new Set(["source"]))).toBe(
       original
     );
+  });
+});
+
+describe("withTypeDimension", () => {
+  it("asks for the type a task metric declares", () => {
+    const result = withTypeDimension(
+      selection("tasks.closed"),
+      new Set(["source", "type"])
+    );
+
+    expect(result.display_dimensions).toEqual(["type"]);
+  });
+
+  it("keeps the requested dimensions sorted, so one selection is one query key", () => {
+    const result = withTypeDimension(
+      selection("tasks.closed", ["source"]),
+      new Set(["source", "type"])
+    );
+
+    expect(result.display_dimensions).toEqual(["source", "type"]);
+  });
+
+  it("leaves a task metric that declares no type untouched", () => {
+    const original = selection("tasks.flow_efficiency");
+
+    expect(withTypeDimension(original, new Set(["source"]))).toBe(original);
+  });
+
+  it("leaves everything untouched while the catalogue is unknown", () => {
+    const original = selection("tasks.closed");
+
+    expect(withTypeDimension(original, null)).toBe(original);
+    expect(withTypeDimension(original, undefined)).toBe(original);
+  });
+
+  it("leaves a metric of a family that has no issue types untouched", () => {
+    const original = selection("git.commits");
+
+    expect(withTypeDimension(original, new Set(["type"]))).toBe(original);
+  });
+
+  it("does not ask twice for a type the caller already grouped by", () => {
+    const original = selection("tasks.closed", ["type"]);
+
+    expect(withTypeDimension(original, new Set(["type"]))).toBe(original);
   });
 });
 

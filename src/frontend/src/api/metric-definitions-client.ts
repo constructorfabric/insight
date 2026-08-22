@@ -13,6 +13,7 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 import type {
   MetricDrilldownCapability,
   MetricDirection,
+  MetricEntityType,
   MetricFormat,
 } from "@/api/metric-results-client";
 
@@ -25,6 +26,7 @@ export type MetricDefinitionOrigin = "builtin" | "custom";
 
 export interface MetricDefinition {
   metric_key: string;
+  entity_type: MetricEntityType;
   label: string;
   short_label: string | null;
   description: string | null;

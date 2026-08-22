@@ -156,7 +156,8 @@ describe("ContextPane", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "People (roster)"],
-    ["reports", "Report builder"],
+    ["scorecard", "Fixed scorecard"],
+    ["reports", "Delivery trend"],
     ["manage", "Metric catalog"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     mocks.zone = { activeZone: zone, activePerson: "boss@x" };
@@ -176,12 +177,6 @@ describe("ContextPane", () => {
     act(() => portalRouter.set({ item: "trend" }));
     pane();
     expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
-  });
-
-  it("highlights nothing in a zone with nothing built to open on", () => {
-    mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
-    pane();
-    expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
   });
 
   it("keeps admin-only Manage items away from a non-admin", () => {

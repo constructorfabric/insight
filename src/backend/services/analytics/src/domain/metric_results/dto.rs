@@ -12,11 +12,23 @@ pub struct MetricResultsRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct MetricResultsEntity {
-    pub r#type: String,
-    /// Canonical person UUIDs (since the identity cutover; the
-    /// pre-cutover email shape is rejected with a 400).
-    pub ids: Vec<String>,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MetricResultsEntity {
+    Person {
+        ids: Vec<String>,
+    },
+    Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
+
+impl MetricResultsEntity {
+    pub(crate) fn is_tenant(&self) -> bool {
+        match self {
+            Self::Tenant {} => true,
+            Self::Person { .. } | Self::Unknown => false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -112,11 +124,10 @@ pub struct MetricResultSelectionDto {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MetricResultsEntityDto {
-    pub r#type: String,
-    /// Canonical person UUIDs (since the identity cutover; the
-    /// pre-cutover email shape is rejected with a 400).
-    pub ids: Vec<String>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MetricResultsEntityDto {
+    Person { ids: Vec<String> },
+    Tenant {},
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -233,3 +244,43 @@ pub struct BreakdownValueDto {
 
 impl toolkit::api::api_dto::RequestApiDto for MetricResultsRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for MetricResultsResponse {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::MetricResultsRequest;
+
+    #[test]
+    fn tenant_entity_needs_no_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "tenant" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_ok());
+    }
+
+    #[test]
+    fn tenant_entity_rejects_client_supplied_identifiers() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "tenant", "ids": ["default"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "team", "ids": ["team"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_ok());
+    }
+}

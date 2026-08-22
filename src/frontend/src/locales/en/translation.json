@@ -579,5 +579,14 @@
       "loading_more": "Loading…",
       "excluded": "excluded — bot / CI"
     }
+  },
+  "feedback": {
+    "nav_label": "Send feedback",
+    "title": "Submit feedback / bug report",
+    "message": "Your feedback",
+    "placeholder": "Describe the issue",
+    "send": "Send",
+    "sent": "Thanks — your feedback was sent.",
+    "failed": "Could not send your feedback. Try again."
   }
 }

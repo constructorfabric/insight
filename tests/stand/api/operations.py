@@ -93,7 +93,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 20 operations.
+#: analytics — 22 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -125,6 +125,10 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("POST", "/v1/usage/events"),
     _a("GET", "/v1/usage/config"),
     _a("GET", "/v1/usage/summary"),
+    # Product feedback. The listing's admin gate is inside the handler, so it is
+    # invisible here and asserted in test_feedback.py.
+    _a("POST", "/v1/feedback"),
+    _a("GET", "/v1/feedback"),
 )
 
 #: identity-resolution — 26 operations. `/health` and `/healthz` are the host

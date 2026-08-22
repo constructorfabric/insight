@@ -22,9 +22,31 @@ pub const EVIDENCE_QUERY_READ_BYTES: usize = 512 * 1024 * 1024;
 pub const EVIDENCE_QUERY_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
-pub struct MetricDrilldownEntity {
-    pub r#type: String,
-    pub id: String,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MetricDrilldownEntity {
+    Person {
+        id: String,
+    },
+    Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
+
+impl MetricDrilldownEntity {
+    pub(crate) fn entity_type(&self) -> &'static str {
+        match self {
+            Self::Person { .. } => "person",
+            Self::Tenant {} => "tenant",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub(crate) fn person_id(&self) -> Option<&str> {
+        match self {
+            Self::Person { id } => Some(id),
+            Self::Tenant {} | Self::Unknown => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
@@ -116,6 +138,49 @@ pub struct MetricDrilldownResponse {
 impl toolkit::api::api_dto::RequestApiDto for MetricDrilldownRequest {}
 impl toolkit::api::api_dto::RequestApiDto for MetricDrilldownExportRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for MetricDrilldownResponse {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::MetricDrilldownRequest;
+
+    #[test]
+    fn tenant_entity_needs_no_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "tenant" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_ok());
+    }
+
+    #[test]
+    fn tenant_entity_rejects_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "tenant", "id": "default" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "team", "id": "team" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_ok());
+    }
+}
 
 #[derive(Debug)]
 pub struct ValidatedMetricDrilldown {

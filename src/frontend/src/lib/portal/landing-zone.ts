@@ -24,11 +24,22 @@ export function landingDecision(args: {
   canSeeOthers: boolean;
   adminPending: boolean;
   isAdmin: boolean;
+  overviewVisible?: boolean;
 }): LandingDecision {
-  const { zone, mgrPending, canSeeOthers, adminPending, isAdmin } = args;
+  const {
+    zone,
+    mgrPending,
+    canSeeOthers,
+    adminPending,
+    isAdmin,
+    overviewVisible = true,
+  } = args;
 
   if (mgrPending) return { kind: "wait" };
-  if (canSeeOthers) return zone == null ? { kind: "pin-overview" } : { kind: "keep" };
+  if (canSeeOthers) {
+    if (zone != null) return { kind: "keep" };
+    return overviewVisible ? { kind: "pin-overview" } : { kind: "keep" };
+  }
 
   // A viewer with nobody to look at collapses to Person — except Manage, which is
   // gated by the admin role, not by having reports. Hold the decision until

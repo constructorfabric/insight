@@ -86,8 +86,7 @@ pub(super) const TEST_TENANT: Uuid = Uuid::from_u128(0x019e_2830_0000_7000_8000_
 pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
     let selection = MetricDrilldownSelection {
         metric_key: plan.definition.key().to_owned(),
-        entity: MetricDrilldownEntity {
-            r#type: "person".to_owned(),
+        entity: MetricDrilldownEntity::Person {
             id: TEST_PERSON.to_string(),
         },
         period: MetricDrilldownPeriod {

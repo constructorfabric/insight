@@ -20,7 +20,7 @@ from .pages.platform_usage_page import PAGES_TABLE, PEOPLE_TABLE, PlatformUsageP
 
 PERSON, VISITS, PAGES = 0, 1, 2
 
-#: `readBoolPref` treats anything but `"false"` as true, so unbuilt zones render.
+#: The sweep must not walk unbuilt zones, whatever the app default is.
 SHOW_PLANNED_OFF = "window.localStorage.setItem('insight.portal.showPlanned', 'false')"
 
 
