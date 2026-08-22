@@ -1,0 +1,190 @@
+spec_version: 1
+description: >
+  Metric: ai.daily_approximate_extra_usage_cost — the billed seat spend placed on
+  the days it was spent.
+  How it's computed (bronze → silver → gold):
+    • bronze: one per-seat spend snapshot per day the vendor was read; used_credits
+              is the month-to-date total ALREADY in cents, not that day's spend
+    • silver: class_ai_overage_daily keeps one reading per seat per day
+    • gold:   a day's figure is the step between consecutive readings inside one
+              billing month, after the running total is corrected to its suffix
+              minimum
+
+  Why a step and not the reported number: the vendor states only a running total
+  for the month in progress and keeps no history, so a day's spend exists nowhere
+  and can only be recovered as a difference.
+
+  The correction rule is what erin is here for. A running total may not fall; when
+  it does the vendor has revised the month down, and the revision belongs to the
+  days already reported rather than to the day it arrived. Taking the minimum of a
+  reading and every later one rewrites those days, which is why erin's Dec 05 reads
+  4.00 and not 5.00, and why her Dec 06 is 0.00 and never −1.00.
+
+  Department: 5 Engineering members, read on Dec 05 and Dec 06 (alice again on
+  Dec 07), inside the custom window (Nov 01 .. Dec 12). Cents as the vendor
+  reports them, dollars as the metric serves them:
+
+    person   Dec 05   Dec 06   Dec 07   corrected steps      window sum
+    alice       100      300      300    100 / 200 / 0        300¢ = $3
+    bob         200      500        —    200 / 300            500¢ = $5
+    carol       300      700        —    300 / 400            700¢ = $7
+    dave        400      900        —    400 / 500            900¢ = $9
+    erin        500      400        —    400 / 0              400¢ = $4
+
+  Five contributors, because the peer view suppresses its quartiles below five.
+
+  Every window sum equals that seat's last reading, and so equals what
+  ai.extra_usage_cost reports for the same window — not by arrangement but by
+  construction, since the steps of a corrected running total telescope to its final
+  value. The third case asserts it for all five, erin included: a correction that
+  broke the identity would show up there first.
+
+  Cases: the four served views · a correction · the sum identity · empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  # One row per seat per day, each with its own unique_key — the grain the
+  # connector writes since claude-team 3.2.0. Keyed by seat and month these
+  # would be one row and every step below would be unmeasurable.
+  bronze_claude_team.claude_team_overage_spend:
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-alice-2026-12-05, snapshot_date: "2026-12-05", used_credits: 100, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-alice-2026-12-06, snapshot_date: "2026-12-06", used_credits: 300, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-07T00:00:00Z", unique_key: seat-alice-2026-12-07, snapshot_date: "2026-12-07", used_credits: 300, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-bob-2026-12-05,   snapshot_date: "2026-12-05", used_credits: 200, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-bob-2026-12-06,   snapshot_date: "2026-12-06", used_credits: 500, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-carol-2026-12-05, snapshot_date: "2026-12-05", used_credits: 300, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-carol-2026-12-06, snapshot_date: "2026-12-06", used_credits: 700, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-dave-2026-12-05,  snapshot_date: "2026-12-05", used_credits: 400, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-dave-2026-12-06,  snapshot_date: "2026-12-06", used_credits: 900, monthly_credit_limit: 1000 }
+    # The correction: Dec 06 reports LESS than Dec 05.
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-erin-2026-12-05,  snapshot_date: "2026-12-05", used_credits: 500, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-erin-2026-12-06,  snapshot_date: "2026-12-06", used_credits: 400, monthly_credit_limit: 1000 }
+
+cases:
+  # ── The four views the metric serves ─────────────────────────────────────────
+  # alice: steps 100 / 200 / 0 cents → $1 / $2 / $0, window sum $3. The peer pool
+  # is the five per-person sums {3, 4, 5, 7, 9}.
+  - name: AI daily extra usage across the served views
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: timeseries }
+              - { view: breakdown, dimensions: [tool] }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 3.0 }
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: peer
+        find: { entity_id: alice@example.com }
+        equal: { target_value: 3.0, p25: 4.0, median: 5.0, p75: 7.0, min: 3.0, max: 9.0, n: 5 }
+      # Three readings, three points — the money lands where it was spent instead
+      # of arriving whole on the day the seat was last read.
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-05' && double(p.value) == 1.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-06' && double(p.value) == 2.0))"
+      # A read day on which nothing was spent is a zero we measured, not a gap.
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-07' && double(p.value) == 0.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'tool' && d.value == 'claude') && double(v.value) == 3.0)"
+
+  # ── A correction rewrites the days it belongs to ─────────────────────────────
+  # erin is read 500 then 400. The 400 is the month's truth, so Dec 05 is rewritten
+  # from 5.00 to 4.00 and Dec 06 is 0.00. A naive difference would emit −1.00.
+  - name: AI daily extra usage never reports a negative day
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+              - { view: timeseries }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 4.0 }
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-05' && double(p.value) == 4.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-06' && double(p.value) == 0.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.all(s, s.points.all(p, double(p.value) >= 0.0))"
+
+  # ── The identity the split rests on ──────────────────────────────────────────
+  # Served side by side, the two must agree over a whole month for every seat —
+  # including erin, whose month was corrected downwards. They are alternatives,
+  # never addends.
+  - name: AI daily extra usage sums to the monthly figure
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity:
+          type: person
+          ids: [alice@example.com, bob@example.com, carol@example.com, dave@example.com, erin@example.com]
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && double(v.value) == 3.0) && items.exists(v, v.entity_id == 'bob@example.com' && double(v.value) == 5.0) && items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) == 7.0) && items.exists(v, v.entity_id == 'dave@example.com' && double(v.value) == 9.0) && items.exists(v, v.entity_id == 'erin@example.com' && double(v.value) == 4.0)"
+      - metric: ai.extra_usage_cost
+        view: period
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && double(v.value) == 3.0) && items.exists(v, v.entity_id == 'bob@example.com' && double(v.value) == 5.0) && items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) == 7.0) && items.exists(v, v.entity_id == 'dave@example.com' && double(v.value) == 9.0) && items.exists(v, v.entity_id == 'erin@example.com' && double(v.value) == 4.0)"
+
+  # ── EMPTY window (no reading taken in range) ─────────────────────────────────
+  - name: AI daily extra usage empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-06-01", to: "2026-06-30" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: null }

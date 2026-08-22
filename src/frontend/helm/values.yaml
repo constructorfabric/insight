@@ -31,6 +31,23 @@ sentry:
   # DSN the SPA reads from /config.js at load. Empty disables reporting.
   dsn: ""
 
+nav:
+  # Navigation entries hidden on this install, read by the SPA from
+  # /config.js. Typed paths, one per entry:
+  #   - "zone:scorecard"                          (a rail zone)
+  #   - "zone:aicost/item:idle-seats"             (a pane item)
+  #   - "zone:directions/dir:sales"               (a whole direction)
+  #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
+  #   - "zone:person/section:git_output"          (a Person-zone section)
+  # Unknown paths are ignored (the browser console warns). Presentation
+  # only — the API authorizes independently of what the menu shows.
+  hide: []
+  # Navigation entries this install marks as still in development — same
+  # path forms as `hide`. They behave like readiness-marked entries in the
+  # code: demoted to the "Planned" menu group and toggled by the viewer's
+  # "Show planned sections" switch. A path in both lists is hidden.
+  planned: []
+
 resources:
   requests:
     cpu: 50m

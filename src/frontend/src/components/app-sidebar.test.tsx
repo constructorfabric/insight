@@ -45,6 +45,7 @@ vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: viewerData }),
 }));
 
+
 vi.mock("@/components/sidebar-settings", () => ({
   SidebarSettings: () => null,
 }));

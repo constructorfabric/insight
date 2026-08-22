@@ -33,7 +33,7 @@ permissions:
 
 env:
   SERVICE_IMAGES: "insight-analytics insight-authenticator insight-frontend insight-gateway insight-identity-resolution insight-toolbox insight-ui-tests"
-  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-bitbucket-cloud-insight source-gitlab-insight source-hubspot-insight"
+  CONNECTOR_IMAGES: "insight-jira-enrich source-active-directory-insight source-gitlab-insight source-hubspot-insight"
 
 jobs:
   trunk:

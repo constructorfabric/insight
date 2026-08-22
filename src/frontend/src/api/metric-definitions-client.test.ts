@@ -18,6 +18,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 
 const METRIC: MetricDefinition = {
   metric_key: "git.commits",
+  entity_type: "person",
   label: "Commits",
   short_label: null,
   description: "Commits authored in the period.",

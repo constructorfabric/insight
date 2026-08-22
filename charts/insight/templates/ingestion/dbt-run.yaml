@@ -130,9 +130,14 @@ spec:
           # output is the unambiguous signal and a non-zero exit is a genuine
           # failure to resolve. An empty DBT_SELECT is deliberately left alone —
           # it means "run everything" for manual triggers.
+          # Resolved WITHOUT --exclude on purpose: the guard judges the
+          # SELECTOR, and a selection an earlier step already covered (a
+          # roster-only connector's models ARE the excluded ones) would
+          # otherwise be indistinguishable from a typo. The run below then
+          # exits 0 on the empty remainder, per the note above.
           if [[ -n "${DBT_SELECT:-}" ]]; then
             LS_RC=0
-            SELECTED="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT" ${DBT_EXCLUDE:+--exclude "$DBT_EXCLUDE"})" || LS_RC=$?
+            SELECTED="$(dbt --quiet ls --profiles-dir . --resource-type model --select "$DBT_SELECT")" || LS_RC=$?
             if [[ "$LS_RC" -ne 0 ]]; then
               echo "ERROR: could not resolve dbt selector '${DBT_SELECT}' (dbt ls exited ${LS_RC})" >&2
               RC="$LS_RC"

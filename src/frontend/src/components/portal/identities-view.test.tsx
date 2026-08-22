@@ -96,7 +96,7 @@ import { portalRouter } from "@/test/portal-router";
 
 import { IdentitiesView } from "./identities-view";
 
-const RATES = { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
+const RATES = { observed: 60, bound: 55, pending: 3, no_source_id: 1, no_evidence: 1, excluded: 1 };
 
 function item(over: Partial<AttentionItem>): AttentionItem {
   return {
@@ -626,6 +626,31 @@ describe("IdentitiesView", () => {
     expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
   });
 
+  it("gives an account no source states an id for its own group", () => {
+    // It is not waiting on automation — nothing will ever bind it — so it must
+    // read as the operator's work, not fall into the catch-all.
+    attention.q.data = {
+      items: [
+        item({
+          kind: "no_source_id",
+          account_id: "sam@example.com",
+          email: "sam@example.com",
+          username: null,
+          display_name: "Sam Rivera",
+          bound_to: null,
+          candidates: [],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getByText(/the source names no account of its own/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
+  });
+
   it("renders candidates as person cells", () => {
     attention.q.data = {
       items: [
@@ -742,27 +767,10 @@ describe("IdentitiesView", () => {
     expect(row).toHaveFocus();
   });
 
-  it("offers the next account without a trip back to the list", async () => {
-    attention.q.data = {
-      items: [
-        item({ account_id: "a1", email: "ann@example.com" }),
-        item({ account_id: "a2", email: "bob@example.com" }),
-      ],
-      rates: RATES,
-    };
-    render(<IdentitiesView />);
-
-    await userEvent.click(screen.getByRole("button", { name: /ann@example\.com/i }));
-    await userEvent.click(screen.getByRole("button", { name: /next account/i }));
-
-    expect(portalRouter.search.acct).toContain("a2");
-  });
-
-  // A decision prunes its row from the list at once. The window must hold
-  // what it knew — the case and its position — or the operator's own success
-  // kills the outcome they are reading and the Next button they are about to
-  // press.
-  it("keeps the open case and the conveyor when the decided row is pruned", async () => {
+  // A decision prunes its row from the list at once. The window must hold the
+  // row it was opened on, or the operator's own success turns the case they are
+  // reading into a stale-link apology.
+  it("keeps the open case when the decided row is pruned", async () => {
     attention.q.data = {
       items: [
         item({ account_id: "a1", email: "ann@example.com" }),
@@ -784,18 +792,22 @@ describe("IdentitiesView", () => {
     // The case still names what was decided, not a stale-link apology.
     expect(within(dialog).getByText(/ann@example\.com/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/link may be stale/i)).not.toBeInTheDocument();
-    // And the conveyor still moves: the row that shifted into this slot is next.
-    await userEvent.click(within(dialog).getByRole("button", { name: /next account/i }));
-    expect(portalRouter.search.acct).toContain("a2");
   });
 
   // Modes are ways IN to the same decisions; the mode rides in the URL so a
   // link opens the one it was sent from.
-  it("switches modes through the URL, dropping the account selected in the old one", async () => {
+  it("switches modes through the URL, dropping what was open in the old one", async () => {
     attention.q.data = { items: [item({})], rates: RATES };
-    // A selection the window cannot open (a mistyped link) leaves the value in
+    // Selections the window cannot open (mistyped links) leave the values in
     // the URL with no modal over the tabs — the state the switch must clear.
-    portalRouter.set({ zone: "manage", item: "identities", acct: "malformed" });
+    // A person is carried the same way an account is: leaving it behind would
+    // reopen a window over a list that does not contain them.
+    portalRouter.set({
+      zone: "manage",
+      item: "identities",
+      acct: "malformed",
+      person: "not-a-person",
+    });
     render(<IdentitiesView />);
 
     await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
@@ -803,6 +815,7 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.mode).toBe("person");
     // A case picked in the queue means nothing in a list it is not part of.
     expect(portalRouter.search.acct).toBeUndefined();
+    expect(portalRouter.search.person).toBeUndefined();
     // The mode it switched TO is on screen, so the cleared selection is not
     // just an empty URL over the old surface.
     expect(

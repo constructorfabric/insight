@@ -13,6 +13,7 @@ import { fetchWithAuth } from "@/api/fetch-with-auth";
 import type {
   MetricDrilldownCapability,
   MetricDirection,
+  MetricEntityType,
   MetricFormat,
 } from "@/api/metric-results-client";
 
@@ -25,6 +26,7 @@ export type MetricDefinitionOrigin = "builtin" | "custom";
 
 export interface MetricDefinition {
   metric_key: string;
+  entity_type: MetricEntityType;
   label: string;
   short_label: string | null;
   description: string | null;
@@ -47,6 +49,12 @@ export interface MetricDefinition {
   schema_error_code: MetricSchemaErrorCode | null;
   /** ISO date of the newest observation ever seen; null = no data yet. */
   last_observed_date: string | null;
+  /**
+   * How many days back from `last_observed_date` the suppliers may still
+   * revise. Absent where nothing revises — never read absence as "revised
+   * forever".
+   */
+  revision_window_days?: number | null;
   drilldown?: MetricDrilldownCapability;
 }
 

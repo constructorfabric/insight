@@ -20,7 +20,7 @@ import { GROUPS } from "@/lib/insight/groups";
 import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import {
-  lensEntry,
+  lensRoadmap,
   visibleDirections,
   visibleLenses,
 } from "@/lib/portal/lens-configs";
@@ -48,11 +48,15 @@ import {
   PLANNED_GROUP_LABEL,
   partitionByReadiness,
   resolveZoneItem,
-  ZONE_SECTIONS,
   zoneById,
+  zoneSections,
   type Direction,
   type PaneItem,
 } from "@/lib/portal/nav-model";
+import {
+  personSectionPlanned,
+  personSectionVisible,
+} from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
   usePortalDir,
@@ -266,7 +270,7 @@ function ThemeNav({
   zoneId: string;
   active: string | null;
 }) {
-  const groups = ZONE_SECTIONS[zoneId] ?? [];
+  const groups = zoneSections(zoneId);
   const showPlanned = usePortalShowPlanned();
   // Everything not yet real is pulled out of its original group and collected
   // under one demoted "Planned" group at the bottom, so the working menu reads
@@ -483,8 +487,7 @@ function DirectionItem({ direction }: { direction: Direction }) {
         <>
           <SidebarMenuSub>
             {lenses.map((lens) => {
-              const entry = lensEntry(direction.id, lens);
-              const roadmap = !!entry && "comingSoon" in entry;
+              const roadmap = lensRoadmap(direction, lens);
               return (
                 <SidebarMenuSubItem key={lens}>
                   <SidebarMenuSubButton
@@ -586,7 +589,8 @@ function PersonSectionsNav() {
   // react-query serves them from cache.
   const standings = usePersonSectionStandings(activePerson);
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
-  const groups = GROUPS;
+  const showPlanned = usePortalShowPlanned();
+  const groups = GROUPS.filter((g) => personSectionVisible(g.id, showPlanned));
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
   return (
@@ -612,6 +616,9 @@ function PersonSectionsNav() {
               <SidebarMenuItem key={g.id}>
                 <SidebarMenuButton
                   isActive={active === g.id}
+                  className={
+                    personSectionPlanned(g.id) ? "text-muted-foreground" : undefined
+                  }
                   onClick={() => {
                     setItem(g.id);
                     dismiss();

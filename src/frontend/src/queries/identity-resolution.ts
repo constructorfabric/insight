@@ -152,9 +152,10 @@ export type PersonListIntent = "browse" | "match";
 
 /**
  * The same for {@link useAccountList}. The accounts mode browses — reviewing
- * what the connectors reported is the point there. Inside one person a blank
- * field asks nothing: the tenant's whole fold would bury the handful of accounts
- * that person actually holds, which is what the reader opened them for.
+ * what the connectors reported is the point there. The picker inside the person
+ * window asks nothing on a blank field: the tenant's whole fold would bury the
+ * handful of accounts that person actually holds, which is what the reader
+ * opened them for.
  */
 export type AccountListIntent = "browse" | "match";
 
@@ -306,7 +307,8 @@ export function useAccountList(
   });
 }
 
-/** The accounts a merge would move — fetched only while the preview is open. */
+/** Every account one person holds: the person window's list, and what a merge
+ *  preview says would move. */
 export function usePersonAccounts(
   personId: string | null,
 ): UseQueryResult<{ person_id: string; accounts: PersonAccountEntry[] }> {

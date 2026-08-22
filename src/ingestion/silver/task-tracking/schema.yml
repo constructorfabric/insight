@@ -1,5 +1,18 @@
 version: 2
 
+sources:
+  # Operator-authored bindings: which vendor field plays which metric role, and
+  # what a vendor value means. dbt guarantees the relations exist via the
+  # `create_task_config_tables` on-run-start hook but owns none of the rows — a
+  # model materializing over them would wipe the decisions they hold. Declared
+  # in the task-tracking domain rather than under one connector, because every
+  # task source and gold itself read them.
+  - name: config
+    schema: config
+    tables:
+      - name: task_field_roles
+      - name: task_value_map
+
 models:
   - name: class_task_field_history
     description: "Unified per-(issue × field × event) history from all task-tracker sources. Event-sourced: one row per changelog entry or synthetic_initial bootstrap row. Source of truth is the Rust jira-enrich binary (per-source)."
@@ -12,6 +25,12 @@ models:
         description: "Source system discriminator (e.g. 'jira')"
         tests:
           - not_null
+      - name: title
+        description: >
+          The issue's own summary as the tracker states it, repeated on every
+          event of that issue — an issue attribute, not an event one. NULL when
+          the source does not report one. Gold surfaces it as `details.title` in
+          task evidence; the record label is `id_readable`.
       - name: event_id
         description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
         tests:

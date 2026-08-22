@@ -3,13 +3,14 @@
  * The account mode. What matters: an operator holding a handle or an address
  * learns whose it is — the question neither other mode can answer, since both
  * are entered through a person; unbound is stated as an answer rather than
- * left blank; the account opens in the same case window, so the verbs are one
- * click away; and with nothing typed the mode lists what the connectors
- * reported instead of waiting to be asked.
+ * left blank; the ROW itself opens the account in the same case window, the way
+ * the queue's rows do, so one gesture means one thing across the console; and
+ * with nothing typed the mode lists what the connectors reported instead of
+ * waiting to be asked.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { AccountMatch } from "@/api/identity-client";
@@ -104,6 +105,13 @@ function match(over: Partial<AccountMatch> = {}): AccountMatch {
 function page(items: AccountMatch[]) {
   return { pages: [{ items }] };
 }
+
+/** The row for {@link match}, addressed the way a reader reaches it. */
+function row() {
+  return screen.getByRole("button", { name: /^octocat,/ });
+}
+
+afterEach(() => window.getSelection()?.removeAllRanges());
 
 beforeEach(() => {
   hooks.search.data = undefined;
@@ -210,7 +218,7 @@ describe("AccountSearchView", () => {
     hooks.binding.isLoading = false;
     render(<AccountSearchView />);
 
-    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+    await userEvent.click(row());
 
     const dialog = screen.getByRole("dialog");
     // The verbs are on screen — so an absent candidate list means absent, not
@@ -255,12 +263,75 @@ describe("AccountSearchView", () => {
     hooks.search.data = page([match()]);
     render(<AccountSearchView />);
 
-    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+    await userEvent.click(row());
 
     expect(portalRouter.search.acct).toContain("gh-main");
     expect(
       within(screen.getByRole("dialog")).getByText(/github · gh-main/),
     ).toBeInTheDocument();
+  });
+
+  // The row IS the door, so a button beside it would be a second way through
+  // the same one — and the queue's rows have never had one.
+  it("carries no open button beside the row that already opens", () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    // The positive control: without it this case also passes for a row that
+    // failed to render at all.
+    expect(row()).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^open$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // The addresses and ids on these rows are what an operator copies into a
+  // ticket. A row that opens on the mouse-up of a drag makes them unreadable.
+  it("does not open on the click that ends a text selection", () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+    const selected = document.createRange();
+    selected.selectNodeContents(screen.getByText("octocat"));
+    const selection = window.getSelection();
+    // A Selection holds one range: adding to a stale one from an earlier case
+    // is a no-op, and this case would then be asserting nothing.
+    selection?.removeAllRanges();
+    selection?.addRange(selected);
+
+    // The bare click, not a full press: a real drag ends in a mouseup with the
+    // selection still standing, and a synthesized mousedown would clear it
+    // before the handler ever sees it.
+    fireEvent.click(row());
+
+    expect(portalRouter.search.acct).toBeUndefined();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The same click with nothing selected DOES open — without this the case
+    // would still pass for a row that never opens at all.
+    selection?.removeAllRanges();
+    fireEvent.click(row());
+
+    expect(portalRouter.search.acct).toContain("gh-main");
+  });
+
+  // The holder's card carries a copy control, and pressing it is not a request
+  // to leave the list.
+  it("does not open when a control inside the row is pressed", async () => {
+    hooks.search.data = page([match()]);
+    render(<AccountSearchView />);
+
+    await userEvent.click(
+      within(row()).getByRole("button", { name: /copy/i }),
+    );
+
+    expect(portalRouter.search.acct).toBeUndefined();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The row itself still opens, so the guard above is a guard and not a row
+    // that never worked.
+    await userEvent.click(row());
+
+    expect(portalRouter.search.acct).toContain("gh-main");
   });
 
   // The search itself proves the account exists — an unbound, never-decided
@@ -278,7 +349,7 @@ describe("AccountSearchView", () => {
     hooks.binding.isLoading = false;
     render(<AccountSearchView />);
 
-    await userEvent.click(screen.getByRole("button", { name: /^open$/i }));
+    await userEvent.click(row());
 
     const dialog = screen.getByRole("dialog");
     expect(

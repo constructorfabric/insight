@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import { SectionTrend } from "@/components/portal/section-trend";
@@ -32,6 +33,7 @@ import {
 import { GROUPS } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import {
   availableSlices,
   cohortKey,
@@ -49,10 +51,11 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { githubRepoUrl } from "@/lib/metrics/git-links";
+import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
+import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
   distribution,
   familyObserved,
@@ -107,6 +110,7 @@ export function DomainLensView({
   const { period, dateRange } = usePortalPeriod();
 
   const orgScope = useOrgScope();
+  const { isFlat } = useVisibilityPolicy();
   const { pivot, roster } = orgScope;
   // The roster IS the member list: identity owns who is on the team and
   // every metric for them comes from `/v1/metric-results`. There is no second
@@ -116,7 +120,7 @@ export function DomainLensView({
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster]
   );
@@ -284,7 +288,10 @@ export function DomainLensView({
     () => (id: string) => cohortKey(attrByEntity.get(id), slice),
     [attrByEntity, slice]
   );
-  const cohortLabel = slice ? (sliceLabel ?? "cohort").toLowerCase() : "team";
+  const cohortLabel = peerPopulationLabel(
+    slice ? (sliceLabel ?? "cohort") : null,
+    isFlat
+  );
 
   const gate = orgScopeGate({
     viewerLoading: orgScope.isLoading,

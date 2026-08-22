@@ -16,6 +16,8 @@ description: >
   then Closed 2026-03-27 -> per-person pickup = {1,2,3,4,5} days. The IC case
   requests erin (5): value=5, median=3, range_min=1, range_max=5 (P95), p25=2,
   p75=4. Empty window 2026-06 -> no items.
+  Every issue comes from the one Jira instance, so the `source` breakdown is a
+  single row carrying the member's own figure.
 
 bronze:
   bronze_bamboohr.employees:
@@ -78,6 +80,7 @@ cases:
               - { view: peer }
               - { view: timeseries, bucket: day }
               - { view: histogram }
+              - { view: breakdown, dimensions: [source] }
     expect:
       - assert: "status == 200"
       - metric: tasks.pickup_time
@@ -94,6 +97,12 @@ cases:
       - metric: tasks.pickup_time
         view: histogram
         assert: "items.exists(h, h.entity_id == 'erin@example.com' && size(h.bins) > 0)"
+      - metric: tasks.pickup_time
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'source' && d.value == 'jira') && double(v.value) == 5.0)"
+      - metric: tasks.pickup_time
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'erin@example.com')) == 1"
 
   - name: tasks.pickup_time empty window
     request:

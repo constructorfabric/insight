@@ -1,4 +1,17 @@
 {{- if .Values.ingestion.templates.enabled }}
+{{/*
+INVARIANT: this step must run the image the identity Deployment runs. The
+release pipeline stamps each subchart's appVersion with the tag it actually
+built for that service, independently of the umbrella's — so deriving the tag
+from the umbrella's `.Chart.AppVersion` yields one no build ever pushed.
+*/}}
+{{- $identity := index .Subcharts "identityResolution" -}}
+{{- if not $identity -}}
+{{/* The chart refuses deploy=false anyway, but this template renders FIRST,
+     so without this the operator gets a nil-deref on .Chart instead. */}}
+{{-   fail "identityResolution.deploy must be true when ingestion.templates.enabled: every connector pipeline runs an identity-seed step on that service's image and mounts its config." -}}
+{{- end -}}
+{{- $identityTag := .Values.identityResolution.image.tag | default $identity.Chart.AppVersion -}}
 # One persons-seed as a pipeline step: resolve the identity claims a connector
 # sync just landed, and publish them (the `seed` subcommand publishes as its
 # own final step). Runs in every connector pipeline. `--guard-ok` keeps an
@@ -20,7 +33,7 @@ spec:
       inputs:
         parameters:
           - name: identity_image
-            default: "{{ .Values.identityResolution.image.repository }}:{{ .Values.identityResolution.image.tag | default .Chart.AppVersion }}"
+            default: "{{ .Values.identityResolution.image.repository }}:{{ $identityTag }}"
       activeDeadlineSeconds: 900
       retryStrategy:
         # Safe to repeat: the advisory lock and the operations journal make a

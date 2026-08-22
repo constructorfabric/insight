@@ -30,7 +30,10 @@ import {
   summaryLine,
   type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
-import { evidenceRecordLinks } from "@/lib/metrics/git-links";
+import {
+  evidenceRecordLinks,
+  evidenceRefText,
+} from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
@@ -263,7 +266,14 @@ export function MetricEvidenceTable({
                   const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
-                  const line = summaryLine(text);
+                  const full = summaryLine(text);
+                  // The ref column shows the issue number alone; the tooltip
+                  // keeps the repository, which is the only place a row states
+                  // it when the metric declares no `source` to link from.
+                  const line =
+                    column.key === "ref"
+                      ? evidenceRefText(metricKey ?? "", full)
+                      : full;
                   return (
                     <TableCell
                       role="cell"
@@ -275,7 +285,7 @@ export function MetricEvidenceTable({
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      title={line}
+                      title={full}
                     >
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">

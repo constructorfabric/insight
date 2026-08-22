@@ -1,7 +1,9 @@
-import { Settings2 } from "lucide-react";
+import { Bug, Settings2, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
+import { useFeedbackDialog } from "@/components/feedback-context";
 import {
   Popover,
   PopoverContent,
@@ -267,17 +269,11 @@ export function LensRail() {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
+          <FeedbackButton />
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
-                <button
-                  type="button"
-                  title="Settings"
-                  className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                >
-                  <Settings2 className="size-[19px]" aria-hidden />
-                  <span className="sr-only">Settings</span>
-                </button>
+                <RailButton icon={Settings2} label="Settings" />
               }
             />
             <PopoverContent
@@ -289,6 +285,7 @@ export function LensRail() {
               finalFocus={false}
             >
               <AppSidebarFooter
+                showFeedback={false}
                 onNavigate={() => {
                   setSettingsOpen(false);
                   // Note 4 above, reached from the footer rather than a zone.
@@ -303,6 +300,48 @@ export function LensRail() {
     </div>
   );
 }
+
+/** Its own rail slot: inside the settings menu nobody found it. */
+function FeedbackButton() {
+  const { t } = useTranslation();
+  const feedback = useFeedbackDialog();
+
+  if (!feedback) return null;
+
+  return (
+    <RailButton
+      icon={Bug}
+      label={t("feedback.nav_label")}
+      onClick={feedback.openFeedback}
+    />
+  );
+}
+
+/** The rail's own control shape: an icon, and its name for everyone else. */
+function RailButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      onClick={onClick}
+      className={RAIL_BUTTON}
+    >
+      <Icon className="size-[19px]" aria-hidden />
+      <span className="sr-only">{label}</span>
+    </button>
+  );
+}
+
+const RAIL_BUTTON =
+  "flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
 
 function ZoneItem({
   zone,

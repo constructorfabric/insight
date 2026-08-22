@@ -1,0 +1,29 @@
+# Operator-authored value mappings; DDL owned by the create_task_config_tables macro.
+schemas:
+  config.task_value_map:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: &id001
+        type: string
+      insight_source_id: *id001
+      data_source: *id001
+      field_id: *id001
+      value_id: *id001
+      valid_from:
+        type: string
+        format: date-time
+      recorded_at:
+        type: string
+        format: date-time
+      unique_key: *id001
+      canonical_value: *id001
+      value_display: *id001
+      is_deleted:
+        type: integer
+      note: *id001
+      recorded_by: *id001
+      _version:
+        type: string
+        format: date-time

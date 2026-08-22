@@ -120,4 +120,7 @@ data:
       # Leaf values (database_url, clickhouse_*, redis_url, identity_url)
       # come from the Secret via envFrom.
       analytics:
-        config: {}
+        config:
+          visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
+          metric_catalog:
+            tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}

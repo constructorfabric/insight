@@ -369,6 +369,13 @@
         ],
         "type": "object"
       },
+      "EntityType": {
+        "enum": [
+          "person",
+          "tenant"
+        ],
+        "type": "string"
+      },
       "EvidenceGranularity": {
         "enum": [
           "event",
@@ -389,6 +396,80 @@
         },
         "required": [
           "metrics"
+        ],
+        "type": "object"
+      },
+      "FeedbackEntry": {
+        "properties": {
+          "display_name": {
+            "description": "Empty when the sender has not been mirrored into the identity rows yet.",
+            "type": "string"
+          },
+          "feedback_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "person_id": {
+            "type": "string"
+          },
+          "ts": {
+            "type": "string"
+          },
+          "username": {
+            "description": "The account handle, empty when no identity row carries one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feedback_id",
+          "ts",
+          "person_id",
+          "display_name",
+          "username",
+          "message",
+          "path"
+        ],
+        "type": "object"
+      },
+      "FeedbackListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntry"
+            },
+            "type": "array"
+          },
+          "since": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "items"
+        ],
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "description": "The screen the sender was on. Empty when the SPA cannot name one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
         ],
         "type": "object"
       },
@@ -521,6 +602,9 @@
               }
             ]
           },
+          "entity_type": {
+            "$ref": "#/components/schemas/EntityType"
+          },
           "explanation": {
             "type": [
               "string",
@@ -550,6 +634,15 @@
           "origin": {
             "$ref": "#/components/schemas/MetricOrigin",
             "description": "`builtin` metrics read managed observation relations; `custom` metrics\nexecute inline SQL at query time. The validator stamps `schema_status`\nand `last_observed_date` from materialized relations only, so for\n`custom` those fields stay `unchecked` / absent regardless of data —\nreaders must not interpret them as \"never measured\" for custom metrics."
+          },
+          "revision_window_days": {
+            "description": "How many days back from `last_observed_date` the suppliers may still\nrevise. Absent where the source declares none, and for `custom` metrics,\nwhich read no managed source — absence means \"settles on arrival\", not\n\"revised forever\". Registry knowledge, not tenant state, so it is read\nfrom the seed rather than stored per row.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "schema_error_code": {
             "oneOf": [
@@ -595,6 +688,7 @@
         },
         "required": [
           "metric_key",
+          "entity_type",
           "label",
           "format",
           "direction",
@@ -713,19 +807,40 @@
         "type": "string"
       },
       "MetricDrilldownEntity": {
-        "properties": {
-          "id": {
-            "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "id"
-        ],
-        "type": "object"
+        ]
       },
       "MetricDrilldownExportFormat": {
         "enum": [
@@ -1217,42 +1332,82 @@
         ]
       },
       "MetricResultsEntity": {
-        "properties": {
-          "ids": {
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
-            "items": {
-              "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
             },
-            "type": "array"
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "ids"
-        ],
-        "type": "object"
+        ]
       },
       "MetricResultsEntityDto": {
-        "properties": {
-          "ids": {
-            "description": "Canonical person UUIDs (since the identity cutover; the\npre-cutover email shape is rejected with a 400).",
-            "items": {
-              "type": "string"
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "person"
+                ],
+                "type": "string"
+              }
             },
-            "type": "array"
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
           },
-          "type": {
-            "type": "string"
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "type",
-          "ids"
-        ],
-        "type": "object"
+        ]
       },
       "MetricResultsPeriod": {
         "properties": {
@@ -2113,6 +2268,154 @@
           }
         ],
         "summary": "Report per-connector ingestion state"
+      }
+    },
+    "/v1/feedback": {
+      "get": {
+        "operationId": "analytics_api.feedback.list",
+        "parameters": [
+          {
+            "description": "Inclusive first day, YYYY-MM-DD",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive last day, YYYY-MM-DD",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackListResponse"
+                }
+              }
+            },
+            "description": "Feedback entries, newest first"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Feedback sent in a date range"
+      },
+      "post": {
+        "operationId": "analytics_api.feedback.submit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "description": "A feedback submission",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Send product feedback"
       }
     },
     "/v1/metric-definitions": {

@@ -118,6 +118,7 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.assistant_messages", "ai", Tier.EXACT_SUM),
     Expectation("ai.chat_assistant_conversations", "ai", Tier.EXACT_SUM),
     Expectation("ai.cost", "ai", Tier.EXACT_SUM),
+    Expectation("ai.daily_approximate_extra_usage_cost", "ai_cost", Tier.EXACT_SUM),
     Expectation("ai.dev_conversations", "ai", Tier.EXACT_SUM),
     Expectation("ai.extra_usage_cost", "ai_cost", Tier.EXACT_SUM),
     Expectation("ai.extra_usage_utilisation", "ai_cost", Tier.EXACT_RATIO, scale=100.0),

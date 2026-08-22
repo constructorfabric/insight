@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.20.15.12-419ad05" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.22.07.59-d8406ed" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.20.15.12-419ad05" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.22.07.59-d8406ed" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -483,6 +483,8 @@ analytics:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
+  metricCatalog:
+    tenantMetricsEnabled: false
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
@@ -582,6 +584,7 @@ gitCliProxy:
 identityResolution:
   deploy: true
   replicaCount: 1
+  visibilityPolicy: "org_chart"
   image:
     repository: ghcr.io/constructorfabric/insight-identity-resolution
     tag: "" # MUST be set (e.g. "0.1.0")
@@ -652,3 +655,20 @@ frontend:
     connectSrc: ""
     # DSN the SPA reads from /config.js at load. Empty disables reporting.
     dsn: ""
+  nav:
+    # Navigation entries hidden on this install, read by the SPA from
+    # /config.js. Typed paths, one per entry:
+    #   - "zone:scorecard"                          (a rail zone)
+    #   - "zone:aicost/item:idle-seats"             (a pane item)
+    #   - "zone:directions/dir:sales"               (a whole direction)
+    #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
+    #   - "zone:person/section:git_output"          (a Person-zone section)
+    # Unknown paths are ignored (the browser console warns). Presentation
+    # only — the API authorizes independently of what the menu shows.
+    hide: []
+    # Navigation entries this install marks as still in development — same
+    # path forms as `hide`. This is the only source of planned navigation:
+    # entries absent from this list are treated as live. Planned entries are
+    # toggled by the viewer's "Show planned sections" switch. A path in both
+    # lists is hidden.
+    planned: []

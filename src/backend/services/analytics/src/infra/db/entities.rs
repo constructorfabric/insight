@@ -26,3 +26,25 @@ pub mod saved_queries {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+pub mod feedback {
+    //! `feedback` entity — what a person told us from inside the product.
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "feedback")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub insight_tenant_id: Uuid,
+        pub person_id: Uuid,
+        pub message: String,
+        pub path: String,
+        pub created_at: ChronoDateTimeUtc,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

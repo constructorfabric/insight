@@ -1,22 +1,32 @@
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
     EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
     SourceKind, ValueTransform,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
     Person,
+    Tenant,
 }
 
 impl EntityType {
     pub fn as_db(self) -> &'static str {
         match self {
             Self::Person => "person",
+            Self::Tenant => "tenant",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "person" => Some(Self::Person),
+            "tenant" => Some(Self::Tenant),
+            _ => None,
         }
     }
 }
@@ -71,6 +81,14 @@ pub struct SourceSeed {
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
+    /// How many days a delivered day keeps changing before it settles, when the
+    /// suppliers revise one. Absent where nothing revises, or where nobody has
+    /// established it — a reader treats absence as "settles on arrival" rather
+    /// than as zero uncertainty. Where several suppliers feed one source the
+    /// longest window wins: calling a settled day provisional costs less than
+    /// the reverse.
+    #[serde(default)]
+    pub revision_window_days: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -186,7 +204,14 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 65, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 66, "builtin metric count");
+    }
+
+    #[test]
+    fn entity_types_round_trip_through_storage_values() {
+        for entity_type in [EntityType::Person, EntityType::Tenant] {
+            assert_eq!(EntityType::from_db(entity_type.as_db()), Some(entity_type));
+        }
     }
 
     #[test]

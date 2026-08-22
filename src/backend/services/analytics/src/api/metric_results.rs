@@ -8,20 +8,23 @@ use axum::http::HeaderMap;
 use futures::stream::{self, StreamExt};
 use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
+use toolkit_security::SecurityContext;
 
 use super::AppState;
 use super::error::MetricError;
+use crate::config::VisibilityPolicy;
+use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
-    MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
-    RankingQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest,
-    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
-    build_period_view, build_ranked_groups, build_timeseries_view, demux_peer_rows,
-    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
+    MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
+    PlannedQuery, RankingQueryRow, TimeseriesQueryRow, UnbatchedView,
+    ValidatedMetricResultsRequest, build_breakdown_view, build_histogram_view, build_metric_result,
+    build_peer_view, build_period_view, build_ranked_groups, build_timeseries_view,
+    demux_peer_rows, demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings,
+    validate_request,
 };
-use crate::domain::person_visibility::authorize_entity_ids;
-use toolkit_security::SecurityContext;
+use crate::domain::person_visibility::authorize_person_ids;
 
 const QUERY_CONCURRENCY: usize = 4;
 // Client-side bound on one view query, network stalls included. The
@@ -37,20 +40,10 @@ pub async fn query_metric_results(
     Json(req): Json<MetricResultsRequest>,
 ) -> Result<Json<MetricResultsResponse>, CanonicalError> {
     let tenant_id = ctx.subject_tenant_id();
+    authorize_tenant_request(&state, &req)?;
     let mut req = validate_request(&state.db, tenant_id, req).await?;
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
-
-    // Visibility gate BEFORE any ClickHouse work: the caller may only query
-    // persons inside their visible set (identity /v1/visible-persons, by
-    // person UUID since the cutover). Service principals bypass.
-    authorize_entity_ids(
-        &state.identity,
-        &ctx,
-        super::forwarded_authorization(&headers),
-        req.entity.entity_type(),
-        req.entity.person_ids(),
-    )
-    .await?;
+    authorize_person_request(&state, &ctx, &headers, &req).await?;
 
     let metric_keys = req
         .metrics
@@ -80,7 +73,8 @@ pub async fn query_metric_results(
     };
     let (ranking_results, capabilities) = tokio::join!(rankings, capabilities);
     let ranking_results = ranking_results?;
-    let planned = plan_queries(&req, &ranking_results)?;
+    let peer_population = peer_population(state.config.visibility_policy);
+    let planned = plan_queries(&req, &ranking_results, peer_population)?;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
         .metrics
@@ -118,9 +112,12 @@ pub async fn query_metric_results(
         }
         let selection = crate::domain::metric_results::MetricResultSelectionDto {
             metric_key: metric.def.key().to_owned(),
-            entity: crate::domain::metric_results::MetricResultsEntityDto {
-                r#type: req.entity.entity_type().to_owned(),
-                ids: req.entity.entity_ids(),
+            entity: if req.entity.is_tenant() {
+                crate::domain::metric_results::MetricResultsEntityDto::Tenant {}
+            } else {
+                crate::domain::metric_results::MetricResultsEntityDto::Person {
+                    ids: req.entity.entity_ids(),
+                }
             },
             period: crate::domain::metric_results::MetricResultsPeriodDto {
                 from: req.from.to_string(),
@@ -145,6 +142,43 @@ pub async fn query_metric_results(
 
     let response = MetricResultsResponse { metrics };
     Ok(Json(response))
+}
+
+fn peer_population(visibility_policy: VisibilityPolicy) -> PeerPopulation {
+    match visibility_policy {
+        VisibilityPolicy::OrgChart => PeerPopulation::DeclaredCohort,
+        VisibilityPolicy::Flat => PeerPopulation::Tenant,
+    }
+}
+
+fn authorize_tenant_request(
+    state: &AppState,
+    req: &MetricResultsRequest,
+) -> Result<(), CanonicalError> {
+    if req.entity.is_tenant() {
+        authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)?;
+    }
+
+    Ok(())
+}
+
+async fn authorize_person_request(
+    state: &AppState,
+    ctx: &SecurityContext,
+    headers: &HeaderMap,
+    req: &ValidatedMetricResultsRequest,
+) -> Result<(), CanonicalError> {
+    let Some(person_ids) = req.entity.person_ids() else {
+        return Ok(());
+    };
+
+    authorize_person_ids(
+        &state.identity,
+        ctx,
+        super::forwarded_authorization(headers),
+        person_ids,
+    )
+    .await
 }
 
 struct MetricViewResult {
@@ -197,7 +231,7 @@ async fn execute_planned(
                 UnbatchedView::Breakdown { dimensions } => {
                     let comment = format!("metric-results:breakdown:{}", def.key());
                     let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
-                    build_breakdown_view(&dimensions, rows)?
+                    build_breakdown_view(req, &dimensions, rows)?
                 }
                 UnbatchedView::Histogram => {
                     let comment = format!("metric-results:histogram:{}", def.key());
@@ -302,7 +336,22 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    use super::map_query_error;
+    use crate::config::VisibilityPolicy;
+    use crate::domain::metric_results::PeerPopulation;
+
+    use super::{map_query_error, peer_population};
+
+    #[test]
+    fn visibility_policy_selects_peer_population() {
+        assert_eq!(
+            peer_population(VisibilityPolicy::OrgChart),
+            PeerPopulation::DeclaredCohort
+        );
+        assert_eq!(
+            peer_population(VisibilityPolicy::Flat),
+            PeerPopulation::Tenant
+        );
+    }
 
     #[test]
     fn missing_relation_maps_to_precondition_failure_not_500() {

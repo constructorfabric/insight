@@ -73,7 +73,7 @@ export default defineConfig({
           globals: false,
           css: false,
           setupFiles: ["./src/test/setup.ts"],
-          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx", "vite.*.test.ts"],
         },
       },
       {

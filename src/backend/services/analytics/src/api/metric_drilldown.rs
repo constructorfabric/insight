@@ -12,6 +12,7 @@ use toolkit_security::SecurityContext;
 
 use super::AppState;
 use crate::api::error::MetricError;
+use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_drilldown::{
     EVIDENCE_QUERY_TIMEOUT_SECS, EvidenceQueryRow, MAX_EXPORT_BYTES, MAX_EXPORT_ROWS,
     MetricDrilldownColumn, MetricDrilldownEntity, MetricDrilldownExportFormat,
@@ -21,7 +22,7 @@ use crate::domain::metric_drilldown::{
     parse_person_entity, presentation, validate_export_request, validate_request,
     verify_evidence_snapshot, with_evidence_query_limits,
 };
-use crate::domain::person_visibility::authorize_entity_ids;
+use crate::domain::person_visibility::authorize_person_ids;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(EVIDENCE_QUERY_TIMEOUT_SECS);
 const EXPORT_TIMEOUT: Duration = Duration::from_mins(1);
@@ -41,7 +42,7 @@ pub async fn query_metric_drilldown(
     Json(req): Json<MetricDrilldownRequest>,
 ) -> Result<Json<MetricDrilldownResponse>, CanonicalError> {
     let started = Instant::now();
-    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+    authorize_metric_entity(&state, &ctx, &headers, &req.entity).await?;
 
     let mut req = validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?;
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
@@ -71,12 +72,12 @@ pub async fn export_metric_drilldown(
     let started = Instant::now();
     // Ahead of the permit: a caller who may not see this person must not occupy
     // one of MAX_CONCURRENT_EXPORTS slots.
-    authorize_person_entity(&state, &ctx, &headers, &req.entity).await?;
+    authorize_metric_entity(&state, &ctx, &headers, &req.entity).await?;
 
     let permit = acquire_export_permit().await?;
     let deadline = tokio::time::Instant::now() + EXPORT_TIMEOUT;
 
-    let validated = validate_export_request(
+    let mut validated = validate_export_request(
         &state.db,
         &state.ch,
         ctx.subject_tenant_id(),
@@ -84,6 +85,7 @@ pub async fn export_metric_drilldown(
         MAX_EXPORT_ROWS + 1,
     )
     .await?;
+    validated.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
     let evidence = collect_export_rows(&state, &validated, deadline).await?;
     let exported_rows = evidence.len();
 
@@ -113,27 +115,33 @@ pub async fn export_metric_drilldown(
     attachment_response(body, content_type, &export_name(&validated, extension))
 }
 
-// INVARIANT: both drilldown routes call this before validation touches MariaDB
-// or ClickHouse. They serve per-person evidence — names, record labels,
-// contributions — so an unchecked id is the IDOR `/v1/metric-results` answers
-// 403 for. Gating ahead of validation also stops its error codes (404 unknown
-// metric, 400 unhealthy evidence) from describing a person the caller cannot see.
-async fn authorize_person_entity(
+// INVARIANT: both drilldown routes authorize the typed entity before validation
+// touches MariaDB or ClickHouse, preventing person IDORs and tenant-gate bypasses.
+async fn authorize_metric_entity(
     state: &AppState,
     ctx: &SecurityContext,
     headers: &HeaderMap,
     entity: &MetricDrilldownEntity,
 ) -> Result<(), CanonicalError> {
-    let (entity_type, person_id) = parse_person_entity(entity)?;
+    match entity {
+        MetricDrilldownEntity::Tenant {} => {
+            authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)
+        }
+        MetricDrilldownEntity::Unknown => Err(MetricError::invalid_argument()
+            .with_field_violation("entity.type", "unsupported entity type", "INVALID")
+            .create()),
+        MetricDrilldownEntity::Person { .. } => {
+            let (_, person_id) = parse_person_entity(entity)?;
 
-    authorize_entity_ids(
-        &state.identity,
-        ctx,
-        super::forwarded_authorization(headers),
-        &entity_type,
-        &[person_id],
-    )
-    .await
+            authorize_person_ids(
+                &state.identity,
+                ctx,
+                super::forwarded_authorization(headers),
+                &[person_id],
+            )
+            .await
+        }
+    }
 }
 
 async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
