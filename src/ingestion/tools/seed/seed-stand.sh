@@ -158,6 +158,9 @@ done
 
 need kubectl
 need envsubst
+# The manifest is computed from this tree before the Job is created.
+need uv
+need jq
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
 # --email is NOT gated here: discovery below needs the cluster first. `all` and
@@ -508,8 +511,7 @@ export SEED_WINDOW_DAYS="$WINDOW_DAYS"
 # do not sit in. The anchor derives from this one variable and nothing else, so
 # resolving it needs no other environment.
 resolve_anchor_date() {
-  need uv
-  need jq
+  # RULE-DEFAULTS-OK: a fallback for a HOME-less shell, not a config input.
   env -i PATH="$PATH" HOME="${HOME:-/tmp}" SEED_ANCHOR_DATE="$ANCHOR_DATE" \
     uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest | jq -r '.anchor_date'
 }
@@ -575,9 +577,12 @@ print_manifest_sentinel() {
 # clear_manifest_configmap / publish_manifest_configmap — the durable copy of
 # the manifest. The Job's log carries it for one hour (ttlSecondsAfterFinished);
 # the stand it describes lives until someone tears it down.
+# SAFETY: fatal, and it runs before the first write — a clear that fails after
+# the seed replaces the data would leave the previous manifest describing rows
+# that no longer exist, which is worse for a reader than no manifest at all.
 clear_manifest_configmap() {
   kube -n "$NAMESPACE" delete configmap "$MANIFEST_CONFIGMAP" --ignore-not-found >/dev/null 2>&1 \
-    || echo "ERROR: could not clear configmap/$MANIFEST_CONFIGMAP; a reader may still see the previous seed." >&2
+    || die "could not clear configmap/$MANIFEST_CONFIGMAP; refusing to seed over a manifest that would outlive its data."
 }
 
 # The one document every consumer gets. The pod's wins when the run emitted
@@ -591,9 +596,17 @@ resolve_manifest() {
     printf '%s' "$LOCAL_MANIFEST"
     return 0
   fi
-  if ! diff -q <(jq -S . <<<"$LOCAL_MANIFEST") <(jq -S . <<<"$pod") >/dev/null 2>&1; then
-    echo "ERROR: this tree computes a different manifest than the seed Job emitted —" >&2
-    echo "       the image it ran is not built from this checkout. Using the Job's." >&2
+  # `catalogue` and `seeded` are facts about the RUN, not about the code — the
+  # local computation opens no database and cannot know them, so comparing them
+  # would make this fire on every healthy run.
+  local drifted
+  drifted="$(diff <(jq -S 'del(.catalogue, .seeded)' <<<"$LOCAL_MANIFEST") \
+                  <(jq -S 'del(.catalogue, .seeded)' <<<"$pod") \
+             | grep -oE '^[<>] *"[a-z_]+"' | grep -oE '"[a-z_]+"' | sort -u | tr '\n' ' ')" || true
+  if [[ -n "$drifted" ]]; then
+    echo "ERROR: this tree computes a different manifest than the seed Job emitted" >&2
+    echo "       ($drifted) — the image it ran is not built from this checkout." >&2
+    echo "       Using the Job's document." >&2
   fi
   printf '%s' "$pod"
 }
@@ -783,7 +796,9 @@ compute_local_manifest() {
       print key "=" $0; key = ""
     }')
   [[ ${#job_env[@]} -gt 0 ]] || die "read no environment from the rendered Job manifest."
-  env -i PATH="$PATH" HOME="${HOME:-/tmp}" "${job_env[@]}" \
+  # RULE-DEFAULTS-OK: a fallback for a HOME-less shell, not a config input; the
+  # Job's own HOME follows in job_env and wins, which is the point.
+  env -i PATH="$PATH" "${job_env[@]}" HOME="${HOME:-/tmp}" \
     uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest
 }
 
@@ -791,10 +806,6 @@ LOCAL_MANIFEST="$(compute_local_manifest)" || die "could not compute the seed ma
 
 case "$STEP" in all) clear_manifest_configmap ;; esac
 run_seed_step "$STEP" || exit 1
-case "$STEP" in all) publish_manifest_configmap ;; esac
-if [[ -n "$MANIFEST_OUT" ]]; then
-  resolve_manifest >"$MANIFEST_OUT" && echo "==> manifest written: $MANIFEST_OUT"
-fi
 
 case "$STEP" in
   all|silver)
@@ -803,6 +814,14 @@ case "$STEP" in
     run_seed_step gold || exit 1
     ;;
 esac
+
+# After the projection and the gold rebuild: the manifest says "this stand is
+# seeded", so it must not appear while gold is still unresolved.
+case "$STEP" in all) publish_manifest_configmap ;; esac
+if [[ -n "$MANIFEST_OUT" ]]; then
+  resolve_manifest >"$MANIFEST_OUT" || die "could not write the manifest to $MANIFEST_OUT."
+  echo "==> manifest written: $MANIFEST_OUT"
+fi
 
 echo "==> seed complete: namespace=$NAMESPACE step=$STEP"
 exit 0

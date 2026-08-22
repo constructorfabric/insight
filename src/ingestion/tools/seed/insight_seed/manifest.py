@@ -416,9 +416,7 @@ def render_manifest(doc: Manifest) -> str:
 #: A single physical line, so the pod-log transport needs no parser.
 SENTINEL_PREFIX = "SEED_MANIFEST_JSON: "
 
-#: The chunked fallback, for a manifest too big to survive as one log line:
 #: `SEED_MANIFEST_GZ: <i>/<n> <base64(gzip(compact json))>`, 1-based, in order.
-#: `manifest-from-log.sh` turns either form back into one plain sentinel line.
 GZ_SENTINEL_PREFIX = "SEED_MANIFEST_GZ: "
 
 #: CRI reassembles a container's log line up to this many bytes; longer and
@@ -456,6 +454,15 @@ def emit_manifest_sentinel(doc: Manifest) -> None:
         print(f"{GZ_SENTINEL_PREFIX}{index}/{len(chunks)} {chunk}")
 
 
+def _as_document(decoded: Any) -> dict[str, Any]:
+    """SAFETY: `json.loads` returns whatever the text was — a bare annotation
+    claiming `dict` is an assertion, not a check, and a non-object reaches the
+    caller typed as a manifest."""
+    if not isinstance(decoded, dict):
+        raise ValueError(f"manifest sentinel is {type(decoded).__name__}, not a JSON object")
+    return decoded
+
+
 def decode_manifest_sentinel(lines: Iterable[str]) -> dict[str, Any]:
     """Recover the manifest from log lines carrying either sentinel form.
 
@@ -472,8 +479,7 @@ def decode_manifest_sentinel(lines: Iterable[str]) -> dict[str, Any]:
     for raw in lines:
         line = raw.rstrip("\n")
         if line.startswith(SENTINEL_PREFIX):
-            plain: dict[str, Any] = json.loads(line[len(SENTINEL_PREFIX) :])
-            return plain
+            return _as_document(json.loads(line[len(SENTINEL_PREFIX) :]))
         if not line.startswith(GZ_SENTINEL_PREFIX):
             continue
         counter, _, payload = line[len(GZ_SENTINEL_PREFIX) :].partition(" ")
@@ -503,8 +509,7 @@ def decode_manifest_sentinel(lines: Iterable[str]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"manifest chunks {missing} are missing; got {len(chunks)} of {total}")
     blob = "".join(chunks[i] for i in range(1, total + 1))
-    document: dict[str, Any] = json.loads(gzip.decompress(base64.b64decode(blob)).decode("utf-8"))
-    return document
+    return _as_document(json.loads(gzip.decompress(base64.b64decode(blob)).decode("utf-8")))
 
 
 def write_manifest(doc: Manifest, path: Path | None = None) -> Path:

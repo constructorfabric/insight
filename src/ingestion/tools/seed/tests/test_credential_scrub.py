@@ -12,6 +12,9 @@ Run against the installed package (see the README's develop section):
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from insight_seed import config, manifest
@@ -55,3 +58,35 @@ def test_the_committed_default_is_always_refused() -> None:
 def test_a_credential_bearing_key_is_refused_whatever_its_value() -> None:
     with pytest.raises(RuntimeError, match="credential-bearing"):
         manifest.assert_no_credentials({**_DOC, "db_password": "anything"}, {})
+
+
+def _import_realm_with(password: str | None) -> subprocess.CompletedProcess[str]:
+    """A subprocess because the realm generator validates at import time."""
+    env = {"PATH": "/usr/bin:/bin"}
+    if password is not None:
+        env[_ENV] = password
+    return subprocess.run(
+        [sys.executable, "-c", "import insight_seed.keycloak_realm"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+@pytest.mark.parametrize("password", ["", "   ", "tooshort"])
+def test_a_set_but_unusable_persona_password_is_refused(password: str) -> None:
+    """Set-but-empty must not fall through to the committed default.
+
+    An operator who exported the variable meant to supply a password; silently
+    seeding every persona with `insight-dev` on a reachable stand is the worst
+    possible reading of that.
+    """
+    done = _import_realm_with(password)
+
+    assert done.returncode != 0, f"{password!r} was accepted"
+    assert "at least 16 characters" in done.stderr
+
+
+def test_an_absent_persona_password_takes_the_local_default() -> None:
+    assert _import_realm_with(None).returncode == 0

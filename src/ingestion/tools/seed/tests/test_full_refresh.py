@@ -188,3 +188,12 @@ def test_accepted_flag_falls_through_to_the_env_asserts() -> None:
 
     assert done.returncode != 0
     assert "CLICKHOUSE_URL" in done.stderr
+
+
+def test_the_script_forwards_its_flags_to_the_dbt_run() -> None:
+    """Parsing --full-refresh is useless if the run never receives it."""
+    body = _MIGRATIONS.read_text()
+
+    assert "_dbt_flags+=(--full-refresh)" in body
+    run_lines = [ln for ln in body.splitlines() if "_dbt_flags[@]" in ln]
+    assert run_lines, "the dbt invocation does not reference _dbt_flags"

@@ -270,6 +270,34 @@ def test_bulk_names_are_deterministic() -> None:
     assert len(set(regenerated)) == len(regenerated)
 
 
+def test_the_realm_generator_sizes_itself_to_the_headcount() -> None:
+    """`build_realm` is pure, so the roster it embeds is checkable directly."""
+    from insight_seed import keycloak_realm
+
+    def users(headcount: int) -> int:
+        realm = keycloak_realm.build_realm(_EMAIL, _TENANT, [], "secret", headcount)
+        return len(realm["users"])
+
+    assert users(_COMMITTED + 1) == users(0) + 1
+
+
+@pytest.mark.parametrize("module", ["identity", "silver", "keycloak_realm"])
+def test_every_writer_reaches_the_roster_through_a_parsed_headcount(module: str) -> None:
+    """A literal at the call site seeds the wrong org, and no unit test sees it.
+
+    Static because the alternative is stubbing three subsystems; it still fails
+    on the mutation that matters — the argument replaced by a constant.
+    """
+    source = (Path(__file__).parent.parent / "insight_seed" / f"{module}.py").read_text()
+    calls = [ln.strip() for ln in source.splitlines() if "build_seeded_roster(" in ln and "=" in ln]
+
+    assert "parse_org_headcount" in source, f"{module} never parses the headcount"
+    assert calls, f"{module} has no build_seeded_roster call"
+    for call in calls:
+        argument = call.rsplit(",", 1)[-1].rstrip(")").strip()
+        assert not argument.isdigit(), f"{module} passes the literal {argument} as the headcount"
+
+
 def _env(headcount: str | None = None) -> dict[str, str]:
     env = {
         "DEV_USER_EMAIL": _EMAIL,
@@ -367,6 +395,13 @@ def test_the_largest_roster_still_fits_a_configmap() -> None:
 def test_input_without_a_sentinel_is_an_error() -> None:
     with pytest.raises(ValueError):
         manifest.decode_manifest_sentinel(["nothing to see here"])
+
+
+@pytest.mark.parametrize("payload", ["null", "[]", "42", '"a string"'])
+def test_a_sentinel_carrying_a_non_object_is_refused(payload: str) -> None:
+    """`json.loads` returns whatever the text was; only an object is a manifest."""
+    with pytest.raises(ValueError, match="not a JSON object"):
+        manifest.decode_manifest_sentinel([manifest.SENTINEL_PREFIX + payload])
 
 
 def test_an_identical_line_read_twice_is_tolerated(grown_manifest: manifest.Manifest) -> None:

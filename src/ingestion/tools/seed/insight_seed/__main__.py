@@ -66,7 +66,8 @@ def main(argv: list[str] | None = None) -> int:
 
         from .manifest import assert_no_credentials, build_manifest, render_manifest
 
-        doc = build_manifest(os.environ, seeded=list(STEPS))
+        # No `seeded`: this command describes an environment, not a run.
+        doc = build_manifest(os.environ)
         assert_no_credentials(doc)
         print(render_manifest(doc))
         return 0

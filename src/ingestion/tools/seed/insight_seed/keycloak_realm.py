@@ -37,7 +37,10 @@ from .profiles import (
 REALM_NAME = "insight"
 # Every seeded user's login credential. An internet-reachable stand MUST set
 # INSIGHT_SEED_PERSONA_PASSWORD here, and TEST_STAND_PERSONA_PASSWORD in CI.
-_ENV_PASSWORD = (os.environ.get(config.PERSONA_PASSWORD_ENV) or "").strip() or None
+_RAW_ENV_PASSWORD = os.environ.get(config.PERSONA_PASSWORD_ENV)
+# SAFETY: absent means "local stand, use the default"; set-but-unusable means the operator
+# meant to supply one and did not — that must refuse, not fall back to a committed literal.
+_ENV_PASSWORD = None if _RAW_ENV_PASSWORD is None else _RAW_ENV_PASSWORD.strip()
 if _ENV_PASSWORD is not None and len(_ENV_PASSWORD) < 16:
     # A short/common value would also poison the manifest's substring scrub
     # (_FORBIDDEN_LITERALS) and fail every seed at its final write.
