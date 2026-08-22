@@ -25,19 +25,18 @@ export interface QueueCase {
 }
 
 /**
- * Kinds the console invents for a row that is NOT a queue item.
+ * The kind the console invents for a row that is NOT a queue item.
  *
- * The accounts and persons modes reuse the case window to show a settled
- * account, so their rows travel in the same shape as a queue row. Naming OUR
- * kinds rather than the server's is what keeps the test safe: the server's
- * vocabulary is open, and a kind this build has never seen is a queue item.
+ * The accounts mode reuses the case window to show a settled account, so its
+ * rows travel in the same shape as a queue row. Naming OUR kind rather than the
+ * server's is what keeps the test safe: the server's vocabulary is open, and a
+ * kind this build has never seen is a queue item.
  */
 export const KIND_SEARCH_MATCH = "match";
-export const KIND_PERSON_MEMBER = "member";
 
 /** Whether this row is a real queue item, and so really leaves the queue. */
 export function isQueueItem(kind: string): boolean {
-  return kind !== KIND_SEARCH_MATCH && kind !== KIND_PERSON_MEMBER;
+  return kind !== KIND_SEARCH_MATCH;
 }
 
 /**

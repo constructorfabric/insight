@@ -201,7 +201,6 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             "Lines removed".to_owned(),
             MetricDrilldownColumnType::Number,
         ),
-        "issue_type" => ("Issue type".to_owned(), MetricDrilldownColumnType::String),
         "billing_month" => (
             "Billing month".to_owned(),
             MetricDrilldownColumnType::String,
@@ -241,21 +240,20 @@ pub(super) fn evidence_presentation(
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: true,
         },
+        // A counting measure needs no value column — the row IS the one it
+        // counted; a duration or a page count is only readable with its number.
         (
             "task",
             "tasks_closed" | "bugs_fixed" | "closed_non_bug" | "due_date_on_time"
             | "due_date_with_due" | "late_count",
-        ) => EvidencePresentation {
-            detail_keys: &["ref", "issue_type"],
+        )
+        | ("wiki", "pages_created") => EvidencePresentation {
+            detail_keys: &["ref", "title"],
             show_value: false,
         },
         ("task", _) if granularity == EvidenceGranularity::Event => EvidencePresentation {
-            detail_keys: &["ref", "issue_type"],
-            show_value: true,
-        },
-        ("wiki", "pages_created") => EvidencePresentation {
             detail_keys: &["ref", "title"],
-            show_value: false,
+            show_value: true,
         },
         // A seat-month row is dated at the day its snapshot was last read, not
         // at the month it bills for, so the month has to be a column of its own

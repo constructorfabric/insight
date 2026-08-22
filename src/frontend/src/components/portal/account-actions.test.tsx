@@ -83,8 +83,10 @@ function binding(over: Partial<AccountBinding> = {}): AccountBinding {
 
 beforeEach(() => {
   for (const verb of [hooks.bind, hooks.detach, hooks.exclude]) {
-    verb.mutate.mockClear();
-    verb.reset.mockClear();
+    // Reset, not clear: `mockClear` keeps an implementation a case installed,
+    // and the outcomes wired mid-file would then fire in every case after them.
+    verb.mutate.mockReset();
+    verb.reset.mockReset();
     verb.isError = false;
     verb.error = null;
     verb.isPending = false;
@@ -149,66 +151,16 @@ describe("AccountActions", () => {
     ).not.toBeInTheDocument();
   });
 
-  // Opened from inside a person: they are the whole reason the reader is here,
-  // so binding to them is one press and the search for a person is gone —
-  // finding somebody you already have open is being asked twice.
-  it("binds straight to the person the surface has open, with no search", async () => {
-    render(
-      <AccountActions
-        accountRef={REF}
-        binding={binding({ person_id: null })}
-        candidates={[]}
-        bindTo={CAROL}
-      />,
-    );
-
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: /bind to selected person/i }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
-
-    expect(hooks.bind.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ person_id: CAROL.person_id }),
-      expect.anything(),
-    );
-  });
-
-  // A press that re-binds an account to the person who already holds it reads
-  // like a decision and changes nothing. Moving it to somebody ELSE is the one
-  // decision left, and it is why an operator opens an account from a person's
-  // own list — so the search takes the button's place rather than the section
-  // disappearing with it.
-  it("offers the search, not a no-op bind, when the account is already that person's", () => {
-    render(
-      <AccountActions
-        accountRef={REF}
-        binding={binding({ person_id: CAROL.person_id })}
-        candidates={[]}
-        bindTo={CAROL}
-      />,
-    );
-
-    expect(
-      screen.queryByRole("button", { name: /bind to selected person/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("searchbox")).toBeInTheDocument();
-    expect(screen.getByText(/assign to someone else/i)).toBeInTheDocument();
-    // The other verbs are untouched — it is still an account under review.
-    expect(screen.getByRole("button", { name: /detach/i })).toBeInTheDocument();
-  });
-
-  // The search that replaced the no-op button must not offer the no-op itself.
-  // No `holder` here on purpose: a surface whose row carries no person card
-  // still knows who holds the account, and that is the case this guards.
-  it("keeps the open person out of that search, card or no card", async () => {
+  // The holder is excluded from the search whether or not the surface could
+  // hydrate their card: a listing that carries no person card still knows the
+  // id, and without that the search offers a bind that moves nothing.
+  it("keeps the holder out of the search with no card to name them by", async () => {
     hooks.search.data = { pages: [{ items: [BOB, CAROL] }] };
     render(
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: CAROL.person_id })}
         candidates={[]}
-        bindTo={CAROL}
       />,
     );
 
@@ -220,17 +172,50 @@ describe("AccountActions", () => {
     ).not.toBeInTheDocument();
   });
 
-  // Without a person behind the window the picker is the only way in, and the
-  // accounts mode is entered with no person at all.
-  it("keeps the person search where no person is open", () => {
+  // A candidate is already named above with a Bind of their own; offering them
+  // in the search too would list the same decision twice.
+  it("keeps the candidates out of the search that names them already", async () => {
+    hooks.search.data = { pages: [{ items: [BOB, CAROL] }] };
     render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[CAROL]}
+      />,
+    );
+
+    await userEvent.type(screen.getByRole("searchbox"), "chen");
+
+    // Named once, on the candidate row that carries her own Bind — and not
+    // offered a second time as a search hit.
+    expect(screen.getByText("Carol Chen")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /carol chen/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /bob park/i })).toBeInTheDocument();
+  });
+
+  // The search is the only way to a person this window does not already name.
+  // Binding to the person a SURFACE has open is not this window's job any more:
+  // the person window binds its own accounts, from the person's side.
+  it("offers the person search whatever the account's state", () => {
+    const { rerender } = render(
+      <AccountActions
+        accountRef={REF}
+        binding={binding({ person_id: null })}
+        candidates={[]}
+      />,
+    );
+
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    expect(screen.getByText(/assign to a person/i)).toBeInTheDocument();
+
+    rerender(
       <AccountActions accountRef={REF} binding={binding()} candidates={[]} />,
     );
 
     expect(screen.getByRole("searchbox")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /bind to/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText(/assign to someone else/i)).toBeInTheDocument();
   });
 
   // A detach mints a person and moves the account there. Taking somebody's ONLY
@@ -574,14 +559,11 @@ describe("AccountActions", () => {
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: null })}
-        candidates={[]}
-        bindTo={CAROL}
+        candidates={[CAROL]}
       />,
     );
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /bind to selected person/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
     expect(
       within(screen.getByRole("dialog")).queryByText(/leaves the queue/i),
     ).not.toBeInTheDocument();
@@ -593,14 +575,11 @@ describe("AccountActions", () => {
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: null })}
-        candidates={[]}
-        bindTo={CAROL}
+        candidates={[CAROL]}
         queued
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /bind to selected person/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
     expect(
       within(screen.getByRole("dialog")).getByText(/leaves the queue/i),
     ).toBeInTheDocument();
@@ -614,14 +593,11 @@ describe("AccountActions", () => {
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: null })}
-        candidates={[]}
-        bindTo={CAROL}
+        candidates={[CAROL]}
       />,
     );
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /bind to selected person/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
     expect(
       within(screen.getByRole("dialog")).getByText(
         /^The account is bound to this person\.$/,
@@ -635,13 +611,10 @@ describe("AccountActions", () => {
       <AccountActions
         accountRef={REF}
         binding={binding({ person_id: BOB.person_id })}
-        candidates={[]}
-        bindTo={CAROL}
+        candidates={[CAROL]}
       />,
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: /bind to selected person/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /^bind$/i }));
     expect(
       within(screen.getByRole("dialog")).getByText(/is re-bound to this person/i),
     ).toBeInTheDocument();

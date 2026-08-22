@@ -34,7 +34,7 @@ this file and the registry disagree.
 - Reads: cost_usd
 - Formula: sum(cost_usd)
 - Shape: currency, lower_is_better
-- Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
+- Notes: Person-attributed AI usage priced at the vendor's token rates — what the consumption would cost if billed purely by usage. It includes usage a seat already covered and excludes seat fees, so it is not the invoiced amount, and only tools that price usage per person contribute. Never add it to actual usage cost, which is the billed part of this same consumption.
 
 ## ai.seat_cost — AI seat cost
 
@@ -42,7 +42,7 @@ this file and the registry disagree.
 - Reads: seat_cost_usd
 - Formula: sum(seat_cost_usd)
 - Shape: currency, lower_is_better
-- Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+- Notes: The invoiced price of one seat for a billing month, read from the per-seat amount on the invoice. A monthly figure, so a partial window returns the whole month and a window spanning two months returns both fees. A seat whose tier the invoice does not price returns no value rather than a share of the total. Add actual usage cost for the full cost of a seat.
 
 ## ai.extra_usage_cost — AI actual usage cost
 
@@ -50,7 +50,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. This is the exact figure — ai.daily_approximate_extra_usage_cost spreads the same money over the days it was spent and sums back to it over a whole month, so the two are alternatives and are never added. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — those two are never summed either. Attribution mode is direct — the vendor reports this amount per seat.
+- Notes: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted, priced at API rates. A monthly figure, so a window covering part of a month returns the whole month rather than a fraction. This is the exact billed amount; its per-day distribution approximates the same money, and neither adds to potential usage cost.
 
 ## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
 
@@ -58,7 +58,7 @@ this file and the registry disagree.
 - Reads: daily_extra_usage_usd
 - Formula: sum(daily_extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: The money ai.extra_usage_cost reports for a month, placed on the days it was spent. The vendor states only a running month-to-date total and keeps no history, so a day's figure is the step between two readings of that total — exact in sum, approximate in placement. A month's first point carries everything spent before the first reading of it, and a run that did not happen makes the next point carry the gap; the evidence names how many days each point covers. A reading that lowers the running total is a correction, and it rewrites the days already reported rather than showing as a negative day, so no point is ever below zero. Over a whole month these points add up to ai.extra_usage_cost exactly; the two are alternatives and are never added. Days before claude-team 3.2.0 have no points at all — readings taken then were overwritten and cannot be recovered.
+- Notes: The billed extra-usage cost placed on the days it was spent. The vendor reports only a running month-to-date total, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and a correction never produces a negative day.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 

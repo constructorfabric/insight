@@ -123,6 +123,12 @@ connectors:
       bitbucket_workspaces:
         value:
           - fake
+      bitbucket_start_date:
+        value: '2020-01-01'
+      git_proxy_url:
+        value: http://fake
+      git_proxy_token:
+        value: fake
       insight_source_id:
         value: bitbucket-acme-prod
       insight_tenant_id:

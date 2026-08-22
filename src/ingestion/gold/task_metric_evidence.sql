@@ -56,7 +56,8 @@ issue_facts AS (
         any(s.final_close_at)                                                AS observed_at,
         s.issue_id                                                           AS issue_id,
         any(s.data_source)                                                   AS data_source,
-        any(s.issue_type)                                                    AS issue_type,
+        any(s.id_readable)                                                   AS id_readable,
+        any(s.title)                                                         AS title,
         any(s.status_category) = 'done'                                      AS is_done,
         toDate(s.final_close_at)                                             AS close_date,
         any(s.due_date)                                                      AS due_date,
@@ -73,7 +74,12 @@ issue_facts AS (
            toFloat64(greatest(toInt64(0),
                dateDiff('second', any(s.created_at),
                         minIf(i.interval_start, i.interval_start < s.final_close_at))))) AS pickup_seconds,
-        CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS no_dimensions
+        -- The duration measures carry no breakdown, but a row still has to
+        -- name its tracker: `source` is what makes its ref addressable.
+        CAST(
+            [tuple('source', any(s.data_source), any(s.data_source))]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        ) AS no_dimensions
     FROM issue_state AS s
     LEFT JOIN status_intervals AS i
         ON i.insight_source_id = s.insight_source_id
@@ -90,7 +96,8 @@ issue_item_evidence AS (
         toDate(final_close_at) AS metric_date,
         final_close_at AS observed_at,
         issue_id,
-        issue_type,
+        id_readable,
+        title,
         item_measure.1 AS measure_key,
         toFloat64(item_measure.2) AS contribution,
         CAST(
@@ -284,14 +291,11 @@ SELECT
     concat(toString(insight_source_id), ':', toString(issue_id), ':', measure_key) AS record_id,
     'issue' AS record_kind,
     'event' AS granularity,
-    toString(issue_id) AS record_label,
+    id_readable AS record_label,
     toNullable(contribution) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     type_dimensions AS dimensions,
-    map(
-        'ref', toString(issue_id),
-        'issue_type', ifNull(issue_type, '')
-    ) AS details
+    map('ref', id_readable, 'title', ifNull(title, '')) AS details
 FROM issue_item_evidence
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
@@ -311,14 +315,11 @@ SELECT
     concat(toString(insight_source_id), ':', toString(issue_id), ':', duration_measure.1) AS record_id,
     'issue' AS record_kind,
     'event' AS granularity,
-    toString(issue_id) AS record_label,
+    id_readable AS record_label,
     toNullable(toFloat64(duration_measure.2)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     no_dimensions AS dimensions,
-    map(
-        'ref', toString(issue_id),
-        'issue_type', ifNull(issue_type, '')
-    ) AS details
+    map('ref', id_readable, 'title', ifNull(title, '')) AS details
 FROM issue_facts
 ARRAY JOIN arrayConcat(
     if(ifNull(dev_seconds, 0) > 0, [tuple('dev_time_hours', toFloat64(dev_seconds / 3600.0))], []),

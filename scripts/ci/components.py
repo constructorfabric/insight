@@ -155,13 +155,6 @@ COMPONENTS = [
         "paths": ["src/ingestion/connectors/git/gitlab"],
     },
     {
-        "name": "bitbucket-cloud",
-        "lang": "python",
-        "root": "src/ingestion/connectors/git/bitbucket-cloud",
-        "cov_package": "source_bitbucket_cloud",
-        "paths": ["src/ingestion/connectors/git/bitbucket-cloud"],
-    },
-    {
         "name": "hubspot",
         "lang": "python",
         "root": "src/ingestion/connectors/crm/hubspot",
@@ -231,6 +224,7 @@ COMPONENTS = [
         "paths": [
             "src/ingestion/connectors/task-tracking/jira",
             "src/ingestion/connectors/git/github",
+            "src/ingestion/connectors/git/bitbucket-cloud",
         ],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it

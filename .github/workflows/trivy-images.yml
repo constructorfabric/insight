@@ -48,7 +48,6 @@ jobs:
           - insight-jira-enrich
           # Python connectors
           - source-active-directory-insight
-          - source-bitbucket-cloud-insight
           - source-gitlab-insight
           # Keep the waiver on the entry line: the GitLab detector reads this image name as a token.
           - source-hubspot-insight # trufflehog:ignore
