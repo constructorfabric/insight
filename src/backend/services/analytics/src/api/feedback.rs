@@ -171,7 +171,7 @@ fn admin_only() -> CanonicalError {
 }
 
 fn refused_window(error: WindowError) -> CanonicalError {
-    violation(&error.field(), &error.description())
+    violation(error.field(), &error.description())
 }
 
 fn violation(field: &str, description: &str) -> CanonicalError {
