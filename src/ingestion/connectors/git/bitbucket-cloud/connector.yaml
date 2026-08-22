@@ -1043,7 +1043,7 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -1388,7 +1388,7 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -1709,7 +1709,7 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2068,7 +2068,7 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2374,7 +2374,7 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2790,7 +2790,7 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -3027,7 +3027,7 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -3293,7 +3293,7 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: >-
-                                next,values.uuid,values.full_name,values.updated_on,values.links.clone
+                                next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
