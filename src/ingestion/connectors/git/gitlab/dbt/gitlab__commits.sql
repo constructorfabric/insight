@@ -11,8 +11,8 @@
 
 -- lines_added / lines_removed come from the commit's own stats (present for
 -- every commit). files_changed is the per-commit count from commit_file_changes,
--- which the connector only collects for default-branch non-merge commits — so
--- it is 0 for commits outside that set. branch is not stored on the commit row;
+-- which the connector collects for non-merge commits on every branch — so it is
+-- 0 only for a merge commit. branch is not stored on the commit row;
 -- membership is, from the ref the stream walked.
 -- INVARIANT: is_in_default_branch is NULL for rows written before the connector
 -- projected it, and no dbt rebuild can fill them — the value is not in Bronze.
