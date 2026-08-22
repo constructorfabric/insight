@@ -56,6 +56,8 @@ reconcile_compute_connection_name() {
 # ---------------------------------------------------------------------------
 # reconcile_compute_schedule <connector_name>
 # Schedule precedence: Secret annotation > descriptor.yaml.schedule > default.
+# Stdout: one cron per line — `descriptor.schedule` may be a list, so callers
+# MUST keep the value quoted end to end or the extra crons are lost.
 # ---------------------------------------------------------------------------
 reconcile_compute_schedule() {
   local connector="$1"
