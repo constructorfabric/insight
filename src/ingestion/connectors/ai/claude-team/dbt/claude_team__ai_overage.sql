@@ -50,8 +50,7 @@
 ) }}
 
 WITH per_seat_day AS (
-    -- One reading per seat per day the endpoint was read. Bronze keys a reading
-    -- by seat and day, and a re-run within a day replaces its own row, but
+    -- One reading per seat per day: Bronze keys a reading by seat and day, but
     -- ReplacingMergeTree collapses on merge rather than on insert.
     SELECT *
     FROM {{ source('bronze_claude_team', 'claude_team_overage_spend') }}
@@ -66,20 +65,15 @@ WITH per_seat_day AS (
     -- keying on account_uuid alone would drop those as false duplicates.
     LIMIT 1 BY tenant_id, source_id, account_uuid, toDate(_airbyte_extracted_at)
 ),
--- INVARIANT: a reading taken on the month's last calendar day may raise the
--- month but never lower it. The endpoint names no billing period, so a drop
--- there cannot be told apart from its counter having already rolled over, and
--- this row IS the month's closing figure. Losing one late correction is the
--- cheaper error. Mirrors the same hold in ai_cost_metric_evidence, so the
--- monthly figure and the per-day distribution keep agreeing.
+-- INVARIANT: a reading on the month's last calendar day may raise the month,
+-- never lower it — this row IS the closing figure. Mirrors the hold in
+-- ai_cost_metric_evidence, so the monthly and per-day figures keep agreeing.
 per_seat_day_held AS (
     SELECT
         *,
-        -- INVARIANT: the floor is the PRECEDING reading, never the largest of
-        -- them. Gold erases an earlier reading that was too high — one taken
-        -- before the vendor's own period rolled over reads as the closing
-        -- month's total — and the last of the earlier readings is the one it
-        -- leaves standing. Their maximum would restore what it erased.
+        -- INVARIANT: the PRECEDING reading, never the largest. Gold erases an
+        -- earlier reading that overstated the month; a maximum over them would
+        -- restore it.
         if(
             toDate(_airbyte_extracted_at) = toLastDayOfMonth(_airbyte_extracted_at),
             greatest(
@@ -95,8 +89,7 @@ per_seat_day_held AS (
     FROM per_seat_day
 ),
 latest_per_seat_month AS (
-    -- The month's closing state: repeated syncs within a month re-emit the seat,
-    -- and rows written before the key carried a day have no day in theirs.
+    -- The month's closing state.
     SELECT *
     FROM per_seat_day_held
     ORDER BY _airbyte_extracted_at DESC

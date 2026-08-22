@@ -190,9 +190,7 @@ sources:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
-      # The billing month in progress is revisable throughout: the monthly
-      # figures keep rising until it closes, and a reading that lowers the
-      # running total rewrites the daily steps already reported. 31 days is the
+      # The month in progress is revisable throughout, and 31 days is the
       # longest such month.
       revision_window_days: 31
     measures:

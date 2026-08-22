@@ -17,10 +17,8 @@ Stdout: rendered YAML.
 Exit:   0 success, 2 missing template variables or empty --schedule.
 
 Schedule precedence is resolved by the caller (Secret annotation >
-descriptor.schedule > default). `descriptor.schedule` may be a single cron
-or a list of them; `parse_descriptor.py` prints a list newline-separated,
-so the caller forwards the value verbatim and every line becomes one entry
-of the CronWorkflow's `schedules:` array.
+descriptor.schedule > default), which may hold one cron or several — a list
+prints newline-separated and travels verbatim.
 
 The renderer is a pure stamp — it neither reads `descriptor.yaml` nor any
 other file beyond the template. All descriptor-derived values are passed
@@ -67,9 +65,8 @@ def main() -> int:
     if not schedules:
         sys.stderr.write("render_cronworkflow: --schedule carries no cron expression\n")
         return 2
-    # INVARIANT: a YAML flow array keeps the value on one line. The template
-    # names every variable in its header comment and substitutes there too, so
-    # a multi-line value would break out of that comment into the document.
+    # INVARIANT: a flow array stays on one line. The template substitutes into
+    # its own header comment too, where a multi-line value would break out.
     schedules_flow = json.dumps(schedules)
 
     env = {

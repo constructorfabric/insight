@@ -63,9 +63,8 @@ seat_month_source AS (
         account_id,
         lower(email)                            AS entity_id,
         seat_tier,
-        -- INVARIANT: month-anchored, not read-anchored. A read-day date moves
-        -- with the sync schedule, so the row leaves any window ending before it.
-        -- `observed_at` beside it keeps the time of the reading.
+        -- INVARIANT: month-anchored, not read-anchored — a read-day date moves
+        -- with the sync schedule. `observed_at` keeps the time of the reading.
         toDate(period_month)                    AS metric_date,
         toDateTime64(collected_at, 3)           AS observed_at,
         period_month,
@@ -129,18 +128,15 @@ seat_day_source AS (
       AND email != ''
       AND snapshot_date IS NOT NULL
 ),
--- INVARIANT: a reading taken on the month's last calendar day may raise the
--- month but never lower it. The vendor states no billing period, so a drop
--- there cannot be told apart from its counter having already rolled over, and
--- the suffix minimum below would spread that drop over every day of the month.
--- Losing one late correction is the cheaper error.
+-- INVARIANT: a reading on the month's last calendar day may raise the month,
+-- never lower it. No billing period is reported, so a drop there cannot be told
+-- from a rolled-over counter, and the suffix minimum would spread it monthwide.
 seat_day_held AS (
     SELECT
         *,
-        -- INVARIANT: the floor is the PRECEDING reading, never the largest of
-        -- them. The suffix minimum below already erases an earlier reading that
-        -- was too high, and the last of the earlier readings is the one it left
-        -- standing — taking their maximum would restore what it erased.
+        -- INVARIANT: the PRECEDING reading, never the largest. The suffix
+        -- minimum erases an earlier reading that was too high; a maximum over
+        -- them would restore it.
         if(
             metric_date = toLastDayOfMonth(period_month),
             greatest(

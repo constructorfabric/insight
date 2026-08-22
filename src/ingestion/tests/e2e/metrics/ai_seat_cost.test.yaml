@@ -101,8 +101,6 @@ cases:
         equal: { target_value: 12.0, p25: 12.0, median: 12.0, p75: 25.0, min: 12.0, max: 25.0, n: 5 }
       - metric: ai.seat_cost
         view: timeseries
-        # Anchored to the first day of the billing month, not to the day the
-        # seat was read: the fee belongs to the month, not to a reading of it.
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-01' && double(p.value) == 12.0))"
       - metric: ai.seat_cost
         view: breakdown

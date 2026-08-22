@@ -21,10 +21,8 @@ description: >
   4.00 and not 5.00, and why her Dec 06 is 0.00 and never −1.00.
 
   The month's last calendar day is the exception, and alice's September is here for
-  it. A drop on that day cannot be told apart from the vendor's counter having
-  rolled over — the endpoint names no billing period — so such a reading may raise
-  the month but never lower it. Without the hold, one reading would rewrite every
-  day of the month down to it.
+  it: a drop there cannot be told from a rolled-over counter, so such a reading may
+  raise the month but never lower it.
 
   Department: 5 Engineering members, read on Dec 05 and Dec 06 (alice again on
   Dec 07), inside the custom window (Nov 01 .. Dec 12). Cents as the vendor
@@ -45,7 +43,8 @@ description: >
   value. The third case asserts it for all five, erin included: a correction that
   broke the identity would show up there first.
 
-  Cases: the four served views · a correction · the sum identity · empty window.
+  Cases: the four served views · a correction · a held last day · an overstated
+  first reading · the sum identity · empty window.
 
 bronze:
   bronze_bamboohr.employees:
@@ -71,12 +70,12 @@ bronze:
     # The correction: Dec 06 reports LESS than Dec 05.
     - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-erin-2026-12-05,  snapshot_date: "2026-12-05", used_credits: 500, monthly_credit_limit: 1000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-erin-2026-12-06,  snapshot_date: "2026-12-06", used_credits: 400, monthly_credit_limit: 1000 }
-    # A separate month, so the December pool above keeps its five contributors:
-    # Sep 30 is that month's last calendar day and reports LESS than Sep 29.
+    # Sep 30 is the month's last calendar day and reports LESS than Sep 29. Its
+    # own month, so the December pool above keeps its five contributors.
     - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-29T00:00:00Z", unique_key: seat-alice-2026-09-29, snapshot_date: "2026-09-29", used_credits: 600, monthly_credit_limit: 1000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-30T00:00:00Z", unique_key: seat-alice-2026-09-30, snapshot_date: "2026-09-30", used_credits: 100, monthly_credit_limit: 1000 }
-    # October for bob, whose 1st reads far above the rest of the month: a reading
-    # taken before the vendor's own period rolled over states the closing month.
+    # bob's Oct 01 reads far above the month: a reading taken before the
+    # vendor's period rolled over states the closing month.
     - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-01T00:00:00Z", unique_key: seat-bob-2026-10-01,   snapshot_date: "2026-10-01", used_credits: 5000, monthly_credit_limit: 10000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-02T00:00:00Z", unique_key: seat-bob-2026-10-02,   snapshot_date: "2026-10-02", used_credits: 100,  monthly_credit_limit: 10000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-31T00:00:00Z", unique_key: seat-bob-2026-10-31,   snapshot_date: "2026-10-31", used_credits: 300,  monthly_credit_limit: 10000 }
@@ -157,11 +156,9 @@ cases:
         assert: "items.all(s, s.points.all(p, double(p.value) >= 0.0))"
 
   # ── A reading on the month's last day may raise it, never lower it ───────────
-  # alice reads 600 on Sep 29 and 100 on Sep 30, the month's last calendar day.
-  # Held, Sep 29 keeps $6 and Sep 30 is $0. Treated as a correction instead, the
-  # suffix minimum would rewrite Sep 29 down and the month would read $1. The
-  # monthly figure is held the same way, so the sum identity survives the hold —
-  # a hold applied to one side only would show up here as $6 against $1.
+  # Held, Sep 29 keeps $6 and Sep 30 is $0; read as a correction the month would
+  # be $1. Both metrics are asked, because a hold on one side only reads as $6
+  # against $1.
   - name: AI daily extra usage holds a month against its last-day reading
     request:
       url: /v1/metric-results
@@ -195,10 +192,9 @@ cases:
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-09-30' && double(p.value) == 0.0))"
 
   # ── A reading that overstates a month is erased, and the hold keeps it erased ─
-  # bob's Oct 01 reads 5000 while the month really spends 300. The rule that
-  # rewrites a month downwards takes care of it — Oct 01 becomes $1, not $50 — and
-  # the last-day hold must not undo that: a hold floored on the largest earlier
-  # reading instead of the preceding one would put the month back at $50.
+  # Oct 01 reads 5000 where the month spends 300. The rewriting rule makes it $1,
+  # and the last-day hold must not undo that: floored on the largest earlier
+  # reading rather than the preceding one, the month would go back to $50.
   - name: AI daily extra usage keeps an overstated first reading erased
     request:
       url: /v1/metric-results
