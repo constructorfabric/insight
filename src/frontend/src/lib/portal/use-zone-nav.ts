@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 
-import { zoneHidden } from "@/lib/portal/nav-hide";
+import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
 import { ZONES, type Zone } from "@/lib/portal/nav-model";
 import {
   usePortalShowPlanned,
@@ -45,7 +45,7 @@ export function useZoneNav(): {
     (z) =>
       !zoneHidden(z.id) &&
       (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
-      (z.readiness == null || showPlanned),
+      ((z.readiness == null && !zonePlanned(z.id)) || showPlanned),
   );
 
   function selectZone(zone: Zone) {

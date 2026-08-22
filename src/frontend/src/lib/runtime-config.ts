@@ -9,7 +9,7 @@
  */
 export interface InsightRuntimeConfig {
   sentryDsn?: string;
-  nav?: { hide?: readonly string[] };
+  nav?: { hide?: readonly string[]; planned?: readonly string[] };
 }
 
 declare global {

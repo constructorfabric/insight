@@ -24,15 +24,21 @@ export function landingDecision(args: {
   canSeeOthers: boolean;
   adminPending: boolean;
   isAdmin: boolean;
-  /** This install hides the Overview zone (`nav.hide`) — nothing to pin. */
-  overviewHidden?: boolean;
+  overviewVisible?: boolean;
 }): LandingDecision {
-  const { zone, mgrPending, canSeeOthers, adminPending, isAdmin, overviewHidden } = args;
+  const {
+    zone,
+    mgrPending,
+    canSeeOthers,
+    adminPending,
+    isAdmin,
+    overviewVisible = true,
+  } = args;
 
   if (mgrPending) return { kind: "wait" };
   if (canSeeOthers) {
     if (zone != null) return { kind: "keep" };
-    return overviewHidden ? { kind: "keep" } : { kind: "pin-overview" };
+    return overviewVisible ? { kind: "pin-overview" } : { kind: "keep" };
   }
 
   // A viewer with nobody to look at collapses to Person — except Manage, which is

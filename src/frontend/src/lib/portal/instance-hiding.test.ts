@@ -1,29 +1,39 @@
 /**
- * The install's `nav.hide` policy applied across the navigation model: every
- * nesting level hides, hidden entries vanish rather than demote to "Planned",
- * and the full catalog stays available where labels and telemetry read it.
+ * The install's nav policy applied across the navigation model: every nesting
+ * level hides, `nav.planned` entries demote exactly like readiness-marked
+ * ones, and the full catalog stays available where labels and telemetry read
+ * it.
  */
 import { describe, expect, it } from "vitest";
 
 import { visibleDirections, visibleLenses } from "./lens-configs";
 import { landingDecision } from "./landing-zone";
-import { parseNavHide } from "./nav-hide";
+import { parseNavPolicy, visiblePersonSections } from "./nav-policy";
 import {
   DIRECTIONS,
   lensSlug,
   manageItemsFor,
+  partitionByReadiness,
   peopleItemsFor,
   resolveZoneItem,
   zoneItems,
   zoneSections,
 } from "./nav-model";
 
+function hide(paths: string[]) {
+  return parseNavPolicy({ hide: paths });
+}
+
+function planned(paths: string[]) {
+  return parseNavPolicy({ planned: paths });
+}
+
 const dev = DIRECTIONS.find((d) => d.id === "dev")!;
 const wiki = DIRECTIONS.find((d) => d.id === "wiki")!;
 
 describe("zoneSections under nav.hide", () => {
   it("drops a hidden item from its group", () => {
-    const policy = parseNavHide(["zone:overview/item:trend"]);
+    const policy = hide(["zone:overview/item:trend"]);
 
     const items = zoneSections("overview", policy).flatMap((g) => g.items);
 
@@ -32,7 +42,7 @@ describe("zoneSections under nav.hide", () => {
 
   it("drops a group whose every item is hidden", () => {
     const cost = zoneSections("aicost").find((g) => g.label === "Cost")!;
-    const policy = parseNavHide(cost.items.map((i) => `zone:aicost/item:${i.id}`));
+    const policy = hide(cost.items.map((i) => `zone:aicost/item:${i.id}`));
 
     const labels = zoneSections("aicost", policy).map((g) => g.label);
 
@@ -40,37 +50,76 @@ describe("zoneSections under nav.hide", () => {
   });
 
   it("keeps the untouched groups intact", () => {
-    const policy = parseNavHide(["zone:aicost/item:adoption-funnel"]);
+    const policy = hide(["zone:aicost/item:adoption-funnel"]);
 
     expect(zoneSections("overview", policy)).toEqual(zoneSections("overview"));
   });
 });
 
-describe("resolveZoneItem under nav.hide", () => {
+describe("zoneSections under nav.planned", () => {
+  it("demotes a marked item exactly as a readiness-marked one", () => {
+    const policy = planned(["zone:overview/item:trend"]);
+    const items = zoneSections("overview", policy).flatMap((g) => g.items);
+
+    const split = partitionByReadiness(items, true);
+
+    expect(split.planned.map((i) => i.id)).toContain("trend");
+    expect(split.live.map((i) => i.id)).not.toContain("trend");
+  });
+
+  it("hides a marked item from a reader who opted out of planned sections", () => {
+    const policy = planned(["zone:overview/item:trend"]);
+    const items = zoneSections("overview", policy).flatMap((g) => g.items);
+
+    const split = partitionByReadiness(items, false);
+
+    expect([...split.live, ...split.planned].map((i) => i.id)).not.toContain(
+      "trend"
+    );
+  });
+
+  it("keeps the code's tier when the code already marks the item", () => {
+    const policy = planned(["zone:aicost/item:per-tool"]);
+    const items = zoneSections("aicost", policy).flatMap((g) => g.items);
+
+    expect(items.find((i) => i.id === "per-tool")?.readiness).toBe("unbuilt");
+  });
+});
+
+describe("resolveZoneItem under the install policy", () => {
   it("sends a deep link into a hidden item to the first shown entry", () => {
-    const policy = parseNavHide(["zone:overview/item:trend"]);
+    const policy = hide(["zone:overview/item:trend"]);
 
     expect(resolveZoneItem("overview", "trend", policy)).toBe("at-a-glance");
   });
 
   it("skips a hidden item when picking the zone default", () => {
-    const policy = parseNavHide(["zone:overview/item:at-a-glance"]);
+    const policy = hide(["zone:overview/item:at-a-glance"]);
 
     expect(resolveZoneItem("overview", null, policy)).toBe("by-direction");
   });
 
+  it("skips a planned item as default but keeps it when the URL names it", () => {
+    const policy = planned(["zone:overview/item:at-a-glance"]);
+
+    expect(resolveZoneItem("overview", null, policy)).toBe("by-direction");
+    expect(resolveZoneItem("overview", "at-a-glance", policy)).toBe(
+      "at-a-glance"
+    );
+  });
+
   it("returns null when the policy hides everything built", () => {
-    const policy = parseNavHide(
-      zoneItems("people").map((i) => `zone:people/item:${i.id}`),
+    const policy = hide(
+      zoneItems("people").map((i) => `zone:people/item:${i.id}`)
     );
 
     expect(resolveZoneItem("people", null, policy)).toBeNull();
   });
 });
 
-describe("pane lists under nav.hide", () => {
+describe("pane lists under the install policy", () => {
   it("hides a People item in both deployment shapes", () => {
-    const policy = parseNavHide(["zone:people/item:employees"]);
+    const policy = hide(["zone:people/item:employees"]);
 
     for (const isFlat of [true, false]) {
       const ids = peopleItemsFor(isFlat, policy).map((i) => i.id);
@@ -79,37 +128,95 @@ describe("pane lists under nav.hide", () => {
   });
 
   it("hides a Manage item even for an admin", () => {
-    const policy = parseNavHide(["zone:manage/item:metric-catalog"]);
+    const policy = hide(["zone:manage/item:metric-catalog"]);
 
     expect(manageItemsFor(true, policy).map((i) => i.id)).not.toContain(
-      "metric-catalog",
+      "metric-catalog"
     );
+  });
+
+  it("demotes a planned People or Manage item instead of dropping it", () => {
+    const policy = planned([
+      "zone:people/item:employees",
+      "zone:manage/item:metric-catalog",
+    ]);
+
+    const people = peopleItemsFor(false, policy).find(
+      (i) => i.id === "employees"
+    );
+    const manage = manageItemsFor(true, policy).find(
+      (i) => i.id === "metric-catalog"
+    );
+
+    expect(people?.readiness).toBe("planned");
+    expect(manage?.readiness).toBe("planned");
   });
 });
 
-describe("directions under nav.hide", () => {
-  it("drops a hidden direction", () => {
-    const policy = parseNavHide(["zone:directions/dir:sales"]);
+describe("Person content under the install policy", () => {
+  const sections = [{ id: "git_output" }, { id: "collaboration" }];
 
-    expect(visibleDirections(true, policy).map((d) => d.id)).not.toContain("sales");
+  it("removes hidden sections from the content catalog", () => {
+    const policy = hide(["zone:person/section:git_output"]);
+
+    expect(visiblePersonSections(sections, true, policy)).toEqual([
+      { id: "collaboration" },
+    ]);
+  });
+
+  it("toggles planned sections in the content catalog", () => {
+    const policy = planned(["zone:person/section:git_output"]);
+
+    expect(visiblePersonSections(sections, false, policy)).toEqual([
+      { id: "collaboration" },
+    ]);
+    expect(visiblePersonSections(sections, true, policy)).toEqual(sections);
+  });
+});
+
+describe("directions under the install policy", () => {
+  it("drops a hidden direction", () => {
+    const policy = hide(["zone:directions/dir:sales"]);
+
+    expect(visibleDirections(true, policy).map((d) => d.id)).not.toContain(
+      "sales"
+    );
   });
 
   it("drops a hidden lens by its slug", () => {
-    const policy = parseNavHide(["zone:directions/dir:dev/lens:git-output"]);
+    const policy = hide(["zone:directions/dir:dev/lens:git-output"]);
 
     expect(visibleLenses(dev, true, policy)).not.toContain("Git output");
   });
 
   it("drops a direction whose every lens is hidden", () => {
-    const policy = parseNavHide(
-      wiki.lenses.map((l) => `zone:directions/dir:wiki/lens:${lensSlug(l)}`),
+    const policy = hide(
+      wiki.lenses.map((l) => `zone:directions/dir:wiki/lens:${lensSlug(l)}`)
     );
 
-    expect(visibleDirections(true, policy).map((d) => d.id)).not.toContain("wiki");
+    expect(visibleDirections(true, policy).map((d) => d.id)).not.toContain(
+      "wiki"
+    );
+  });
+
+  it("toggles a planned lens with the show-planned choice", () => {
+    const policy = planned(["zone:directions/dir:dev/lens:git-output"]);
+
+    expect(visibleLenses(dev, true, policy)).toContain("Git output");
+    expect(visibleLenses(dev, false, policy)).not.toContain("Git output");
+  });
+
+  it("toggles a whole planned direction with the show-planned choice", () => {
+    const policy = planned(["zone:directions/dir:dev"]);
+
+    expect(visibleDirections(true, policy).map((d) => d.id)).toContain("dev");
+    expect(visibleDirections(false, policy).map((d) => d.id)).not.toContain(
+      "dev"
+    );
   });
 });
 
-describe("what nav.hide must NOT touch", () => {
+describe("what the install policy must NOT touch", () => {
   it("leaves the full item catalog for labels and telemetry", () => {
     // zoneItems is deliberately unfiltered — screen labels and the usage
     // catalog enumerate everything the model knows, hidden or not.
@@ -125,7 +232,7 @@ describe("landing under nav.hide", () => {
       zone: null,
       ...resolved,
       canSeeOthers: true,
-      overviewHidden: true,
+      overviewVisible: false,
     });
 
     expect(decision.kind).toBe("keep");
@@ -136,7 +243,7 @@ describe("landing under nav.hide", () => {
       zone: null,
       ...resolved,
       canSeeOthers: true,
-      overviewHidden: false,
+      overviewVisible: true,
     });
 
     expect(decision.kind).toBe("pin-overview");

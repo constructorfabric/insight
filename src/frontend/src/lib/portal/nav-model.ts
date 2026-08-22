@@ -28,7 +28,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { itemHidden, navHidePolicy, type NavHidePolicy } from "./nav-hide";
+import {
+  itemHidden,
+  itemPlanned,
+  navPolicy,
+  type InstanceNavPolicy,
+} from "./nav-policy";
 
 
 /**
@@ -206,18 +211,36 @@ export function partitionByReadiness<T extends { readiness?: Readiness }>(
 }
 
 /**
- * A theme zone's pane groups minus what this install hides. A group whose
- * every item is hidden drops with them: an empty heading is a dead end, the
- * same rule `visibleDirections` applies to a direction with no lenses left.
+ * The install's `nav.planned` marking, folded into the same field the code
+ * marks: downstream (partitioning, defaults) then needs no second concept.
+ * A tier the code already assigned stays — the config cannot promote.
+ */
+function withConfigReadiness(
+  zoneId: string,
+  item: PaneItem,
+  policy: InstanceNavPolicy,
+): PaneItem {
+  if (item.readiness != null) return item;
+  if (!itemPlanned(zoneId, item.id, policy)) return item;
+  return { ...item, readiness: "planned" };
+}
+
+/**
+ * A theme zone's pane groups through this install's policy: hidden items are
+ * gone, `nav.planned` ones read as readiness-marked. A group whose every item
+ * is hidden drops with them: an empty heading is a dead end, the same rule
+ * `visibleDirections` applies to a direction with no lenses left.
  */
 export function zoneSections(
   zoneId: string,
-  policy: NavHidePolicy = navHidePolicy(),
+  policy: InstanceNavPolicy = navPolicy(),
 ): readonly PaneGroup[] {
   return (ZONE_SECTIONS[zoneId] ?? [])
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !itemHidden(zoneId, item.id, policy)),
+      items: group.items
+        .filter((item) => !itemHidden(zoneId, item.id, policy))
+        .map((item) => withConfigReadiness(zoneId, item, policy)),
     }))
     .filter((group) => group.items.length > 0);
 }
@@ -318,13 +341,15 @@ const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "employees", label: "Roster", icon: Users },
 ];
 
-/** The People pane for this deployment's shape, minus what it hides. */
+/** The People pane for this deployment's shape, through the install policy. */
 export function peopleItemsFor(
   isFlat: boolean,
-  policy: NavHidePolicy = navHidePolicy(),
+  policy: InstanceNavPolicy = navPolicy(),
 ): readonly PaneItem[] {
   const items = isFlat ? FLAT_PEOPLE_ITEMS : PEOPLE_ITEMS;
-  return items.filter((item) => !itemHidden("people", item.id, policy));
+  return items
+    .filter((item) => !itemHidden("people", item.id, policy))
+    .map((item) => withConfigReadiness("people", item, policy));
 }
 
 /* ── Manage zone ─────────────────────────────────────────────────────── */
@@ -332,11 +357,11 @@ export function peopleItemsFor(
 /** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
 export function manageItemsFor(
   isAdmin: boolean,
-  policy: NavHidePolicy = navHidePolicy(),
+  policy: InstanceNavPolicy = navPolicy(),
 ): readonly PaneItem[] {
   return MANAGE_ITEMS.filter(
     (item) => (!item.adminOnly || isAdmin) && !itemHidden("manage", item.id, policy),
-  );
+  ).map((item) => withConfigReadiness("manage", item, policy));
 }
 
 export const MANAGE_ITEMS: readonly PaneItem[] = [
@@ -380,19 +405,23 @@ export function defaultZoneItem(zoneId: string): string | null {
 
 /**
  * The item a zone is showing: the one the URL names if this zone lists it and
- * this install shows it, else the first entry the pane would render. Pane and
- * content resolve through here so the menu marks the view on screen — a bare
- * `?zone=` used to highlight nothing while the content rendered a default, an
- * `item` left behind by another zone matched nothing here while that zone's
- * view fell back, and a deep link into a hidden item lands the same way.
+ * this install shows it, else the first entry the pane would render — built,
+ * not hidden, and not demoted by `nav.planned` (a planned row is clickable
+ * but is never what a bare zone opens on). Pane and content resolve through
+ * here so the menu marks the view on screen — a bare `?zone=` used to
+ * highlight nothing while the content rendered a default, an `item` left
+ * behind by another zone matched nothing here while that zone's view fell
+ * back, and a deep link into a hidden item lands the same way.
  */
 export function resolveZoneItem(
   zoneId: string,
   item: string | null,
-  policy: NavHidePolicy = navHidePolicy(),
+  policy: InstanceNavPolicy = navPolicy(),
 ): string | null {
   const shown = (i: PaneItem) => !itemHidden(zoneId, i.id, policy);
+  const live = (i: PaneItem) =>
+    i.readiness == null && !itemPlanned(zoneId, i.id, policy);
   const items = zoneItems(zoneId);
   if (item && items.some((i) => i.id === item && shown(i))) return item;
-  return items.find((i) => i.readiness == null && shown(i))?.id ?? null;
+  return items.find((i) => live(i) && shown(i))?.id ?? null;
 }

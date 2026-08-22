@@ -1,9 +1,11 @@
 import {
   directionHidden,
+  directionPlanned,
   lensHidden,
-  navHidePolicy,
-  type NavHidePolicy,
-} from "@/lib/portal/nav-hide";
+  lensPlanned,
+  navPolicy,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
 import {
   DIRECTIONS,
   lensSlug,
@@ -94,18 +96,35 @@ export function lensEntry(dir: string, lens: string): LensEntry | undefined {
 }
 
 /**
+ * Whether a lens reads as roadmap: a ComingSoon registry entry, or this
+ * install marking it (or its whole direction) as planned. Roadmap lenses
+ * render muted and hide for a reader who opted out of planned sections.
+ */
+export function lensRoadmap(
+  direction: Direction,
+  lens: string,
+  policy: InstanceNavPolicy = navPolicy()
+): boolean {
+  const entry = lensEntry(direction.id, lens);
+  if (entry && "comingSoon" in entry) return true;
+  return (
+    directionPlanned(direction.id, policy) ||
+    lensPlanned(direction.id, lensSlug(lens), policy)
+  );
+}
+
+/**
  * A direction's lenses in pane order, minus the roadmap ones a reader opted
  * out of and the ones this install hides.
  */
 export function visibleLenses(
   direction: Direction,
   showPlanned: boolean,
-  policy: NavHidePolicy = navHidePolicy()
+  policy: InstanceNavPolicy = navPolicy()
 ): string[] {
   return direction.lenses.filter((lens) => {
     if (lensHidden(direction.id, lensSlug(lens), policy)) return false;
-    const entry = lensEntry(direction.id, lens);
-    return !entry || !("comingSoon" in entry) || showPlanned;
+    return !lensRoadmap(direction, lens, policy) || showPlanned;
   });
 }
 
@@ -115,7 +134,7 @@ export function visibleLenses(
  */
 export function visibleDirections(
   showPlanned: boolean,
-  policy: NavHidePolicy = navHidePolicy()
+  policy: InstanceNavPolicy = navPolicy()
 ): Direction[] {
   return DIRECTIONS.filter(
     (d) =>

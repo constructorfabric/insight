@@ -128,11 +128,11 @@ Server-side cookie/BFF flow — the SPA holds no tokens.
 4. A 401 bounces the whole page into `/auth/login?return_to=…` ([src/auth/use-auth.ts](src/auth/use-auth.ts)); there is no client-side token to refresh.
 5. The session is non-sliding: [src/auth/refresh.ts](src/auth/refresh.ts) drives `POST /auth/refresh` on the server-supplied `refresh_at`.
 
-## Per-Install Navigation Hiding
+## Per-Install Navigation Policy
 
-A deployment can hide navigation entries — at any nesting level — with the
-`nav.hide` chart value, rendered into `/config.js` next to the Sentry DSN.
-Each entry is a typed path:
+A deployment can hide navigation entries — at any nesting level — or mark
+them as still in development, with the `nav` chart value rendered into
+`/config.js` next to the Sentry DSN. Both lists take the same typed paths:
 
 ```yaml
 nav:
@@ -142,13 +142,18 @@ nav:
     - "zone:directions/dir:sales"               # a whole direction
     - "zone:directions/dir:dev/lens:git-output" # one lens, by URL slug
     - "zone:person/section:git_output"          # a Person-zone section
+  planned:
+    - "zone:reports/item:report-builder"        # same path forms as hide
 ```
 
 A hidden entry disappears from every menu and from default/deep-link
-resolution; a path that matches nothing is ignored (malformed ones warn in
-the browser console). This is presentation, not authorization — the API
-refuses on its own regardless of what the menu shows. Parsing and semantics
-live in [src/lib/portal/nav-hide.ts](src/lib/portal/nav-hide.ts).
+resolution. A `planned` entry behaves exactly like a `readiness`-marked one
+in the code: demoted to the "Planned" menu group and toggled by the viewer's
+"Show planned sections" switch. A path in both lists is hidden; a path that
+matches nothing is ignored (malformed ones warn in the browser console).
+This is presentation, not authorization — the API refuses on its own
+regardless of what the menu shows. Parsing and semantics live in
+[src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).
 
 ## Environment Variables
 
