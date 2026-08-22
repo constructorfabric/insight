@@ -46,7 +46,9 @@ server {
     # Only content-hashed names may be immutable; a stable-named file pinned
     # here goes stale for the full max-age.
     location ^~ /assets/ {
-        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        # No `always`: nginx then limits the header to 2xx/3xx, keeping the
+        # immutable lifetime off the 404 a request mid-rollout can hit.
+        add_header Cache-Control "public, max-age=31536000, immutable";
         # Re-include security headers — see comment above for why.
         include /etc/nginx/snippets/security-headers.conf;
     }
