@@ -7,12 +7,13 @@ use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
     BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, RankingQueryRow,
-    TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, dimension_aliases,
+    RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE,
+    dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
-    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, TimeseriesDto,
-    TimeseriesPointDto,
+    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, RollupValueDto,
+    TimeseriesDto, TimeseriesPointDto,
 };
 use super::validation::{
     HISTOGRAM_BINS, ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large,
@@ -204,6 +205,38 @@ pub fn build_breakdown_view(
     })
 }
 
+pub fn build_rollup_view(
+    dimensions: &[String],
+    rows: Vec<RollupQueryRow>,
+) -> Result<MetricResultViewDto, CanonicalError> {
+    let values = rows
+        .into_iter()
+        .map(|row| {
+            let remainder = row.remainder != 0;
+            let dimensions = if remainder {
+                Vec::new()
+            } else {
+                row_dimensions(&row.extra, dimensions)?
+                    .into_iter()
+                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .collect()
+            };
+            Ok(RollupValueDto {
+                dimensions,
+                value: row.value,
+                contributing_entity_count: row.contributing_entity_count.unwrap_or(0),
+                rank: row.rank,
+                remainder: remainder.then_some(true),
+                label: row.group_label,
+            })
+        })
+        .collect::<Result<Vec<_>, CanonicalError>>()?;
+    Ok(MetricResultViewDto::Rollup {
+        dimensions: dimensions.to_vec(),
+        values,
+    })
+}
+
 /// Densifies histogram rows into the full fixed-bin shape. The SQL reports
 /// only observed (entity, bin) pairs plus each entity's exact bounds; edge
 /// math lives here alone so empty and observed bins can never disagree.
@@ -315,6 +348,7 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         }
         MetricResultViewDto::Peer { values } => values.len(),
         MetricResultViewDto::Breakdown { values, .. } => values.len(),
+        MetricResultViewDto::Rollup { values, .. } => values.len(),
         MetricResultViewDto::Histogram { values } => {
             values.iter().map(|value| value.bins.len()).sum()
         }
@@ -866,6 +900,42 @@ mod tests {
             values[0].dimensions[0].label.as_deref(),
             Some(UNKNOWN_DIMENSION_LABEL)
         );
+    }
+
+    #[test]
+    fn rollup_keeps_contributor_count_and_marks_remainder() {
+        let rows = vec![
+            RollupQueryRow {
+                value: Some(4.0),
+                contributing_entity_count: Some(2),
+                rank: Some(1),
+                remainder: 0,
+                group_label: None,
+                extra: HashMap::from([
+                    ("dim_0_value".to_owned(), json!("example/repository")),
+                    ("dim_0_label".to_owned(), json!("Example repository")),
+                ]),
+            },
+            RollupQueryRow {
+                value: Some(3.0),
+                contributing_entity_count: Some(2),
+                rank: None,
+                remainder: 1,
+                group_label: Some("Other".to_owned()),
+                extra: HashMap::new(),
+            },
+        ];
+
+        let Ok(MetricResultViewDto::Rollup { values, .. }) =
+            build_rollup_view(&["repository".to_owned()], rows)
+        else {
+            panic!("expected rollup view");
+        };
+        assert_eq!(values[0].contributing_entity_count, 2);
+        assert_eq!(values[0].rank, Some(1));
+        assert_eq!(values[1].dimensions.len(), 0);
+        assert_eq!(values[1].remainder, Some(true));
+        assert_eq!(values[1].label.as_deref(), Some("Other"));
     }
 
     fn selection(metric_key: &str) -> super::super::dto::MetricResultSelectionDto {

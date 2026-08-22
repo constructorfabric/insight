@@ -375,8 +375,12 @@ pull_request_measures AS (
             []
         ),
         if(
-            created_on IS NOT NULL AND state = 'MERGED',
-            [tuple('pr_created_merged', toFloat64(1), toDateTime64(assumeNotNull(created_on), 3))],
+            created_on IS NOT NULL,
+            [tuple(
+                'pr_created_merged',
+                toFloat64(state = 'MERGED'),
+                toDateTime64(assumeNotNull(created_on), 3)
+            )],
             []
         ),
         if(

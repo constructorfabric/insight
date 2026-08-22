@@ -1252,6 +1252,34 @@
           },
           {
             "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "values": {
+                "items": {
+                  "$ref": "#/components/schemas/RollupValueDto"
+                },
+                "type": "array"
+              },
+              "view": {
+                "enum": [
+                  "rollup"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dimensions",
+              "values",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "values": {
                 "items": {
                   "$ref": "#/components/schemas/HistogramValueDto"
@@ -1525,6 +1553,37 @@
           },
           {
             "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "group_limit": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MetricGroupLimitRequest"
+                  }
+                ]
+              },
+              "view": {
+                "enum": [
+                  "rollup"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "dimensions",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "view": {
                 "enum": [
                   "histogram"
@@ -1648,6 +1707,53 @@
           "status",
           "detail",
           "context"
+        ],
+        "type": "object"
+      },
+      "RollupValueDto": {
+        "properties": {
+          "contributing_entity_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionDto"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rank": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "remainder": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "dimensions",
+          "contributing_entity_count"
         ],
         "type": "object"
       },

@@ -388,15 +388,19 @@ class View3(StrEnum):
 
 
 class View4(StrEnum):
+    rollup = 'rollup'
+
+
+class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto5(BaseModel):
+class MetricResultViewDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     values: list[HistogramValueDto]
-    view: View4
+    view: View5
 
 
 class Type2(StrEnum):
@@ -476,7 +480,7 @@ class MetricSchemaErrorCode(StrEnum):
     unknown = 'unknown'
 
 
-class View5(StrEnum):
+class View6(StrEnum):
     period = 'period'
 
 
@@ -484,10 +488,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View5
+    view: View6
 
 
-class View6(StrEnum):
+class View7(StrEnum):
     peer = 'peer'
 
 
@@ -496,10 +500,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View6
+    view: View7
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -510,10 +514,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -522,22 +526,35 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
-    histogram = 'histogram'
+class View10(StrEnum):
+    rollup = 'rollup'
 
 
 class MetricViewRequest5(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View9
+    dimensions: list[str]
+    group_limit: MetricGroupLimitRequest | None = None
+    view: View10
 
 
-class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5]):
-    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5
+class View11(StrEnum):
+    histogram = 'histogram'
+
+
+class MetricViewRequest6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    view: View11
+
+
+class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
+    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6
 
 
 class PeerValueDto(BaseModel):
@@ -576,6 +593,18 @@ class Problem(BaseModel):
     title: str
     trace_id: str | None = None
     type: str
+
+
+class RollupValueDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    contributing_entity_count: int = Field(..., ge=0)
+    dimensions: list[MetricDimensionDto]
+    label: str | None = None
+    rank: int | None = Field(None, ge=0)
+    remainder: bool | None = None
+    value: float | None = None
 
 
 class RunResponse(BaseModel):
@@ -896,6 +925,15 @@ class MetricResultViewDto4(BaseModel):
     view: View3
 
 
+class MetricResultViewDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str]
+    values: list[RollupValueDto]
+    view: View4
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1025,8 +1063,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
 
 
 class MetricResultDto5(BaseModel):

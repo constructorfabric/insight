@@ -137,6 +137,10 @@ pub enum ValidatedMetricView {
     Breakdown {
         dimensions: Vec<String>,
     },
+    Rollup {
+        dimensions: Vec<String>,
+        group_limit: Option<ValidatedGroupLimit>,
+    },
     Histogram,
 }
 
@@ -163,15 +167,18 @@ pub async fn validate_request(
     let mut definition_keys = metric_keys.clone();
     for metric in &req.metrics {
         for view in &metric.views {
-            if let MetricViewRequest::Timeseries {
-                group_limit:
-                    Some(MetricGroupLimitRequest {
-                        rank_by_metric: Some(rank_by_metric),
-                        ..
-                    }),
-                ..
-            } = view
-            {
+            let rank_by_metric = match view {
+                MetricViewRequest::Timeseries {
+                    group_limit: Some(limit),
+                    ..
+                }
+                | MetricViewRequest::Rollup {
+                    group_limit: Some(limit),
+                    ..
+                } => limit.rank_by_metric.as_deref(),
+                _ => None,
+            };
+            if let Some(rank_by_metric) = rank_by_metric {
                 definition_keys.push(normalize_metric_key(
                     "metrics.views.group_limit.rank_by_metric",
                     rank_by_metric,
@@ -406,6 +413,25 @@ fn validate_view_with_context(
             }
             Ok(ValidatedMetricView::Breakdown {
                 dimensions: validate_dimensions(def, "metrics.views.dimensions", dimensions)?,
+            })
+        }
+        MetricViewRequest::Rollup {
+            dimensions,
+            group_limit,
+        } => {
+            if dimensions.is_empty() {
+                return invalid(
+                    "metrics.views.dimensions",
+                    format!("metric {} rollup dimensions must not be empty", def.key()),
+                );
+            }
+            let dimensions = validate_dimensions(def, "metrics.views.dimensions", dimensions)?;
+            let group_limit = group_limit
+                .map(|limit| validate_group_limit(def, definitions, filters, &dimensions, limit))
+                .transpose()?;
+            Ok(ValidatedMetricView::Rollup {
+                dimensions,
+                group_limit,
             })
         }
         MetricViewRequest::Histogram => {
@@ -669,6 +695,11 @@ fn validate_projected_view_limits(
                 }
                 ValidatedMetricView::Histogram => req.entity.len().saturating_mul(HISTOGRAM_BINS),
                 ValidatedMetricView::Breakdown { .. } => 0,
+                ValidatedMetricView::Rollup { group_limit, .. } => {
+                    group_limit.as_ref().map_or(0, |limit| {
+                        limit.count + usize::from(limit.include_remainder)
+                    })
+                }
             };
             if projected > ROW_LIMIT {
                 return Err(metric_result_too_large(format!(
@@ -1001,6 +1032,37 @@ mod tests {
         let view = MetricViewRequest::Breakdown {
             dimensions: vec!["surface".to_owned()],
         };
+        assert!(validate_view(&def, view).is_err());
+    }
+
+    #[test]
+    fn validate_view_accepts_dimension_only_rollup() {
+        let def = sum_definition(vec!["repository"]);
+        let view = MetricViewRequest::Rollup {
+            dimensions: vec!["repository".to_owned()],
+            group_limit: None,
+        };
+
+        match validate_view(&def, view) {
+            Ok(ValidatedMetricView::Rollup {
+                dimensions,
+                group_limit,
+            }) => {
+                assert_eq!(dimensions, vec!["repository"]);
+                assert!(group_limit.is_none());
+            }
+            other => panic!("expected rollup, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_view_rejects_rollup_without_dimensions() {
+        let def = sum_definition(vec!["repository"]);
+        let view = MetricViewRequest::Rollup {
+            dimensions: vec![],
+            group_limit: None,
+        };
+
         assert!(validate_view(&def, view).is_err());
     }
 
