@@ -18,11 +18,9 @@ import { visitorLabel } from "@/lib/portal/visitor-label";
 import { TEXT_NAME } from "@/lib/type-scale";
 import { useFeedbackList } from "@/queries/feedback";
 
-const CATEGORY_LABEL: Record<string, string> = {
-  bug: "Broken",
-  idea: "Idea",
-  confusing: "Confusing",
-  other: "Other",
+const KIND_LABEL: Record<string, string> = {
+  bug: "Bug",
+  feedback: "Feedback",
 };
 
 export function FeedbackTable({ range }: { range: FeedbackRange }) {
@@ -60,9 +58,9 @@ function Body({ query }: { query: ReturnType<typeof useFeedbackList> }) {
         },
         { header: "Person", width: 12, cell: (row) => <SenderName row={row} /> },
         {
-          header: "About",
+          header: "Kind",
           width: 7,
-          cell: (row) => CATEGORY_LABEL[row.category] ?? row.category,
+          cell: (row) => KIND_LABEL[row.kind] ?? row.kind,
         },
         { header: "Feedback", cell: (row) => <Message text={row.message} /> },
         {

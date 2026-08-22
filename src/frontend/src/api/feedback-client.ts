@@ -6,17 +6,12 @@ const BASE =
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-export const FEEDBACK_CATEGORIES = [
-  "bug",
-  "idea",
-  "confusing",
-  "other",
-] as const;
+export const FEEDBACK_KINDS = ["bug", "feedback"] as const;
 
-export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
 
 export interface FeedbackSubmission {
-  category: FeedbackCategory;
+  kind: FeedbackKind;
   message: string;
   path: string;
   app_name: string;
@@ -29,7 +24,7 @@ export interface FeedbackEntry {
   person_id: string;
   display_name: string;
   username: string;
-  category: string;
+  kind: string;
   message: string;
   path: string;
 }

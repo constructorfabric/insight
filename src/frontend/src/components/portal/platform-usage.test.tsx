@@ -87,7 +87,7 @@ const FEEDBACK = {
       person_id: "00000000-0000-0000-0000-0000000000aa",
       display_name: "Alice Example",
       username: "alice",
-      category: "confusing",
+      kind: "feedback",
       message: "The cohort control does not say what it compares against.",
       path: "/portal/overview",
     },

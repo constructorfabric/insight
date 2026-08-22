@@ -578,16 +578,17 @@
   "feedback": {
     "nav_label": "Send feedback",
     "title": "Send feedback",
-    "description": "Tell us what works, what does not, and what is missing.",
-    "category": "What is this about?",
-    "categories": {
-      "bug": "Something is broken",
-      "idea": "An idea",
-      "confusing": "Something is confusing",
-      "other": "Anything else"
+    "description": "Tell us what broke, or what would make this better.",
+    "kind_label": "Bug or feedback",
+    "kinds": {
+      "bug": "Bug",
+      "feedback": "Feedback"
     },
     "message": "Your feedback",
-    "placeholder": "What happened, and what did you expect?",
+    "placeholder": {
+      "bug": "What happened, and what did you expect instead?",
+      "feedback": "What would you change?"
+    },
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."

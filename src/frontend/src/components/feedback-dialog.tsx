@@ -5,26 +5,19 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  FEEDBACK_CATEGORIES,
-  type FeedbackCategory,
-} from "@/api/feedback-client";
+import { FEEDBACK_KINDS, type FeedbackKind } from "@/api/feedback-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group";
 import { apiErrorReason } from "@/lib/query-console/api-error";
 import { useSubmitFeedback } from "@/queries/feedback";
 import { APP_NAME, APP_VERSION, currentScreen } from "@/telemetry";
 
-const DEFAULT_CATEGORY: FeedbackCategory = "idea";
+const DEFAULT_KIND: FeedbackKind = "bug";
 
 export function FeedbackDialog({
   open,
@@ -34,13 +27,13 @@ export function FeedbackDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [category, setCategory] = useState<FeedbackCategory>(DEFAULT_CATEGORY);
+  const [kind, setKind] = useState<FeedbackKind>(DEFAULT_KIND);
   const [message, setMessage] = useState("");
   const submit = useSubmitFeedback();
 
   const close = () => {
     onOpenChange(false);
-    setCategory(DEFAULT_CATEGORY);
+    setKind(DEFAULT_KIND);
     setMessage("");
     submit.reset();
   };
@@ -48,7 +41,7 @@ export function FeedbackDialog({
   const send = () => {
     submit.mutate(
       {
-        category,
+        kind,
         message,
         path: currentScreen(),
         app_name: APP_NAME,
@@ -77,35 +70,31 @@ export function FeedbackDialog({
       }
       onConfirm={send}
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="feedback-category">{t("feedback.category")}</Label>
-          <Select
-            value={category}
-            onValueChange={(value) => setCategory(value as FeedbackCategory)}
-          >
-            <SelectTrigger id="feedback-category" className="w-full">
-              <SelectValue>{t(`feedback.categories.${category}`)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {FEEDBACK_CATEGORIES.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {t(`feedback.categories.${option}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="feedback-message">{t("feedback.message")}</Label>
-          <Textarea
-            id="feedback-message"
-            rows={5}
-            value={message}
-            placeholder={t("feedback.placeholder")}
-            onChange={(event) => setMessage(event.target.value)}
-          />
-        </div>
+      <div className="flex flex-col gap-3">
+        <ToggleGroup
+          aria-label={t("feedback.kind_label")}
+          value={[kind]}
+          onValueChange={(values) => {
+            const next = Array.isArray(values) ? values[0] : values;
+            if (next) setKind(next as FeedbackKind);
+          }}
+          variant="outline"
+          size="sm"
+          className="w-full"
+        >
+          {FEEDBACK_KINDS.map((option) => (
+            <ToggleGroupItem key={option} value={option} className="flex-auto">
+              {t(`feedback.kinds.${option}`)}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <Textarea
+          aria-label={t("feedback.message")}
+          rows={5}
+          value={message}
+          placeholder={t(`feedback.placeholder.${kind}`)}
+          onChange={(event) => setMessage(event.target.value)}
+        />
       </div>
     </ConfirmDialog>
   );

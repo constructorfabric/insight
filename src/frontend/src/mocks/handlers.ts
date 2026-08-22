@@ -861,7 +861,7 @@ interface MockFeedback {
   person_id: string;
   display_name: string;
   username: string;
-  category: string;
+  kind: string;
   message: string;
   path: string;
 }
@@ -873,7 +873,7 @@ const feedbackStore: MockFeedback[] = [
     person_id: PEOPLE[1]?.person_id ?? "",
     display_name: PEOPLE[1]?.name ?? "",
     username: PEOPLE[1]?.email.split("@")[0] ?? "",
-    category: "confusing",
+    kind: "feedback",
     message: "The cohort control does not say what it compares against.",
     path: "/portal/overview",
   },
@@ -883,7 +883,7 @@ const feedbackStore: MockFeedback[] = [
     person_id: PEOPLE[2]?.person_id ?? "",
     display_name: PEOPLE[2]?.name ?? "",
     username: PEOPLE[2]?.email.split("@")[0] ?? "",
-    category: "idea",
+    kind: "feedback",
     message: "Let me export the people table to a spreadsheet.",
     path: "/portal/people",
   },
@@ -893,11 +893,11 @@ function feedbackHandlers() {
   return [
     http.post("/api/analytics/v1/feedback", async ({ request }) => {
       const body = (await request.json().catch(() => null)) as {
-        category?: string;
+        kind?: string;
         message?: string;
         path?: string;
       } | null;
-      if (!body?.category || !body.message?.trim()) {
+      if (!body?.kind || !body.message?.trim()) {
         return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
       }
       feedbackStore.unshift({
@@ -906,7 +906,7 @@ function feedbackHandlers() {
         person_id: defaultPerson?.person_id ?? "",
         display_name: defaultPerson?.name ?? "",
         username: defaultPerson?.email.split("@")[0] ?? "",
-        category: body.category,
+        kind: body.kind,
         message: body.message.trim(),
         path: body.path ?? "",
       });
