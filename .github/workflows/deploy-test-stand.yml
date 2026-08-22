@@ -553,6 +553,20 @@ jobs:
 
       # BETWEEN capture and upload, and always — a failed run is exactly when a
       # trace exists. A Playwright trace replays a real signed-in session: it
+      # Affirms the durable copy matches what this run emitted, so phase 2 can
+      # let readers depend on it. Last and always(): a broken publish turns the
+      # run red without blocking the smoke or suite stages of a seeded stand.
+      - name: Verify the published seed manifest
+        if: ${{ always() && steps.seed.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          kubectl -n "$STAND_NAMESPACE" get configmap seed-stand-manifest \
+            -o 'go-template={{index .data "manifest"}}' > "$RUNNER_TEMP/stand-manifest-cm.json"
+          diff -q <(jq -S . "$RUNNER_TEMP/stand-manifest.json") \
+                  <(jq -S . "$RUNNER_TEMP/stand-manifest-cm.json") >/dev/null \
+            || { echo "::error::configmap/seed-stand-manifest does not match the manifest this run emitted."; exit 1; }
+          echo "seed-stand-manifest matches the run's manifest"
+
       # carries the session cookie and every Authorization header. The script
       # fails closed — a trace it cannot rewrite and verify is deleted. It
       # opens `*.zip` and nothing else, which is why no video is captured

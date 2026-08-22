@@ -249,6 +249,15 @@ Four things to know before pointing it at a stand:
     | ./src/ingestion/tools/seed/manifest-from-log.sh | cut -d' ' -f2- | jq .
   ```
 
+  A completed `--step all` on a cluster stand also publishes the compact
+  document to `configmap/seed-stand-manifest` (key `manifest`), which outlives
+  the Job's one-hour TTL — the copy to prefer once the Job is reaped:
+
+  ```bash
+  kubectl -n <ns> get configmap seed-stand-manifest \
+    -o 'go-template={{index .data "manifest"}}' | jq .
+  ```
+
   The two stand workflows (`run-stand-suite.yml`, `deploy-test-stand.yml`) read
   the manifest through this script, so a CI stand recovers it at any roster
   size. `seed-stand.sh` reassembles it for you as well — a run prints one plain

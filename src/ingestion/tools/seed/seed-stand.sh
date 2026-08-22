@@ -16,6 +16,10 @@ STEP="all"
 DEADLINE_SECONDS="3600"
 
 NAMESPACE=""
+# The durable copy of the manifest; deliberately outside the chart's name
+# prefix so a future chart template cannot fail to adopt it.
+MANIFEST_CONFIGMAP="seed-stand-manifest"
+SEED_MANIFEST_SENTINEL=""
 CONTEXT=""
 RELEASE=""
 DEV_EMAIL=""
@@ -87,6 +91,9 @@ Output:
       --dry-run            print the rendered Job manifest and exit
       --no-follow          apply the Job without following its logs
   -h, --help               this text
+
+  A completed --step all run also publishes the manifest to
+  configmap/seed-stand-manifest, which outlives the Job's log.
 
 Examples:
   seed-stand.sh -n insight --dry-run
@@ -514,11 +521,11 @@ render_seed_manifest() {
   ' < "$JOB_TEMPLATE"
 }
 
-# print_manifest_sentinel NAME — re-read the finished Job's log and print the
+# recover_manifest_sentinel NAME — re-read the finished Job's log and print the
 # manifest, or nothing for a step that writes none. Read from the finished
 # Job: `logs -f` can end without the container's final lines, and a consumer
 # that lost the manifest cannot tell a seeded stand from an attempt.
-print_manifest_sentinel() {
+recover_manifest_sentinel() {
   local log
   log="$(kube -n "$NAMESPACE" logs "job/$1" --tail=-1 2>/dev/null || true)"
   if grep -m1 '^SEED_MANIFEST_JSON: ' <<<"$log"; then
@@ -534,6 +541,46 @@ print_manifest_sentinel() {
   fi
   echo "ERROR: the Job's $chunks gzipped manifest chunk(s) could not be reassembled." >&2
   return 1
+}
+
+# INVARIANT: only a step that produced a manifest may overwrite the remembered
+# one — wait_for_job runs this for the gold and persons-seed jobs too.
+print_manifest_sentinel() {
+  local line
+  line="$(recover_manifest_sentinel "$1")" || return 1
+  [[ -n "$line" ]] || return 0
+  SEED_MANIFEST_SENTINEL="$line"
+  printf '%s\n' "$line"
+}
+
+# clear_manifest_configmap / publish_manifest_configmap — the durable copy of
+# the manifest. The Job's log carries it for one hour (ttlSecondsAfterFinished);
+# the stand it describes lives until someone tears it down.
+clear_manifest_configmap() {
+  kube -n "$NAMESPACE" delete configmap "$MANIFEST_CONFIGMAP" --ignore-not-found >/dev/null 2>&1 \
+    || echo "ERROR: could not clear configmap/$MANIFEST_CONFIGMAP; a reader may still see the previous seed." >&2
+}
+
+publish_manifest_configmap() {
+  local tmp status=0
+  [[ -n "$SEED_MANIFEST_SENTINEL" ]] || return 0
+  tmp="$(mktemp)"
+  printf '%s' "${SEED_MANIFEST_SENTINEL#SEED_MANIFEST_JSON: }" >"$tmp"
+  # WORKAROUND: --from-file needs a path, not a stream. --server-side because a
+  # client-side apply stamps last-applied-configuration, whose 256 KiB cap the
+  # document crosses well inside the supported roster range.
+  kube -n "$NAMESPACE" create configmap "$MANIFEST_CONFIGMAP" \
+        --from-file=manifest="$tmp" --dry-run=client -o yaml \
+    | kube -n "$NAMESPACE" apply --server-side --force-conflicts \
+        --field-manager=seed-stand.sh -f - >/dev/null || status=$?
+  rm -f "$tmp"
+  if [[ "$status" -ne 0 ]]; then
+    echo "ERROR: could not publish the manifest to configmap/$MANIFEST_CONFIGMAP in $NAMESPACE." >&2
+    echo "       The stand IS seeded; only the durable copy is missing. The document is on" >&2
+    echo "       stdout above and in the Job's log until it is reaped." >&2
+    return 0
+  fi
+  echo "==> manifest published: configmap/$MANIFEST_CONFIGMAP"
 }
 
 # wait_for_job NAME — follow the pod's logs, then read the verdict from the Job
@@ -681,7 +728,9 @@ fi
 # the identity projection and rebuild gold, so the stand serves resolved metrics
 # instead of a null for every person — the k8s analogue of dev-compose.sh's
 # cmd_seed, which does the same for the compose stand.
+case "$STEP" in all) clear_manifest_configmap ;; esac
 run_seed_step "$STEP" || exit 1
+case "$STEP" in all) publish_manifest_configmap ;; esac
 
 case "$STEP" in
   all|silver)

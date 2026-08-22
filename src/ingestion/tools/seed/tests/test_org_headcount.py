@@ -353,6 +353,18 @@ def test_a_missing_chunk_is_an_error_not_a_partial_document() -> None:
         manifest.decode_manifest_sentinel(lines[:-1])
 
 
+#: The apiserver's cap on the summed length of a ConfigMap's `data` entries.
+_CONFIGMAP_DATA_MAX_BYTES = 1024 * 1024
+
+
+def test_the_largest_roster_still_fits_a_configmap() -> None:
+    """`seed-stand.sh` publishes this document; raising the ceiling can break it."""
+    doc = manifest.build_manifest(_env(str(config.MAX_ORG_HEADCOUNT)))
+    compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+
+    assert len(compact.encode("utf-8")) < _CONFIGMAP_DATA_MAX_BYTES
+
+
 def test_input_without_a_sentinel_is_an_error() -> None:
     with pytest.raises(ValueError):
         manifest.decode_manifest_sentinel(["nothing to see here"])
