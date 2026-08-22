@@ -19,6 +19,8 @@ use crate::domain::date_window;
 use crate::infra::db::entities::feedback;
 use crate::migration::feedback_schema;
 
+/// The newest submissions in the window. A window holding more is cut without
+/// saying so — narrowing the period is the only way to reach what falls past it.
 const LIST_LIMIT: u64 = 200;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
