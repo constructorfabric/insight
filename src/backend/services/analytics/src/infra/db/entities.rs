@@ -41,7 +41,6 @@ pub mod feedback {
         pub id: Uuid,
         pub insight_tenant_id: Uuid,
         pub person_id: Uuid,
-        pub kind: String,
         pub message: String,
         pub path: String,
         pub app_name: String,

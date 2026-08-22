@@ -343,9 +343,6 @@
           "feedback_id": {
             "type": "string"
           },
-          "kind": {
-            "type": "string"
-          },
           "message": {
             "type": "string"
           },
@@ -369,19 +366,10 @@
           "person_id",
           "display_name",
           "username",
-          "kind",
           "message",
           "path"
         ],
         "type": "object"
-      },
-      "FeedbackKind": {
-        "description": "Which of the two things the sender is doing: a bug is a claim that something\nis broken, anything else is feedback.",
-        "enum": [
-          "bug",
-          "feedback"
-        ],
-        "type": "string"
       },
       "FeedbackListResponse": {
         "properties": {
@@ -413,9 +401,6 @@
           "app_version": {
             "type": "string"
           },
-          "kind": {
-            "$ref": "#/components/schemas/FeedbackKind"
-          },
           "message": {
             "type": "string"
           },
@@ -425,7 +410,6 @@
           }
         },
         "required": [
-          "kind",
           "message"
         ],
         "type": "object"

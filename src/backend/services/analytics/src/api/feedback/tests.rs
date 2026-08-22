@@ -2,9 +2,8 @@ use sea_orm::ActiveValue;
 
 use super::*;
 
-fn request(kind: FeedbackKind, message: &str) -> FeedbackRequest {
+fn request(message: &str) -> FeedbackRequest {
     FeedbackRequest {
-        kind,
         message: message.to_owned(),
         path: "/portal/overview".to_owned(),
         app_name: "insight-front".to_owned(),
@@ -31,13 +30,7 @@ fn the_session_decides_identity_not_the_payload() {
     let tenant = Uuid::now_v7();
     let person = Uuid::now_v7();
 
-    let row = to_row(
-        &request(FeedbackKind::Bug, "the chart is empty"),
-        tenant,
-        person,
-        Utc::now(),
-    )
-    .ok();
+    let row = to_row(&request("the chart is empty"), tenant, person, Utc::now()).ok();
 
     assert_eq!(
         row.clone().and_then(|r| value(r.insight_tenant_id)),
@@ -50,7 +43,7 @@ fn the_session_decides_identity_not_the_payload() {
 fn a_message_of_whitespace_is_refused_rather_than_stored() {
     for message in ["", "   ", "\n\t "] {
         assert!(
-            row_of(&request(FeedbackKind::Feedback, message)).is_none(),
+            row_of(&request(message)).is_none(),
             "should reject: {message:?}"
         );
     }
@@ -58,7 +51,7 @@ fn a_message_of_whitespace_is_refused_rather_than_stored() {
 
 #[test]
 fn a_stored_message_carries_no_surrounding_whitespace() {
-    let row = row_of(&request(FeedbackKind::Feedback, "  add a dark mode  "));
+    let row = row_of(&request("  add a dark mode  "));
 
     assert_eq!(
         row.and_then(|r| value(r.message)),
@@ -70,7 +63,7 @@ fn a_stored_message_carries_no_surrounding_whitespace() {
 fn an_oversized_message_is_clipped_to_the_column_budget() {
     let long = "x".repeat(MAX_MESSAGE * 2);
 
-    let row = row_of(&request(FeedbackKind::Feedback, &long));
+    let row = row_of(&request(&long));
 
     assert_eq!(
         row.and_then(|r| value(r.message))
@@ -80,28 +73,12 @@ fn an_oversized_message_is_clipped_to_the_column_budget() {
 }
 
 #[test]
-fn a_kind_is_stored_as_the_wire_name_the_dialog_sends() {
-    for (kind, expected) in [
-        (FeedbackKind::Bug, "bug"),
-        (FeedbackKind::Feedback, "feedback"),
-    ] {
-        let row = row_of(&request(kind, "a note"));
+fn the_screen_the_sender_was_on_is_stored_with_what_they_wrote() {
+    let row = row_of(&request("this is confusing"));
 
-        assert_eq!(
-            row.and_then(|r| value(r.kind)),
-            Some(expected.to_owned()),
-            "should store: {expected}"
-        );
-    }
-}
-
-#[test]
-fn a_kind_outside_the_closed_set_never_parses() {
-    let unknown = serde_json::json!({ "kind": "rant", "message": "a note" });
-
-    assert!(
-        serde_json::from_value::<FeedbackRequest>(unknown).is_err(),
-        "an unknown kind is a 400, not a silent 'feedback'"
+    assert_eq!(
+        row.and_then(|r| value(r.path)),
+        Some("/portal/overview".to_owned())
     );
 }
 
@@ -109,10 +86,8 @@ fn a_kind_outside_the_closed_set_never_parses() {
 fn the_last_day_of_the_window_is_read_whole() {
     let day = NaiveDate::from_ymd_opt(2026, 8, 22).unwrap_or_default();
 
-    let end = day_end(day);
-
     assert_eq!(
-        end.format("%Y-%m-%d %H:%M:%S").to_string(),
+        day_end(day).format("%Y-%m-%d %H:%M:%S").to_string(),
         "2026-08-22 23:59:59"
     );
     assert_eq!(

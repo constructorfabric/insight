@@ -6,12 +6,7 @@ const BASE =
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-export const FEEDBACK_KINDS = ["bug", "feedback"] as const;
-
-export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
-
 export interface FeedbackSubmission {
-  kind: FeedbackKind;
   message: string;
   path: string;
   app_name: string;
@@ -24,7 +19,6 @@ export interface FeedbackEntry {
   person_id: string;
   display_name: string;
   username: string;
-  kind: string;
   message: string;
   path: string;
 }

@@ -61,7 +61,6 @@ describe("FeedbackDialog", () => {
 
     expect(hooks.submit.mutate).toHaveBeenCalledWith(
       {
-        kind: "bug",
         message: "the chart is empty",
         path: "/portal/overview",
         app_name: "insight-frontend",

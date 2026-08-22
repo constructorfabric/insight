@@ -28,27 +28,8 @@ const MAX_NAME: usize = 64;
 
 const LIST_LIMIT: u64 = 200;
 
-/// Which of the two things the sender is doing: a bug is a claim that something
-/// is broken, anything else is feedback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedbackKind {
-    Bug,
-    Feedback,
-}
-
-impl FeedbackKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Bug => "bug",
-            Self::Feedback => "feedback",
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct FeedbackRequest {
-    pub kind: FeedbackKind,
     pub message: String,
     /// The screen the sender was on. Empty when the SPA cannot name one.
     #[serde(default)]
@@ -69,7 +50,6 @@ pub struct FeedbackEntry {
     pub display_name: String,
     /// The account handle, empty when no identity row carries one.
     pub username: String,
-    pub kind: String,
     pub message: String,
     pub path: String,
 }
@@ -154,7 +134,6 @@ fn to_row(
         id: Set(Uuid::now_v7()),
         insight_tenant_id: Set(tenant_id),
         person_id: Set(person_id),
-        kind: Set(req.kind.as_str().to_owned()),
         message: Set(clip(message, MAX_MESSAGE)),
         path: Set(clip(&req.path, MAX_PATH)),
         app_name: Set(clip(&req.app_name, MAX_NAME)),
@@ -173,7 +152,6 @@ fn entry(row: feedback::Model, names: &HashMap<String, PersonName>) -> FeedbackE
         display_name: sender.map(|n| n.display_name.clone()).unwrap_or_default(),
         username: sender.map(|n| n.username.clone()).unwrap_or_default(),
         person_id,
-        kind: row.kind,
         message: row.message,
         path: row.path,
     }

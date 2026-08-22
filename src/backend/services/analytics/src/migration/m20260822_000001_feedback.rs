@@ -21,7 +21,6 @@ impl MigrationTrait for Migration {
                     .col(ColumnDef::new(Feedback::Id).uuid().not_null().primary_key())
                     .col(ColumnDef::new(Feedback::InsightTenantId).uuid().not_null())
                     .col(ColumnDef::new(Feedback::PersonId).uuid().not_null())
-                    .col(ColumnDef::new(Feedback::Kind).string_len(32).not_null())
                     .col(ColumnDef::new(Feedback::Message).text().not_null())
                     .col(ColumnDef::new(Feedback::Path).string_len(512).not_null())
                     .col(ColumnDef::new(Feedback::AppName).string_len(64).not_null())
@@ -65,7 +64,6 @@ enum Feedback {
     Id,
     InsightTenantId,
     PersonId,
-    Kind,
     Message,
     Path,
     AppName,
