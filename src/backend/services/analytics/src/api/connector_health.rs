@@ -44,7 +44,14 @@ pub(crate) async fn get_connector_health(
             CanonicalError::internal("connector health query failed").create()
         })?;
 
-    let connectors = connector_health::summarize(&streams)
+    Ok(Json(ConnectorHealthResponse {
+        as_of: Utc::now(),
+        connectors: connector_rows(connector_health::summarize(&streams)),
+    }))
+}
+
+fn connector_rows(states: Vec<connector_health::ConnectorState>) -> Vec<ConnectorRow> {
+    states
         .into_iter()
         .map(|c| ConnectorRow {
             connector: connector_health::connector_name(&c.namespace).to_owned(),
@@ -54,16 +61,64 @@ pub(crate) async fn get_connector_health(
             rows: c.rows,
             last_write: c.last_write,
         })
-        .collect();
-
-    Ok(Json(ConnectorHealthResponse {
-        as_of: Utc::now(),
-        connectors,
-    }))
+        .collect()
 }
 
 fn admin_only() -> CanonicalError {
     ConnectorHealthError::permission_denied()
         .with_reason(ADMIN_ONLY)
         .create()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a failed unwrap is the test failing")]
+mod tests {
+    use chrono::TimeZone;
+    use toolkit_canonical_errors::Problem;
+
+    use super::*;
+    use crate::domain::connector_health::ConnectorState;
+
+    fn state(namespace: &str, last_write: Option<DateTime<Utc>>) -> ConnectorState {
+        ConnectorState {
+            namespace: namespace.to_owned(),
+            streams: 4,
+            populated_streams: 3,
+            rows: 12,
+            last_write,
+        }
+    }
+
+    #[test]
+    fn a_summary_row_is_reported_under_the_connector_name_not_the_schema() {
+        let at = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+
+        let rows = connector_rows(vec![state("bronze_example", Some(at))]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].connector, "example");
+        assert_eq!(rows[0].namespace, "bronze_example");
+        assert_eq!(rows[0].streams, 4);
+        assert_eq!(rows[0].streams_with_data, 3);
+        assert_eq!(rows[0].rows, 12);
+        assert_eq!(rows[0].last_write, Some(at));
+    }
+
+    #[test]
+    fn a_connector_that_never_delivered_is_reported_without_a_last_write() {
+        let rows = connector_rows(vec![state("bronze_example", None)]);
+
+        assert_eq!(rows[0].last_write, None);
+    }
+
+    #[test]
+    fn a_caller_without_the_admin_role_is_refused_rather_than_served() {
+        let problem = serde_json::to_value(Problem::from(admin_only())).unwrap();
+
+        assert_eq!(problem["status"], 403);
+        assert_eq!(
+            problem["context"]["resource_type"],
+            "gts.cf.insight.analytics_api.connector_health.v1~"
+        );
+    }
 }

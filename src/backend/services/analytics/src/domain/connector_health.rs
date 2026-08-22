@@ -391,6 +391,15 @@ mod tests {
     }
 
     #[test]
+    fn data_inside_the_warn_threshold_is_fresh() {
+        let state = written_at(Some(at("2020-01-01T00:00:00Z")));
+
+        let verdict = freshness(&state, thresholds(36, 72), at("2020-01-01T06:00:00Z"));
+
+        assert_eq!(verdict, Freshness::Fresh);
+    }
+
+    #[test]
     fn data_between_the_two_thresholds_only_warns() {
         let state = written_at(Some(at("2020-01-01T00:00:00Z")));
 
