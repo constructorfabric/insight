@@ -18,6 +18,7 @@ import {
   metricAttentionItems,
   orderAttentionItems,
 } from "@/lib/insight/attention";
+import { metricSnapshot } from "@/lib/insight/explain-snapshot";
 import { metricKpiTiles } from "@/lib/insight/kpi-row";
 import { GROUPS, KPI_ROW_COLLECTION, type GroupId } from "@/lib/insight/groups";
 import {
@@ -210,6 +211,11 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
                       tile={tile}
                       periodNoun={period}
                       onOpenGroup={openDetails}
+                      explain={metricSnapshot(tile, {
+                        periodNoun: period,
+                        since: dateRange.from,
+                        until: dateRange.to,
+                      })}
                     />
                   ))
                 ) : (

@@ -11,6 +11,8 @@ let currentPath = "/";
 let currentSearch: PortalSearch = {};
 let portalEnabled = true;
 
+let aiEnabled = false;
+
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
     to,
@@ -44,6 +46,10 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "alice@x.io", personId: null }),
+}));
+
+vi.mock("@/queries/ai", () => ({
+  useAiConfig: () => ({ data: aiEnabled ? { enabled: true, model: "m" } : { enabled: false, model: "" } }),
 }));
 
 vi.mock("@/queries/ic-dashboard", () => ({
@@ -126,6 +132,7 @@ beforeEach(() => {
   currentPath = "/";
   currentSearch = {};
   portalEnabled = true;
+  aiEnabled = false;
   mocks.openFeedback.mockClear();
 });
 
@@ -218,5 +225,19 @@ describe("AppSidebarFooter", () => {
     render(<AppSidebarFooter showFeedback={false} />);
 
     expect(screen.queryByText("Send feedback")).toBeNull();
+  });
+
+  it("hides the AI assistant where the deployment does not offer it", () => {
+    render(<AppSidebarFooter />);
+
+    expect(screen.queryByText("AI assistant")).toBeNull();
+  });
+
+  it("offers the AI assistant where the deployment does", () => {
+    aiEnabled = true;
+
+    render(<AppSidebarFooter />);
+
+    expect(screen.getByText("AI assistant")).toBeInTheDocument();
   });
 });

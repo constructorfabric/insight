@@ -22,6 +22,7 @@ import {
   GROUPS,
   type GroupId,
 } from "@/lib/insight/groups";
+import { metricSnapshot } from "@/lib/insight/explain-snapshot";
 import { metricKpiTiles } from "@/lib/insight/kpi-row";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
 import {
@@ -367,19 +368,28 @@ export function MetricGroupsView({
                     metrics this person is observed for, in candidate order. A
                     slot per fixed key is what painted "—" over the most
                     valuable space on the page. */}
-                {tiles.map((tile) => (
-                  <KpiTile
-                    key={tile.key}
-                    tile={tile}
-                    periodNoun={PERIOD_NOUN[period]}
-                    trend={personTrendPoints(
-                      trendData.byKey.get(tile.key),
-                      entityId,
-                      runningBucketStart(dateRange.to, bucket)
-                    )}
-                    onOpenGroup={openOrSelect}
-                  />
-                ))}
+                {tiles.map((tile) => {
+                  const trend = personTrendPoints(
+                    trendData.byKey.get(tile.key),
+                    entityId,
+                    runningBucketStart(dateRange.to, bucket)
+                  );
+                  return (
+                    <KpiTile
+                      key={tile.key}
+                      tile={tile}
+                      periodNoun={PERIOD_NOUN[period]}
+                      trend={trend}
+                      onOpenGroup={openOrSelect}
+                      explain={metricSnapshot(tile, {
+                        periodNoun: PERIOD_NOUN[period],
+                        since: dateRange.from,
+                        until: dateRange.to,
+                        trend,
+                      })}
+                    />
+                  );
+                })}
               </div>
             </section>
             <IcNeedsAttention

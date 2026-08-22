@@ -6,6 +6,8 @@ import {
   TrendingUpIcon,
 } from "lucide-react";
 
+import type { MetricSnapshot } from "@/api/ai-client";
+import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { MetricHelpTooltip } from "@/components/widgets/metric-help-tooltip";
 import { Sparkline } from "@/components/widgets/dashboard/sparkline";
 import {
@@ -33,6 +35,11 @@ export interface KpiTileProps {
    */
   trend?: (number | null)[] | null;
   onOpenGroup?: (id: GroupId) => void;
+  /**
+   * The tile as the AI assistant would be asked to explain it. Absent on
+   * surfaces that do not offer explanations, which then render no sparkle.
+   */
+  explain?: MetricSnapshot;
 }
 
 const CARD_SURFACE = "@container/card";
@@ -46,12 +53,13 @@ export function KpiTile({
   periodNoun,
   trend,
   onOpenGroup,
+  explain,
 }: KpiTileProps) {
   const { showExplanations } = useSettings();
   const primaryGroup = onOpenGroup ? tile.groupId : null;
   const interactive = primaryGroup != null;
 
-  return (
+  const card = (
     <MetricHelpTooltip help={tile.help}>
       <Card
         className={cn(
@@ -156,6 +164,18 @@ export function KpiTile({
         </CardFooter>
       </Card>
     </MetricHelpTooltip>
+  );
+
+  // The card IS the drilldown button, so the sparkle cannot live inside it —
+  // a button nested in a button is invalid markup. It overlays the corner as a
+  // sibling instead, which also keeps the card's own click area whole.
+  if (!explain) return card;
+
+  return (
+    <div className="relative h-full">
+      {card}
+      <ExplainWithAi snapshot={explain} />
+    </div>
   );
 }
 
