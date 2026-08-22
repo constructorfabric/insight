@@ -12,6 +12,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricResult } from "@/api/metric-results-client";
+import { toISODate } from "@/api/period-to-date-range";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
 
 const detail = vi.hoisted(() => ({
@@ -349,29 +350,43 @@ describe("MetricActivity", () => {
   it("reaches the current day, and draws it as not collected yet", () => {
     // The period a total was measured on ends yesterday. A strip draws each day
     // on its own and can say a day is incomplete, so it asks for today too —
-    // otherwise the day the sources now deliver is never on screen.
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 2, 6, 9, 0)); // local 2026-03-06
-    try {
-      detail.collectedThrough = "2026-03-05";
-      detail.state.data = {
-        columns: [
-          { key: "date", label: "Date", type: "date" },
-          { key: "value", label: "Value", type: "number" },
-        ],
-        rows: [{ values: { date: "2026-03-05", value: 2 } }],
-      };
-      draw(metric("collab.messages_sent", ["source_summary"], 2));
+    // otherwise the day the sources now deliver is never on screen. The window
+    // is taken from the clock rather than pinned, because "yesterday" is what
+    // decides whether it is widened at all.
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const from = new Date(today);
+    from.setDate(from.getDate() - 4);
 
-      const asked = detail.calls.at(-1)?.selection as {
-        period: { from: string; to: string };
-      };
-      expect(asked.period).toEqual({ from: "2026-03-01", to: "2026-03-06" });
-      const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
-      expect(label).toMatch(/1 day is not collected yet/);
-    } finally {
-      vi.useRealTimers();
-    }
+    detail.collectedThrough = toISODate(yesterday);
+    detail.state.data = {
+      columns: [
+        { key: "date", label: "Date", type: "date" },
+        { key: "value", label: "Value", type: "number" },
+      ],
+      rows: [{ values: { date: toISODate(yesterday), value: 2 } }],
+    };
+    draw(
+      metric("collab.messages_sent", ["source_summary"], 2, {
+        selection: {
+          metric_key: "collab.messages_sent",
+          entity: { type: "person", ids: [ME] },
+          period: { from: toISODate(from), to: toISODate(yesterday) },
+          filters: [],
+        },
+      } as unknown as Partial<MetricResult>)
+    );
+
+    const asked = detail.calls.at(-1) as {
+      selection: { period: { from: string; to: string } };
+    };
+    expect(asked.selection.period).toEqual({
+      from: toISODate(from),
+      to: toISODate(today),
+    });
+    const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/1 day is not collected yet/);
   });
 
   it("says nothing was recorded rather than drawing an empty chart", () => {
