@@ -227,6 +227,12 @@ describe("AiCostView", () => {
       ...mocks.grid.byKey,
       ["ai.cost", metric("ai.cost", [], { format: "currency", unit: "USD" } as never)],
     ]);
+    // The per-tool cards read their own breakdown, so both reads go silent or
+    // the figure survives in a card.
+    mocks.tools.byKey = new Map([
+      ...mocks.tools.byKey,
+      ["ai.cost", toolBreakdown("ai.cost", [])],
+    ]);
     render(<AiCostView item={null} />);
     // Neither the total nor the per-user average may be conjured from no reading.
     expect(screen.queryByText("$150")).not.toBeInTheDocument();
