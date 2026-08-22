@@ -282,7 +282,7 @@ metrics:
     label: AI seat cost
     short_label: Seat cost
     description: What a seat costs before any usage
-    explanation: The invoiced price of one seat for a billing month, read from the per-seat amount on the invoice. A monthly figure dated at the first day of its billing month — a window containing that day returns the whole month, a window falling inside a month returns nothing, and a window spanning two months returns both fees. A seat whose tier the invoice does not price returns no value rather than a share of the total. Add actual usage cost for the full cost of a seat.
+    explanation: The invoiced price of one seat for a billing month, taken from the per-seat amount on the invoice. Dated at the first day of that month, so a window inside a month returns nothing and one spanning two months returns both fees. A seat whose tier the invoice does not price returns no value.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -300,7 +300,7 @@ metrics:
     label: AI actual usage cost
     short_label: Actual cost
     description: Exact monthly cost billed on top of the seat fee, part of the potential total
-    explanation: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted, priced at API rates. A monthly figure dated at the first day of its billing month — a window containing that day returns the whole month, and a window falling inside a month returns nothing, so read the per-day distribution for a window shorter than a month. This is the exact billed amount; its per-day distribution approximates the same money, and neither adds to potential usage cost.
+    explanation: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted. The exact monthly amount, dated at the first day of its billing month, so a window inside a month returns nothing — read the per-day distribution instead. Never added to potential usage cost.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -318,7 +318,7 @@ metrics:
     label: AI actual usage cost — approximate distribution
     short_label: Actual cost / day
     description: Approximate distribution across days of the exact monthly billed cost
-    explanation: The billed extra-usage cost placed on the days it was spent. The vendor reports only a running month-to-date total, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and a correction never produces a negative day. A reading taken on the month's last calendar day may raise the month but never lower it — the vendor states no billing period, so a drop there cannot be told apart from its counter having rolled over. A reading taken before that rollover overstates the month it lands in, and the same rewriting rule erases it once the month's real readings arrive.
+    explanation: The billed extra-usage cost placed on the days it was spent. Only a running month-to-date total is reported, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and no day is ever negative.
     format: currency
     direction: lower_is_better
     entity_type: person

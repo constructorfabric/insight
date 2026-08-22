@@ -136,9 +136,9 @@ class DescriptorScheduleTests(unittest.TestCase):
         rendered = _render(self._schedule_of(CLAUDE_TEAM_DESCRIPTOR))
 
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
-        self.assertGreater(
-            len(_rendered_schedules(rendered.stdout)),
-            1,
+        self.assertEqual(
+            _rendered_schedules(rendered.stdout),
+            ["50 23 * * *", "0 9,15,21 28-31 * *"],
             "claude-team must keep the extra month-end readings its billing month depends on",
         )
 

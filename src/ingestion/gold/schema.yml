@@ -122,6 +122,13 @@ models:
       extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
       only as the utilisation denominator; daily_extra_usage_usd is the same
       billed money as extra_usage_usd, stepped across the days it was spent.
+      The month-grain measures are dated at the first day of the billing month
+      they charge for, so their date never moves with the sync schedule. A
+      reading taken on that month's last calendar day may raise the month but
+      never lower it: the endpoint names no billing period, so a drop there
+      cannot be told apart from its counter having already rolled over. A
+      reading taken before that rollover overstates the month it lands in, and
+      the same rewriting rule erases it once the month's real readings arrive.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
