@@ -6,8 +6,8 @@ mod validation;
 mod view;
 
 pub use batch::{
-    BatchItem, PeerWideRow, PeriodWideRow, PlannedQuery, UnbatchedView, demux_peer_rows,
-    demux_period_rows, plan_queries, plan_rankings,
+    BatchItem, PeerPopulation, PeerWideRow, PeriodWideRow, PlannedQuery, UnbatchedView,
+    demux_peer_rows, demux_period_rows, plan_queries, plan_rankings,
 };
 pub use builder::{
     build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,

@@ -33,6 +33,7 @@ import {
 import { GROUPS } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
+import { useVisibilityPolicy } from "@/queries/identity-me";
 import {
   availableSlices,
   cohortKey,
@@ -54,6 +55,7 @@ import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
+import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
   distribution,
   familyObserved,
@@ -108,6 +110,7 @@ export function DomainLensView({
   const { period, dateRange } = usePortalPeriod();
 
   const orgScope = useOrgScope();
+  const { isFlat } = useVisibilityPolicy();
   const { pivot, roster } = orgScope;
   // The roster IS the member list: identity owns who is on the team and
   // every metric for them comes from `/v1/metric-results`. There is no second
@@ -285,7 +288,10 @@ export function DomainLensView({
     () => (id: string) => cohortKey(attrByEntity.get(id), slice),
     [attrByEntity, slice]
   );
-  const cohortLabel = slice ? (sliceLabel ?? "cohort").toLowerCase() : "team";
+  const cohortLabel = peerPopulationLabel(
+    slice ? (sliceLabel ?? "cohort") : null,
+    isFlat
+  );
 
   const gate = orgScopeGate({
     viewerLoading: orgScope.isLoading,

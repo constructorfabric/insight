@@ -4,8 +4,7 @@ use std::fmt::Write;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::batch::ResolvedGroupLimit;
-use super::batch::{peer_aliases, period_alias};
+use super::batch::{PeerPopulation, ResolvedGroupLimit, peer_aliases, period_alias};
 use super::validation::{
     HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedEntitySelection,
     ValidatedMetricResultsRequest, query_row_limit,
@@ -500,6 +499,21 @@ pub(crate) fn compile_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     cohort_key: &str,
+    peer_population: PeerPopulation,
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    match peer_population {
+        PeerPopulation::DeclaredCohort => {
+            compile_declared_cohort_peer_batch_query(defs, req, cohort_key, filters)
+        }
+        PeerPopulation::Tenant => compile_tenant_peer_batch_query(defs, req, filters),
+    }
+}
+
+fn compile_declared_cohort_peer_batch_query(
+    defs: &[&MetricDefinition],
+    req: &ValidatedMetricResultsRequest,
+    cohort_key: &str,
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
@@ -570,41 +584,110 @@ pub(crate) fn compile_peer_batch_query(
     CompiledQuery { sql, params }
 }
 
+fn compile_tenant_peer_batch_query(
+    defs: &[&MetricDefinition],
+    req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = req.entity.entity_ids();
+    let value_selects = item_value_selects(defs, &mut params, period_alias);
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
+
+    let entity_id_params = placeholders(req.entity.len());
+    let observation_table = batch_observation_table(defs);
+    let limit = query_row_limit();
+
+    let carried = peer_carried_selects(defs);
+    let (population_stat_selects, result_selects) = tenant_peer_item_selects(defs);
+
+    let sql = format!(
+        r"
+        WITH
+        targets AS (
+            SELECT arrayJoin([{entity_id_params}]) AS entity_id
+        ),
+        metric_values AS (
+            SELECT
+                entity_id{value_selects}
+            FROM {observation_table}
+            WHERE {metric_scope}
+            GROUP BY entity_id
+        ),
+        entity_values AS (
+            SELECT
+                entity_id{carried}
+            FROM metric_values
+        ),
+        population_stats AS (
+            SELECT
+                1 AS join_key{population_stat_selects}
+            FROM entity_values AS peer
+        )
+        SELECT
+            targets.entity_id AS entity_id{result_selects}
+        FROM targets
+        LEFT JOIN entity_values AS target_values
+            ON target_values.entity_id = targets.entity_id
+        CROSS JOIN population_stats
+        LIMIT {limit}
+        SETTINGS join_use_nulls = 1
+        "
+    );
+    CompiledQuery { sql, params }
+}
+
 // Per-item select fragments of the peer query: the carried (transformed)
 // value column, the guarded stats block, and the GROUP BY tail.
 fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
-    let mut carried = String::new();
+    let carried = peer_carried_selects(defs);
     let mut stats_selects = String::new();
     let mut target_group = String::new();
-    for (item_index, def) in defs.iter().enumerate() {
+    for item_index in 0..defs.len() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
-        // Transform before the percentile pass — peer pools must rank the
-        // shaped values, not the raw artifact.
+        let _ = write!(
+            stats_selects,
+            ",
+            target_values.{value} AS {target}",
+            target = aliases.target,
+        );
+        push_peer_stat_selects(&mut stats_selects, item_index);
+        let _ = write!(target_group, ", target_values.{value}");
+    }
+    (carried, stats_selects, target_group)
+}
+
+fn peer_carried_selects(defs: &[&MetricDefinition]) -> String {
+    let mut carried = String::new();
+    for (item_index, def) in defs.iter().enumerate() {
+        let value = period_alias(item_index);
         let carried_value = transformed(def, format!("metric_values.{value}"));
         let _ = write!(
             carried,
             ",
                 {carried_value} AS {value}"
         );
-        let observed = format!("peer.{value} IS NOT NULL");
-        let pool = format!("uniqExactIf(peer.entity_id, {observed})");
-        // One `quantilesExactIf` over the pool yields all three quartiles in a
-        // single sort; the three `[i]` indexes reference the identical
-        // aggregate, which ClickHouse computes once. min/max come back from
-        // `*IfOrNull` already Nullable, so the disclosure guard's NULL branch
-        // needs no `toNullable`; the quartile elements are non-nullable and do.
-        let quantiles = format!("quantilesExactIf(0.25, 0.5, 0.75)(peer.{value}, {observed})");
+    }
+    carried
+}
+
+fn tenant_peer_item_selects(defs: &[&MetricDefinition]) -> (String, String) {
+    let mut population_stat_selects = String::new();
+    let mut result_selects = String::new();
+    for item_index in 0..defs.len() {
+        let value = period_alias(item_index);
+        let aliases = peer_aliases(item_index);
+        push_peer_stat_selects(&mut population_stat_selects, item_index);
         let _ = write!(
-            stats_selects,
+            result_selects,
             ",
             target_values.{value} AS {target},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[1]), NULL) AS {p25},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {median},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[3]), NULL) AS {p75},
-            if({pool} >= {min_peer_n}, minIfOrNull(peer.{value}, {observed}), NULL) AS {min},
-            if({pool} >= {min_peer_n}, maxIfOrNull(peer.{value}, {observed}), NULL) AS {max},
-            toUInt64({pool}) AS {n}",
+            population_stats.{p25} AS {p25},
+            population_stats.{median} AS {median},
+            population_stats.{p75} AS {p75},
+            population_stats.{min} AS {min},
+            population_stats.{max} AS {max},
+            population_stats.{n} AS {n}",
             target = aliases.target,
             p25 = aliases.p25,
             median = aliases.median,
@@ -612,11 +695,34 @@ fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
             min = aliases.min,
             max = aliases.max,
             n = aliases.n,
-            min_peer_n = MIN_PEER_N,
         );
-        let _ = write!(target_group, ", target_values.{value}");
     }
-    (carried, stats_selects, target_group)
+    (population_stat_selects, result_selects)
+}
+
+fn push_peer_stat_selects(selects: &mut String, item_index: usize) {
+    let value = period_alias(item_index);
+    let aliases = peer_aliases(item_index);
+    let observed = format!("peer.{value} IS NOT NULL");
+    let pool = format!("uniqExactIf(peer.entity_id, {observed})");
+    let quantiles = format!("quantilesExactIf(0.25, 0.5, 0.75)(peer.{value}, {observed})");
+    let _ = write!(
+        selects,
+        ",
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[1]), NULL) AS {p25},
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {median},
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[3]), NULL) AS {p75},
+            if({pool} >= {min_peer_n}, minIfOrNull(peer.{value}, {observed}), NULL) AS {min},
+            if({pool} >= {min_peer_n}, maxIfOrNull(peer.{value}, {observed}), NULL) AS {max},
+            toUInt64({pool}) AS {n}",
+        p25 = aliases.p25,
+        median = aliases.median,
+        p75 = aliases.p75,
+        min = aliases.min,
+        max = aliases.max,
+        n = aliases.n,
+        min_peer_n = MIN_PEER_N,
+    );
 }
 
 fn item_value_selects(
@@ -1304,7 +1410,13 @@ mod tests {
 
         // The peer query reads the contract three times (targets, cohort,
         // metric_values); each must carry the tenant predicate and its value.
-        let peer = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&sum],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert_eq!(peer.sql.matches("tenant_id = ?").count(), 3);
         assert_eq!(
             peer.params
@@ -1338,7 +1450,13 @@ mod tests {
         assert_eq!(ts.params.first().map(String::as_str), Some(TEST_TENANT_STR));
 
         // All three peer reads (targets, cohort, metric_values) bypass together.
-        let peer = compile_peer_batch_query(&[&sum], &req, "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&sum],
+            &req,
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert_eq!(peer.sql.matches("(tenant_id = ? OR 1 = 1)").count(), 3);
         assert_eq!(peer.sql.matches('?').count(), peer.params.len());
     }
@@ -1485,7 +1603,13 @@ mod tests {
     #[test]
     fn peer_batch_keeps_cohort_ctes_and_param_order() {
         let sum = sum_metric();
-        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(
             query
                 .sql
@@ -1519,13 +1643,59 @@ mod tests {
     }
 
     #[test]
+    fn flat_peer_batch_uses_every_measured_person_as_one_population() {
+        let sum = sum_metric();
+        let query =
+            compile_peer_batch_query(&[&sum], &request(), "org_unit", PeerPopulation::Tenant, &[]);
+
+        assert!(!query.sql.contains("metric_entity_cohorts_current"));
+        assert!(query.sql.contains("arrayJoin([?, ?]) AS entity_id"));
+        assert!(
+            query.sql.contains(
+                "population_stats AS (\n            SELECT\n                1 AS join_key"
+            )
+        );
+        assert!(query.sql.contains("CROSS JOIN population_stats"));
+        assert!(!query.sql.contains("ON 1 = 1"));
+        assert!(query.sql.contains("target_values.m0 AS m0_target"));
+        assert!(
+            query
+                .sql
+                .contains("population_stats.m0_median AS m0_median")
+        );
+        assert_eq!(query.sql.matches("tenant_id = ?").count(), 1);
+        assert_eq!(
+            query.params,
+            vec![
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
+                "ai_usage",
+                "accepted_lines",
+                TEST_TENANT_STR,
+                "person",
+                "2026-01-01",
+                "2026-01-31",
+                "ai_usage",
+                "accepted_lines",
+            ]
+        );
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
     fn peer_batch_never_fabricates_zero_observations() {
         // Honest-null through the runtime: cohort members without observed
         // values stay NULL and drop out of the pool per metric — absence of
         // rows cannot be distinguished from "not covered by the source", so
         // the peer query must not invent zeros for them.
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum, &ratio],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(query.sql.contains("sumIfOrNull"));
         assert!(!query.sql.contains("coalesce"));
         assert!(query.sql.contains("metric_values.m0 AS m0"));
@@ -1534,7 +1704,13 @@ mod tests {
     #[test]
     fn peer_batch_guards_every_percentile_per_item() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum, &ratio],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         for item in 0..2 {
             let guard =
                 format!("uniqExactIf(peer.entity_id, peer.m{item} IS NOT NULL) >= {MIN_PEER_N}");
@@ -1588,9 +1764,15 @@ mod tests {
                 .contains(&limit)
         );
         assert!(
-            compile_peer_batch_query(&[&ratio], &request(), "org_unit", &[])
-                .sql
-                .contains(&limit)
+            compile_peer_batch_query(
+                &[&ratio],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            )
+            .sql
+            .contains(&limit)
         );
     }
 
@@ -1613,6 +1795,7 @@ mod tests {
                 &[&sum, &median, &ratio, &distinct],
                 &request(),
                 "org_unit",
+                PeerPopulation::DeclaredCohort,
                 &[],
             ),
         ] {
@@ -1628,7 +1811,13 @@ mod tests {
         // medians). Placeholder/param lockstep still holds.
         for query in [
             compile_period_batch_query(&[&median_metric()], &request(), &[]),
-            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit", &[]),
+            compile_peer_batch_query(
+                &[&median_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
         ] {
             assert!(
                 query.sql.contains(
@@ -1664,7 +1853,13 @@ mod tests {
         // the builder zero-fills distinct counts like sums. Lockstep holds.
         for query in [
             compile_period_batch_query(&[&distinct_count_metric()], &request(), &[]),
-            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit", &[]),
+            compile_peer_batch_query(
+                &[&distinct_count_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
         ] {
             assert!(
                 query
@@ -1802,7 +1997,13 @@ mod tests {
             period.sql
         );
         assert_eq!(period.sql.matches('?').count(), period.params.len());
-        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&def],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(
             peer.sql.contains("if((metric_values.m0) IS NULL, NULL,"),
             "peer carry must transform before percentiles: {}",

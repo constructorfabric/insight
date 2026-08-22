@@ -8,21 +8,23 @@ use axum::http::HeaderMap;
 use futures::stream::{self, StreamExt};
 use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
+use toolkit_security::SecurityContext;
 
 use super::AppState;
 use super::error::MetricError;
+use crate::config::VisibilityPolicy;
 use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
-    MetricResultsRequest, MetricResultsResponse, PeerWideRow, PeriodWideRow, PlannedQuery,
-    RankingQueryRow, TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest,
-    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
-    build_period_view, build_ranked_groups, build_timeseries_view, demux_peer_rows,
-    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
+    MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
+    PlannedQuery, RankingQueryRow, TimeseriesQueryRow, UnbatchedView,
+    ValidatedMetricResultsRequest, build_breakdown_view, build_histogram_view, build_metric_result,
+    build_peer_view, build_period_view, build_ranked_groups, build_timeseries_view,
+    demux_peer_rows, demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings,
+    validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
-use toolkit_security::SecurityContext;
 
 const QUERY_CONCURRENCY: usize = 4;
 // Client-side bound on one view query, network stalls included. The
@@ -71,7 +73,8 @@ pub async fn query_metric_results(
     };
     let (ranking_results, capabilities) = tokio::join!(rankings, capabilities);
     let ranking_results = ranking_results?;
-    let planned = plan_queries(&req, &ranking_results)?;
+    let peer_population = peer_population(state.config.visibility_policy);
+    let planned = plan_queries(&req, &ranking_results, peer_population)?;
 
     let mut views_by_metric: Vec<Vec<Option<MetricResultViewDto>>> = req
         .metrics
@@ -139,6 +142,13 @@ pub async fn query_metric_results(
 
     let response = MetricResultsResponse { metrics };
     Ok(Json(response))
+}
+
+fn peer_population(visibility_policy: VisibilityPolicy) -> PeerPopulation {
+    match visibility_policy {
+        VisibilityPolicy::OrgChart => PeerPopulation::DeclaredCohort,
+        VisibilityPolicy::Flat => PeerPopulation::Tenant,
+    }
 }
 
 fn authorize_tenant_request(
@@ -326,7 +336,22 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    use super::map_query_error;
+    use crate::config::VisibilityPolicy;
+    use crate::domain::metric_results::PeerPopulation;
+
+    use super::{map_query_error, peer_population};
+
+    #[test]
+    fn visibility_policy_selects_peer_population() {
+        assert_eq!(
+            peer_population(VisibilityPolicy::OrgChart),
+            PeerPopulation::DeclaredCohort
+        );
+        assert_eq!(
+            peer_population(VisibilityPolicy::Flat),
+            PeerPopulation::Tenant
+        );
+    }
 
     #[test]
     fn missing_relation_maps_to_precondition_failure_not_500() {
