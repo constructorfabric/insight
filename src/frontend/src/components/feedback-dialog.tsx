@@ -51,7 +51,6 @@ export function FeedbackDialog({
       open={open}
       onOpenChange={(next) => (next ? onOpenChange(true) : close())}
       title={t("feedback.title")}
-      description={t("feedback.description")}
       confirmLabel={t("feedback.send")}
       isPending={submit.isPending}
       confirmDisabled={message.trim().length === 0}

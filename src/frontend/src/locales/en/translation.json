@@ -577,10 +577,9 @@
   },
   "feedback": {
     "nav_label": "Send feedback",
-    "title": "Send feedback",
-    "description": "Tell us what broke, or what would make this better.",
+    "title": "Submit feedback / bug report",
     "message": "Your feedback",
-    "placeholder": "What happened, and what would you change?",
+    "placeholder": "Describe the issue",
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
