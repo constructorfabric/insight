@@ -87,6 +87,18 @@ class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDt
     root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4
 
 
+class ConnectorRow(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    last_write: UnzonedDatetime | None = None
+    namespace: str
+    rows: int = Field(..., ge=0)
+    streams: int = Field(..., ge=0)
+    streams_with_data: int = Field(..., ge=0)
+
+
 class CreateSavedQueryRequest(BaseModel):
     """
     Request to create a saved query.
@@ -766,6 +778,14 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: UnzonedDatetime
+    connectors: list[ConnectorRow]
 
 
 class CustomMetricInput(BaseModel):

@@ -27,6 +27,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("paths object missing"))?;
     for expected in [
+        "/v1/connector-health",
         "/v1/feedback",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
@@ -47,7 +48,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        15,
+        16,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -77,6 +78,18 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     assert!(
         schemas.contains_key("TimeseriesDto"),
         "TimeseriesDto schema missing"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_instance_wide_connector_read_is_declared_admin_only() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let responses = &json["paths"]["/v1/connector-health"]["get"]["responses"];
+
+    assert!(
+        responses.get("403").is_some(),
+        "an instance-wide read must declare the role refusal, got {responses:?}"
     );
     Ok(())
 }

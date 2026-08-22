@@ -580,6 +580,35 @@
       "excluded": "excluded — bot / CI"
     }
   },
+  "connector_health": {
+    "heading": "Connectors",
+    "columns": {
+      "connector": "Connector",
+      "last_data": "Last data",
+      "streams_with_data": "Streams with data",
+      "rows": "Rows",
+      "state": "State"
+    },
+    "streams_fraction": "{{withData}} / {{total}}",
+    "elapsed": {
+      "never": "never",
+      "hours": "{{count}}h ago",
+      "days_one": "{{count}} day ago",
+      "days_other": "{{count}} days ago",
+      "unknown": "—"
+    },
+    "tiles": {
+      "delivering": "delivering",
+      "partial": "partial",
+      "never": "never delivered"
+    },
+    "state": {
+      "delivering": "delivering",
+      "partial": "partial",
+      "never": "not delivering"
+    },
+    "empty": "No connectors are visible to this service — either none are configured, or its database user cannot read the bronze schemas."
+  },
   "feedback": {
     "nav_label": "Send feedback",
     "title": "Submit feedback / bug report",
@@ -588,5 +617,8 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "data_health": {
+    "heading": "Data health"
   }
 }

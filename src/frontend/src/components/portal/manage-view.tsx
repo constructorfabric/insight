@@ -20,9 +20,22 @@ import { IdentitiesView } from "@/components/portal/identities-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
+import { useConnectorHealth } from "@/queries/connector-health";
+import {
+  connectorState,
+  elapsedSince,
+  orderByAttention,
+} from "@/lib/portal/connector-health";
+import { seriesColors } from "@/lib/series-colors";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
+
+const CONNECTOR_STATE_STYLE: Record<string, string> = {
+  delivering: "bg-success/15 text-success",
+  partial: "bg-warning/20 text-warning-foreground",
+  never: "bg-destructive/15 text-destructive",
+};
 
 const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
   ok: "bg-success/15 text-success",
@@ -42,7 +55,12 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  */
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
-  if (item === "data-health") return <DataHealth />;
+  if (item === "data-health")
+    return (
+      <AdminGate>
+        <DataHealth />
+      </AdminGate>
+    );
   if (item === "identities")
     return (
       <AdminGate>
@@ -200,53 +218,149 @@ function MetricCatalogTable() {
 }
 
 function DataHealth() {
-  const { metrics, isLoading, isError, refetch } = useFlatDefinitions();
-  if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
-  if (isError)
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex flex-col gap-6 p-4 md:p-6">
+      <h1 className="text-lg font-semibold tracking-tight">
+        {t("data_health.heading")}
+      </h1>
+
+      <ConnectorDelivery />
+    </div>
+  );
+}
+
+function ConnectorDelivery() {
+  const { t } = useTranslation();
+  const { data, isLoading, isError, refetch } = useConnectorHealth();
+
+  if (isLoading) return <CenteredSpinner className="min-h-[12rem]" />;
+  if (isError || data == null)
     return (
       <div className="mx-auto w-full max-w-md p-8">
         <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
       </div>
     );
 
-  const counts: Record<MetricDefinitionSchemaStatus, number> = {
-    ok: 0,
-    error: 0,
-    unchecked: 0,
-  };
-  for (const m of metrics) counts[m.schema_status] += 1;
-  // A definition whose schema checks out can still have never produced a row
-  // for this tenant — two separate questions, so show both answers.
-  const noData = metrics.filter((m) => m.last_observed_date == null).length;
+  const asOf = new Date(data.as_of);
+  const connectors = orderByAttention(data.connectors);
+  const states = connectors.map((c) => connectorState(c));
+  const count = (state: string) => states.filter((s) => s === state).length;
+  const dots = seriesColors(connectors.map((c) => c.connector));
+
+  const tiles = [
+    { key: "delivering", value: count("delivering"), tone: "text-success" },
+    {
+      key: "partial",
+      value: count("partial"),
+      tone: count("partial") > 0 ? "text-warning-foreground" : "",
+    },
+    {
+      key: "never",
+      value: count("never"),
+      tone: count("never") > 0 ? "text-destructive" : "",
+    },
+  ] as const;
+
+  if (connectors.length === 0)
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          {t("connector_health.heading")}
+        </h2>
+        <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
+          {t("connector_health.empty")}
+        </div>
+      </div>
+    );
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">Data health</h1>
-        <p className="text-sm text-muted-foreground">
-          Schema-check status across {metrics.length} metrics
-        </p>
-      </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
-        {(["ok", "error", "unchecked"] as const).map((s) => (
-          <div key={s} className="rounded-lg border bg-card p-4">
-            <div className={TEXT_FIGURE}>{counts[s]}</div>
-            <div
-              className={cn(
-                "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s]
-              )}
-            >
-              {s}
+    <div className="flex flex-col gap-4">
+      <h2 className="text-sm font-medium text-muted-foreground">
+        {t("connector_health.heading")}
+      </h2>
+
+      <div
+        data-connector-tiles
+        className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3"
+      >
+        {tiles.map((tile) => (
+          <div key={tile.key} className="rounded-lg border bg-card p-4">
+            <div className={cn(TEXT_FIGURE, tile.tone)}>{tile.value}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {t(`connector_health.tiles.${tile.key}`)}
             </div>
           </div>
         ))}
-        <div className="rounded-lg border bg-card p-4">
-          <div className={TEXT_FIGURE}>{noData}</div>
-          <div className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            no data yet
-          </div>
-        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("connector_health.columns.connector")}</TableHead>
+              <TableHead>{t("connector_health.columns.last_data")}</TableHead>
+              <TableHead>
+                {t("connector_health.columns.streams_with_data")}
+              </TableHead>
+              <TableHead className="text-end">
+                {t("connector_health.columns.rows")}
+              </TableHead>
+              <TableHead>{t("connector_health.columns.state")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {connectors.map((c) => {
+              const elapsed = elapsedSince(c.last_write, asOf);
+              const state = connectorState(c);
+              return (
+                <TableRow key={c.namespace}>
+                  <TableCell className="font-medium">
+                    <span className="flex items-center gap-2.5">
+                      <span
+                        aria-hidden
+                        data-connector-dot
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ background: dots[c.connector] }}
+                      />
+                      {c.connector}
+                    </span>
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "tabular-nums",
+                      state === "never" && "text-muted-foreground",
+                    )}
+                  >
+                    {elapsed.kind === "never" || elapsed.kind === "unknown"
+                      ? t(`connector_health.elapsed.${elapsed.kind}`)
+                      : t(`connector_health.elapsed.${elapsed.kind}`, {
+                          count: elapsed.value,
+                        })}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {t("connector_health.streams_fraction", {
+                      withData: c.streams_with_data,
+                      total: c.streams,
+                    })}
+                  </TableCell>
+                  <TableCell className="text-end tabular-nums">
+                    {c.rows.toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="secondary"
+                      className={cn("font-medium", CONNECTOR_STATE_STYLE[state])}
+                    >
+                      {t(`connector_health.state.${state}`)}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );

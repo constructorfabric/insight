@@ -368,6 +368,97 @@ function customMetricHandlers() {
 /** Whoever the person mode has open holds the two accounts it lists for them. */
 const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
 
+/**
+ * Synthetic connector delivery. The names are the repo's own connector slugs;
+ * every count and timestamp is invented, and the set spans a connector
+ * delivering now, ones falling behind, one partially populated, and two that
+ * have never delivered.
+ */
+const MOCK_CONNECTOR_AS_OF = "2020-01-10T12:00:00Z";
+
+const MOCK_CONNECTORS = [
+  {
+    connector: "github",
+    namespace: "bronze_github",
+    streams: 18,
+    streams_with_data: 18,
+    rows: 412004,
+    last_write: "2020-01-10T09:00:00Z",
+  },
+  {
+    connector: "gitlab",
+    namespace: "bronze_gitlab",
+    streams: 12,
+    streams_with_data: 12,
+    rows: 254268,
+    last_write: "2020-01-10T07:30:00Z",
+  },
+  {
+    connector: "jira",
+    namespace: "bronze_jira",
+    streams: 14,
+    streams_with_data: 14,
+    rows: 88120,
+    last_write: "2020-01-10T04:00:00Z",
+  },
+  {
+    connector: "zoom",
+    namespace: "bronze_zoom",
+    streams: 3,
+    streams_with_data: 3,
+    rows: 19136,
+    last_write: "2020-01-09T22:00:00Z",
+  },
+  {
+    connector: "confluence",
+    namespace: "bronze_confluence",
+    streams: 7,
+    streams_with_data: 5,
+    rows: 1902,
+    last_write: "2020-01-08T12:00:00Z",
+  },
+  {
+    connector: "bamboohr",
+    namespace: "bronze_bamboohr",
+    streams: 3,
+    streams_with_data: 3,
+    rows: 2246,
+    last_write: "2020-01-05T04:00:00Z",
+  },
+  {
+    connector: "bitbucket_cloud",
+    namespace: "bronze_bitbucket_cloud",
+    streams: 10,
+    streams_with_data: 8,
+    rows: 41007,
+    last_write: "2020-01-07T06:00:00Z",
+  },
+  {
+    connector: "ms_entra",
+    namespace: "bronze_ms_entra",
+    streams: 1,
+    streams_with_data: 1,
+    rows: 1426,
+    last_write: "2020-01-09T03:00:00Z",
+  },
+  {
+    connector: "slack",
+    namespace: "bronze_slack",
+    streams: 4,
+    streams_with_data: 0,
+    rows: 0,
+    last_write: null,
+  },
+  {
+    connector: "zendesk",
+    namespace: "bronze_zendesk",
+    streams: 5,
+    streams_with_data: 0,
+    rows: 0,
+    last_write: null,
+  },
+];
+
 export const handlers = [
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
@@ -444,6 +535,12 @@ export const handlers = [
   // 401 bounces the whole mock session to the real IdP.
   http.get("/api/analytics/v1/metric-definitions", () =>
     HttpResponse.json({ metrics: buildMetricDefinitions() }),
+  ),
+  http.get("/api/analytics/v1/connector-health", () =>
+    HttpResponse.json({
+      as_of: MOCK_CONNECTOR_AS_OF,
+      connectors: MOCK_CONNECTORS,
+    }),
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
