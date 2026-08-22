@@ -212,9 +212,9 @@ describe("AiCostView", () => {
     ).toBeInTheDocument();
     // the caveat is spelled out for the reader
     expect(screen.getByText(/Only Claude Code is usage-metered/)).toBeInTheDocument();
-    // ...including that the two figures beside each other span different windows
+    // ...including that a day of the billed figure is a distribution, not a reading
     expect(
-      screen.getByText(/Actual cost is a monthly figure/),
+      screen.getByText(/Actual cost is the vendor’s monthly bill spread/),
     ).toBeInTheDocument();
   });
 
