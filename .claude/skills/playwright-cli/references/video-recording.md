@@ -141,3 +141,5 @@ Embrace creativity, overlays are powerful.
 
 - Recording adds slight overhead to automation
 - Large recordings can consume significant disk space
+- `video-start` / `video-stop` can report success and leave no file behind. `video-stop` prints a path whether or not one was written, so check the file exists before you rely on it. For anything you intend to hand to someone, use the `run-code` + `page.screencast` path above — it writes the file itself.
+- When no video survives, an annotated GIF built from per-step screenshots beats retrying: see [annotated-gif.md](./annotated-gif.md). GitHub and most trackers render a GIF inline with no player.
