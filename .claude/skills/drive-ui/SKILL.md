@@ -135,9 +135,9 @@ Annotate before capturing rather than describing the element in prose afterwards
 
 A screenshot of a populated stand carries more than the thing you meant to capture. Person names, a scope picker, team metric values and other people's free text all render, and the issue tracker is public.
 
-Two moves, in order. Reproduce on a screen with no person data where the defect allows it — the metric catalog and the other config surfaces show product vocabulary only. Where it doesn't, redact the person column before uploading rather than cropping the layout apart, since the layout is usually part of what the reader needs to see.
+Two moves, in order. Reproduce on a screen carrying no person data where the defect allows it — a config surface beats a populated table, though a metric name, group title or description there can be author-written too, so it is a better starting point rather than a safe one. Where the defect needs the populated screen, redact before uploading rather than cropping the layout apart, since the layout is usually part of what the reader needs to see.
 
-Check the whole frame every time. The offending element is rarely the sensitive part.
+Read the whole frame every time, and treat any free text in it as personal until you have checked. The offending element is rarely the sensitive part.
 
 ### Mock the response instead of writing the content
 

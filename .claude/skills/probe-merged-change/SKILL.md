@@ -42,7 +42,7 @@ Take vector semantics from `quality-vector-tests/references/vector-mapping.md` r
 
 ### Smoke before you plan
 
-Three checks decide whether a plan is worth writing: the migration applied, one round trip stores and reads back what you sent, and one gated read refuses the wrong caller. If any of those fails, that is the report — stop and write it.
+Three checks decide whether a plan is worth writing: the migration applied, one round trip stores and reads back what you sent, and one gated read refuses the wrong caller. If any of those fails, stop — but classify before you file. Re-run the failed check on a stand you have confirmed healthy and seeded, still on that same build. What reproduces there is the report; what does not is `layer: stand`, and the pass has learned nothing about the change yet.
 
 Run this on a stand carrying the **exact build the change shipped in**, not on `main` built locally. Pin the images to the build tag from the release commit and reuse an existing compose project so the named volumes survive: the migration then runs against a populated database, which is the case that actually breaks. A fresh instance only proves the migration works on empty.
 
@@ -59,7 +59,9 @@ A merge description states things the author believes. Each is a check. Quote it
 
 Boundary testing usually asks for the last accepted value and the first refused one. That framing has two states and misses the one that hurts: **accepted, reported success, silently modified**.
 
-For every cap, send a value far past it and then read the stored record back. A 100,000-character message returned `204` and kept 4,000 of it. Nothing in the response, the interface or the log said so.
+For a cap on something stored, send a value far past it and then read the record back. A 100,000-character message returned `204` and kept 4,000 of it. Nothing in the response, the interface or the log said so.
+
+Where the cap is not a write — a page size, a rate limit, a result set — the same question lands on the response instead: does the payload, its metadata or the next request admit that anything was withheld? A truncated list that looks identical to a complete one is the same defect wearing different clothes.
 
 Where a write is silently clipped, check the client too. A field with no `maxLength` and no counter means nothing warned before, and a success message means nothing warned after.
 

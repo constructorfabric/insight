@@ -12,24 +12,50 @@ One screenshot per step, a caption bar burned into each frame, assembled with Pi
 from PIL import Image, ImageDraw, ImageFont
 
 BAR = 62
+FONTS = ("/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+         "DejaVuSans-Bold.ttf")
 
-def annotate(src, dst, step, caption, width=1100):
+def bar_font(size=21):
+    for path in FONTS:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+def annotate(src, dst, step, caption, width=None):
     im = Image.open(src).convert("RGB")
-    w, h = im.size
-    im = im.resize((width, int(h * width / w)), Image.LANCZOS)
-    out = Image.new("RGB", (width, im.height + BAR), (18, 26, 35))
+    if width:
+        w, h = im.size
+        im = im.resize((width, int(h * width / w)), Image.LANCZOS)
+    out = Image.new("RGB", (im.width, im.height + BAR), (18, 26, 35))
     out.paste(im, (0, 0))
     d = ImageDraw.Draw(out)
-    f = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 21)
+    f = bar_font()
     d.text((18, im.height + BAR // 2), step, font=f, fill=(224, 121, 111), anchor="lm")
     d.text((18 + d.textlength(step, font=f) + 14, im.height + BAR // 2),
            caption, font=f, fill=(232, 238, 244), anchor="lm")
     out.save(dst)
 
-frames = [Image.open(p).convert("P", palette=Image.ADAPTIVE, colors=128) for p in paths]
+shots = ["step1.png", "step2.png", "step3.png"]
+steps = [("Step 1", "what you did", 2600),
+         ("Step 2", "what came back", 3200),
+         ("Step 3", "what was stored", 4200)]
+
+assert len(shots) == len(steps), "one caption per screenshot"
+
+annotated = []
+for i, (src, (step, caption, _)) in enumerate(zip(shots, steps)):
+    annotate(src, f"frame{i}.png", step, caption)
+    annotated.append(f"frame{i}.png")
+
+frames = [Image.open(p).convert("P", palette=Image.ADAPTIVE, colors=128) for p in annotated]
 frames[0].save("repro.gif", save_all=True, append_images=frames[1:],
-               duration=[2600, 3200, 4200], loop=0, optimize=True, disposal=2)
+               duration=[ms for *_, ms in steps], loop=0, optimize=True, disposal=2)
 ```
+
+`annotate` keeps each screenshot at its natural size; pass `width=` only when the shots are far larger than the tracker needs and the defect is not about layout. The length assert is what stops a missing caption from silently dropping a step — `zip` would truncate to the shorter list — and taking the durations from `steps` keeps one per frame however many there are.
 
 `disposal=2` clears each frame before the next. Without it, frames of differing size ghost onto each other.
 
@@ -59,4 +85,4 @@ Give each frame long enough to read its caption: roughly 2.5 s for a simple step
 
 ## Size
 
-Keep frames near 1100–1300 px wide and the palette at 128 colours. A four-frame walkthrough lands around 500 KB, well inside what a tracker accepts inline.
+Keep the palette at 128 colours, and frames near 1100–1300 px wide where the source shots are wider than that and the defect is not a layout one. A four-frame walkthrough lands around 500 KB, well inside what a tracker accepts inline.
