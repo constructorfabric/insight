@@ -13,8 +13,8 @@ import type { EvidenceDialogState } from "@/components/metric-evidence-context";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import {
   SOURCE_DIMENSION,
-  withGitSourceDimension,
-} from "@/lib/metrics/git-links";
+  withSourceDimension,
+} from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,7 +70,7 @@ export function MetricEvidenceDialog({
   // and refetch every row.
   const declaredDimensions = useDeclaredMetricDimensions();
   const selection = activeTarget
-    ? withGitSourceDimension(
+    ? withSourceDimension(
         activeTarget.selection,
         declaredDimensions.byMetricKey?.get(activeTarget.selection.metric_key)
       )
@@ -100,7 +100,7 @@ export function MetricEvidenceDialog({
     [pages]
   );
   const columns = useMemo(() => {
-    // `source` rides along purely to back a link (see withGitSourceDimension) —
+    // `source` rides along purely to back a link (see withSourceDimension) —
     // it is not a column anyone asked to see.
     const columns = (query.data?.pages[0]?.columns ?? []).filter(
       (column) => column.key !== SOURCE_DIMENSION

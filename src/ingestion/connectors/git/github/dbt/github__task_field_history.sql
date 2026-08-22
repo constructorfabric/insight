@@ -32,6 +32,7 @@ issues AS (
         source_id,
         toString(id)                                            AS issue_id,
         concat(repo_full_name, '#', toString(number))           AS id_readable,
+        title,
         repo_full_name,
         number,
         parseDateTimeBestEffortOrNull(created_at)               AS created_at,
@@ -334,6 +335,10 @@ SELECT
     CAST('github' AS String)                                    AS data_source,
     CAST(issue_id AS String)                                    AS issue_id,
     CAST(id_readable AS String)                                 AS id_readable,
+    -- One row per (issue x field x event) all share the issue's summary; it is
+    -- an issue attribute, not an event one, so it is joined in rather than
+    -- repeated by every branch of the union above.
+    CAST(nullIf(issue_title.title, '') AS Nullable(String))     AS title,
     CAST(event_id AS String)                                    AS event_id,
     -- The WHERE below already excludes the unparseable ones; the class declares
     -- a non-Nullable column and `union_by_tag` fails the shared relation for
@@ -358,4 +363,6 @@ SELECT
     toDateTime64(_airbyte_extracted_at, 3)                      AS collected_at,
     CAST(toUnixTimestamp64Milli(toDateTime64(_airbyte_extracted_at, 3)) AS UInt64) AS _version
 FROM every_row
+LEFT JOIN (SELECT issue_id, title FROM issues) AS issue_title
+    ON issue_title.issue_id = every_row.issue_id
 WHERE event_at IS NOT NULL

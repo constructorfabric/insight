@@ -780,6 +780,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history
     `data_source` String,
     `issue_id` String,
     `id_readable` String,
+    `title` Nullable(String),
     `event_id` String,
     `event_at` DateTime64(3),
     `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2),

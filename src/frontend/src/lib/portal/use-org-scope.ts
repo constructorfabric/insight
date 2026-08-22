@@ -15,6 +15,7 @@ import {
   usePortalScope,
 } from "@/lib/portal/portal-nav";
 import type { PersonSummary } from "@/api/identity-client";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
@@ -50,13 +51,12 @@ export const WHOLE_ORG_LABEL = "Whole organisation";
  * Scope resolution for an organisation with no reporting lines.
  *
  * There is one cohort — everyone the viewer may see — so there is no pivot to
- * pick and nothing for `directOnly` to narrow. The viewer is left out of the
- * roster for the same reason a manager is left out of their subtree's: they read
- * their own numbers on their Person page.
+ * pick and nothing for `directOnly` to narrow. The viewer stays in: this scope
+ * counts the organisation, and an org-level head-count that changes with who
+ * is looking disagrees with the roster listed right beside it (#2724).
  */
 export function flatOrgScope(
   roster: readonly PersonSummary[] | null,
-  viewerPersonId: string | null,
 ): ResolvedScope {
   if (!roster) {
     return {
@@ -69,17 +69,15 @@ export function flatOrgScope(
     };
   }
 
-  const viewer = viewerPersonId?.toLowerCase() ?? null;
-  const members: RosterEntry[] = roster
-    .filter((person) => person.person_id.toLowerCase() !== viewer)
-    .map((person) => ({
-      person_id: person.person_id,
-      email: person.email ?? "",
-      display_name: person.display_name ?? "",
-      // No reporting lines to name, and no depth to be at.
-      supervisor_person_id: null,
-      is_direct: false,
-    }));
+  const members: RosterEntry[] = roster.map((person) => ({
+    person_id: person.person_id,
+    email: person.email ?? "",
+    display_name: person.display_name ?? "",
+    username: person.username ?? "",
+    // No reporting lines to name, and no depth to be at.
+    supervisor_person_id: null,
+    is_direct: false,
+  }));
 
   return {
     pivot: null,
@@ -126,7 +124,7 @@ export function resolveScopeRoster(
       node.subordinates.length > 0
         ? {
             person_id: node.person_id,
-            name: node.display_name || node.email,
+            name: personDisplayName(node),
             depth,
             teamSize: 0,
           }
@@ -142,7 +140,7 @@ export function resolveScopeRoster(
   return {
     pivot,
     roster,
-    label: pivot.display_name || pivot.email,
+    label: personDisplayName(pivot),
     count: roster?.length ?? 0,
     managerNodes,
     canDirectOnly,
@@ -166,7 +164,7 @@ export function useOrgScope(): ResolvedScope & {
   const resolved = useMemo(
     () =>
       isFlat
-        ? flatOrgScope(flatRoster.isPending ? null : flatRoster.roster, personId)
+        ? flatOrgScope(flatRoster.isPending ? null : flatRoster.roster)
         : resolveScopeRoster(viewerQ.data ?? null, personId, scope),
     [isFlat, flatRoster.isPending, flatRoster.roster, viewerQ.data, personId, scope],
   );

@@ -1,4 +1,5 @@
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { personDisplayName } from "@/lib/identities/person-display";
 import type { IdentityPerson } from "@/types/insight";
 
 export interface ReportPerson {
@@ -42,7 +43,7 @@ export function collectReportPeople(
     if (node.person_id) {
       out.set(normalizePersonId(node.person_id), {
         entityId: normalizePersonId(node.person_id),
-        name: node.display_name ?? "",
+        name: personDisplayName(node),
         email: node.email ?? "",
         division: node.division ?? "",
         department: node.department ?? "",

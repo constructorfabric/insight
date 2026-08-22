@@ -90,7 +90,7 @@ function PersonNode({
             <span className="w-4 shrink-0" />
           )}
           {hasReports ? <Users /> : <User />}
-          <span className="truncate">{node.display_name || node.email}</span>
+          <span className="truncate">{personDisplayName(node)}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       {hasReports && open

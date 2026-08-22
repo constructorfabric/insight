@@ -434,8 +434,6 @@
       "loading_more": "Loading…",
       "case_count_one": "{{count}} case · {{accounts}} accounts",
       "case_count_other": "{{count}} cases · {{accounts}} accounts",
-      "previous_case": "‹ Previous account",
-      "next_case": "Next account ›",
       "reports_to": "reports to {{manager}}",
       "bound_to": "held by {{name}}",
       "case_people_one": "{{count}} person",
@@ -465,16 +463,14 @@
       "merge": "Merged",
       "detach": "Detached",
       "exclude": "Excluded",
-      "automatic": "Automatic",
+      "linked": "Linked",
+      "auto_seed_link": "Linked by address",
       "to": "to",
       "by_operator": "by an operator",
       "login_bootstrap": "First sign-in",
       "roster_mint": "Added from the roster",
-      "by": "by",
       "by_name": "by {{name}}",
-      "accounts_touched_one": "{{count}} account in this call",
-      "accounts_touched_other": "{{count}} accounts in this call",
-      "call": "the call"
+      "by_automation": "by automation"
     },
     "actions": {
       "bind": "Bind",
@@ -485,7 +481,6 @@
       "exclude": "Exclude (bot / CI)",
       "exclude_confirm": "Exclude",
       "assign_other": "Assign to someone else",
-      "bind_to": "Bind to selected person",
       "assign_person": "Assign to a person",
       "merge_into_person": "Merge into this person",
       "confirm_group_one": "Confirm 1 account",
@@ -557,10 +552,20 @@
       "no_accounts": "No account is bound to this person.",
       "by_operator": "decided by an operator",
       "by_automation": "bound automatically",
-      "open": "Open",
-      "load_failed": "Unable to load this person’s accounts",
-      "back": "‹ Back to the roster",
-      "find_account": "Find an account to bind to this person…"
+      "load_failed": "Unable to load this person’s accounts"
+    },
+    "person_window": {
+      "bind_section": "Bind an account to this person",
+      "find_account": "Find an account by source, address, handle, id or observed name…",
+      "detach": "Detach",
+      "exclude": "Exclude",
+      "detach_account": "Detach {{account}} on {{source}} from this person",
+      "exclude_account": "Exclude {{account}} on {{source}}",
+      "detach_title": "Take this account off this person?",
+      "detach_description": "A new person is created and the account is bound to them. This person keeps their other accounts.",
+      "bind_title": "Bind this account to this person?",
+      "bind_description": "The account is bound to this person.",
+      "bind_from_description": "The account is taken from {{name}} and bound to this person."
     },
     "accounts": {
       "placeholder": "Find an account by source, address, handle, id or observed name…",

@@ -73,40 +73,7 @@ export function PersonCell({
           >
             {name}
           </span>
-          {/* One word on the badge, the warning behind it: a badge never wraps
-              and never shrinks, so a sentence in one pushes the name out of a
-              narrow column and spills across the row. The trigger takes a tab
-              stop of its own on purpose — this mark is what says a person is
-              the wrong side of a merge, and a hover-only carrier tells a
-              keyboard reader nothing. */}
-          {person.provisional ? (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Badge
-                      variant="outline"
-                      className="cursor-help font-normal"
-                      tabIndex={0}
-                    />
-                  }
-                >
-                  {t("identities.person.provisional")}
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {t("identities.person.provisional_hint")}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : null}
-          {person.status?.trim().toLowerCase() === TERMINATED ? (
-            <Badge
-              variant="secondary"
-              className="bg-destructive/15 text-destructive"
-            >
-              {t("identities.person.terminated")}
-            </Badge>
-          ) : null}
+          <PersonMarks person={person} />
         </div>
         {detail ? (
           <div className="truncate text-xs text-muted-foreground">{detail}</div>
@@ -125,5 +92,48 @@ export function PersonCell({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * What makes a person the wrong one to act on: a stub automation minted, or a
+ * leaver. Wherever a person is named for a decision — a cell in a listing, the
+ * heading of the window they are decided in — these travel with the name.
+ */
+export function PersonMarks({ person }: { person: PersonSummary }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {/* One word on the badge, the warning behind it: a badge never wraps and
+          never shrinks, so a sentence in one pushes the name out of a narrow
+          column and spills across the row. The trigger takes a tab stop of its
+          own on purpose — this mark is what says a person is the wrong side of a
+          merge, and a hover-only carrier tells a keyboard reader nothing. */}
+      {person.provisional ? (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge
+                  variant="outline"
+                  className="cursor-help font-normal"
+                  tabIndex={0}
+                />
+              }
+            >
+              {t("identities.person.provisional")}
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {t("identities.person.provisional_hint")}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ) : null}
+      {person.status?.trim().toLowerCase() === TERMINATED ? (
+        <Badge variant="secondary" className="bg-destructive/15 text-destructive">
+          {t("identities.person.terminated")}
+        </Badge>
+      ) : null}
+    </>
   );
 }

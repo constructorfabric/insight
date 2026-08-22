@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
 import { useFeedbackDialog } from "@/components/feedback-context";
+import { personName } from "@/lib/identities/person-display";
 import { SidebarSettings } from "@/components/sidebar-settings";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -45,7 +46,7 @@ export function AppSidebarFooter({
   const viewer = viewerQ.data ?? null;
 
   const primaryEmail = viewer?.email ?? viewerEmail;
-  const primary = viewer?.display_name || primaryEmail;
+  const primary = (viewer ? personName(viewer) : null) ?? primaryEmail;
   const showSecondary = primary !== primaryEmail;
 
   return (

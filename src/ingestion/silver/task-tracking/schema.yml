@@ -25,6 +25,12 @@ models:
         description: "Source system discriminator (e.g. 'jira')"
         tests:
           - not_null
+      - name: title
+        description: >
+          The issue's own summary as the tracker states it, repeated on every
+          event of that issue — an issue attribute, not an event one. NULL when
+          the source does not report one. Gold surfaces it as `details.title` in
+          task evidence; the record label is `id_readable`.
       - name: event_id
         description: "Natural identifier of the event. For `event_kind='changelog'` this is `jira_issue_history.changelog_id` (shared across all fields changed in one changelog). For `event_kind='synthetic_initial'` it is `'initial:<issue_id>'` (shared across all initial fields of one issue). Per ADR-005, operator audit JOIN key is (insight_source_id, id_readable, event_id, field_id)."
         tests:

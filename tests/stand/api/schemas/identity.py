@@ -164,9 +164,11 @@ class PersonAccountsResponse(BaseModel):
 class PersonResponse(BaseModel):
     """
     A person node in the org tree (subordinate of a profile), matching the .NET
-    `PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain
-    strings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`
-    fields serialize as `null` rather than being dropped.
+    `PersonResponse` plus `username`, which the .NET shape never carried — the
+    UI labels a nameless person by their handle (#2711). Unlike
+    `ProfileResponse`, the attribute fields are plain strings (empty when
+    absent, not omitted) and the `supervisor_*`/`parent_*` fields serialize as
+    `null` rather than being dropped.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -186,6 +188,7 @@ class PersonResponse(BaseModel):
     subordinates: list[PersonResponse]
     supervisor_email: str | None = None
     supervisor_name: str | None = None
+    username: str
 
 
 class PersonRoleResponse(BaseModel):

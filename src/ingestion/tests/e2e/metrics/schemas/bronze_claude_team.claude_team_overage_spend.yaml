@@ -3,7 +3,8 @@
 # — stream claude_team_overage_spend, GET /api/organizations/{org}/overage_spend_limits)
 # plus the 4 _airbyte_* CDK columns. NOTE: monthly_credit_limit and used_credits
 # are ALREADY minor units (cents) — Silver maps them through with no ×100. The
-# stream carries no date; period_month is stamped from _airbyte_extracted_at.
+# payload carries no date of its own: snapshot_date is stamped by the connector
+# with the day of the reading, and period_month from _airbyte_extracted_at.
 schemas:
   bronze_claude_team.claude_team_overage_spend:
     $schema: http://json-schema.org/draft-07/schema#
@@ -17,6 +18,7 @@ schemas:
       tenant_id: { type: [string, "null"] }
       source_id: { type: [string, "null"] }
       unique_key: { type: string }
+      snapshot_date: { type: [string, "null"], format: date }
       collected_at: { type: [string, "null"] }
       data_source: { type: [string, "null"] }
       account_uuid: { type: [string, "null"] }

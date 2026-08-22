@@ -31,7 +31,6 @@
  */
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "@/components/ui/sonner";
 
 import type {
   AccountBinding,
@@ -40,14 +39,13 @@ import type {
   WireAccountRef,
 } from "@/api/identity-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { OutcomeAlert } from "@/components/portal/outcome-alert";
 import { PersonCell } from "@/components/portal/person-cell";
 import { PersonId } from "@/components/portal/person-id";
 import { PersonPicker } from "@/components/portal/person-picker";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useCorrectionReport } from "@/hooks/use-correction-report";
 import type { AccountRef } from "@/lib/identities/account-key";
-import { fullyDecided, refusedCount } from "@/lib/identities/outcomes";
 import { apiErrorReason } from "@/lib/query-console/api-error";
 import {
   useBindAccount,
@@ -63,9 +61,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-
-/** Long enough to read a UUID off and paste it somewhere. */
-const MINTED_ID_TOAST_MS = 15_000;
 
 /** Join the sentences a description is built from, skipping the absent ones. */
 function sentences(...parts: (string | null)[]): string {
@@ -83,7 +78,6 @@ export function AccountActions({
   binding,
   candidates,
   holder,
-  bindTo,
   queued = false,
   onDecided,
 }: {
@@ -95,16 +89,10 @@ export function AccountActions({
   /** Whoever holds it now, when the surface knows their card. */
   holder?: PersonSummary | null;
   /**
-   * The person the surface behind this window has open. Binding to them is then
-   * one press, and the search for a person is gone: the reader is already
-   * inside that person, so asking them to find them again is asking twice.
-   */
-  bindTo?: PersonSummary | null;
-  /**
    * This account really is on the review queue, so a verb really does take it
-   * off. The same window opens over settled accounts from the search and from a
-   * person's own list, and promising them the queue would describe a queue they
-   * were never in.
+   * off. The same window opens over settled accounts found in the accounts
+   * mode, and promising those the queue would describe a queue they were never
+   * in.
    */
   queued?: boolean;
   /**
@@ -117,6 +105,7 @@ export function AccountActions({
   const { t } = useTranslation();
   const [action, setAction] = useState<PendingAction>({ kind: "closed" });
   const [outcome, setOutcome] = useState<CorrectionResponse | null>(null);
+  const report = useCorrectionReport();
 
   const bind = useBindAccount();
   const detach = useDetachAccount();
@@ -174,38 +163,16 @@ export function AccountActions({
   };
   const done = (result: CorrectionResponse) => {
     close();
-
-    // Not "no refusals": the outcome vocabulary is open by contract, so a value
-    // this build has never heard of must not pass for success.
-    if (!fullyDecided(result)) {
+    if (!report(result)) {
       // The account kept its binding, so the window keeps its verbs: the
       // operator has something left to decide and needs the counters to see it.
       setOutcome(result);
-      const refused = refusedCount(result);
-      toast.error(
-        refused > 0
-          ? t("identities.outcomes.toast_refused", { count: refused })
-          : t("identities.dialogs.failed"),
-      );
       return;
     }
 
     // An earlier attempt's counters have nothing to say about this one. Today
     // `onDecided` unmounts this window, but the prop is optional.
     setOutcome(null);
-    const message =
-      result.applied > 0
-        ? t("identities.outcomes.toast_applied", { count: result.applied })
-        : t("identities.outcomes.toast_already");
-    // The minted person's id is the one thing a detach reports that nothing else
-    // on the page can name yet, and the window that used to hold it now closes —
-    // so the toast carrying it stays up long enough to be copied out.
-    toast.success(message, {
-      description: result.new_person_id
-        ? `${t("identities.outcomes.new_person")} ${result.new_person_id}`
-        : undefined,
-      duration: result.new_person_id ? MINTED_ID_TOAST_MS : undefined,
-    });
     onDecided?.();
   };
 
@@ -270,44 +237,25 @@ export function AccountActions({
         </section>
       ) : null}
 
-      {/* One section, two ways in. With a person open behind the window and the
-          account not yet theirs, one press is the whole decision — the reader
-          is already inside that person, and asking them to search for them
-          again is asking twice. Once the account IS theirs that press would
-          change nothing, so the search comes back: moving it to somebody else
-          is the only decision left, and it is exactly the one an operator
-          opened the account to make. */}
       <section>
-        <div className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        <SectionLabel>
           {boundId
             ? t("identities.actions.assign_other")
             : t("identities.actions.assign_person")}
-        </div>
-        {bindTo && boundId !== bindTo.person_id ? (
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => setAction({ kind: "bind", person: bindTo })}
-          >
-            {t("identities.actions.bind_to")}
-          </Button>
-        ) : (
-          <PersonPicker
-            // The holder too: this picker moves an account to somebody else,
-            // and the one person it cannot move it to is the one who already
-            // has it. Named by ID rather than by card — a surface that could
-            // not hydrate the holder still knows who they are, and without
-            // this the search would offer a bind that moves nothing.
-            excludeIds={[
-              ...candidates.map((c) => c.person_id),
-              ...(boundCard ? [boundCard.person_id] : []),
-              ...(boundId ? [boundId] : []),
-              ...(bindTo ? [bindTo.person_id] : []),
-            ]}
-            onPick={(person) => setAction({ kind: "bind", person })}
-          />
-        )}
+        </SectionLabel>
+        <PersonPicker
+          // The holder too: this picker moves an account to somebody else, and
+          // the one person it cannot move it to is the one who already has it.
+          // Named by ID rather than by card — a surface that could not hydrate
+          // the holder still knows who they are, and without this the search
+          // would offer a bind that moves nothing.
+          excludeIds={[
+            ...candidates.map((c) => c.person_id),
+            ...(boundCard ? [boundCard.person_id] : []),
+            ...(boundId ? [boundId] : []),
+          ]}
+          onPick={(person) => setAction({ kind: "bind", person })}
+        />
       </section>
 
       <section className="flex flex-wrap gap-2">
@@ -413,37 +361,5 @@ export function AccountActions({
         />
       ) : null}
     </div>
-  );
-}
-
-/** The server's answer, verbatim — three counters, never a bare "done". */
-function OutcomeAlert({ outcome }: { outcome: CorrectionResponse }) {
-  const { t } = useTranslation();
-  const refused = outcome.items.filter((i) => i.outcome === "refused").length;
-  return (
-    <Alert variant={refused > 0 ? "destructive" : "default"} role="status">
-      <AlertTitle className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="secondary">
-          {t("identities.outcomes.applied", { count: outcome.applied })}
-        </Badge>
-        {outcome.already_decided > 0 ? (
-          <Badge variant="outline">
-            {t("identities.outcomes.already_decided", {
-              count: outcome.already_decided,
-            })}
-          </Badge>
-        ) : null}
-        {refused > 0 ? (
-          <Badge variant="secondary" className="bg-destructive/15 text-destructive">
-            {t("identities.outcomes.refused", { count: refused })}
-          </Badge>
-        ) : null}
-      </AlertTitle>
-      {outcome.new_person_id ? (
-        <AlertDescription className="font-mono text-xs">
-          {t("identities.outcomes.new_person")} {outcome.new_person_id}
-        </AlertDescription>
-      ) : null}
-    </Alert>
   );
 }

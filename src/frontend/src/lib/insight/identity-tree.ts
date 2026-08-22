@@ -21,6 +21,7 @@ export interface RosterEntry {
   person_id: string;
   email: string;
   display_name: string;
+  username: string;
   supervisor_person_id: string | null;
   /** True when the person is a direct report of the pivot (depth 1). */
   is_direct: boolean;
@@ -44,6 +45,7 @@ export function flattenSubordinates(pivot: IdentityPerson): RosterEntry[] {
         person_id: sub.person_id,
         email: sub.email,
         display_name: sub.display_name,
+        username: sub.username ?? "",
         supervisor_person_id: supervisorPersonId,
         is_direct: isDirect,
       });

@@ -1,5 +1,6 @@
 /**
- * Links into the provider a git metric came from.
+ * Links into the provider a metric's record came from — git records and
+ * tracker issues alike.
  *
  * Only GitHub, and only because its web layout is derivable from data we
  * already hold: `https://github.com/{owner}/{repo}`. GitLab and Bitbucket can
@@ -64,19 +65,58 @@ export function githubRecordUrl(
   return null;
 }
 
-/** Two-part `family.name` metric keys namespace by family; git's is fixed. */
+/** Two-part `family.name` metric keys namespace by family; these are fixed. */
 const GIT_METRIC_PREFIX = "git.";
+const TASK_METRIC_PREFIX = "tasks.";
 
 /** Whether links are worth attempting at all for this metric's evidence. */
 export function isGitMetric(metricKey: string): boolean {
   return metricKey.startsWith(GIT_METRIC_PREFIX);
 }
 
+export function isTaskMetric(metricKey: string): boolean {
+  return metricKey.startsWith(TASK_METRIC_PREFIX);
+}
+
+/**
+ * A tracker states an issue's readable key its own way — GitHub as
+ * `owner/repo#12`, Jira as `PROJ-7` — and only the GitHub shape carries the
+ * repository the URL needs. Matching the shape is what keeps a Jira key from
+ * being linked to a github.com path that does not exist.
+ */
+const GITHUB_ISSUE_REF = /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#([0-9]+)$/;
+
+/** The issue's own page, or null when the row is not linkable. */
+export function githubIssueUrl(
+  source: string | null | undefined,
+  ref: string | null | undefined
+): string | null {
+  if (source?.trim().toLowerCase() !== GITHUB_SOURCE) return null;
+  const matched = GITHUB_ISSUE_REF.exec(ref?.trim() ?? "");
+  if (!matched) return null;
+  return `${GITHUB_WEB_BASE}/${matched[1]}/issues/${matched[2]}`;
+}
+
+/**
+ * How an issue ref reads in a column: the repository prefix is the same for
+ * nearly every row of one drilldown, so it costs width and says nothing —
+ * `#12` is what distinguishes rows, and the repository stays in the link and
+ * in what the copy button yields. A ref of any other shape reads as-is.
+ */
+export function evidenceRefText(
+  metricKey: string,
+  value: string
+): string {
+  if (!isTaskMetric(metricKey)) return value;
+  const matched = GITHUB_ISSUE_REF.exec(value.trim());
+  return matched ? `#${matched[2]}` : value;
+}
+
 /** The dimension key requested so a row's own connector rides along. */
 export const SOURCE_DIMENSION = "source";
 
 /**
- * Adds `source` to a git metric's requested display dimensions, so its
+ * Adds `source` to a metric's requested display dimensions, so its
  * evidence rows carry the per-row connector a link needs to be safe.
  *
  * SAFETY: only when the metric DECLARES the dimension — a drilldown that asks
@@ -84,11 +124,13 @@ export const SOURCE_DIMENSION = "source";
  * missing link for an unopenable dialog. `declared` is null while the catalog
  * is unknown, which is also a no-op.
  */
-export function withGitSourceDimension(
+export function withSourceDimension(
   selection: MetricEvidenceSelection,
   declared: ReadonlySet<string> | null | undefined
 ): MetricEvidenceSelection {
-  if (!isGitMetric(selection.metric_key)) return selection;
+  if (!isGitMetric(selection.metric_key) && !isTaskMetric(selection.metric_key)) {
+    return selection;
+  }
   if (!declared?.has(SOURCE_DIMENSION)) return selection;
   if (selection.display_dimensions.includes(SOURCE_DIMENSION)) return selection;
   return {
@@ -109,6 +151,13 @@ export function evidenceRecordLinks(
   metricKey: string,
   values: Readonly<Record<string, unknown>>
 ): Readonly<Record<string, string | undefined>> {
+  if (isTaskMetric(metricKey)) {
+    const issue = githubIssueUrl(
+      asString(values[SOURCE_DIMENSION]),
+      asString(values.ref)
+    );
+    return issue ? { ref: issue, title: issue } : {};
+  }
   if (!isGitMetric(metricKey)) return {};
   const repoUrl = githubRepoUrl(
     asString(values[SOURCE_DIMENSION]),
@@ -121,4 +170,23 @@ export function evidenceRecordLinks(
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * One line naming an issue in an activity list: `#12: what it is about`.
+ *
+ * The list has one column for the thing itself, so the number and the summary
+ * share it — the number alone does not say what the work was, and the summary
+ * alone cannot be told apart from another issue with a similar name. Either
+ * half may be missing; what is left still reads.
+ */
+export function activityEventLabel(
+  metricKey: string,
+  ref: string | null | undefined,
+  title: string | null | undefined
+): string | null {
+  const shortRef = ref ? evidenceRefText(metricKey, ref) : null;
+  if (!isTaskMetric(metricKey)) return title ?? null;
+  if (shortRef && title) return `${shortRef}: ${title}`;
+  return title ?? shortRef ?? null;
 }

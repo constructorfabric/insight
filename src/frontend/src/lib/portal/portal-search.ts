@@ -33,9 +33,9 @@ export interface PortalSearch {
   /**
    * What was typed into the Identities person roster.
    *
-   * In the URL rather than in the field's own state because choosing a person
-   * replaces the roster with their accounts — the field unmounts, and coming
-   * back to a blank one means finding the same person twice.
+   * In the URL rather than in the field's own state so the terms survive
+   * leaving the mode and coming back: an operator comparing two people should
+   * not have to find the same list twice.
    */
   find?: string;
   /** Expanded direction + its active lens, within the Directions zone. */

@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import type { PersonSummary } from "@/api/identity-client";
 import { PersonCell } from "@/components/portal/person-cell";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -182,17 +183,10 @@ export function PersonPicker({
                     role="button"
                     tabIndex={0}
                     onClick={(event) => {
-                      if (
-                        event.target instanceof Element &&
-                        event.target.closest("button, a")
-                      ) {
-                        return;
-                      }
-                      onPick(person);
+                      if (activatesRow(event)) onPick(person);
                     }}
                     onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      if (event.target !== event.currentTarget) return;
+                      if (!activatesRowByKey(event)) return;
                       event.preventDefault();
                       onPick(person);
                     }}

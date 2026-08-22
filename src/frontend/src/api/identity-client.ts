@@ -595,6 +595,7 @@ function toIdentityPerson(p: ProfileResponse): IdentityPerson {
     division: p.division ?? "",
     job_title: p.job_title ?? "",
     status: p.status ?? "",
+    username: p.username ?? "",
     parent_email: p.parent_email ?? null,
     // `parent_id` has no ProfileResponse source; preserve the prior default.
     parent_id: null,

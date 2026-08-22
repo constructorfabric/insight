@@ -10,6 +10,8 @@ export interface OrgTreeFilter {
 function haystack(person: IdentityPerson): string {
   return [
     person.display_name,
+    person.username,
+    person.email,
     person.job_title,
     person.department,
     person.division,
