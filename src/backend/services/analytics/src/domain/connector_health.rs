@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 #[derive(Debug, Clone)]
 pub struct StreamState {
     pub namespace: String,
+    #[expect(dead_code, reason = "names the source stream; only the fold is read today")]
     pub stream: String,
     pub rows: u64,
     /// `max(_airbyte_extracted_at)` over the stream. A stream holding no rows
@@ -53,12 +54,14 @@ fn extract_written(stream: &StreamState) -> Option<DateTime<Utc>> {
 
 /// Each connector declares its own pair; there is no instance-wide window.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
 pub struct Thresholds {
     pub warn_after: Duration,
     pub error_after: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
 pub enum Freshness {
     NeverReceived,
     Fresh,
@@ -66,6 +69,7 @@ pub enum Freshness {
     Stale,
 }
 
+#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
 pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<Utc>) -> Freshness {
     let Some(last_write) = state.last_write else {
         return Freshness::NeverReceived;
