@@ -12,9 +12,11 @@
 -- lines_added / lines_removed come from the commit's own stats (present for
 -- every commit). files_changed is the per-commit count from commit_file_changes,
 -- which the connector only collects for default-branch non-merge commits — so
--- it is 0 for commits outside that set. branch is not stored on the commit row,
--- and neither is default-branch membership: the stream knows which ref it
--- walked but does not project it, so is_default_branch is NULL here.
+-- it is 0 for commits outside that set. branch is not stored on the commit row;
+-- membership is, from the ref the stream walked.
+-- INVARIANT: is_in_default_branch is NULL for rows written before the connector
+-- projected it, and no dbt rebuild can fill them — the value is not in Bronze.
+-- Only a re-read of the commits stream from its start date supplies it.
 WITH proj AS (
     SELECT
         tenant_id,
@@ -44,7 +46,7 @@ SELECT
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(c.id, '') AS commit_hash,
     '' AS branch,
-    CAST(NULL AS Nullable(UInt8)) AS is_default_branch,
+    CAST(c.is_in_default_branch AS Nullable(UInt8)) AS is_default_branch,
     COALESCE(c.author_name, '') AS author_name,
     COALESCE(c.author_email, '') AS author_email,
     COALESCE(c.committer_name, '') AS committer_name,
@@ -58,7 +60,12 @@ SELECT
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     c._airbyte_extracted_at
-FROM {{ source('bronze_gitlab', 'commits') }} AS c
+-- FINAL: a re-walk re-emits a commit under the same unique_key with the
+-- membership flag set, so Bronze holds the old row and the new one. Without
+-- FINAL a full-refresh build inserts both into staging under one now64()
+-- _version, and union_by_tag's dedup orders by that column — a tie it cannot
+-- break. See ADR-0001.
+FROM {{ source('bronze_gitlab', 'commits') }} AS c FINAL
 LEFT JOIN proj AS p
     ON p.project_id = c.project_id
     AND p.tenant_id = c.tenant_id
