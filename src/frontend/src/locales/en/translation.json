@@ -594,21 +594,23 @@
       "never": "never",
       "hours": "{{count}}h ago",
       "days_one": "{{count}} day ago",
-      "days_other": "{{count}} days ago"
+      "days_other": "{{count}} days ago",
+      "unknown": "—"
     },
     "tiles": {
       "delivering": "delivering",
-      "never": "never delivered",
-      "empty_streams": "streams with no data"
+      "partial": "partial",
+      "never": "never delivered"
     },
     "state": {
       "delivering": "delivering",
       "partial": "partial",
       "never": "not delivering"
-    }
+    },
+    "empty": "No connectors are visible to this service — either none are configured, or its database user cannot read the bronze schemas."
   },
   "catalogue_health": {
-    "heading": "Metric catalog",
+    "heading": "Metric catalog — {{count}} metrics",
     "serving": "serving data",
     "awaiting_data": "no data yet",
     "unverified": "not verified",
@@ -624,5 +626,8 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "data_health": {
+    "heading": "Data health"
   }
 }

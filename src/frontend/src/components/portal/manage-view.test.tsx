@@ -58,8 +58,6 @@ vi.mock("@/components/portal/identities-view", () => ({
   IdentitiesView: () => <div data-testid="identities-view" />,
 }));
 
-import "@/i18n";
-
 import { ManageView } from "./manage-view";
 
 function def(over: Partial<MetricDefinition>): MetricDefinition {
@@ -264,6 +262,7 @@ describe("identities gate", () => {
 function connectorRow(
   connector: string,
   last_write: string | null,
+  over: Partial<ConnectorRow> = {},
 ): ConnectorRow {
   return {
     connector,
@@ -272,12 +271,20 @@ function connectorRow(
     streams_with_data: last_write == null ? 0 : 2,
     rows: last_write == null ? 0 : 5,
     last_write,
+    ...over,
   };
 }
 
 describe("Manage · connector delivery", () => {
   beforeEach(() => {
     mocks.q.data = [{ prefix: "git", metrics: [def({})] }];
+    adminGate.value.isAdmin = true;
+    connectorHealth.value = {
+      data: { as_of: "2020-01-10T12:00:00Z", connectors: [] },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    };
   });
 
   it("renders translated copy rather than raw keys, and sinks a connector that never delivered", () => {
@@ -300,5 +307,83 @@ describe("Manage · connector delivery", () => {
       .map((r) => r.firstElementChild?.textContent)
       .filter((n) => n === "delivering" || n === "never_delivered");
     expect(names).toEqual(["delivering", "never_delivered"]);
+  });
+  it("keeps the pane's own heading, so the page is not titled after one section", () => {
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [connectorRow("delivering", "2020-01-10T02:00:00Z")],
+    };
+
+    render(<ManageView item="data-health" />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Data health" }),
+    ).toBeInTheDocument();
+  });
+
+  it("still reports connector delivery when the metric catalogue read fails", () => {
+    mocks.q.isError = true;
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [connectorRow("delivering", "2020-01-10T02:00:00Z")],
+    };
+
+    render(<ManageView item="data-health" />);
+
+    expect(screen.getByText("10h ago")).toBeInTheDocument();
+  });
+
+  it("says the service can see no bronze schemas rather than showing an empty table", () => {
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [],
+    };
+
+    render(<ManageView item="data-health" />);
+
+    expect(screen.getByText(/no connectors are visible/i)).toBeInTheDocument();
+  });
+
+  it("counts a partly-delivering connector as partial in the tiles too", () => {
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [
+        connectorRow("full", "2020-01-10T02:00:00Z"),
+        connectorRow("half", "2020-01-10T02:00:00Z", {
+          streams: 4,
+          streams_with_data: 2,
+        }),
+        connectorRow("none", null),
+      ],
+    };
+
+    const { container } = render(<ManageView item="data-health" />);
+
+    const tiles = container.querySelector("[data-connector-tiles]");
+    expect(tiles?.textContent).toBe("1delivering1partial1never delivered");
+  });
+
+  it("colours a multi-word connector by its brand token, not by a missing one", () => {
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [connectorRow("ms_entra", "2020-01-10T02:00:00Z")],
+    };
+
+    const { container } = render(<ManageView item="data-health" />);
+
+    const dot = container.querySelector("[data-connector-dot]");
+    expect(dot?.getAttribute("style")).toContain("--brand-ms-entra");
+  });
+  it("keeps connector delivery out of a non-admin's pane, catalogue and all", () => {
+    adminGate.value.isAdmin = false;
+    connectorHealth.value.data = {
+      as_of: "2020-01-10T12:00:00Z",
+      connectors: [connectorRow("delivering", "2020-01-10T02:00:00Z")],
+    };
+
+    render(<ManageView item="data-health" />);
+
+    expect(screen.queryByText("10h ago")).not.toBeInTheDocument();
+    expect(screen.getByText("serving data")).toBeInTheDocument();
   });
 });

@@ -21,8 +21,13 @@ import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { useConnectorHealth } from "@/queries/connector-health";
-import { elapsedSince, orderByAttention } from "@/lib/portal/connector-health";
+import {
+  connectorState,
+  elapsedSince,
+  orderByAttention,
+} from "@/lib/portal/connector-health";
 import { catalogueHealth } from "@/lib/portal/catalogue-health";
+import { seriesColors } from "@/lib/series-colors";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -210,8 +215,31 @@ function MetricCatalogTable() {
 
 function DataHealth() {
   const { t } = useTranslation();
+
+  return (
+    <div className="flex flex-col gap-6 p-4 md:p-6">
+      <h1 className="text-lg font-semibold tracking-tight">
+        {t("data_health.heading")}
+      </h1>
+
+      <AdminOnly>
+        <ConnectorDelivery />
+      </AdminOnly>
+      <MetricCatalogueHealth />
+    </div>
+  );
+}
+
+function AdminOnly({ children }: { children: ReactNode }) {
+  const { isAdmin, isPending } = useIsAdmin();
+  if (isPending || !isAdmin) return null;
+  return children;
+}
+
+function MetricCatalogueHealth() {
+  const { t } = useTranslation();
   const { metrics, isLoading, isError, refetch } = useFlatDefinitions();
-  if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (isLoading) return <CenteredSpinner className="min-h-[12rem]" />;
   if (isError)
     return (
       <div className="mx-auto w-full max-w-md p-8">
@@ -230,12 +258,10 @@ function DataHealth() {
   ] as const;
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
-      <ConnectorDelivery />
-
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-muted-foreground">
-          {t("catalogue_health.heading")}
+          {t("catalogue_health.heading", { count: metrics.length })}
         </h2>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
           {tiles.map((tile) => (
@@ -266,31 +292,46 @@ function ConnectorDelivery() {
 
   const asOf = new Date(data.as_of);
   const connectors = orderByAttention(data.connectors);
-  const delivering = connectors.filter((c) => c.last_write != null).length;
-  const emptyStreams = connectors.reduce(
-    (n, c) => n + (c.streams - c.streams_with_data),
-    0,
-  );
+  const states = connectors.map((c) => connectorState(c));
+  const count = (state: string) => states.filter((s) => s === state).length;
+  const dots = seriesColors(connectors.map((c) => c.connector));
 
   const tiles = [
-    { key: "delivering", value: delivering, tone: "text-success" },
+    { key: "delivering", value: count("delivering"), tone: "text-success" },
+    {
+      key: "partial",
+      value: count("partial"),
+      tone: count("partial") > 0 ? "text-warning-foreground" : "",
+    },
     {
       key: "never",
-      value: connectors.length - delivering,
-      tone: connectors.length - delivering > 0 ? "text-destructive" : "",
+      value: count("never"),
+      tone: count("never") > 0 ? "text-destructive" : "",
     },
-    { key: "empty_streams", value: emptyStreams, tone: "" },
   ] as const;
+
+  if (connectors.length === 0)
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          {t("connector_health.heading")}
+        </h2>
+        <div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
+          {t("connector_health.empty")}
+        </div>
+      </div>
+    );
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">
-          {t("connector_health.heading")}
-        </h1>
-      </div>
+      <h2 className="text-sm font-medium text-muted-foreground">
+        {t("connector_health.heading")}
+      </h2>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+      <div
+        data-connector-tiles
+        className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3"
+      >
         {tiles.map((tile) => (
           <div key={tile.key} className="rounded-lg border bg-card p-4">
             <div className={cn(TEXT_FIGURE, tile.tone)}>{tile.value}</div>
@@ -319,22 +360,16 @@ function ConnectorDelivery() {
           <TableBody>
             {connectors.map((c) => {
               const elapsed = elapsedSince(c.last_write, asOf);
-              const state =
-                elapsed.kind === "never"
-                  ? "never"
-                  : c.streams_with_data < c.streams
-                    ? "partial"
-                    : "delivering";
+              const state = connectorState(c);
               return (
                 <TableRow key={c.namespace}>
                   <TableCell className="font-medium">
                     <span className="flex items-center gap-2.5">
                       <span
                         aria-hidden
+                        data-connector-dot
                         className="size-2 shrink-0 rounded-full"
-                        style={{
-                          background: `var(--brand-${c.connector}, var(--muted-foreground))`,
-                        }}
+                        style={{ background: dots[c.connector] }}
                       />
                       {c.connector}
                     </span>
@@ -345,8 +380,8 @@ function ConnectorDelivery() {
                       state === "never" && "text-muted-foreground",
                     )}
                   >
-                    {elapsed.kind === "never"
-                      ? t("connector_health.elapsed.never")
+                    {elapsed.kind === "never" || elapsed.kind === "unknown"
+                      ? t(`connector_health.elapsed.${elapsed.kind}`)
                       : t(`connector_health.elapsed.${elapsed.kind}`, {
                           count: elapsed.value,
                         })}

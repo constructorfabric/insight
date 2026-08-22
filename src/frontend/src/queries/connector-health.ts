@@ -9,6 +9,6 @@ export function useConnectorHealth(): UseQueryResult<ConnectorHealthResponse> {
   return useQuery({
     queryKey: ["connector-health"],
     queryFn: getConnectorHealth,
-    staleTime: 30 * 1000,
+    staleTime: 5 * 60 * 1000,
   });
 }
