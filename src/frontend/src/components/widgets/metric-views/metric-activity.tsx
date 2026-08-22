@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { evidenceSelection } from "@/api/metric-drilldown-client";
+import { throughToday } from "@/api/period-to-date-range";
 import {
   useEvidenceScope,
   useMetricEvidenceOptional,
@@ -68,8 +69,15 @@ export function MetricActivity({
 }) {
   const grain = finestGrain(metric);
   const declared = useDeclaredMetricDimensions();
+  // The strip draws one day at a time and marks an incomplete one, so it asks
+  // for the current day. The period total beside it keeps the bound it was
+  // measured on.
   const base = metric.selection
-    ? evidenceSelection(metric.selection, entityId)
+    ? evidenceSelection(
+        metric.selection,
+        entityId,
+        throughToday(metric.selection.period)
+      )
     : null;
   // INVARIANT: the same gate the evidence dialog applies — `source` is what
   // makes a link safe, and asking for it where a metric does not declare it is
@@ -336,7 +344,10 @@ function DayStrip({
   columns: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["columns"];
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
-  const period = metric.selection?.period;
+  // INVARIANT: the same widening the drilldown asked for, or the calendar would
+  // stop a day short of the readings it draws.
+  const selected = metric.selection?.period;
+  const period = selected ? throughToday(selected) : undefined;
   const { collectedThrough, revisionWindowDays } = useCollectedThrough(
     metric.metric_key
   );
