@@ -123,24 +123,25 @@ async fn authorize_metric_entity(
     headers: &HeaderMap,
     entity: &MetricDrilldownEntity,
 ) -> Result<(), CanonicalError> {
-    if matches!(entity, MetricDrilldownEntity::Tenant {}) {
-        return authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled);
-    }
-    if matches!(entity, MetricDrilldownEntity::Unknown) {
-        return Err(MetricError::invalid_argument()
+    match entity {
+        MetricDrilldownEntity::Tenant {} => {
+            authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)
+        }
+        MetricDrilldownEntity::Unknown => Err(MetricError::invalid_argument()
             .with_field_violation("entity.type", "unsupported entity type", "INVALID")
-            .create());
+            .create()),
+        MetricDrilldownEntity::Person { .. } => {
+            let (_, person_id) = parse_person_entity(entity)?;
+
+            authorize_person_ids(
+                &state.identity,
+                ctx,
+                super::forwarded_authorization(headers),
+                &[person_id],
+            )
+            .await
+        }
     }
-
-    let (_, person_id) = parse_person_entity(entity)?;
-
-    authorize_person_ids(
-        &state.identity,
-        ctx,
-        super::forwarded_authorization(headers),
-        &[person_id],
-    )
-    .await
 }
 
 async fn acquire_export_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
