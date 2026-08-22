@@ -108,8 +108,6 @@ cases:
               - { view: breakdown, dimensions: [type] }
     expect:
       - assert: "status == 200"
-      # A median says which kinds of work it was taken over; every fixture issue
-      # is one Task, so the whole figure sits under that one type.
       - metric: tasks.dev_time
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Task') && double(v.value) == 5.0)"

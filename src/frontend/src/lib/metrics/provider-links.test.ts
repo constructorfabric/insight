@@ -129,20 +129,20 @@ describe("isGitMetric", () => {
   );
 });
 
-describe("withSourceDimension", () => {
-  function selection(
-    metricKey: string,
-    displayDimensions: string[] = []
-  ): MetricEvidenceSelection {
-    return {
-      metric_key: metricKey,
-      entity: { type: "person", id: "person-1" },
-      period: { from: "2026-01-01", to: "2026-01-31" },
-      filters: [],
-      display_dimensions: displayDimensions,
-    };
-  }
+function selection(
+  metricKey: string,
+  displayDimensions: string[] = []
+): MetricEvidenceSelection {
+  return {
+    metric_key: metricKey,
+    entity: { type: "person", id: "person-1" },
+    period: { from: "2026-01-01", to: "2026-01-31" },
+    filters: [],
+    display_dimensions: displayDimensions,
+  };
+}
 
+describe("withSourceDimension", () => {
   it("asks for the source a git metric declares", () => {
     const result = withSourceDimension(
       selection("git.commits"),
@@ -200,19 +200,6 @@ describe("withSourceDimension", () => {
 });
 
 describe("withTypeDimension", () => {
-  function selection(
-    metricKey: string,
-    displayDimensions: string[] = []
-  ): MetricEvidenceSelection {
-    return {
-      metric_key: metricKey,
-      entity: { type: "person", id: "person-1" },
-      period: { from: "2026-01-01", to: "2026-01-31" },
-      filters: [],
-      display_dimensions: displayDimensions,
-    };
-  }
-
   it("asks for the type a task metric declares", () => {
     const result = withTypeDimension(
       selection("tasks.closed"),
@@ -231,10 +218,8 @@ describe("withTypeDimension", () => {
     expect(result.display_dimensions).toEqual(["source", "type"]);
   });
 
-  // A duration metric's rows carry no issue type; asking anyway is refused
-  // outright, which would cost the reader the whole dialog.
   it("leaves a task metric that declares no type untouched", () => {
-    const original = selection("tasks.dev_time_hours");
+    const original = selection("tasks.flow_efficiency");
 
     expect(withTypeDimension(original, new Set(["source"]))).toBe(original);
   });

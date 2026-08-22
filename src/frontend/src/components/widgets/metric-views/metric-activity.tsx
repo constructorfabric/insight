@@ -284,7 +284,8 @@ function EventList({
 function eventType(values: Readonly<Record<string, unknown>>): string | null {
   const value = values[TYPE_DIMENSION];
   if (typeof value !== "string") return null;
-  return value.trim() === "" ? null : value;
+  const type = value.trim();
+  return type === "" ? null : type;
 }
 
 /** A ratio's daily value is a fraction; the metric says what to scale it by. */
