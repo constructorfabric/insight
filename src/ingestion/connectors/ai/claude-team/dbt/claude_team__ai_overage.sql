@@ -75,18 +75,19 @@ WITH per_seat_day AS (
 per_seat_day_held AS (
     SELECT
         *,
+        -- INVARIANT: the floor is the PRECEDING reading, never the largest of
+        -- them. Gold erases an earlier reading that was too high — one taken
+        -- before the vendor's own period rolled over reads as the closing
+        -- month's total — and the last of the earlier readings is the one it
+        -- leaves standing. Their maximum would restore what it erased.
         if(
             toDate(_airbyte_extracted_at) = toLastDayOfMonth(_airbyte_extracted_at),
             greatest(
                 toInt64(round(coalesce(used_credits, 0))),
-                coalesce(
-                    max(toInt64(round(coalesce(used_credits, 0)))) OVER (
-                        PARTITION BY tenant_id, source_id, account_uuid,
-                                     toStartOfMonth(_airbyte_extracted_at)
-                        ORDER BY _airbyte_extracted_at
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                    ),
-                    toInt64(0)
+                lagInFrame(toInt64(round(coalesce(used_credits, 0))), 1, toInt64(0)) OVER (
+                    PARTITION BY tenant_id, source_id, account_uuid,
+                                 toStartOfMonth(_airbyte_extracted_at)
+                    ORDER BY _airbyte_extracted_at
                 )
             ),
             toInt64(round(coalesce(used_credits, 0)))

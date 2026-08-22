@@ -137,17 +137,17 @@ seat_day_source AS (
 seat_day_held AS (
     SELECT
         *,
+        -- INVARIANT: the floor is the PRECEDING reading, never the largest of
+        -- them. The suffix minimum below already erases an earlier reading that
+        -- was too high, and the last of the earlier readings is the one it left
+        -- standing — taking their maximum would restore what it erased.
         if(
             metric_date = toLastDayOfMonth(period_month),
             greatest(
                 used_amount_cents,
-                coalesce(
-                    max(used_amount_cents) OVER (
-                        PARTITION BY tenant_id, source, source_id, account_id, period_month
-                        ORDER BY metric_date
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                    ),
-                    toUInt32(0)
+                lagInFrame(used_amount_cents, 1, toUInt32(0)) OVER (
+                    PARTITION BY tenant_id, source, source_id, account_id, period_month
+                    ORDER BY metric_date
                 )
             ),
             used_amount_cents

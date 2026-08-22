@@ -75,6 +75,11 @@ bronze:
     # Sep 30 is that month's last calendar day and reports LESS than Sep 29.
     - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-29T00:00:00Z", unique_key: seat-alice-2026-09-29, snapshot_date: "2026-09-29", used_credits: 600, monthly_credit_limit: 1000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-30T00:00:00Z", unique_key: seat-alice-2026-09-30, snapshot_date: "2026-09-30", used_credits: 100, monthly_credit_limit: 1000 }
+    # October for bob, whose 1st reads far above the rest of the month: a reading
+    # taken before the vendor's own period rolled over states the closing month.
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-01T00:00:00Z", unique_key: seat-bob-2026-10-01,   snapshot_date: "2026-10-01", used_credits: 5000, monthly_credit_limit: 10000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-02T00:00:00Z", unique_key: seat-bob-2026-10-02,   snapshot_date: "2026-10-02", used_credits: 100,  monthly_credit_limit: 10000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-10-31T00:00:00Z", unique_key: seat-bob-2026-10-31,   snapshot_date: "2026-10-31", used_credits: 300,  monthly_credit_limit: 10000 }
 
 cases:
   # ── The four views the metric serves ─────────────────────────────────────────
@@ -188,6 +193,43 @@ cases:
       - metric: ai.daily_approximate_extra_usage_cost
         view: timeseries
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-09-30' && double(p.value) == 0.0))"
+
+  # ── A reading that overstates a month is erased, and the hold keeps it erased ─
+  # bob's Oct 01 reads 5000 while the month really spends 300. The rule that
+  # rewrites a month downwards takes care of it — Oct 01 becomes $1, not $50 — and
+  # the last-day hold must not undo that: a hold floored on the largest earlier
+  # reading instead of the preceding one would put the month back at $50.
+  - name: AI daily extra usage keeps an overstated first reading erased
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [bob@example.com] }
+        period: { from: "2026-10-01", to: "2026-10-31" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+              - { view: timeseries }
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        find: { entity_id: bob@example.com }
+        equal: { value: 3.0 }
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: bob@example.com }
+        equal: { value: 3.0 }
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'bob@example.com' && s.points.exists(p, p.bucket_start == '2026-10-01' && double(p.value) == 1.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'bob@example.com' && s.points.exists(p, p.bucket_start == '2026-10-31' && double(p.value) == 2.0))"
 
   # ── The identity the split rests on ──────────────────────────────────────────
   # Served side by side, the two must agree over a whole month for every seat —
