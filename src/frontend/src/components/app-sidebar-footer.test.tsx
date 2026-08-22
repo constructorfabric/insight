@@ -213,4 +213,10 @@ describe("AppSidebarFooter", () => {
 
     expect(entry("Send feedback").querySelector('[data-testid="link"]')).toBeNull();
   });
+
+  it("leaves feedback out where the shell already offers it", () => {
+    render(<AppSidebarFooter showFeedback={false} />);
+
+    expect(screen.queryByText("Send feedback")).toBeNull();
+  });
 });

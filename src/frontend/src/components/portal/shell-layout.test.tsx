@@ -40,6 +40,9 @@ vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: false }),
 }));
 
+vi.mock("@/components/feedback-context", () => ({
+  useFeedbackDialog: () => ({ openFeedback: () => {} }),
+}));
 vi.mock("@/components/org-tree", () => ({ OrgTree: () => <div /> }));
 vi.mock("@/components/mock-banner", () => ({ MockBanner: () => <div /> }));
 vi.mock("@/components/view-as-banner", () => ({

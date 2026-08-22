@@ -16,6 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   layout: "wide" as "phone" | "narrow" | "wide",
   selected: [] as string[],
+  openFeedback: vi.fn(),
+}));
+
+vi.mock("@/components/feedback-context", () => ({
+  useFeedbackDialog: () => ({ openFeedback: mocks.openFeedback }),
 }));
 
 vi.mock("@/lib/portal/use-shell-layout", () => ({
@@ -226,5 +231,14 @@ describe("LensRail state that only breaks in a particular order", () => {
     await user.unhover(el);
     settle();
     expect(labelOf("Overview")).toHaveClass("opacity-0");
+  });
+
+  it("offers feedback from the rail itself, not from inside the settings menu", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    rail();
+
+    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+
+    expect(mocks.openFeedback).toHaveBeenCalled();
   });
 });

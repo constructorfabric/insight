@@ -1,7 +1,8 @@
-import { Settings2 } from "lucide-react";
+import { MessageSquarePlus, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
+import { useFeedbackDialog } from "@/components/feedback-context";
 import {
   Popover,
   PopoverContent,
@@ -267,6 +268,7 @@ export function LensRail() {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="relative z-10 items-start gap-1 ps-2">
+          <FeedbackButton />
           <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
             <PopoverTrigger
               render={
@@ -289,6 +291,7 @@ export function LensRail() {
               finalFocus={false}
             >
               <AppSidebarFooter
+                showFeedback={false}
                 onNavigate={() => {
                   setSettingsOpen(false);
                   // Note 4 above, reached from the footer rather than a zone.
@@ -301,6 +304,23 @@ export function LensRail() {
         </SidebarFooter>
       </Sidebar>
     </div>
+  );
+}
+
+/** Its own rail slot: inside the settings menu nobody found it. */
+function FeedbackButton() {
+  const { openFeedback } = useFeedbackDialog();
+
+  return (
+    <button
+      type="button"
+      title="Send feedback"
+      onClick={openFeedback}
+      className="flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    >
+      <MessageSquarePlus className="size-[19px]" aria-hidden />
+      <span className="sr-only">Send feedback</span>
+    </button>
   );
 }
 
