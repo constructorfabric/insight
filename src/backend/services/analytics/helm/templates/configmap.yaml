@@ -121,5 +121,6 @@ data:
       # come from the Secret via envFrom.
       analytics:
         config:
+          visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}

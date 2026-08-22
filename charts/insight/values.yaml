@@ -584,6 +584,7 @@ gitCliProxy:
 identityResolution:
   deploy: true
   replicaCount: 1
+  visibilityPolicy: "org_chart"
   image:
     repository: ghcr.io/constructorfabric/insight-identity-resolution
     tag: "" # MUST be set (e.g. "0.1.0")

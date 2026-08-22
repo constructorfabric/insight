@@ -9,6 +9,14 @@
 
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityPolicy {
+    #[default]
+    OrgChart,
+    Flat,
+}
+
 /// Configuration consumed by the analytics gear. Deserialized from
 /// `gears.analytics.config`.
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +48,9 @@ pub struct GearConfig {
     /// `ClickHouse` without alias resolution (MVP mode).
     pub identity_url: String,
 
+    /// Deployment-wide person visibility and peer-population policy.
+    pub visibility_policy: VisibilityPolicy,
+
     /// Redis URL (e.g., `redis://localhost:6379`). Empty disables every
     /// Redis-backed path; multi-replica deploys configure it so a cache added
     /// here is coordinated across replicas rather than per-process.
@@ -62,6 +73,7 @@ impl Default for GearConfig {
             clickhouse_user: None,
             clickhouse_password: None,
             identity_url: String::new(),
+            visibility_policy: VisibilityPolicy::default(),
             redis_url: String::new(),
             metric_catalog: MetricCatalogConfig::default(),
             usage: UsageConfig::default(),
@@ -112,4 +124,41 @@ fn default_bind_addr() -> String {
 
 fn default_clickhouse_database() -> String {
     "insight".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visibility_policy_defaults_to_org_chart() -> anyhow::Result<()> {
+        let config: GearConfig = serde_json::from_value(serde_json::json!({}))?;
+
+        assert_eq!(config.visibility_policy, VisibilityPolicy::OrgChart);
+        Ok(())
+    }
+
+    #[test]
+    fn visibility_policy_accepts_only_wire_values() -> anyhow::Result<()> {
+        for (value, expected) in [
+            ("org_chart", VisibilityPolicy::OrgChart),
+            ("flat", VisibilityPolicy::Flat),
+        ] {
+            let config: GearConfig =
+                serde_json::from_value(serde_json::json!({ "visibility_policy": value }))?;
+
+            assert_eq!(config.visibility_policy, expected, "for: {value}");
+        }
+
+        for value in ["OrgChart", "org-chart", "Flat", "unknown", ""] {
+            assert!(
+                serde_json::from_value::<GearConfig>(
+                    serde_json::json!({ "visibility_policy": value })
+                )
+                .is_err(),
+                "should reject: {value}"
+            );
+        }
+        Ok(())
+    }
 }

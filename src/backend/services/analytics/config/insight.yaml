@@ -139,6 +139,7 @@ gears:
       clickhouse_database: "insight"
       # clickhouse_user / clickhouse_password: omit for no-auth ClickHouse.
       identity_url: ""
+      visibility_policy: "org_chart"
       redis_url: ""
       metric_catalog:
         tenant_metrics_enabled: false
