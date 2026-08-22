@@ -64,6 +64,16 @@ models:
         tests:
           - not_null
           - unique
+      - name: is_default_branch
+        description: >
+          Whether the commit is reachable from the repository's default branch:
+          1 yes, 0 no, NULL the source does not report it. Reachability is as of
+          the sync that saw the commit, so a commit merged into the default
+          branch after the connector's lookback window keeps 0.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
 
   - name: class_git_file_changes
     description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"

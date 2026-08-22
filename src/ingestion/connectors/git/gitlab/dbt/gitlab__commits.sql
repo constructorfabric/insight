@@ -3,6 +3,7 @@
     materialized='incremental',
     unique_key='unique_key',
     order_by=['unique_key'],
+    on_schema_change='append_new_columns',
     settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['gitlab', 'silver:class_git_commits']
@@ -11,7 +12,9 @@
 -- lines_added / lines_removed come from the commit's own stats (present for
 -- every commit). files_changed is the per-commit count from commit_file_changes,
 -- which the connector only collects for default-branch non-merge commits — so
--- it is 0 for commits outside that set. branch is not stored on the commit row.
+-- it is 0 for commits outside that set. branch is not stored on the commit row,
+-- and neither is default-branch membership: the stream knows which ref it
+-- walked but does not project it, so is_default_branch is NULL here.
 WITH proj AS (
     SELECT
         tenant_id,
@@ -41,6 +44,7 @@ SELECT
     COALESCE(p.repo_slug, '') AS repo_slug,
     COALESCE(c.id, '') AS commit_hash,
     '' AS branch,
+    CAST(NULL AS Nullable(UInt8)) AS is_default_branch,
     COALESCE(c.author_name, '') AS author_name,
     COALESCE(c.author_email, '') AS author_email,
     COALESCE(c.committer_name, '') AS committer_name,

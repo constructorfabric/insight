@@ -1,5 +1,9 @@
 name: gitlab
-version: "1.14.0"
+# Strict semver per ADR-0015. 1.15.0: dbt staging declares the class-contract
+#   column is_default_branch. MINOR, not MAJOR: the commits stream reports no
+#   branch membership, so the column is NULL whether a row re-materializes or
+#   not and nothing has to be rebuilt.
+version: "1.15.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
