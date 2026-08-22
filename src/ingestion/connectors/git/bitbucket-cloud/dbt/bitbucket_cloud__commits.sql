@@ -37,7 +37,12 @@ SELECT
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
     _airbyte_extracted_at
-FROM {{ source('bronze_bitbucket_cloud', 'commits') }}
+-- FINAL: the lookback window re-reads a commit under the same unique_key, and
+-- its membership flag can differ between the two rows. Without FINAL a
+-- full-refresh build inserts both into staging under one now64() _version, and
+-- union_by_tag's dedup orders by that column — a tie it cannot break. See
+-- ADR-0001.
+FROM {{ source('bronze_bitbucket_cloud', 'commits') }} FINAL
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}
