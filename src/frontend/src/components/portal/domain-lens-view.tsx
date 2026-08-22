@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import { SectionTrend } from "@/components/portal/section-trend";
@@ -116,7 +117,7 @@ export function DomainLensView({
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster]
   );

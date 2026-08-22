@@ -15,6 +15,7 @@ import {
   usePortalScope,
 } from "@/lib/portal/portal-nav";
 import type { PersonSummary } from "@/api/identity-client";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
@@ -76,6 +77,7 @@ export function flatOrgScope(
       person_id: person.person_id,
       email: person.email ?? "",
       display_name: person.display_name ?? "",
+      username: person.username ?? "",
       // No reporting lines to name, and no depth to be at.
       supervisor_person_id: null,
       is_direct: false,
@@ -126,7 +128,7 @@ export function resolveScopeRoster(
       node.subordinates.length > 0
         ? {
             person_id: node.person_id,
-            name: node.display_name || node.email,
+            name: personDisplayName(node),
             depth,
             teamSize: 0,
           }
@@ -142,7 +144,7 @@ export function resolveScopeRoster(
   return {
     pivot,
     roster,
-    label: pivot.display_name || pivot.email,
+    label: personDisplayName(pivot),
     count: roster?.length ?? 0,
     managerNodes,
     canDirectOnly,

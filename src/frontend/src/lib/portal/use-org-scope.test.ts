@@ -128,6 +128,29 @@ describe("flatOrgScope", () => {
     expect(scope.label).toBe("Whole organisation");
   });
 
+  it("carries every naming field a person label reads (#2711)", () => {
+    // The roster entry is what the zones label people by; dropping username
+    // here would blank every person the org chart never named.
+    const scope = flatOrgScope(
+      [
+        { person_id: "p-me", display_name: "Me" },
+        { person_id: "p-h", display_name: "", username: "handle", email: "" },
+      ],
+      "p-me",
+    );
+
+    expect(scope.roster).toEqual([
+      {
+        person_id: "p-h",
+        display_name: "",
+        username: "handle",
+        email: "",
+        supervisor_person_id: null,
+        is_direct: false,
+      },
+    ]);
+  });
+
   it("keeps a roster it cannot place the viewer in", () => {
     // A viewer absent from their own roster is a bug elsewhere; dropping every
     // row here would report it as "you can see nobody".
