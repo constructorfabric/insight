@@ -18,6 +18,16 @@ def _analytics_config(manifests: str) -> dict:
     return host["gears"]["analytics"]["config"]
 
 
+def _analytics_secret(manifests: str) -> dict:
+    docs = [doc for doc in yaml.safe_load_all(manifests) if isinstance(doc, dict)]
+    secrets = [
+        doc for doc in docs if doc.get("kind") == "Secret" and doc["metadata"]["name"] == "insight-analytics-config"
+    ]
+    assert len(secrets) == 1, f"expected one analytics config Secret, got {len(secrets)}"
+
+    return secrets[0]["stringData"]
+
+
 @pytest.mark.parametrize(
     ("extra", "expected"), [((), False), (("--set", "analytics.metricCatalog.tenantMetricsEnabled=true"), True)]
 )
@@ -26,3 +36,18 @@ def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[
     assert code == 0, err
 
     assert _analytics_config(out)["metric_catalog"]["tenant_metrics_enabled"] is expected
+
+
+def test_analytics_visibility_policy_reuses_identity_resolution_setting(umbrella_deps) -> None:
+    code, out, err = render(
+        umbrella_deps,
+        *UMBRELLA_BASE,
+        "--set",
+        f"global.tenantDefaultId={TENANT}",
+        "--set",
+        "identityResolution.visibilityPolicy=flat",
+    )
+    assert code == 0, err
+
+    key = "APP__gears__analytics__config__visibility_policy"
+    assert _analytics_secret(out)[key] == "flat"
