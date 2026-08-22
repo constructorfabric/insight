@@ -2,9 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import type { ConnectorRow } from "@/api/connector-health-client";
 
-import { elapsedSince, orderByAttention } from "./connector-health";
+import {
+  connectorState,
+  elapsedSince,
+  orderByAttention,
+} from "./connector-health";
 
-function row(connector: string, last_write: string | null): ConnectorRow {
+function row(
+  connector: string,
+  last_write: string | null,
+  over: Partial<ConnectorRow> = {},
+): ConnectorRow {
   return {
     connector,
     namespace: `bronze_${connector}`,
@@ -12,6 +20,7 @@ function row(connector: string, last_write: string | null): ConnectorRow {
     streams_with_data: last_write == null ? 0 : 1,
     rows: last_write == null ? 0 : 1,
     last_write,
+    ...over,
   };
 }
 
@@ -74,5 +83,37 @@ describe("elapsedSince", () => {
       kind: "days",
       value: 1,
     });
+  });
+  it("reports an arrival stamped ahead of the read as just now, not as negative", () => {
+    expect(elapsedSince("2020-01-10T12:00:01Z", now)).toEqual({
+      kind: "hours",
+      value: 0,
+    });
+  });
+
+  it("reports an unparseable timestamp as unknown rather than NaN", () => {
+    expect(elapsedSince("not a timestamp", now)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("connectorState", () => {
+  it("is never for a connector that has delivered nothing", () => {
+    expect(connectorState(row("a", null))).toBe("never");
+  });
+
+  it("is partial while any stream is still empty", () => {
+    expect(
+      connectorState(
+        row("a", "2020-01-01T00:00:00Z", { streams: 3, streams_with_data: 2 }),
+      ),
+    ).toBe("partial");
+  });
+
+  it("is delivering once every stream carries data", () => {
+    expect(
+      connectorState(
+        row("a", "2020-01-01T00:00:00Z", { streams: 3, streams_with_data: 3 }),
+      ),
+    ).toBe("delivering");
   });
 });

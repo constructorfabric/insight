@@ -9,12 +9,9 @@ export interface CatalogueHealth {
   disabled: number;
 }
 
-/**
- * A custom metric runs its SQL at query time and the validator stamps schema
- * status and observation date from materialized relations only, so both stay
- * absent however much data it serves. Counting those as unverified or as
- * awaiting data reports a working metric as a broken one.
- */
+// INVARIANT: a custom metric carries neither schema status nor observation
+// date by design, so it gets its own bucket rather than counting as unverified
+// or as awaiting data.
 export function catalogueHealth(
   definitions: readonly MetricDefinition[],
 ): CatalogueHealth {
