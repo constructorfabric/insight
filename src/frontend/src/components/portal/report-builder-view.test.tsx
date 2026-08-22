@@ -83,6 +83,29 @@ const reportPerson = {
   status: "",
 };
 
+const decimalResult = (value: number) =>
+  ({
+    metric_key: "git.commits",
+    label: "Commits",
+    format: "decimal",
+    unit: null,
+    direction: "neutral",
+    computation: "sum",
+    views: [
+      {
+        view: "timeseries",
+        bucket: "month",
+        series: [
+          {
+            entity_id: "p1",
+            dimensions: [],
+            points: [{ bucket_start: "2026-05-01", value }],
+          },
+        ],
+      },
+    ],
+  }) as never;
+
 beforeEach(() => {
   mocks.definitions = [
     definition({}),
@@ -209,6 +232,19 @@ describe("ReportBuilderView", () => {
         expect.objectContaining({ entityIds: ["p1"] }),
       ),
     );
+  });
+
+  it("formats rounded metric values in the preview", async () => {
+    const user = userEvent.setup();
+    mocks.run.mockResolvedValueOnce(
+      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
+    );
+    render(<ReportBuilderView />);
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+
+    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
   });
 
   it("offers the file once the run has finished, stamped with what made it", async () => {

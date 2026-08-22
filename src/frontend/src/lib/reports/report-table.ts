@@ -1,4 +1,9 @@
-import type { MetricResult, TimeseriesView } from "@/api/metric-results-client";
+import type {
+  MetricFormat,
+  MetricResult,
+  TimeseriesView,
+} from "@/api/metric-results-client";
+import { roundMetricValue } from "@/lib/format";
 import type { ReportPerson } from "@/lib/identities/report-person";
 import {
   bucketSpan,
@@ -12,6 +17,7 @@ export type ReportCell = string | number | null;
 
 export interface ReportTable {
   columns: string[];
+  formats: Array<MetricFormat | null>;
   rows: ReportCell[][];
 }
 
@@ -41,6 +47,10 @@ const cellKey = (metricKey: string, entityId: string, bucket: string): string =>
  */
 export function buildReportTable(input: ReportInput): ReportTable {
   const personColumns = reportPersonColumns(input.people);
+  const metrics = input.metrics.map((metric) => ({
+    ...metric,
+    format: input.results.get(metric.metric_key)?.format ?? null,
+  }));
   const buckets = bucketsInRange(
     input.range.from,
     input.range.to,
@@ -73,7 +83,14 @@ export function buildReportTable(input: ReportInput): ReportTable {
       "Period",
       "From",
       "To",
-      ...input.metrics.map((metric) => metric.label),
+      ...metrics.map((metric) => metric.label),
+    ],
+    formats: [
+      ...personColumns.map(() => null),
+      null,
+      null,
+      null,
+      ...metrics.map((metric) => metric.format),
     ],
     rows: input.people.flatMap((person) =>
       buckets.map((bucket) => [
@@ -81,11 +98,12 @@ export function buildReportTable(input: ReportInput): ReportTable {
         bucket,
         spans.get(bucket)?.from ?? "",
         spans.get(bucket)?.to ?? "",
-        ...input.metrics.map(
-          (metric) =>
-            cells.get(cellKey(metric.metric_key, person.entityId, bucket)) ??
-            null,
-        ),
+        ...metrics.map((metric) => {
+          const value = cells.get(cellKey(metric.metric_key, person.entityId, bucket));
+          return value == null || metric.format == null
+            ? value ?? null
+            : roundMetricValue(value, metric.format);
+        }),
       ]),
     ),
   };

@@ -29,6 +29,7 @@ import {
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
+import { formatMetricNumber } from "@/lib/format";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
@@ -451,7 +452,9 @@ export function ReportBuilderView() {
                           key={cellIndex}
                           className="whitespace-nowrap tabular-nums"
                         >
-                          {cell ?? "—"}
+                          {typeof cell === "number" && table.formats[cellIndex]
+                            ? formatMetricNumber(cell, table.formats[cellIndex])
+                            : cell ?? "—"}
                         </TableCell>
                       ))}
                     </TableRow>

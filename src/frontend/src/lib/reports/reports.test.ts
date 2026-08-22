@@ -269,6 +269,45 @@ describe("buildReportTable", () => {
     ]);
   });
 
+  it("rounds metric cells with the metric's declared format", () => {
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.cycle_time", label: "Cycle time" }],
+      results: new Map([
+        [
+          "git.cycle_time",
+          {
+            metric_key: "git.cycle_time",
+            label: "Cycle time",
+            format: "decimal",
+            views: [
+              {
+                view: "timeseries",
+                bucket: "month",
+                series: [
+                  {
+                    entity_id: "p1",
+                    dimensions: [],
+                    points: [
+                      {
+                        bucket_start: "2026-01-01",
+                        value: 1082.1594444444445,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          } as unknown as MetricResult,
+        ],
+      ]),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.rows[0]?.at(-1)).toBe(1082.2);
+  });
+
   it("leaves a cell empty where the metric said nothing", () => {
     const table = buildReportTable({
       people: [person()],
