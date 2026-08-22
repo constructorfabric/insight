@@ -261,7 +261,7 @@ function MetricCatalogueHealth() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-muted-foreground">
-          {t("catalogue_health.heading", { count: metrics.length })}
+          {t("catalogue_health.heading")}
         </h2>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
           {tiles.map((tile) => (
