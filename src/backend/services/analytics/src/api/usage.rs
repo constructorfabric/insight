@@ -13,7 +13,7 @@ use uuid::Uuid;
 use super::error::UsageError;
 use super::person_names::named_persons;
 use super::{ADMIN_ONLY, AppState, clip, require_admin};
-use crate::domain::date_window::{self, Window};
+use crate::domain::date_window::{self, Window, WindowError};
 
 /// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
 /// service holds INSERT and SELECT here, never CREATE.
@@ -313,17 +313,14 @@ pub struct UsageRangeQuery {
 
 impl UsageRangeQuery {
     fn window(&self) -> Result<Window, CanonicalError> {
-        date_window::parse_window(
-            self.since.as_deref(),
-            self.until.as_deref(),
-            range_violation,
-        )
+        date_window::parse_window(self.since.as_deref(), self.until.as_deref())
+            .map_err(range_violation)
     }
 }
 
-fn range_violation(field: &str, description: &str) -> CanonicalError {
+fn range_violation(error: WindowError) -> CanonicalError {
     UsageError::invalid_argument()
-        .with_field_violation(field, description, "INVALID")
+        .with_field_violation(error.field(), error.description(), "INVALID")
         .create()
 }
 

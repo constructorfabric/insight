@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::error::FeedbackError;
 use super::person_names::{self, PersonName};
 use super::{ADMIN_ONLY, AppState, clip, require_admin};
-use crate::domain::date_window;
+use crate::domain::date_window::{self, WindowError};
 use crate::infra::db::entities::feedback;
 use crate::migration::feedback_schema;
 
@@ -87,8 +87,8 @@ pub async fn list_feedback(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let window =
-        date_window::parse_window(range.since.as_deref(), range.until.as_deref(), violation)?;
+    let window = date_window::parse_window(range.since.as_deref(), range.until.as_deref())
+        .map_err(refused_window)?;
     let tenant = ctx.subject_tenant_id();
 
     let rows = feedback::Entity::find()
@@ -168,6 +168,10 @@ fn admin_only() -> CanonicalError {
     FeedbackError::permission_denied()
         .with_reason(ADMIN_ONLY)
         .create()
+}
+
+fn refused_window(error: WindowError) -> CanonicalError {
+    violation(&error.field(), &error.description())
 }
 
 fn violation(field: &str, description: &str) -> CanonicalError {
