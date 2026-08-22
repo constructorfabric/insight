@@ -94,13 +94,47 @@ pub struct MetricSnapshot {
     pub trend: Vec<Option<f64>>,
 }
 
+/// Longest any one snapshot field may be once it reaches the prompt.
+const MAX_FIELD_CHARS: usize = 300;
+
+/// Most readings a sparkline can contribute.
+const MAX_TREND_POINTS: usize = 64;
+
 /// The user message: the snapshot as JSON, with a one-line instruction so an
 /// empty context still produces an answer about this metric.
+///
+/// Every field is clipped first. The snapshot arrives from the browser, so
+/// without a bound one request could hand the upstream a megabyte of text on
+/// the caller's own key.
 pub fn snapshot_message(snapshot: &MetricSnapshot) -> String {
-    let body = serde_json::to_string_pretty(snapshot)
+    let body = serde_json::to_string_pretty(&clip_snapshot(snapshot))
         .unwrap_or_else(|_| "{\"error\":\"snapshot could not be encoded\"}".to_owned());
 
     format!("Explain this metric reading:\n\n{body}")
+}
+
+fn clip_snapshot(snapshot: &MetricSnapshot) -> MetricSnapshot {
+    MetricSnapshot {
+        metric_key: clip(&snapshot.metric_key),
+        label: clip(&snapshot.label),
+        value: clip(&snapshot.value),
+        period: clip(&snapshot.period),
+        since: clip(&snapshot.since),
+        until: clip(&snapshot.until),
+        delta: clip(&snapshot.delta),
+        peer: clip(&snapshot.peer),
+        help: clip(&snapshot.help),
+        trend: snapshot
+            .trend
+            .iter()
+            .take(MAX_TREND_POINTS)
+            .copied()
+            .collect(),
+    }
+}
+
+fn clip(value: &str) -> String {
+    value.chars().take(MAX_FIELD_CHARS).collect()
 }
 
 #[cfg(test)]
@@ -168,6 +202,24 @@ mod tests {
     #[test]
     fn system_prompt_without_context_is_just_the_instructions() {
         assert_eq!(build_system_prompt("  BASE  ", &[], &[]), "BASE");
+    }
+
+    #[test]
+    fn a_snapshot_field_cannot_grow_the_prompt_without_bound() -> Result<(), serde_json::Error> {
+        let mut huge = snapshot();
+        huge.label = "x".repeat(10_000);
+        huge.trend = vec![Some(1.0); 500];
+
+        let message = snapshot_message(&huge);
+        let json = message
+            .split_once("\n\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(json)?;
+
+        assert_eq!(parsed["label"].as_str().map(str::len), Some(300));
+        assert_eq!(parsed["trend"].as_array().map(Vec::len), Some(64));
+        Ok(())
     }
 
     #[test]
