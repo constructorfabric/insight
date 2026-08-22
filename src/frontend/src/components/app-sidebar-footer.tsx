@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpenText, Bug, Megaphone, Sparkles, type LucideIcon } from "lucide-react";
+import { BookOpenText, Bug, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
@@ -18,7 +18,6 @@ import { resolveZoneItem } from "@/lib/portal/nav-model";
 import { usePortalItem } from "@/lib/portal/portal-nav";
 import { usePortalEnabled } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { useAiConfig } from "@/queries/ai";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
 /**
@@ -80,7 +79,6 @@ export function AppSidebarFooter({
             </SidebarMenuButton>
           </SidebarMenuItem>
         ) : null}
-        <AiAssistantEntry onNavigate={onNavigate} />
       </SidebarMenu>
       <SidebarSettings />
       <ThemeSwitcher />
@@ -116,29 +114,6 @@ export function AppSidebarFooter({
  * pane and the zone content use: a private comparison disagrees with them on a
  * bare `?zone=manage` and on a `?zone=` stranded by a person route.
  */
-/**
- * Hidden entirely where the deployment does not offer AI explanations — a menu
- * row whose only content is "not available here" is worse than its absence.
- */
-function AiAssistantEntry({ onNavigate }: { onNavigate?: () => void }) {
-  const config = useAiConfig();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-
-  if (config.data?.enabled !== true) return null;
-
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={pathname === "/ai-assistant"}
-        render={<Link to="/ai-assistant" onClick={onNavigate} />}
-      >
-        <Sparkles />
-        <span>AI assistant</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
-
 function MenuEntry({
   surface,
   screen,

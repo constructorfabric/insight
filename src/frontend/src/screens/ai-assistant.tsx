@@ -1,10 +1,10 @@
 /**
- * AI assistant settings: the caller's key, the context both scopes contribute
- * to every explanation, and — for admins — the system prompt the tenant runs.
+ * AI assistant settings as the portal's Manage zone renders them: the caller's
+ * key, the context both scopes contribute to every explanation, and — for
+ * admins — the system prompt the tenant runs.
  *
- * The screen exists only where the deployment offers explanations at all; the
- * navigation entry is hidden on the same condition, so reaching it directly is
- * the only way to see the "not enabled" state.
+ * The Manage entry is hidden where the deployment does not offer explanations,
+ * so the "not enabled" state is reached only by a bookmark or a stale tab.
  */
 import { Lock, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -36,7 +36,7 @@ import type { ContextEntry, ContextScope } from "@/api/ai-client";
 import { TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
-export function AiAssistantScreen() {
+export function AiAssistantBody() {
   const config = useAiConfig();
   const featureOn = config.data?.enabled === true;
   const { isAdmin } = useIsAdmin();
@@ -83,13 +83,13 @@ export function AiAssistantScreen() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="flex flex-1 flex-col gap-6 p-4 md:p-6">
+    <div className="flex flex-1 flex-col gap-6 p-4 md:p-6">
       <header className="flex items-center gap-2">
         <Sparkles className="size-4" aria-hidden />
-        <h1 className={TEXT_TITLE}>AI assistant</h1>
+        <h2 className={TEXT_TITLE}>AI assistant</h2>
       </header>
       <div className="flex max-w-3xl flex-col gap-4">{children}</div>
-    </main>
+    </div>
   );
 }
 

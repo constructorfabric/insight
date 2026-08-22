@@ -74,3 +74,6 @@ pub(crate) fn read_error(error: &sea_orm::DbErr, what: &str) -> CanonicalError {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod live_tests;

@@ -161,7 +161,7 @@ fn openapi_info() -> OpenApiInfo {
 // One `OperationBuilder` chain per endpoint makes this a long-but-flat route
 // table; splitting it further would only obscure the 1:1 route↔handler map.
 #[allow(clippy::too_many_lines)]
-fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let mut router: Router = router;
 
     // Usage monitoring (#2573). Ingest is open to any signed-in caller — it is

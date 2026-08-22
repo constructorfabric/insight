@@ -341,6 +341,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
   { id: "mcp", label: "MCP servers", icon: Server },
   { id: "config", label: "Config & setup", icon: Settings2 },
+  { id: "ai-assistant", label: "AI assistant", icon: Sparkles },
   { id: "whats-new", label: "What's new", icon: Megaphone },
 ];
 

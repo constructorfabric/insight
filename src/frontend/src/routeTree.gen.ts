@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AiAssistantRouteImport } from './routes/ai-assistant'
 import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as PortalRouteImport } from './routes/portal'
@@ -24,11 +23,6 @@ import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AiAssistantRoute = AiAssistantRouteImport.update({
-  id: '/ai-assistant',
-  path: '/ai-assistant',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CustomMetricsRoute = CustomMetricsRouteImport.update({
@@ -79,7 +73,6 @@ const IcPersonTeamRoute = IcPersonTeamRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/ai-assistant': typeof AiAssistantRoute
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
@@ -92,7 +85,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/ai-assistant': typeof AiAssistantRoute
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
@@ -105,7 +97,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/ai-assistant': typeof AiAssistantRoute
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
@@ -120,7 +111,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/ai-assistant'
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
@@ -133,7 +123,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/ai-assistant'
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
@@ -145,7 +134,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/ai-assistant'
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
@@ -159,7 +147,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AiAssistantRoute: typeof AiAssistantRoute
   CustomMetricsRoute: typeof CustomMetricsRoute
   MetricsRoute: typeof MetricsRoute
   PortalRoute: typeof PortalRoute
@@ -175,13 +162,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ai-assistant': {
-      id: '/ai-assistant'
-      path: '/ai-assistant'
-      fullPath: '/ai-assistant'
-      preLoaderRoute: typeof AiAssistantRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/custom-metrics': {
@@ -268,7 +248,6 @@ const IcPersonRouteWithChildren = IcPersonRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AiAssistantRoute: AiAssistantRoute,
   CustomMetricsRoute: CustomMetricsRoute,
   MetricsRoute: MetricsRoute,
   PortalRoute: PortalRoute,

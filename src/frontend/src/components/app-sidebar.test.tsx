@@ -10,8 +10,6 @@ let viewerEmail: string | null = "alice@x.io";
 let viewerPersonId: string | null = null;
 let viewerData: IdentityPerson | undefined;
 
-const aiEnabled = false;
-
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
     to,
@@ -41,10 +39,6 @@ vi.mock("@/auth", () => ({
 // This sidebar is the shell the toggle falls back to.
 vi.mock("@/lib/portal/portal-store", () => ({
   usePortalEnabled: () => false,
-}));
-
-vi.mock("@/queries/ai", () => ({
-  useAiConfig: () => ({ data: aiEnabled ? { enabled: true, model: "m" } : { enabled: false, model: "" } }),
 }));
 
 vi.mock("@/queries/ic-dashboard", () => ({

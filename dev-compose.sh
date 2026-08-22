@@ -609,7 +609,7 @@ YML
     echo "       Get on a network, or pin AUTHENTICATOR_OIDC_ISSUER in $env_file." >&2
     return 1
   fi
-  local kc_base="http://${kc_ip:-localhost}:8085/kc"
+  local kc_base="http://${kc_ip:-localhost}:${KEYCLOAK_PORT:-8085}/kc"
 
   echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
   # The generator's own --authenticator-redirect REPLACES its defaults rather

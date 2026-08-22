@@ -4,21 +4,33 @@
  * invalid markup that browsers silently reparent.
  */
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  available: { featureOn: true, hasKey: true },
-  mutate: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const mutate = vi.fn();
+  return {
+    available: { featureOn: true, hasKey: true },
+    mutate,
+    explain: {
+      mutate,
+      isPending: false,
+      isError: false,
+      data: undefined as
+        | undefined
+        | {
+            text: string;
+            model: string;
+            tenant_context_entries: number;
+            person_context_entries: number;
+          },
+    },
+  };
+});
 
 vi.mock("@/queries/ai", () => ({
   useAiAvailable: () => mocks.available,
-  useExplainMetric: () => ({
-    mutate: mocks.mutate,
-    isPending: false,
-    isError: false,
-    data: undefined,
-  }),
+  useExplainMetric: () => mocks.explain,
 }));
 
 import { ExplainWithAi } from "./explain-with-ai";
@@ -76,6 +88,62 @@ describe("ExplainWithAi", () => {
     expect(
       screen.getByLabelText("Explain Tasks closed with AI")
     ).toBeInTheDocument();
+  });
+
+  it("asks for the explanation the moment the sparkle is pressed", async () => {
+    mocks.available = { featureOn: true, hasKey: true };
+    const user = userEvent.setup();
+
+    render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
+
+    expect(mocks.mutate).toHaveBeenCalledWith(SNAPSHOT);
+  });
+
+  it("reads the answer back with the model and the notes behind it", async () => {
+    mocks.available = { featureOn: true, hasKey: true };
+    mocks.explain.data = {
+      text: "Focus time is down seven points.",
+      model: "claude-sonnet-5",
+      tenant_context_entries: 2,
+      person_context_entries: 1,
+    };
+    const user = userEvent.setup();
+
+    render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
+
+    expect(
+      screen.getByText("Focus time is down seven points.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/claude-sonnet-5 · 2 org \+ 1 personal notes/)
+    ).toBeInTheDocument();
+    mocks.explain.data = undefined;
+  });
+
+  it("names the fix when the call comes back refused", async () => {
+    mocks.available = { featureOn: true, hasKey: true };
+    mocks.explain.isError = true;
+    const user = userEvent.setup();
+
+    render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
+
+    expect(screen.getByText(/key may have been rejected/)).toBeInTheDocument();
+    mocks.explain.isError = false;
+  });
+
+  it("shows it is working rather than an empty answer", async () => {
+    mocks.available = { featureOn: true, hasKey: true };
+    mocks.explain.isPending = true;
+    const user = userEvent.setup();
+
+    render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
+
+    expect(document.querySelector("[aria-busy]")).not.toBeNull();
+    mocks.explain.isPending = false;
   });
 
   it("keeps the sparkle outside the tile's own button", () => {
