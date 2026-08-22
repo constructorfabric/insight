@@ -116,6 +116,7 @@ vi.mock("@/components/portal/section-trend", () => ({
 }));
 
 
+import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import type { LensConfig } from "@/lib/portal/lens-configs";
 import { DomainLensView } from "./domain-lens-view";
 
@@ -220,6 +221,68 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
     // 100 total / 2 active = 50, not 25
     expect(screen.getByText("50 commits")).toBeInTheDocument();
+  });
+});
+
+describe("headline cards open the records behind them", () => {
+  const openEvidenceTargets = vi.fn();
+  const openEvidence = vi.fn();
+
+  function drawWithEvidence(config: LensConfig = HEADLINE_CONFIG) {
+    return render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence, openEvidenceTargets }}
+      >
+        <DomainLensView config={config} />
+      </EvidenceDialogContext.Provider>
+    );
+  }
+
+  it("opens the roster's own records, not one person's", async () => {
+    const user = userEvent.setup();
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          IDS.map((id) => [id, 10] as [string, number]),
+          {
+            short_label: "Commits",
+            unit: "commits",
+            drilldown: { granularity: ["event"] },
+            selection: {
+              metric_key: "t.commits",
+              entity: { type: "person", ids: IDS },
+              period: { from: "2026-07-20", to: "2026-07-26" },
+              filters: [],
+            },
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+    drawWithEvidence();
+
+    await user.click(screen.getByRole("button", { name: /Commits|t.commits/ }));
+
+    expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+    const [targets, options] = openEvidenceTargets.mock.calls[0]!;
+    expect(options).toEqual({ activeMetricKey: "t.commits" });
+    // The card's figure is the roster's, so its records are the roster's too —
+    // asked for as one selection over every member.
+    expect(targets[0].selection.entity).toEqual({
+      type: "persons",
+      ids: [...IDS].sort(),
+    });
+  });
+
+  it("stays a plain card for a metric whose evidence cannot be read", () => {
+    drawWithEvidence();
+
+    // The seeded metric declares no drilldown: an affordance that opens an
+    // empty dialog is worse than none.
+    expect(
+      screen.queryByRole("button", { name: /Commits|t.commits/ })
+    ).not.toBeInTheDocument();
   });
 });
 

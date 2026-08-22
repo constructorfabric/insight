@@ -15,9 +15,9 @@ use super::cursor::{
     decode_cursor, evidence_snapshot_id, selection_fingerprint, verify_evidence_snapshot,
 };
 use super::dto::{
-    DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_EXPORT_ROWS,
-    MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT, MAX_PERIOD_DAYS,
-    MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
+    DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_ENTITY_PERSONS,
+    MAX_EXPORT_ROWS, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT,
+    MAX_PERIOD_DAYS, MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
     MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection,
     ValidatedMetricDrilldown,
 };
@@ -108,6 +108,41 @@ pub(crate) fn parse_person_entity(
     Ok(("person".to_owned(), person_id))
 }
 
+/// Every person a selection reads, canonical and deduplicated.
+///
+/// INVARIANT: like `parse_person_entity`, this runs BEFORE the visibility gate
+/// on both handlers, so it reaches no backend — an unauthorized caller gets no
+/// further than the shape of their own request.
+pub(crate) fn parse_person_ids(
+    entity: &MetricDrilldownEntity,
+) -> Result<Vec<Uuid>, CanonicalError> {
+    let ids = entity.person_ids();
+    if ids.is_empty() {
+        return Err(invalid_error("entity.ids", "entity must select a person"));
+    }
+    if ids.len() > MAX_ENTITY_PERSONS {
+        return Err(invalid_error(
+            "entity.ids",
+            format!("entity.ids must name at most {MAX_ENTITY_PERSONS} people"),
+        ));
+    }
+    let mut parsed = ids
+        .iter()
+        .map(|id| {
+            Uuid::parse_str(id.trim())
+                .ok()
+                .filter(|id| !id.is_nil())
+                .ok_or_else(|| invalid_error("entity.ids", "entity.ids must be person UUIDs"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Sorted and deduplicated so one set of people is one selection: the
+    // cursor fingerprint is taken over the selection, and the same roster in
+    // another order would otherwise reject its own next page.
+    parsed.sort_unstable();
+    parsed.dedup();
+    Ok(parsed)
+}
+
 async fn validate_common(
     db: &DatabaseConnection,
     ch: &insight_clickhouse::Client,
@@ -132,6 +167,12 @@ async fn validate_common(
                 id: person_id.to_string(),
             }
         }
+        MetricDrilldownEntity::Persons { .. } => MetricDrilldownEntity::Persons {
+            ids: parse_person_ids(&entity)?
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+        },
         MetricDrilldownEntity::Tenant {} => MetricDrilldownEntity::Tenant {},
         MetricDrilldownEntity::Unknown => {
             return invalid("entity.type", "unsupported entity type");
@@ -370,5 +411,56 @@ mod tests {
             .is_err()
         );
         assert!(normalize_display_dimensions(&definition, vec!["unknown".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn roster_ids_are_canonical_sorted_and_deduplicated() {
+        let first = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0001);
+        let second = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0002);
+        let parsed = parse_person_ids(&MetricDrilldownEntity::Persons {
+            ids: vec![format!(" {second} "), first.to_string(), second.to_string()],
+        })
+        .unwrap_or_else(|error| panic!("roster must parse: {error}"));
+
+        // One set of people is one selection: the cursor fingerprint is taken
+        // over the selection, so the same roster in another order must not
+        // reject its own next page.
+        assert_eq!(parsed, [first, second]);
+    }
+
+    #[test]
+    fn a_roster_must_name_real_people_and_stay_within_the_cap() {
+        assert!(parse_person_ids(&MetricDrilldownEntity::Persons { ids: vec![] }).is_err());
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: vec!["alice@example.com".to_owned()],
+            })
+            .is_err()
+        );
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: vec![Uuid::nil().to_string()],
+            })
+            .is_err()
+        );
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: (0..=MAX_ENTITY_PERSONS)
+                    .map(|index| Uuid::from_u128(index as u128 + 1).to_string())
+                    .collect(),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_single_person_reads_as_a_roster_of_one() {
+        let person = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0003);
+        let parsed = parse_person_ids(&MetricDrilldownEntity::Person {
+            id: person.to_string(),
+        })
+        .unwrap_or_else(|error| panic!("person must parse: {error}"));
+
+        assert_eq!(parsed, [person]);
     }
 }

@@ -19,7 +19,7 @@ use crate::domain::metric_drilldown::{
     MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
     MetricDrilldownRow, ValidatedMetricDrilldown, build_export, build_response, compile_query,
     decode_evidence_rows, evidence_unavailable, export_filename, export_internal, export_limit,
-    parse_person_entity, presentation, validate_export_request, validate_request,
+    parse_person_entity, parse_person_ids, presentation, validate_export_request, validate_request,
     verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_person_ids;
@@ -138,6 +138,20 @@ async fn authorize_metric_entity(
                 ctx,
                 super::forwarded_authorization(headers),
                 &[person_id],
+            )
+            .await
+        }
+        // Every person in the list, checked one by one: a rollup card is a
+        // convenience over the same records, never a way around the gate that
+        // decides which people this caller may read.
+        MetricDrilldownEntity::Persons { .. } => {
+            let person_ids = parse_person_ids(entity)?;
+
+            authorize_person_ids(
+                &state.identity,
+                ctx,
+                super::forwarded_authorization(headers),
+                &person_ids,
             )
             .await
         }

@@ -11,7 +11,10 @@ const BASE =
 
 export interface MetricEvidenceSelection {
   metric_key: string;
-  entity: { type: "person"; id: string } | { type: "tenant" };
+  entity:
+    | { type: "person"; id: string }
+    | { type: "persons"; ids: string[] }
+    | { type: "tenant" };
   period: { from: string; to: string };
   filters: MetricDimensionFilter[];
   display_dimensions: string[];
@@ -103,6 +106,37 @@ export async function downloadMetricDrilldown(
       `${selection.metric_key}.${format}`
     )
   );
+}
+
+/**
+ * The same selection for a GROUP of people — an org or team card, whose figure
+ * is taken over a roster rather than one person.
+ *
+ * A roster is passed as its own entity rather than one selection per member:
+ * the reader asked what the number on the card is made of, and one table of
+ * every record answers that where a hundred tabs do not.
+ */
+export function personsEvidenceSelection(
+  canonical: MetricCanonicalSelection | undefined,
+  personIds: readonly string[],
+  period?: { from: string; to: string },
+  filters?: MetricDimensionFilter[],
+  displayDimensions: string[] = []
+): MetricEvidenceSelection | null {
+  if (!canonical) return null;
+  // Sorted and deduplicated here as well as on the server: this object is the
+  // react-query key, and the same roster in another order would otherwise be a
+  // second cache entry for one question.
+  const ids = [...new Set(personIds)].sort();
+  if (ids.length === 0) return null;
+
+  return {
+    metric_key: canonical.metric_key,
+    entity: { type: "persons", ids },
+    period: period ?? canonical.period,
+    filters: filters ?? canonical.filters,
+    display_dimensions: [...new Set(displayDimensions)].sort(),
+  };
 }
 
 export function evidenceSelection(
