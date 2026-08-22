@@ -38,8 +38,6 @@ export const Default: Story = {};
 export const TestToggleRowsShowTheirWholeLabel: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
-    // The portal row is not among them: it renders only for a reader still on
-    // the screens the portal replaced, and it carries the same shape as these.
     for (const name of [/planned sections/i, /explanations/i]) {
       const row = canvas.getByRole("button", { name });
       const children = [...row.children];

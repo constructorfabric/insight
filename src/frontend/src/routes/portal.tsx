@@ -22,7 +22,5 @@ export const Route = createFileRoute("/portal")({
     // missed, and the scope silently resets.
     middlewares: [retainSearchParams(PORTAL_SEARCH_KEYS)],
   },
-  // The root shell swaps in PortalLayout for every path it claims, this one
-  // included, so the route needs no component of its own.
   component: PortalLayout,
 });

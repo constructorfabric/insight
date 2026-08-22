@@ -233,18 +233,35 @@ class MetricDrilldownEntity1(BaseModel):
 
 
 class Type1(StrEnum):
-    tenant = 'tenant'
+    persons = 'persons'
 
 
 class MetricDrilldownEntity2(BaseModel):
+    """
+    The records behind a figure a surface reports for a GROUP of people —
+    an org rollup card, a team total. Every id is authorized individually,
+    exactly as the single-person shape is.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
+    ids: list[str]
     type: Type1
 
 
-class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2]):
-    root: MetricDrilldownEntity1 | MetricDrilldownEntity2
+class Type2(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricDrilldownEntity3(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type2
+
+
+class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3]):
+    root: MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3
 
 
 class MetricDrilldownExportFormat(StrEnum):
@@ -399,7 +416,7 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
-class Type2(StrEnum):
+class Type3(StrEnum):
     person = 'person'
 
 
@@ -408,10 +425,10 @@ class MetricResultsEntity1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type2
+    type: Type3
 
 
-class Type3(StrEnum):
+class Type4(StrEnum):
     tenant = 'tenant'
 
 
@@ -419,14 +436,14 @@ class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type3
+    type: Type4
 
 
 class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
     root: MetricResultsEntity1 | MetricResultsEntity2
 
 
-class Type4(StrEnum):
+class Type5(StrEnum):
     person = 'person'
 
 
@@ -435,10 +452,10 @@ class MetricResultsEntityDto1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type4
+    type: Type5
 
 
-class Type5(StrEnum):
+class Type6(StrEnum):
     tenant = 'tenant'
 
 
@@ -446,7 +463,7 @@ class MetricResultsEntityDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type5
+    type: Type6
 
 
 class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
