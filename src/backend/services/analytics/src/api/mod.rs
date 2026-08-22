@@ -210,8 +210,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .no_license_required()
         .json_request::<feedback::FeedbackRequest>(openapi, "A feedback submission")
         .no_content_response(StatusCode::NO_CONTENT, "Recorded")
-        .standard_errors(openapi)
+        // Only what a submission can actually answer: it addresses no resource,
+        // so the standard bundle's 404/409/429 would promise cases with no path.
+        .error_400(openapi)
+        .error_401(openapi)
         .error_415(openapi)
+        .error_500(openapi)
         .handler(feedback::submit_feedback)
         .register(router, openapi);
 
@@ -227,7 +231,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             StatusCode::OK,
             "Feedback entries, newest first",
         )
-        .standard_errors(openapi)
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
         .handler(feedback::list_feedback)
         .register(router, openapi);
 

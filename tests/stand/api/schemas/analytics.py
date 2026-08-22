@@ -105,6 +105,36 @@ class EvidenceGranularity(StrEnum):
     derived_population = 'derived_population'
 
 
+class FeedbackEntry(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str = Field(..., description='Empty when the sender has not been mirrored into the identity rows yet.')
+    feedback_id: str
+    message: str
+    path: str
+    person_id: str
+    ts: str
+    username: str = Field(..., description='The account handle, empty when no identity row carries one.')
+
+
+class FeedbackListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[FeedbackEntry]
+    since: str
+    until: str
+
+
+class FeedbackRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    message: str
+    path: str | None = Field(None, description='The screen the sender was on. Empty when the SPA cannot name one.')
+
+
 class HistogramBinDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
