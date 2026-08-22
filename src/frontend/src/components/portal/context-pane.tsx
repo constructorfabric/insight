@@ -1,4 +1,5 @@
 import {
+  Bug,
   ChevronRight,
   Layers,
   LayoutGrid,
@@ -6,8 +7,10 @@ import {
   Settings2,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
+import { useFeedbackDialog } from "@/components/feedback-context";
 import { OrgTree } from "@/components/org-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -146,11 +149,12 @@ export function ContextPane() {
       </SidebarContent>
       {isPhone ? (
         <SidebarFooter>
-          {/* One row, not six: inline the settings menu and it takes a third of
-              the drawer, crowding out the sections that are the point of it.
-              Same affordance the rail gives desktop — an icon that opens the
-              menu on demand. */}
           <SidebarMenu>
+            <FeedbackItem onPicked={dismissDrawer} />
+            {/* One row, not six: inline the settings menu and it takes a third
+                of the drawer, crowding out the sections that are the point of
+                it. Same affordance the rail gives desktop — an icon that opens
+                the menu on demand. */}
             <SidebarMenuItem>
               <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
                 <PopoverTrigger
@@ -170,6 +174,7 @@ export function ContextPane() {
                       one here does — and the popover with it, which on a phone
                       covers the surface just asked for. */}
                   <AppSidebarFooter
+                    showFeedback={false}
                     onNavigate={() => {
                       setSettingsOpen(false);
                       dismissDrawer();
@@ -182,6 +187,28 @@ export function ContextPane() {
         </SidebarFooter>
       ) : null}
     </Sidebar>
+  );
+}
+
+/** Its own drawer row: inside the settings menu nobody found it. */
+function FeedbackItem({ onPicked }: { onPicked: () => void }) {
+  const { t } = useTranslation();
+  const feedback = useFeedbackDialog();
+
+  if (!feedback) return null;
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        onClick={() => {
+          feedback.openFeedback();
+          onPicked();
+        }}
+      >
+        <Bug aria-hidden />
+        <span>{t("feedback.nav_label")}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
