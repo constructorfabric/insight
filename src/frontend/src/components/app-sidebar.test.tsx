@@ -45,9 +45,6 @@ vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: viewerData }),
 }));
 
-vi.mock("@/components/feedback-context", () => ({
-  useFeedbackDialog: () => ({ openFeedback: () => {} }),
-}));
 
 vi.mock("@/components/sidebar-settings", () => ({
   SidebarSettings: () => null,

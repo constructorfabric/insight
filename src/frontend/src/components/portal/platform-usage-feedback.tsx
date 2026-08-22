@@ -2,19 +2,16 @@
  * Feedback over the period the rest of the usage surface is showing. Its own
  * query, so a failed read here leaves the usage numbers standing.
  */
-import type { FeedbackEntry, FeedbackRange } from "@/api/feedback-client";
+import type { FeedbackRange } from "@/api/feedback-client";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { VirtualTable } from "@/components/portal/usage-table";
+  PersonName,
+  TruncatedCell,
+  VirtualTable,
+} from "@/components/portal/usage-table";
 import { formatUtcClock } from "@/lib/format";
 import { screenLabel } from "@/lib/portal/screen-label";
-import { visitorLabel } from "@/lib/portal/visitor-label";
 import { TEXT_NAME } from "@/lib/type-scale";
 import { useFeedbackList } from "@/queries/feedback";
 
@@ -51,8 +48,18 @@ function Body({ query }: { query: ReturnType<typeof useFeedbackList> }) {
           width: 11,
           cell: (row) => formatUtcClock(row.ts, "d MMM HH:mm"),
         },
-        { header: "Person", width: 12, cell: (row) => <SenderName row={row} /> },
-        { header: "Feedback", cell: (row) => <Message text={row.message} /> },
+        { header: "Person", width: 12, cell: (row) => <PersonName row={row} /> },
+        {
+          header: "Feedback",
+          cell: (row) => (
+            <TruncatedCell
+              detail={row.message}
+              detailClassName="max-w-sm text-xs leading-relaxed"
+            >
+              {row.message}
+            </TruncatedCell>
+          ),
+        },
         {
           header: "Screen",
           width: 10,
@@ -64,31 +71,5 @@ function Body({ query }: { query: ReturnType<typeof useFeedbackList> }) {
         },
       ]}
     />
-  );
-}
-
-function Message({ text }: { text: string }) {
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate" />}>{text}</TooltipTrigger>
-        <TooltipContent className="max-w-sm text-xs leading-relaxed">
-          {text}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-function SenderName({ row }: { row: FeedbackEntry }) {
-  const { label, detail } = visitorLabel(row);
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate" />}>{label}</TooltipTrigger>
-        <TooltipContent className="font-mono text-xs">{detail}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }

@@ -1,13 +1,9 @@
-use sea_orm::ActiveValue;
-
 use super::*;
 
 fn request(message: &str) -> FeedbackRequest {
     FeedbackRequest {
         message: message.to_owned(),
         path: "/portal/overview".to_owned(),
-        app_name: "insight-front".to_owned(),
-        app_version: "0.0.1".to_owned(),
     }
 }
 
@@ -15,28 +11,17 @@ fn row_of(req: &FeedbackRequest) -> Option<feedback::ActiveModel> {
     to_row(req, Uuid::now_v7(), Uuid::now_v7(), Utc::now()).ok()
 }
 
-fn value<T>(field: ActiveValue<T>) -> Option<T>
-where
-    T: Clone + Into<sea_orm::Value>,
-{
-    match field {
-        ActiveValue::Set(v) => Some(v),
-        _ => None,
-    }
-}
-
 #[test]
 fn the_session_decides_identity_not_the_payload() {
     let tenant = Uuid::now_v7();
     let person = Uuid::now_v7();
 
-    let row = to_row(&request("the chart is empty"), tenant, person, Utc::now()).ok();
+    let Some(row) = to_row(&request("the chart is empty"), tenant, person, Utc::now()).ok() else {
+        panic!("a filled message is accepted")
+    };
 
-    assert_eq!(
-        row.clone().and_then(|r| value(r.insight_tenant_id)),
-        Some(tenant)
-    );
-    assert_eq!(row.and_then(|r| value(r.person_id)), Some(person));
+    assert_eq!(row.insight_tenant_id.try_as_ref(), Some(&tenant));
+    assert_eq!(row.person_id.try_as_ref(), Some(&person));
 }
 
 #[test]
@@ -54,21 +39,23 @@ fn a_stored_message_carries_no_surrounding_whitespace() {
     let row = row_of(&request("  add a dark mode  "));
 
     assert_eq!(
-        row.and_then(|r| value(r.message)),
-        Some("add a dark mode".to_owned())
+        row.as_ref().and_then(|r| r.message.try_as_ref()),
+        Some(&"add a dark mode".to_owned())
     );
 }
 
 #[test]
 fn an_oversized_message_is_clipped_to_the_column_budget() {
-    let long = "x".repeat(MAX_MESSAGE * 2);
+    let budget = feedback_schema::max_message();
+    let long = "x".repeat(budget * 2);
 
     let row = row_of(&request(&long));
 
     assert_eq!(
-        row.and_then(|r| value(r.message))
+        row.as_ref()
+            .and_then(|r| r.message.try_as_ref())
             .map(|m| m.chars().count()),
-        Some(MAX_MESSAGE)
+        Some(budget)
     );
 }
 
@@ -77,29 +64,23 @@ fn the_screen_the_sender_was_on_is_stored_with_what_they_wrote() {
     let row = row_of(&request("this is confusing"));
 
     assert_eq!(
-        row.and_then(|r| value(r.path)),
-        Some("/portal/overview".to_owned())
+        row.as_ref().and_then(|r| r.path.try_as_ref()),
+        Some(&"/portal/overview".to_owned())
     );
 }
 
 #[test]
 fn the_last_day_of_the_window_is_read_whole() {
-    let day = NaiveDate::from_ymd_opt(2026, 8, 22).unwrap_or_default();
+    let Some(day) = NaiveDate::from_ymd_opt(2026, 8, 22) else {
+        panic!("a real date")
+    };
 
     assert_eq!(
-        day_end(day).format("%Y-%m-%d %H:%M:%S").to_string(),
-        "2026-08-22 23:59:59"
+        day_after(day).format("%Y-%m-%d %H:%M:%S").to_string(),
+        "2026-08-23 00:00:00"
     );
     assert_eq!(
         day_start(day).format("%Y-%m-%d %H:%M:%S").to_string(),
         "2026-08-22 00:00:00"
-    );
-}
-
-#[test]
-fn a_malformed_day_is_refused_rather_than_queried() {
-    assert!(
-        date_window::parse_window(Some("2026-99-99"), None, violation).is_err(),
-        "a date that cannot exist is a 400"
     );
 }

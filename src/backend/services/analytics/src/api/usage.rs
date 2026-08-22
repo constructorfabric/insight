@@ -10,10 +10,10 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::date_window::{self, WINDOW, Window};
 use super::error::UsageError;
-use super::person_names::NAMED_PERSONS;
-use super::{AppState, is_admin_caller};
+use super::person_names::named_persons;
+use super::{ADMIN_ONLY, AppState, clip, require_admin};
+use crate::domain::date_window::{self, Window};
 
 /// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
 /// service holds INSERT and SELECT here, never CREATE.
@@ -35,6 +35,10 @@ const PAGE_VIEW: &str = "page_view";
 const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
+
+/// Every read is bounded by the tenant and a pair of whole UTC days.
+const WINDOW: &str =
+    "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
 /// A record carrying no session id stores `''`, and every such row across every
 /// person and day is that same value — one phantom visit if counted naively.
@@ -265,6 +269,7 @@ fn people_query(
 /// Names come from the mirrored identity rows; a per-caller profile lookup
 /// answers only for the caller's visible set, and this surface is org-wide.
 fn people_sql() -> String {
+    let named = named_persons();
     format!(
         "SELECT toString(u.person) AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
@@ -277,7 +282,7 @@ fn people_sql() -> String {
            FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
            GROUP BY person ORDER BY visits DESC, page_views DESC \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
-         LEFT JOIN {NAMED_PERSONS} AS p ON p.person_id = u.person \
+         LEFT JOIN {named} AS p ON p.person_id = u.person \
          ORDER BY u.visits DESC, u.page_views DESC"
     )
 }
@@ -296,10 +301,6 @@ fn actions_sql(visitors: &str) -> String {
 /// with `path`. Keeping both counts every page twice.
 fn is_recordable(row: &UsageEventRow) -> bool {
     row.event_name != PAGE_VIEW || !row.path.is_empty()
-}
-
-fn clip(value: &str, max: usize) -> String {
-    value.chars().take(max).collect()
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -400,7 +401,7 @@ pub async fn get_usage_summary(
     headers: HeaderMap,
     Query(range): Query<UsageRangeQuery>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    require_admin(&state, &headers).await?;
+    require_admin(&state, &headers, admin_only).await?;
 
     let window = range.window()?;
     let tenant = ctx.subject_tenant_id().to_string();
@@ -436,20 +437,16 @@ pub async fn get_usage_summary(
     }))
 }
 
+fn admin_only() -> CanonicalError {
+    UsageError::permission_denied()
+        .with_reason(ADMIN_ONLY)
+        .create()
+}
+
 #[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
 fn read_error(error: clickhouse::error::Error) -> CanonicalError {
     tracing::error!(error = %error, "usage summary query failed");
     CanonicalError::internal("failed to read usage").create()
-}
-
-async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), CanonicalError> {
-    if is_admin_caller(state, headers).await? {
-        return Ok(());
-    }
-
-    Err(UsageError::permission_denied()
-        .with_reason("admin role required for this operation")
-        .create())
 }
 
 #[cfg(test)]

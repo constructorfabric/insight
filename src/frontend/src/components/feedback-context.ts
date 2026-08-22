@@ -8,12 +8,7 @@ export const FeedbackDialogContext = createContext<
   FeedbackDialogContextValue | undefined
 >(undefined);
 
-export function useFeedbackDialog(): FeedbackDialogContextValue {
-  const context = useContext(FeedbackDialogContext);
-  if (!context) {
-    throw new Error(
-      "useFeedbackDialog must be used within FeedbackDialogProvider",
-    );
-  }
-  return context;
+/** Undefined where no provider is mounted — the caller hides its trigger. */
+export function useFeedbackDialog(): FeedbackDialogContextValue | undefined {
+  return useContext(FeedbackDialogContext);
 }

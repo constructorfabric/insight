@@ -1,8 +1,7 @@
 //! HTTP API layer — routes and handlers.
 
-mod date_window;
 pub(crate) mod error;
-pub(crate) mod feedback;
+mod feedback;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
@@ -73,6 +72,27 @@ pub(crate) async fn is_admin_caller(
             tracing::error!(error = %error, "admin role check failed");
             CanonicalError::internal("failed to verify caller permissions").create()
         })
+}
+
+/// What a refused admin surface says. The builder is generic over its own
+/// resource, so each caller constructs the refusal in its namespace and this
+/// gate decides only whether to raise it.
+pub(crate) const ADMIN_ONLY: &str = "admin role required for this operation";
+
+pub(crate) async fn require_admin(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    denied: fn() -> CanonicalError,
+) -> Result<(), CanonicalError> {
+    if is_admin_caller(state, headers).await? {
+        return Ok(());
+    }
+    Err(denied())
+}
+
+/// Clips to a CHARACTER budget: a byte slice would split a multi-byte value.
+pub(crate) fn clip(value: &str, max: usize) -> String {
+    value.chars().take(max).collect()
 }
 
 /// Register all analytics routes onto the host's stateless router.

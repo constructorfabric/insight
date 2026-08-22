@@ -29,9 +29,6 @@ pub mod saved_queries {
 
 pub mod feedback {
     //! `feedback` entity — what a person told us from inside the product.
-    //!
-    //! Service-DB content like [`super::saved_queries`], never ClickHouse: one
-    //! row per submission, written while its author waits on the answer.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -43,8 +40,6 @@ pub mod feedback {
         pub person_id: Uuid,
         pub message: String,
         pub path: String,
-        pub app_name: String,
-        pub app_version: String,
         pub created_at: ChronoDateTimeUtc,
     }
 

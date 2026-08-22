@@ -60,7 +60,8 @@ mod m20260805_000001_semantic_definition_core;
 mod m20260806_000001_metric_custom_observation_sql;
 mod m20260810_000001_metric_definition_subject;
 mod m20260810_000002_metric_definition_tags;
-mod m20260822_000001_feedback;
+pub mod m20260822_000001_feedback;
+pub(crate) use m20260822_000001_feedback::feedback_schema;
 
 use sea_orm_migration::prelude::*;
 

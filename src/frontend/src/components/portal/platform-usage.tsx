@@ -33,17 +33,14 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { FeedbackTable } from "@/components/portal/platform-usage-feedback";
-import { VirtualTable } from "@/components/portal/usage-table";
+import {
+  PersonName,
+  TruncatedCell,
+  VirtualTable,
+} from "@/components/portal/usage-table";
 import { useUsageSummary } from "@/queries/usage";
 import { formatDate, formatMetricNumber, formatUtcClock } from "@/lib/format";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { screenLabel } from "@/lib/portal/screen-label";
-import { visitorLabel } from "@/lib/portal/visitor-label";
 import { TEXT_FIGURE, TEXT_LABEL, TEXT_NAME } from "@/lib/type-scale";
 import type { CustomRange, PeriodValue } from "@/types/insight";
 
@@ -84,14 +81,33 @@ export function PlatformUsage() {
     const shift = daysBetween(resolved.to, utcToday());
     return { since: addDays(resolved.from, shift), until: addDays(resolved.to, shift) };
   }, [period, customRange]);
-  const summary = useUsageSummary(range);
-
   // A custom range outranks the period in `resolveDateRange`, so leaving it set
   // makes every preset inert.
   const choosePeriod = (next: PeriodValue) => {
     setPeriod(next);
     setCustomRange(null);
   };
+
+  // The two reads are siblings, not a sequence: nesting the feedback section
+  // under the summary's pending branch delayed its request until the summary
+  // landed, and hid it entirely when the summary failed.
+  return (
+    <div className="flex w-full flex-col gap-6 p-6">
+      <PeriodSelectorBar
+        period={period}
+        customRange={customRange}
+        onPeriodChange={choosePeriod}
+        onRangeChange={setCustomRange}
+      />
+
+      <UsageSummary range={range} />
+      <FeedbackTable range={range} />
+    </div>
+  );
+}
+
+function UsageSummary({ range }: { range: UsageRange }) {
+  const summary = useUsageSummary(range);
 
   if (summary.isPending) return <CenteredSpinner />;
   if (summary.isError || !summary.data) {
@@ -109,14 +125,7 @@ export function PlatformUsage() {
   });
 
   return (
-    <div className="flex w-full flex-col gap-6 p-6">
-      <PeriodSelectorBar
-        period={period}
-        customRange={customRange}
-        onPeriodChange={choosePeriod}
-        onRangeChange={setCustomRange}
-      />
-
+    <>
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi label="visits" value={totals.visits} />
         <Kpi label="people" value={totals.visitors} />
@@ -131,8 +140,7 @@ export function PlatformUsage() {
       <PeopleTable rows={by_person} />
       <PagesTable rows={by_page} />
       <EventsTable rows={by_event} />
-      <FeedbackTable range={range} />
-    </div>
+    </>
   );
 }
 
@@ -199,7 +207,7 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
           columns={[
             {
               header: "Person",
-              cell: (row) => <VisitorName row={row} />,
+              cell: (row) => <PersonName row={row} />,
             },
             { header: "Visits", width: 6, align: "right", cell: (row) => row.visits },
             { header: "Pages", width: 6, align: "right", cell: (row) => row.page_views },
@@ -208,19 +216,6 @@ function PeopleTable({ rows }: { rows: UsagePerson[] }) {
         />
       )}
     </section>
-  );
-}
-
-function VisitorName({ row }: { row: UsagePerson }) {
-  const { label, detail } = visitorLabel(row);
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate" />}>{label}</TooltipTrigger>
-        <TooltipContent className="font-mono text-xs">{detail}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 
@@ -269,16 +264,9 @@ function PagesTable({ rows }: { rows: UsagePage[] }) {
             {
               header: "Page",
               cell: (row) => (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="truncate" />}>
-                      {screenLabel(row.path)}
-                    </TooltipTrigger>
-                    <TooltipContent className="font-mono text-xs">
-                      {row.path}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <TruncatedCell detail={row.path}>
+                  {screenLabel(row.path)}
+                </TruncatedCell>
               ),
             },
             { header: "Views", width: 6, align: "right", cell: (row) => row.views },

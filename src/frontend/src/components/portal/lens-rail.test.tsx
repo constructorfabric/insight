@@ -13,6 +13,8 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import "@/i18n";
+
 const mocks = vi.hoisted(() => ({
   layout: "wide" as "phone" | "narrow" | "wide",
   selected: [] as string[],

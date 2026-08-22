@@ -10,6 +10,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { visitorLabel, type VisitorNaming } from "@/lib/portal/visitor-label";
 import { cn } from "@/lib/utils";
 
 const ROW_HEIGHT = 40;
@@ -100,4 +106,39 @@ export function VirtualTable<T>({
       </TableBody>
     </Table>
   );
+}
+
+/**
+ * A row is one line high and its value often is not: the cell shows what fits
+ * and the tooltip carries the whole of it.
+ *
+ * No `TooltipProvider` — the app root mounts one, and a second per cell would
+ * be built twice per visible virtualized row.
+ */
+export function TruncatedCell({
+  children,
+  detail,
+  detailClassName,
+}: {
+  children: ReactNode;
+  detail: ReactNode;
+  detailClassName?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="truncate" />}>
+        {children}
+      </TooltipTrigger>
+      <TooltipContent className={detailClassName ?? "font-mono text-xs"}>
+        {detail}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Whoever the row is about, named the way every usage surface names them. */
+export function PersonName({ row }: { row: VisitorNaming }) {
+  const { label, detail } = visitorLabel(row);
+
+  return <TruncatedCell detail={detail}>{label}</TruncatedCell>;
 }

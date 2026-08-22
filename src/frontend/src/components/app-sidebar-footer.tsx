@@ -39,7 +39,7 @@ export function AppSidebarFooter({
   showFeedback?: boolean;
 }) {
   const { t } = useTranslation();
-  const { openFeedback } = useFeedbackDialog();
+  const feedback = useFeedbackDialog();
   const { email: viewerEmail, personId: viewerPersonId } = useViewer();
   const viewerQ = useIcPerson(viewerPersonId ?? "");
   const viewer = viewerQ.data ?? null;
@@ -65,11 +65,11 @@ export function AppSidebarFooter({
           label={t("whats_new.nav_label")}
           onNavigate={onNavigate}
         />
-        {showFeedback ? (
+        {showFeedback && feedback ? (
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={() => {
-                openFeedback();
+                feedback.openFeedback();
                 onNavigate?.();
               }}
             >

@@ -865,22 +865,26 @@ interface MockFeedback {
   path: string;
 }
 
+function mockSender(person: (typeof PEOPLE)[number] | undefined) {
+  return {
+    person_id: person?.person_id ?? "",
+    display_name: person?.name ?? "",
+    username: person?.email.split("@")[0] ?? "",
+  };
+}
+
 const feedbackStore: MockFeedback[] = [
   {
     feedback_id: "22222222-2222-2222-2222-222222222222",
     ts: "2026-08-20 09:14:00",
-    person_id: PEOPLE[1]?.person_id ?? "",
-    display_name: PEOPLE[1]?.name ?? "",
-    username: PEOPLE[1]?.email.split("@")[0] ?? "",
+    ...mockSender(PEOPLE[1]),
     message: "The cohort control does not say what it compares against.",
     path: "/portal/overview",
   },
   {
     feedback_id: "33333333-3333-3333-3333-333333333333",
     ts: "2026-08-19 16:02:00",
-    person_id: PEOPLE[2]?.person_id ?? "",
-    display_name: PEOPLE[2]?.name ?? "",
-    username: PEOPLE[2]?.email.split("@")[0] ?? "",
+    ...mockSender(PEOPLE[2]),
     message: "Let me export the people table to a spreadsheet.",
     path: "/portal/people",
   },
@@ -899,9 +903,7 @@ function feedbackHandlers() {
       feedbackStore.unshift({
         feedback_id: `mock-${feedbackStore.length + 1}`,
         ts: new Date().toISOString().replace("T", " ").slice(0, 19),
-        person_id: defaultPerson?.person_id ?? "",
-        display_name: defaultPerson?.name ?? "",
-        username: defaultPerson?.email.split("@")[0] ?? "",
+        ...mockSender(defaultPerson),
         message: body.message.trim(),
         path: body.path ?? "",
       });
