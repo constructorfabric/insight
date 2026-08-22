@@ -8,6 +8,7 @@ bronze:
     - $ref: templates/people.yaml#/templates/carol
     - $ref: templates/people.yaml#/templates/dave
     - $ref: templates/people.yaml#/templates/erin
+    - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e006, unique_key: bamboohr-test-e006, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com, department: Quality}
   bronze_github.commits:
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, sha: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, sha: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20}
@@ -26,14 +27,59 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol, id: 3, number: 3, author_login: carol, closed_at: "2026-10-01T11:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-carol}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, id: 4, number: 4, author_login: dave, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, id: 5, number: 5, author_login: erin, closed_at: "2026-10-01T13:00:00Z", merged_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-frank, id: 6, number: 6, author_login: frank, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
   bronze_github.pull_request_diff_stats:
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice, pull_number: 1, additions: 10, author_email: alice@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob, pull_number: 2, additions: 20, author_email: bob@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol, pull_number: 3, additions: 30, author_email: carol@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-dave, pull_number: 4, additions: 40, author_email: dave@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-erin, pull_number: 5, additions: 50, author_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-frank, pull_number: 6, additions: 10, author_email: frank@example.com}
 
 cases:
+  - name: Repository rollups pool observations across people
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, bob@example.com, carol@example.com, dave@example.com, erin@example.com, frank@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.merge_rate
+            views:
+              - {view: rollup, dimensions: [repository]}
+          - metric_key: git.pr_cycle_time_h
+            views:
+              - {view: rollup, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.merge_rate
+        view: rollup
+        find: {dimensions: {key: repository, value: "git-test:constructor/insight"}}
+        equal: {value: 83.33333333333333, contributing_entity_count: 6}
+      - metric: git.pr_cycle_time_h
+        view: rollup
+        find: {dimensions: {key: repository, value: "git-test:constructor/insight"}}
+        equal: {value: 3, contributing_entity_count: 5}
+
+  - name: Merge rate is zero when created pull requests never merge
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [frank@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.merge_rate
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - metric: git.merge_rate
+        view: period
+        find: {entity_id: frank@example.com}
+        equal: {value: 0}
+
   - name: Unified Git metrics
     request:
       url: /v1/metric-results

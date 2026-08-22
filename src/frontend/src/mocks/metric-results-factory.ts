@@ -138,6 +138,20 @@ export function buildMetricResultsResponse(
               })),
             ),
           };
+        case "rollup":
+          return {
+            view: "rollup",
+            dimensions: view.dimensions,
+            values: MOCK_TOOLS.map((dimension) => ({
+              dimensions: view.dimensions.map((key) => ({
+                key,
+                value: dimension.value,
+                label: dimension.label,
+              })),
+              value: valueFor("rollup", key, dimension.value),
+              contributing_entity_count: ids.length,
+            })),
+          };
         case "histogram":
           return {
             view: "histogram",

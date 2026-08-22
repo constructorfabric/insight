@@ -11,10 +11,12 @@ pub use batch::{
 };
 pub use builder::{
     build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
-    build_period_view, build_ranked_groups, build_timeseries_view, enforce_view_row_limit,
+    build_period_view, build_ranked_groups, build_rollup_view, build_timeseries_view,
+    enforce_view_row_limit,
 };
 pub use compiler::{
-    BreakdownQueryRow, CompiledQuery, HistogramQueryRow, RankingQueryRow, TimeseriesQueryRow,
+    BreakdownQueryRow, CompiledQuery, HistogramQueryRow, RankingQueryRow, RollupQueryRow,
+    TimeseriesQueryRow,
 };
 pub use dto::{
     MetricDimensionFilterDto, MetricResultSelectionDto, MetricResultViewDto,
