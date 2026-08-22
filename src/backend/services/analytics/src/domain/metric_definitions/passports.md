@@ -58,7 +58,7 @@ this file and the registry disagree.
 - Reads: daily_extra_usage_usd
 - Formula: sum(daily_extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: The billed extra-usage cost placed on the days it was spent. The vendor reports only a running month-to-date total, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and a correction never produces a negative day.
+- Notes: The billed extra-usage cost placed on the days it was spent. The vendor reports only a running month-to-date total, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and a correction never produces a negative day. A reading taken on the month's last calendar day may raise the month but never lower it — the vendor states no billing period, so a drop there cannot be told apart from its counter having rolled over.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 

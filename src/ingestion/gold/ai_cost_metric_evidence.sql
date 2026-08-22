@@ -129,17 +129,42 @@ seat_day_source AS (
       AND email != ''
       AND snapshot_date IS NOT NULL
 ),
+-- INVARIANT: a reading taken on the month's last calendar day may raise the
+-- month but never lower it. The vendor states no billing period, so a drop
+-- there cannot be told apart from its counter having already rolled over, and
+-- the suffix minimum below would spread that drop over every day of the month.
+-- Losing one late correction is the cheaper error.
+seat_day_held AS (
+    SELECT
+        *,
+        if(
+            metric_date = toLastDayOfMonth(period_month),
+            greatest(
+                used_amount_cents,
+                coalesce(
+                    max(used_amount_cents) OVER (
+                        PARTITION BY tenant_id, source, source_id, account_id, period_month
+                        ORDER BY metric_date
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ),
+                    toUInt32(0)
+                )
+            ),
+            used_amount_cents
+        )                                       AS held_cents
+    FROM seat_day_source
+),
 -- INVARIANT: the suffix minimum is what keeps every step non-negative and makes
 -- the steps add up to the month's final reading, which the monthly metric serves.
 seat_day_corrected AS (
     SELECT
         *,
-        min(used_amount_cents) OVER (
+        min(held_cents) OVER (
             PARTITION BY tenant_id, source, source_id, account_id, period_month
             ORDER BY metric_date
             ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
         )                                       AS corrected_cents
-    FROM seat_day_source
+    FROM seat_day_held
 ),
 seat_day_step AS (
     SELECT

@@ -20,6 +20,12 @@ description: >
   reading and every later one rewrites those days, which is why erin's Dec 05 reads
   4.00 and not 5.00, and why her Dec 06 is 0.00 and never −1.00.
 
+  The month's last calendar day is the exception, and alice's September is here for
+  it. A drop on that day cannot be told apart from the vendor's counter having
+  rolled over — the endpoint names no billing period — so such a reading may raise
+  the month but never lower it. Without the hold, one reading would rewrite every
+  day of the month down to it.
+
   Department: 5 Engineering members, read on Dec 05 and Dec 06 (alice again on
   Dec 07), inside the custom window (Nov 01 .. Dec 12). Cents as the vendor
   reports them, dollars as the metric serves them:
@@ -65,6 +71,10 @@ bronze:
     # The correction: Dec 06 reports LESS than Dec 05.
     - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-05T00:00:00Z", unique_key: seat-erin-2026-12-05,  snapshot_date: "2026-12-05", used_credits: 500, monthly_credit_limit: 1000 }
     - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-06T00:00:00Z", unique_key: seat-erin-2026-12-06,  snapshot_date: "2026-12-06", used_credits: 400, monthly_credit_limit: 1000 }
+    # A separate month, so the December pool above keeps its five contributors:
+    # Sep 30 is that month's last calendar day and reports LESS than Sep 29.
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-29T00:00:00Z", unique_key: seat-alice-2026-09-29, snapshot_date: "2026-09-29", used_credits: 600, monthly_credit_limit: 1000 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-09-30T00:00:00Z", unique_key: seat-alice-2026-09-30, snapshot_date: "2026-09-30", used_credits: 100, monthly_credit_limit: 1000 }
 
 cases:
   # ── The four views the metric serves ─────────────────────────────────────────
@@ -140,6 +150,44 @@ cases:
       - metric: ai.daily_approximate_extra_usage_cost
         view: timeseries
         assert: "items.all(s, s.points.all(p, double(p.value) >= 0.0))"
+
+  # ── A reading on the month's last day may raise it, never lower it ───────────
+  # alice reads 600 on Sep 29 and 100 on Sep 30, the month's last calendar day.
+  # Held, Sep 29 keeps $6 and Sep 30 is $0. Treated as a correction instead, the
+  # suffix minimum would rewrite Sep 29 down and the month would read $1. The
+  # monthly figure is held the same way, so the sum identity survives the hold —
+  # a hold applied to one side only would show up here as $6 against $1.
+  - name: AI daily extra usage holds a month against its last-day reading
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-09-01", to: "2026-09-30" }
+        metrics:
+          - metric_key: ai.daily_approximate_extra_usage_cost
+            views:
+              - { view: period }
+              - { view: timeseries }
+          - metric_key: ai.extra_usage_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 6.0 }
+      - metric: ai.extra_usage_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 6.0 }
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-09-29' && double(p.value) == 6.0))"
+      - metric: ai.daily_approximate_extra_usage_cost
+        view: timeseries
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-09-30' && double(p.value) == 0.0))"
 
   # ── The identity the split rests on ──────────────────────────────────────────
   # Served side by side, the two must agree over a whole month for every seat —
