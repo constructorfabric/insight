@@ -769,6 +769,28 @@
             "type": "object"
           },
           {
+            "description": "The records behind a figure a surface reports for a GROUP of people —\nan org rollup card, a team total. Every id is authorized individually,\nexactly as the single-person shape is.",
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "persons"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "type": {
                 "enum": [

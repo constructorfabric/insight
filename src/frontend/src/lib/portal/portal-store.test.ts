@@ -1,48 +1,23 @@
 // @vitest-environment jsdom
 /**
- * What is left in the store after navigation moved to the URL: the two
- * PREFERENCES. They belong here precisely because they describe the reader
- * rather than the view — a shared link must not turn someone else's portal on,
- * or reveal the scaffolding they never asked to see.
+ * What is left in the store after navigation moved to the URL and the portal
+ * stopped being optional: one PREFERENCE. It belongs here because it describes
+ * the reader rather than the view — a shared link must not reveal the
+ * scaffolding they never asked to see.
  */
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  setPortalEnabled,
-  setPortalShowPlanned,
-  usePortalEnabled,
-  usePortalShowPlanned,
-} from "./portal-store";
+import { setPortalShowPlanned, usePortalShowPlanned } from "./portal-store";
 
 beforeEach(() => {
   act(() => {
-    setPortalEnabled(false);
     setPortalShowPlanned(true);
   });
   window.localStorage.clear();
 });
 
 describe("portal preferences", () => {
-  it("enabled round-trips and persists", () => {
-    const { result } = renderHook(() => usePortalEnabled());
-    expect(result.current).toBe(false);
-    act(() => setPortalEnabled(true));
-    expect(result.current).toBe(true);
-    expect(window.localStorage.getItem("insight.portal")).toBe("true");
-  });
-
-  it("enabled defaults ON when the key is absent", async () => {
-    const { readPortalEnabled } = await import("./portal-store");
-    expect(readPortalEnabled()).toBe(true);
-  });
-
-  it("an explicit opt-out is what the router reads back", async () => {
-    window.localStorage.setItem("insight.portal", "false");
-    const { readPortalEnabled } = await import("./portal-store");
-    expect(readPortalEnabled()).toBe(false);
-  });
-
   it("show-planned defaults OFF when the key is absent", async () => {
     window.localStorage.removeItem("insight.portal.showPlanned");
     vi.resetModules();
@@ -81,21 +56,59 @@ describe("portal preferences", () => {
   });
 });
 
-describe("blocked storage", () => {
-  it("reading a preference survives a throwing localStorage", async () => {
+describe("the retired opt-out", () => {
+  it("is deleted from storage rather than read", async () => {
+    window.localStorage.setItem("insight.portal", "false");
+    vi.resetModules();
+    const store = await import("./portal-store");
+
+    // Gone from storage, and gone from the module: the portal is the
+    // interface, so nothing can hold a reader off it.
+    expect(window.localStorage.getItem("insight.portal")).toBeNull();
+    for (const gone of ["readPortalEnabled", "usePortalEnabled", "setPortalEnabled"]) {
+      expect(store, gone).not.toHaveProperty(gone);
+    }
+  });
+
+  it("leaves the test-only legacy-shell hatch as the only way back", async () => {
+    window.localStorage.setItem("insight.legacyShell", "true");
+    vi.resetModules();
+    const store = await import("./portal-store");
+
+    // Read once, at load: the stand's UI journeys set it before any app code
+    // runs, and nothing in the product writes it at all.
+    expect(store.readLegacyShell()).toBe(true);
+    expect(window.localStorage.getItem("insight.legacyShell")).toBe("true");
+  });
+
+  it("stays off for a reader who was never told to use it", async () => {
+    vi.resetModules();
+    const store = await import("./portal-store");
+
+    expect(store.readLegacyShell()).toBe(false);
+  });
+
+  it("survives a throwing localStorage", async () => {
     // A sandboxed iframe or blocked third-party storage raises on property
-    // access, not by returning null. The readers run at module scope, so an
-    // unguarded throw would take the whole bundle down over a preview flag.
+    // access, not by returning null. This runs at module scope, so an
+    // unguarded throw would take the whole bundle down over a stale key.
     const getItem = vi
       .spyOn(window.localStorage, "getItem")
       .mockImplementation(() => {
         throw new DOMException("blocked", "SecurityError");
       });
+    const removeItem = vi
+      .spyOn(window.localStorage, "removeItem")
+      .mockImplementation(() => {
+        throw new DOMException("blocked", "SecurityError");
+      });
     try {
-      const { readPortalEnabled } = await import("./portal-store");
-      expect(readPortalEnabled()).toBe(true);
+      vi.resetModules();
+      const store = await import("./portal-store");
+      expect(store).toHaveProperty("usePortalShowPlanned");
     } finally {
       getItem.mockRestore();
+      removeItem.mockRestore();
     }
   });
 });

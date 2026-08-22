@@ -42,9 +42,7 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
         req.plan.source_key.clone(),
         req.selection.entity.entity_type().to_owned(),
     ]);
-    if let Some(person_id) = req.selection.entity.person_id() {
-        params.push(person_id.to_owned());
-    }
+    params.extend(req.selection.entity.person_ids().iter().cloned());
     params.extend([req.from.to_string(), req.to.to_string()]);
     params.extend(
         req.plan
@@ -104,9 +102,7 @@ fn compile_ratio_query(
         req.plan.source_key.clone(),
         req.selection.entity.entity_type().to_owned(),
     ];
-    if let Some(person_id) = req.selection.entity.person_id() {
-        params.push(person_id.to_owned());
-    }
+    params.extend(req.selection.entity.person_ids().iter().cloned());
     params.extend([
         req.from.to_string(),
         req.to.to_string(),
@@ -147,11 +143,25 @@ fn compile_ratio_query(
     Ok((sql, params))
 }
 
-fn entity_predicate(entity: &super::dto::MetricDrilldownEntity) -> &'static str {
+fn entity_predicate(entity: &super::dto::MetricDrilldownEntity) -> String {
     match entity {
-        super::dto::MetricDrilldownEntity::Person { .. } => "evidence.entity_id = ?",
-        super::dto::MetricDrilldownEntity::Tenant {} => "evidence.entity_id = evidence.tenant_id",
-        super::dto::MetricDrilldownEntity::Unknown => "1 = 0",
+        super::dto::MetricDrilldownEntity::Person { .. } => "evidence.entity_id = ?".to_owned(),
+        // One placeholder per person, bound in the same order the params are
+        // pushed — an id is never interpolated into the SQL.
+        super::dto::MetricDrilldownEntity::Persons { ids } if !ids.is_empty() => {
+            format!(
+                "evidence.entity_id IN ({})",
+                vec!["?"; ids.len()].join(", ")
+            )
+        }
+        super::dto::MetricDrilldownEntity::Tenant {} => {
+            "evidence.entity_id = evidence.tenant_id".to_owned()
+        }
+        // An empty roster is rejected in validation, so it cannot arrive
+        // through the API; matching no row beats emitting `IN ()`, which is a
+        // syntax error rather than an empty result.
+        super::dto::MetricDrilldownEntity::Persons { .. }
+        | super::dto::MetricDrilldownEntity::Unknown => "1 = 0".to_owned(),
     }
 }
 
@@ -221,6 +231,7 @@ mod tests {
     use crate::domain::metric_drilldown::test_support::{
         TEST_PERSON, TEST_TENANT, input, plan, validated,
     };
+    use uuid::Uuid;
 
     #[test]
     fn value_query_binds_filters_and_cursor() {
@@ -313,6 +324,46 @@ mod tests {
         assert!(sql.contains("evidence.entity_id = evidence.tenant_id"));
         assert!(!params.iter().any(|value| value == "default"));
         assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    #[test]
+    fn roster_query_binds_one_placeholder_per_person() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: evidence_presentation(
+                    "git",
+                    "commit_count",
+                    EvidenceGranularity::Event,
+                ),
+            }],
+        );
+        let second = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0002);
+        let mut request = validated(plan);
+        request.selection.entity = super::super::dto::MetricDrilldownEntity::Persons {
+            ids: vec![TEST_PERSON.to_string(), second.to_string()],
+        };
+
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("evidence.entity_id IN (?, ?)"));
+        // The roster reads as one query over people, not as a tenant total:
+        // the entity type stays `person`, which is the partition the evidence
+        // rows are keyed by.
+        assert!(params.iter().any(|value| value == "person"));
+        assert!(params.iter().any(|value| *value == TEST_PERSON.to_string()));
+        assert!(params.iter().any(|value| *value == second.to_string()));
+        assert_eq!(
+            sql.matches('?').count(),
+            params.len(),
+            "every placeholder needs exactly one bound param"
+        );
     }
 
     #[test]

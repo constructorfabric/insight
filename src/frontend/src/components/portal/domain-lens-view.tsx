@@ -52,6 +52,11 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { githubRepoUrl } from "@/lib/metrics/provider-links";
+import {
+  personsEvidenceSelection,
+  type MetricEvidenceSelection,
+} from "@/api/metric-drilldown-client";
+import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
@@ -880,6 +885,15 @@ function HeadlineSection({
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
+  // Every drillable card of the row, so the dialog a reader opens on one of
+  // them lists its neighbours — the same set the members grid offers from a
+  // row of cells.
+  const targets = cards.flatMap((c) => {
+    if (!c.r.drilldown) return [];
+    const selection = personsEvidenceSelection(c.r.selection, memberIds);
+    return selection ? [{ selection, label: c.r.label }] : [];
+  });
+
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -887,33 +901,93 @@ function HeadlineSection({
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
         {cards.map((c) => (
-          <Card key={c.key}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between gap-2">
-                <MetricName
-                  metric={c.r}
-                  text={c.r.short_label ?? c.r.label}
-                  className="text-xs font-medium text-muted-foreground"
-                />
-                <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
-              </div>
-              <div className={cn("mt-1", TEXT_FIGURE)}>
-                {formatMetricValue(
-                  c.isSum ? perCapita(c.r, memberIds) : c.now,
-                  c.r.format,
-                  c.r.unit
-                )}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {c.isSum
-                  ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
-                  : "median / person"}
-              </div>
-            </CardContent>
-          </Card>
+          <HeadlineCard
+            key={c.key}
+            card={c}
+            targets={targets}
+            memberIds={memberIds}
+          />
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * One headline figure, and the records it was taken over.
+ *
+ * The card opens the evidence dialog for the WHOLE roster rather than for a
+ * person: the number on it is the roster's, and a reader asking what it is
+ * made of is asking about all of them. Nothing here names an individual —
+ * the dialog lists records, and who did what stays inside it.
+ *
+ * A metric whose evidence cannot be read renders as a plain card: an
+ * affordance that opens an empty dialog is worse than none.
+ */
+function HeadlineCard({
+  card,
+  targets,
+  memberIds,
+}: {
+  card: {
+    r: NormalizedMetricResult;
+    now: number;
+    prev: number | null;
+    isSum: boolean;
+  };
+  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
+  memberIds: readonly string[];
+}) {
+  const evidence = useMetricEvidenceOptional();
+  const c = card;
+  const selection = c.r.drilldown
+    ? personsEvidenceSelection(c.r.selection, memberIds)
+    : null;
+  const body = (
+    <CardContent className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        {/* The full label, not the short one: `short_label` exists for a grid
+            column head or a heatmap axis, and it drops the very word that says
+            what was counted — "Issues" for issues CLOSED. A card twelve rem
+            wide has room to say it. */}
+        <MetricName
+          metric={c.r}
+          className="text-xs font-medium text-muted-foreground"
+        />
+        <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
+      </div>
+      <div className={cn("mt-1", TEXT_FIGURE)}>
+        {formatMetricValue(
+          c.isSum ? perCapita(c.r, memberIds) : c.now,
+          c.r.format,
+          c.r.unit
+        )}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {c.isSum
+          ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
+          : "median / person"}
+      </div>
+    </CardContent>
+  );
+
+  if (!selection || !evidence) return <Card>{body}</Card>;
+
+  return (
+    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() =>
+          evidence.openEvidenceTargets(targets, {
+            activeMetricKey: selection.metric_key,
+          })
+        }
+      >
+        {body}
+      </button>
+    </Card>
   );
 }
 
