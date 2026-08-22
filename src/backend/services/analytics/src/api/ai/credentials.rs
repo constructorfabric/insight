@@ -10,7 +10,8 @@ use axum::extract::Extension;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait as _, EntityTrait, Set};
+use sea_orm::sea_query::OnConflict;
+use sea_orm::{EntityTrait, Set};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
@@ -71,36 +72,37 @@ pub async fn put_credential(
 
     let hint = crypto::hint(token.as_str());
     let now = Utc::now();
-    let existing = load(&state, tenant, person).await?;
 
-    if existing.is_some() {
-        let row = ai_credentials::ActiveModel {
-            insight_tenant_id: Set(tenant),
-            person_id: Set(person),
-            nonce: Set(sealed.nonce),
-            ciphertext: Set(sealed.ciphertext),
-            hint: Set(hint.clone()),
-            updated_at: Set(now),
-            ..Default::default()
-        };
-        row.update(&state.db)
-            .await
-            .map_err(|e| write_error(&e, "credential update"))?;
-    } else {
-        let row = ai_credentials::ActiveModel {
-            insight_tenant_id: Set(tenant),
-            person_id: Set(person),
-            nonce: Set(sealed.nonce),
-            ciphertext: Set(sealed.ciphertext),
-            hint: Set(hint.clone()),
-            created_at: Set(now),
-            updated_at: Set(now),
-        };
-        ai_credentials::Entity::insert(row)
-            .exec(&state.db)
-            .await
-            .map_err(|e| write_error(&e, "credential insert"))?;
-    }
+    // One statement, not read-then-write: two saves racing (a double-clicked
+    // Save) would otherwise both find no row and the second would collide on
+    // the primary key.
+    let row = ai_credentials::ActiveModel {
+        insight_tenant_id: Set(tenant),
+        person_id: Set(person),
+        nonce: Set(sealed.nonce),
+        ciphertext: Set(sealed.ciphertext),
+        hint: Set(hint.clone()),
+        created_at: Set(now),
+        updated_at: Set(now),
+    };
+
+    ai_credentials::Entity::insert(row)
+        .on_conflict(
+            OnConflict::columns([
+                ai_credentials::Column::InsightTenantId,
+                ai_credentials::Column::PersonId,
+            ])
+            .update_columns([
+                ai_credentials::Column::Nonce,
+                ai_credentials::Column::Ciphertext,
+                ai_credentials::Column::Hint,
+                ai_credentials::Column::UpdatedAt,
+            ])
+            .to_owned(),
+        )
+        .exec(&state.db)
+        .await
+        .map_err(|e| write_error(&e, "credential save"))?;
 
     Ok(Json(AiCredentialResponse {
         configured: true,

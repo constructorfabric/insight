@@ -10,7 +10,8 @@ use axum::extract::Extension;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use chrono::Utc;
-use sea_orm::{ActiveModelTrait as _, EntityTrait, Set};
+use sea_orm::sea_query::OnConflict;
+use sea_orm::{EntityTrait, Set};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
@@ -58,26 +59,26 @@ pub async fn put_settings(
     let now = Utc::now();
     let stored = prompt.into_inner();
 
-    if load(&state, tenant).await?.is_some() {
-        let row = ai_settings::ActiveModel {
-            insight_tenant_id: Set(tenant),
-            system_prompt: Set(Some(stored.clone())),
-            updated_at: Set(now),
-        };
-        row.update(&state.db)
-            .await
-            .map_err(|e| write_error(&e, "system prompt update"))?;
-    } else {
-        let row = ai_settings::ActiveModel {
-            insight_tenant_id: Set(tenant),
-            system_prompt: Set(Some(stored.clone())),
-            updated_at: Set(now),
-        };
-        ai_settings::Entity::insert(row)
-            .exec(&state.db)
-            .await
-            .map_err(|e| write_error(&e, "system prompt insert"))?;
-    }
+    // One statement, not read-then-write — two admins saving at once would
+    // otherwise race on the insert.
+    let row = ai_settings::ActiveModel {
+        insight_tenant_id: Set(tenant),
+        system_prompt: Set(Some(stored.clone())),
+        updated_at: Set(now),
+    };
+
+    ai_settings::Entity::insert(row)
+        .on_conflict(
+            OnConflict::column(ai_settings::Column::InsightTenantId)
+                .update_columns([
+                    ai_settings::Column::SystemPrompt,
+                    ai_settings::Column::UpdatedAt,
+                ])
+                .to_owned(),
+        )
+        .exec(&state.db)
+        .await
+        .map_err(|e| write_error(&e, "system prompt save"))?;
 
     Ok(Json(AiSettingsResponse {
         system_prompt: stored,
