@@ -426,6 +426,22 @@ const MOCK_CONNECTORS = [
     last_write: "2020-01-05T04:00:00Z",
   },
   {
+    connector: "bitbucket_cloud",
+    namespace: "bronze_bitbucket_cloud",
+    streams: 10,
+    streams_with_data: 8,
+    rows: 41007,
+    last_write: "2020-01-07T06:00:00Z",
+  },
+  {
+    connector: "ms_entra",
+    namespace: "bronze_ms_entra",
+    streams: 1,
+    streams_with_data: 1,
+    rows: 1426,
+    last_write: "2020-01-09T03:00:00Z",
+  },
+  {
     connector: "slack",
     namespace: "bronze_slack",
     streams: 4,
