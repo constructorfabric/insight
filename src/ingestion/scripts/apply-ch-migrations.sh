@@ -166,6 +166,24 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+# Same positional invariant, one relation further along: class_task_field_history
+# gained `title` after `id_readable` (#2739) so evidence rows can name the work
+# item. The connectors-ddl snapshot only CREATEs IF NOT EXISTS, so a warm
+# installation keeps the old column list, and the gold build fails resolving
+# `fh.title`. Staging needs no heal — github's member is a table rebuilt every
+# run, and jira's is altered by the DDL macro that owns it.
+heal_task_field_history_table() {
+  local db="$1" table="$2"
+  ch_table_is_real "$db" "$table" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS title Nullable(String) AFTER id_readable;
+ALTER TABLE ${db}.${table} MODIFY COLUMN title Nullable(String) AFTER id_readable;
+SQL
+}
+
+heal_task_field_history_table silver class_task_field_history
+
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds
 # class_git_file_changes. Pre-existing tables lack them and the positional
