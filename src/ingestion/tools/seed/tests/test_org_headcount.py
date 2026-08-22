@@ -12,8 +12,6 @@ Run against the installed package (see the README's develop section):
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import shutil
 import subprocess
@@ -262,12 +260,16 @@ def test_bulk_names_cannot_collide_with_the_committed_ones() -> None:
     assert not set(scale._BULK_LAST_NAMES) & set(profiles._LAST_NAMES)
 
 
-def test_bulk_names_are_deterministic() -> None:
-    """Same Faker seed, same pool: a re-seeded stand keeps its people's names."""
-    regenerated = scale._generate_bulk_last_names()
+#: The head of the pool the pinned Faker seed yields. Written out, not derived:
+#: comparing the generator to its own output passes whatever the seed is.
+_GOLDEN_SURNAMES = ("Thomas", "Austin", "Gonzalez", "Glenn", "Fisher")
 
-    assert regenerated == scale._BULK_LAST_NAMES
-    assert len(set(regenerated)) == len(regenerated)
+
+def test_the_growth_surname_pool_is_pinned() -> None:
+    """A changed seed or Faker version renames a re-seeded stand's whole growth."""
+    assert tuple(scale._BULK_LAST_NAMES[: len(_GOLDEN_SURNAMES)]) == _GOLDEN_SURNAMES
+    assert len(set(scale._BULK_LAST_NAMES)) == len(scale._BULK_LAST_NAMES)
+    assert scale._generate_bulk_last_names() == scale._BULK_LAST_NAMES
 
 
 def test_the_realm_generator_sizes_itself_to_the_headcount() -> None:
@@ -298,171 +300,22 @@ def test_every_writer_reaches_the_roster_through_a_parsed_headcount(module: str)
         assert not argument.isdigit(), f"{module} passes the literal {argument} as the headcount"
 
 
-def _env(headcount: str | None = None) -> dict[str, str]:
-    env = {
-        "DEV_USER_EMAIL": _EMAIL,
-        "TENANT_DEFAULT_ID": _TENANT,
-        "SEED_ANCHOR_DATE": "2026-06-30",
-        "SEED_DAYS": "60",
-        config.CROSS_TENANT_FIXTURE_ENV: "0",
-    }
-    if headcount is not None:
-        env[_ENV] = headcount
-    return env
-
-
-def _emit(doc: manifest.Manifest) -> list[str]:
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        manifest.emit_manifest_sentinel(doc)
-    return buffer.getvalue().splitlines()
-
-
-@pytest.fixture(scope="module")
-def default_manifest() -> manifest.Manifest:
-    return manifest.build_manifest(_env())
-
-
-@pytest.fixture(scope="module")
-def grown_manifest() -> manifest.Manifest:
-    return manifest.build_manifest(_env(str(_GROWN)))
-
-
-def test_the_default_roster_still_emits_one_plain_line(
-    default_manifest: manifest.Manifest,
-) -> None:
-    """The manifest is printed after every write, in a Job with backoffLimit 0.
-
-    Refusing an oversized document there would report a correctly seeded stand
-    as a failure, with nothing left to retry.
-    """
-    lines = _emit(default_manifest)
-
-    assert len(lines) == 1
-    assert lines[0].startswith(manifest.SENTINEL_PREFIX)
-    assert len(lines[0].encode("utf-8")) <= manifest._SENTINEL_MAX_BYTES
-    assert json.loads(lines[0][len(manifest.SENTINEL_PREFIX) :]) == default_manifest
-    assert manifest.decode_manifest_sentinel(lines) == default_manifest
-
-
-def test_a_grown_roster_round_trips_through_the_chunked_form(
-    grown_manifest: manifest.Manifest,
-) -> None:
-    assert len(grown_manifest["personas"]) == _GROWN
-
-    lines = _emit(grown_manifest)
-
-    assert lines
-    for line in lines:
-        assert line.startswith(manifest.GZ_SENTINEL_PREFIX), line[:40]
-        assert len(line.encode("utf-8")) <= manifest._SENTINEL_MAX_BYTES
-    assert manifest.decode_manifest_sentinel(lines) == grown_manifest
-
-
-def test_chunks_survive_reordering_and_surrounding_log_noise(
-    grown_manifest: manifest.Manifest,
-) -> None:
-    lines = [
-        "2026-06-30 INFO seed.silver generating rows",
-        *reversed(_emit(grown_manifest)),
-        "done",
-    ]
-
-    assert manifest.decode_manifest_sentinel(lines) == grown_manifest
-
-
-def test_a_missing_chunk_is_an_error_not_a_partial_document() -> None:
-    doc = manifest.build_manifest(_env(str(config.MAX_ORG_HEADCOUNT)))
-    lines = _emit(doc)
-    assert len(lines) > 1, "the largest roster should need several chunks"
-
-    with pytest.raises(ValueError):
-        manifest.decode_manifest_sentinel(lines[:-1])
-
-
 #: The apiserver's cap on the summed length of a ConfigMap's `data` entries.
 _CONFIGMAP_DATA_MAX_BYTES = 1024 * 1024
 
 
 def test_the_largest_roster_still_fits_a_configmap() -> None:
     """`seed-stand.sh` publishes this document; raising the ceiling can break it."""
-    doc = manifest.build_manifest(_env(str(config.MAX_ORG_HEADCOUNT)))
+    doc = manifest.build_manifest(
+        {
+            "DEV_USER_EMAIL": _EMAIL,
+            "TENANT_DEFAULT_ID": _TENANT,
+            "SEED_ANCHOR_DATE": "2026-06-30",
+            "SEED_DAYS": "60",
+            config.CROSS_TENANT_FIXTURE_ENV: "0",
+            _ENV: str(config.MAX_ORG_HEADCOUNT),
+        }
+    )
     compact = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
 
     assert len(compact.encode("utf-8")) < _CONFIGMAP_DATA_MAX_BYTES
-
-
-def test_input_without_a_sentinel_is_an_error() -> None:
-    with pytest.raises(ValueError):
-        manifest.decode_manifest_sentinel(["nothing to see here"])
-
-
-@pytest.mark.parametrize("payload", ["null", "[]", "42", '"a string"'])
-def test_a_sentinel_carrying_a_non_object_is_refused(payload: str) -> None:
-    """`json.loads` returns whatever the text was; only an object is a manifest."""
-    with pytest.raises(ValueError, match="not a JSON object"):
-        manifest.decode_manifest_sentinel([manifest.SENTINEL_PREFIX + payload])
-
-
-def test_an_identical_line_read_twice_is_tolerated(grown_manifest: manifest.Manifest) -> None:
-    """A re-read log repeats lines; the same bytes are the same chunk."""
-    lines = _emit(grown_manifest)
-
-    assert manifest.decode_manifest_sentinel(lines + lines) == grown_manifest
-
-
-def test_conflicting_totals_are_an_error_not_a_splice(grown_manifest: manifest.Manifest) -> None:
-    """Two emissions in one log must fail, not decode whichever came last."""
-    lines = _emit(grown_manifest)
-    foreign = f"{manifest.GZ_SENTINEL_PREFIX}1/{len(lines) + 1} AAAA"
-
-    with pytest.raises(ValueError):
-        manifest.decode_manifest_sentinel([foreign, *lines])
-
-
-def test_a_differing_duplicate_chunk_is_an_error(grown_manifest: manifest.Manifest) -> None:
-    lines = _emit(grown_manifest)
-    forged = f"{manifest.GZ_SENTINEL_PREFIX}1/{len(lines)} AAAA"
-
-    with pytest.raises(ValueError):
-        manifest.decode_manifest_sentinel([*lines, forged])
-
-
-@_needs_reassembler
-@pytest.mark.parametrize("manifest_fixture", ["default_manifest", "grown_manifest"])
-def test_the_shell_reassembler_agrees_with_the_python_one(
-    manifest_fixture: str, request: pytest.FixtureRequest
-) -> None:
-    doc = request.getfixturevalue(manifest_fixture)
-    log = "\n".join(["starting", *_emit(doc), "done"]) + "\n"
-
-    result = subprocess.run(
-        ["bash", str(_REASSEMBLER)],
-        input=log,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    out = result.stdout.strip()
-    assert out.startswith(manifest.SENTINEL_PREFIX), out[:60]
-    assert json.loads(out[len(manifest.SENTINEL_PREFIX) :]) == doc
-
-
-@_needs_reassembler
-def test_the_shell_reassembler_refuses_a_corrupt_payload() -> None:
-    """A failed decode must not print a bare sentinel — it matches the grep.
-
-    Consumers select the manifest with `grep -m1 '^SEED_MANIFEST_JSON: '`, so
-    an empty line under that prefix reads as a valid, empty manifest.
-    """
-    result = subprocess.run(
-        ["bash", str(_REASSEMBLER)],
-        input=f"{manifest.GZ_SENTINEL_PREFIX}1/1 !!!!notbase64!!!!\n",
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert manifest.SENTINEL_PREFIX not in result.stdout

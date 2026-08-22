@@ -47,17 +47,31 @@ def test_a_document_carrying_the_override_is_refused() -> None:
         manifest.assert_no_credentials(doc, {_ENV: "a-long-enough-persona-pw"})
 
 
-def test_the_committed_default_is_always_refused() -> None:
-    """Even on a stand that overrides it — the default must never ship."""
-    doc = {**_DOC, "leaked": "insight-dev"}
+#: Written out rather than read from the module: parametrising over the constant
+#: would delete a case together with the entry it is meant to guard.
+_DEV_LITERALS = ("insight-dev", "insight-authenticator-dev-secret", "insight-local", "root-local")
+_CREDENTIAL_WORDS = ("password", "secret", "token", "credential", "passwd")
 
+
+@pytest.mark.parametrize("literal", _DEV_LITERALS)
+def test_every_committed_dev_credential_is_refused(literal: str) -> None:
+    """Even on a stand that overrides the persona password."""
     with pytest.raises(RuntimeError, match="credential literal"):
-        manifest.assert_no_credentials(doc, {_ENV: "a-long-enough-persona-pw"})
+        manifest.assert_no_credentials({**_DOC, "leaked": literal}, {_ENV: "a-long-enough-pw"})
 
 
-def test_a_credential_bearing_key_is_refused_whatever_its_value() -> None:
+def test_the_blocklist_covers_every_literal_the_module_declares() -> None:
+    assert set(_DEV_LITERALS) == manifest._STATIC_FORBIDDEN_LITERALS
+
+
+@pytest.mark.parametrize("word", _CREDENTIAL_WORDS)
+def test_a_credential_bearing_key_is_refused_whatever_its_value(word: str) -> None:
     with pytest.raises(RuntimeError, match="credential-bearing"):
-        manifest.assert_no_credentials({**_DOC, "db_password": "anything"}, {})
+        manifest.assert_no_credentials({**_DOC, f"db_{word}": "anything"}, {})
+
+
+def test_the_key_scan_covers_every_word_the_module_declares() -> None:
+    assert set(_CREDENTIAL_WORDS) == set(manifest._FORBIDDEN_KEY_SUBSTRINGS)
 
 
 def _import_realm_with(password: str | None) -> subprocess.CompletedProcess[str]:

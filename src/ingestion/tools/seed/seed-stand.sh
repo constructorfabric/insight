@@ -158,11 +158,14 @@ done
 
 need kubectl
 need envsubst
-# The manifest is computed from this tree before the Job is created.
-need uv
+# The manifest is computed from this tree before the Job is created; a
+# render-only run does none of that.
 need jq
+[[ "$DRY_RUN" -eq 1 ]] || need uv
 [[ -f "$JOB_TEMPLATE" ]] || die "Job template not found at $JOB_TEMPLATE."
 [[ -n "$NAMESPACE" ]] || { usage >&2; die "--namespace is required."; }
+[[ -z "$MANIFEST_OUT" || "$DRY_RUN" -eq 0 ]] \
+  || die "--manifest-out has nothing to write with --dry-run."
 # --email is NOT gated here: discovery below needs the cluster first. `all` and
 # `silver` finish by running the projection + gold rebuild themselves (see tail).
 case "$STEP" in
@@ -516,8 +519,12 @@ resolve_anchor_date() {
     uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest | jq -r '.anchor_date'
 }
 
-ANCHOR_DATE="$(resolve_anchor_date)" \
-  || die "could not resolve the seed anchor; uv and the seeder package are required."
+# --dry-run renders and exits, so it neither needs nor should require a working
+# uv project; the anchor it shows is then whatever the caller passed.
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  ANCHOR_DATE="$(resolve_anchor_date)" \
+    || die "could not resolve the seed anchor; uv and the seeder package are required."
+fi
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
 # Empty means the committed roster. Resolved here rather than in the template:
 # WORKAROUND: GNU envsubst emits `${VAR:-default}` verbatim, so a default
@@ -581,6 +588,9 @@ print_manifest_sentinel() {
 # the seed replaces the data would leave the previous manifest describing rows
 # that no longer exist, which is worse for a reader than no manifest at all.
 clear_manifest_configmap() {
+  # Only a step that will publish one may clear it; `gold` writes no manifest
+  # and `identity` alone must not blank the whole stand's description.
+  [[ "$STEP" == "all" ]] || return 0
   kube -n "$NAMESPACE" delete configmap "$MANIFEST_CONFIGMAP" --ignore-not-found >/dev/null 2>&1 \
     || die "could not clear configmap/$MANIFEST_CONFIGMAP; refusing to seed over a manifest that would outlive its data."
 }
@@ -593,6 +603,8 @@ resolve_manifest() {
   local pod=""
   [[ -z "$SEED_MANIFEST_SENTINEL" ]] || pod="${SEED_MANIFEST_SENTINEL#SEED_MANIFEST_JSON: }"
   if [[ -z "$pod" ]]; then
+    echo "ERROR: the seed Job emitted no manifest; using the one computed from this tree." >&2
+    echo "       It describes the environment the Job was given, not what it wrote." >&2
     printf '%s' "$LOCAL_MANIFEST"
     return 0
   fi
@@ -613,6 +625,7 @@ resolve_manifest() {
 
 publish_manifest_configmap() {
   local tmp status=0
+  [[ "$STEP" == "all" ]] || return 0
   [[ -n "$LOCAL_MANIFEST$SEED_MANIFEST_SENTINEL" ]] || return 0
   tmp="$(mktemp)"
   resolve_manifest >"$tmp"
@@ -774,10 +787,6 @@ if [[ "$FOLLOW" -eq 0 ]]; then
   exit 0
 fi
 
-# Run the requested step. For the steps that build gold (all, silver), refresh
-# the identity projection and rebuild gold, so the stand serves resolved metrics
-# instead of a null for every person — the k8s analogue of dev-compose.sh's
-# cmd_seed, which does the same for the compose stand.
 # The manifest is a pure function of the seeder's environment, and the rendered
 # Job is where that environment is decided — so it is read back from the render
 # rather than restated here, which cannot drift from the template.
@@ -795,7 +804,13 @@ compute_local_manifest() {
       sub(/^              value: /, ""); sub(/^"/, ""); sub(/"$/, "")
       print key "=" $0; key = ""
     }')
+  local declared
+  declared="$(render_seed_manifest | grep -c '^            - name: ' || true)"
+  # SAFETY: the extractor is anchored on the template's indentation, so a
+  # reformat would silently drop variables and build a manifest from defaults.
   [[ ${#job_env[@]} -gt 0 ]] || die "read no environment from the rendered Job manifest."
+  [[ $(( ${#job_env[@]} + $(render_seed_manifest | grep -c '^              valueFrom:' || true) )) -eq "$declared" ]] \
+    || die "read ${#job_env[@]} of $declared Job environment variables; the template's shape changed."
   # RULE-DEFAULTS-OK: a fallback for a HOME-less shell, not a config input; the
   # Job's own HOME follows in job_env and wins, which is the point.
   env -i PATH="$PATH" "${job_env[@]}" HOME="${HOME:-/tmp}" \
@@ -804,7 +819,11 @@ compute_local_manifest() {
 
 LOCAL_MANIFEST="$(compute_local_manifest)" || die "could not compute the seed manifest."
 
-case "$STEP" in all) clear_manifest_configmap ;; esac
+# Run the requested step. For the steps that build gold (all, silver), refresh
+# the identity projection and rebuild gold, so the stand serves resolved metrics
+# instead of a null for every person — the k8s analogue of dev-compose.sh's
+# cmd_seed, which does the same for the compose stand.
+clear_manifest_configmap
 run_seed_step "$STEP" || exit 1
 
 case "$STEP" in
@@ -817,7 +836,7 @@ esac
 
 # After the projection and the gold rebuild: the manifest says "this stand is
 # seeded", so it must not appear while gold is still unresolved.
-case "$STEP" in all) publish_manifest_configmap ;; esac
+publish_manifest_configmap
 if [[ -n "$MANIFEST_OUT" ]]; then
   resolve_manifest >"$MANIFEST_OUT" || die "could not write the manifest to $MANIFEST_OUT."
   echo "==> manifest written: $MANIFEST_OUT"

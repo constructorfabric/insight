@@ -205,9 +205,8 @@ jobs:
           seed_rc=0
           ./src/ingestion/tools/seed/seed-stand.sh \
             -n "$STAND_NAMESPACE" --context "$kube_context" --days 730 \
+            --manifest-out "$RUNNER_TEMP/stand-manifest.json" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
-          ./src/ingestion/tools/seed/manifest-from-log.sh "$RUNNER_TEMP/seed.log" \
-            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || true
           if [ "$seed_rc" -eq 0 ] && jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1; then
             echo "personas=$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json") window=$(jq -r '.data_window' "$RUNNER_TEMP/stand-manifest.json")"
             exit 0

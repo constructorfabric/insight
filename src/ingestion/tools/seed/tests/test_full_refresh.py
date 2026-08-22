@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -53,7 +54,9 @@ def script_runs(monkeypatch: pytest.MonkeyPatch) -> list[ScriptRun]:
     def record(argv: list[str], **kwargs: Any) -> None:
         runs.append((list(argv), dict(kwargs["env"])))
 
-    monkeypatch.setattr("insight_seed.silver.subprocess.run", record)
+    # Swap the module's handle, not stdlib's: the real subprocess.run stays
+    # available to everything else running in this session.
+    monkeypatch.setattr(silver, "subprocess", SimpleNamespace(run=record))
     monkeypatch.setattr(silver, "_script_env", lambda: dict(_STUB_SCRIPT_ENV))
     return runs
 

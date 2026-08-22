@@ -223,7 +223,10 @@ Four things to know before pointing it at a stand:
 - **The ceiling is 3000, and it is about blast radius.** Every person multiplies
   the per-day rows the generators write, across ten domains and the whole
   window, so a mistyped headcount is the difference between a stand and an
-  incident. Raise `config.MAX_ORG_HEADCOUNT` deliberately if a stand needs more.
+  incident. Raise `config.MAX_ORG_HEADCOUNT` deliberately if a stand needs more,
+  and check two bounds when you do: the Job's `limits.memory` (2Gi, fixed in
+  `seed-job.yaml.tpl`) and the ~1 MiB ConfigMap the manifest is published to —
+  the seeder's tests pin the second, nothing pins the first.
 - **There is no shrink.** The silver step truncates what it writes, so activity
   rows do follow the roster down — but `identity.py` only ever inserts, so the
   extra people's `persons`, `org_chart` and login rows in MariaDB survive a
@@ -258,10 +261,11 @@ Four things to know before pointing it at a stand:
     -o 'go-template={{index .data "manifest"}}' | jq .
   ```
 
-  The two stand workflows (`run-stand-suite.yml`, `deploy-test-stand.yml`) read
-  the manifest through this script, so a CI stand recovers it at any roster
-  size. `seed-stand.sh` reassembles it for you as well — a run prints one plain
-  sentinel line whichever transport the seeder chose.
+  You rarely need any of that. `seed-stand.sh --manifest-out <path>` writes the
+  run's manifest straight to a file, which is what `deploy-test-stand.yml` and
+  `run-stand-suite.yml`'s reseed path use. `run-stand-suite.yml` reads the
+  ConfigMap when it is testing a stand it did not just seed, and falls back to
+  the Job log only for a stand seeded before that existed.
 
 ## [PROFILE.md](PROFILE.md)
 

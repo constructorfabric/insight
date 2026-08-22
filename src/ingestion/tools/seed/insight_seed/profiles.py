@@ -368,17 +368,13 @@ CANONICAL_ROSTER_SIZE = config.CANONICAL_ROSTER_SIZE
 def build_seeded_roster(dev_user_email: str, headcount: int) -> list[Person]:
     """The roster a seed run writes: the committed one, or a grown one.
 
-    This is the entry point every WRITER uses (identity, silver, the realm, the
-    manifest); each parses `SEED_ORG_HEADCOUNT` at its own boundary with
-    `config.parse_org_headcount` and passes the resulting int here, so raw
-    environment state never crosses into roster construction. `build_roster`
-    stays what it always was and is still the right call for anything asserting
-    on the committed fixtures.
+    Every writer parses `SEED_ORG_HEADCOUNT` at its own boundary and passes the
+    resulting int here, so raw environment state never reaches roster
+    construction.
 
-    The default path returns `build_roster`'s own object, and `scale` is not
-    even imported: growing the roster is opt-in via `SEED_ORG_HEADCOUNT`, and a
-    stand that did not ask for it must get byte-identical data to the one CI
-    asserts against.
+    The default path returns `build_roster`'s own object and does not import
+    `scale`: a stand that did not ask to grow must get byte-identical data to
+    the one CI asserts against.
     """
     base = build_roster(dev_user_email)
     if headcount in (config.DEFAULT_ORG_HEADCOUNT, CANONICAL_ROSTER_SIZE):

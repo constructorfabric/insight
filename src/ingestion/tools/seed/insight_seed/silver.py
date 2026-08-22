@@ -129,7 +129,9 @@ def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = F
     (see module docstring).
 
     `full_refresh` rebuilds the selected models from source rather than
-    appending to them. The silver step needs it whenever the roster can
+    appending to them. It is a GLOBAL dbt flag, so it reaches every selected
+    model that is incremental — every `*__identity_inputs` feeder, not only
+    the two named here. The silver step needs it whenever the roster can
     differ from the one already on the stand: a seed REPLACES the org, but
     the identity feeders are incremental (bamboohr__employees_snapshot
     appends; identity_inputs admits only rows past the current max _version),

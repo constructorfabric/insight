@@ -56,15 +56,22 @@ def _load_stand_reader() -> Any:
         shim = types.ModuleType(package)
         shim.__path__ = [str(reader.parent)]
         sys.modules[package] = shim
-        for name in ("errors", "manifest"):
-            spec = importlib.util.spec_from_file_location(
-                f"{package}.{name}", reader.parent / f"{name}.py"
-            )
-            if spec is None or spec.loader is None:
-                pytest.skip(f"cannot load {name}.py from the stand library")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[spec.name] = module
-            spec.loader.exec_module(module)
+        try:
+            for name in ("errors", "manifest"):
+                spec = importlib.util.spec_from_file_location(
+                    f"{package}.{name}", reader.parent / f"{name}.py"
+                )
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"cannot load {name}.py from the stand library")
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = module
+                spec.loader.exec_module(module)
+        except Exception:
+            # SAFETY: leave nothing half-registered, or the next caller gets a
+            # KeyError from this shim instead of the failure that caused it.
+            for key in (package, f"{package}.errors", f"{package}.manifest"):
+                sys.modules.pop(key, None)
+            raise
     return sys.modules[f"{package}.manifest"]
 
 
@@ -110,7 +117,33 @@ def test_the_stand_suite_parses_what_this_package_produces(headcount: str | None
 
 
 def test_both_sides_agree_on_the_supported_version() -> None:
-    """A shape change without a bump is the failure this catches."""
     reader = _load_stand_reader()
 
     assert manifest.MANIFEST_VERSION == reader.SUPPORTED_MANIFEST_VERSION
+
+
+#: The published field set. A change here is a wire change: bump
+#: MANIFEST_VERSION and SUPPORTED_MANIFEST_VERSION together, or readers built
+#: against the old set parse a document that no longer matches it.
+_PUBLISHED_FIELDS = (
+    "manifest_version",
+    "tenant",
+    "tenants",
+    "realm",
+    "personas",
+    "service_urls",
+    "fixtures",
+    "catalogue",
+    "golden_metrics",
+    "golden_metrics_note",
+    "capabilities",
+    "seed_revision",
+    "data_window",
+    "anchor_date",
+    "seeded",
+)
+
+
+def test_the_published_field_set_has_not_changed_without_a_version_bump() -> None:
+    """The version gate is coarse: it fires on a bump, not on a silent change."""
+    assert tuple(manifest.Manifest.__annotations__) == _PUBLISHED_FIELDS
