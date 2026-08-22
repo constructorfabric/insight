@@ -723,3 +723,99 @@ def test_a_resumed_sync_asks_for_less_than_the_first(http_mocker: HttpMocker) ->
     assert 'updated_on >= "2026-06-19' in asked[-1], (
         f"a resumed run starts at stored state, not the floor: {asked[-1]}"
     )
+
+
+def _repo_named(slug: str) -> dict[str, Any]:
+    return {
+        "uuid": "{r-%s}" % slug,
+        "slug": slug,
+        "full_name": f"acme/{slug}",
+        "updated_on": "2026-06-20T10:00:00.000000+00:00",
+        "mainbranch": {"name": "main"},
+        "workspace": {"slug": "acme", "uuid": "{w-1}"},
+        "links": {"clone": [{"name": "https", "href": f"https://bitbucket.org/acme/{slug}.git"}]},
+    }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_a_repository_matching_an_exclusion_pattern_is_not_collected(
+    http_mocker: HttpMocker,
+) -> None:
+    """A workspace can carry thousands of mirrors whose `updated_on` moves
+    without anyone committing. The operator names them by pattern; the vendor
+    cannot, so the listing is filtered before a repository becomes a partition
+    and before its clone is ever asked for."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_exclude_repositories"] = [r"\.rospecs$", r"\.vhispecs$"]
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                {"values": [_repo_named("app"), _repo_named("plocate.rospecs"),
+                            _repo_named("c4core.vhispecs"), _repo_named("rospecs-tooling")]}
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    kept = sorted(r.record.data["slug"] for r in output.records)
+    # `rospecs-tooling` survives: the pattern is anchored, not a substring.
+    assert kept == ["app", "rospecs-tooling"], kept
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_every_repository_is_collected_when_no_pattern_is_configured(
+    http_mocker: HttpMocker,
+) -> None:
+    """The field is optional and silence means collect everything — an empty
+    pattern list must not compile into a regex that matches every name."""
+    config = BitbucketCloudConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps({"values": [_repo_named("app"), _repo_named("plocate.rospecs")]}),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "repositories", config)
+
+    assert not output.errors
+    assert len(output.records) == 2
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_an_excluded_repository_is_never_asked_of_the_proxy(
+    http_mocker: HttpMocker,
+) -> None:
+    """Dropping the record is not the point — not cloning it is. A filtered
+    repository must never become a partition, so the proxy is never asked to
+    walk it and its clone never enters the cache."""
+    config = BitbucketCloudConfigBuilder().build()
+    config["bitbucket_exclude_repositories"] = [r"\.rospecs$"]
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps({"values": [_repo_named("app"), _repo_named("plocate.rospecs")]}),
+            status_code=200,
+        ),
+    )
+    http_mocker.get(
+        HttpRequest(f"{PROXY_URL}/v1/commits", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"items": [], "next_page_token": None}), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "commits", config)
+
+    assert not output.errors
+    walked = [
+        unquote_plus(r.url)
+        for r in http_mocker._mocker.request_history
+        if "/v1/commits" in r.url
+    ]
+    assert walked, "the kept repository was never walked"
+    assert all("acme/app.git" in u for u in walked), walked
+    assert not any("rospecs" in u for u in walked), walked
