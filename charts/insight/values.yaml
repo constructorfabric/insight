@@ -663,6 +663,11 @@ frontend:
     #   - "zone:directions/dir:sales"               (a whole direction)
     #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
     #   - "zone:person/section:git_output"          (a Person-zone section)
+    #   - "metric:tasks.resolution_time"            (one metric, everywhere)
+    #   - "metric:ai.*"                             (a whole metric family)
+    # A metric path is not a menu entry: it gates the key itself, so the metric
+    # reaches no tile, attention row, heatmap column, drilldown block or report
+    # column, and no request asks for it.
     # Unknown paths are ignored (the browser console warns). Presentation
     # only — the API authorizes independently of what the menu shows.
     hide: []

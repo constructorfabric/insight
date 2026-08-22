@@ -19,7 +19,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { GROUPS } from "@/lib/insight/groups";
+import { visibleGroups } from "@/lib/insight/groups";
 import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import {
@@ -58,7 +58,6 @@ import {
 } from "@/lib/portal/nav-model";
 import {
   personSectionPlanned,
-  personSectionVisible,
 } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
@@ -617,7 +616,7 @@ function PersonSectionsNav() {
   const standings = usePersonSectionStandings(activePerson);
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const showPlanned = usePortalShowPlanned();
-  const groups = GROUPS.filter((g) => personSectionVisible(g.id, showPlanned));
+  const groups = visibleGroups(showPlanned);
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
   return (

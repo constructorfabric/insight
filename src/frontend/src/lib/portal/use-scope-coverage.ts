@@ -10,9 +10,10 @@ import {
   type PartCoverage,
   type PersonCoverage,
 } from "@/lib/insight/coverage";
-import { GROUPS } from "@/lib/insight/groups";
+import { visibleGroups } from "@/lib/insight/groups";
 import { projectViews } from "@/lib/metrics/collection";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricCollectionSet } from "@/queries/metric-results";
 
@@ -62,6 +63,10 @@ export function useScopeCoverage(
   memberIds: readonly string[],
 ): ScopeCoverage {
   const { dateRange } = usePortalPeriod();
+  // Sections this install does not show are not gaps in anyone's data, so they
+  // are not counted — see `visibleGroups`.
+  const showPlanned = usePortalShowPlanned();
+  const groups = useMemo(() => visibleGroups(showPlanned), [showPlanned]);
   // The scope selector owns who is in view, so this takes the member list
   // rather than deriving one. Deriving it would leave the tab answering about
   // the viewer's whole reach while every other tab answered about the selected
@@ -75,7 +80,7 @@ export function useScopeCoverage(
   // chunk-and-merge path available at roster scale.
   const data = useMetricCollectionSet(
     rosterIds.length
-      ? GROUPS.map((def) => ({
+      ? groups.map((def) => ({
           key: def.id,
           collection: projectViews(def.collection, ["period"]),
         }))
@@ -94,16 +99,16 @@ export function useScopeCoverage(
 
   return useMemo(() => {
     const byKey = new Map(
-      GROUPS.flatMap((def) => [...(data.get(def.id)?.byKey ?? new Map())]),
+      groups.flatMap((def) => [...(data.get(def.id)?.byKey ?? new Map())]),
     );
     const people = rosterIds.map((id) =>
-      personCoverage(GROUPS, byKey, id, reachable),
+      personCoverage(groups, byKey, id, reachable),
     );
     return {
-      distribution: coverageDistribution(people, GROUPS.length),
+      distribution: coverageDistribution(people, groups.length),
       people,
-      thin: thinlyCovered(people, GROUPS.length),
-      parts: partCoverage(GROUPS, people),
+      thin: thinlyCovered(people, groups.length),
+      parts: partCoverage(groups, people),
       // An empty roster is an answer, not a wait. With no members the hook
       // sends no collections, so no group has an entry and the `?? true`
       // below would hold every one of them pending forever — the section
@@ -112,10 +117,17 @@ export function useScopeCoverage(
       isPending:
         definitions.isPending ||
         (rosterIds.length > 0 &&
-          GROUPS.some((def) => data.get(def.id)?.isPending ?? true)),
+          groups.some((def) => data.get(def.id)?.isPending ?? true)),
       isError:
         definitions.isError ||
-        GROUPS.some((def) => data.get(def.id)?.isError ?? false),
+        groups.some((def) => data.get(def.id)?.isError ?? false),
     };
-  }, [data, rosterIds, reachable, definitions.isPending, definitions.isError]);
+  }, [
+    data,
+    groups,
+    rosterIds,
+    reachable,
+    definitions.isPending,
+    definitions.isError,
+  ]);
 }

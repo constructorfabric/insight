@@ -30,7 +30,7 @@ import {
   attentionSummary,
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
-import { GROUPS } from "@/lib/insight/groups";
+import { GROUPS, visibleGroups } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
 import { useVisibilityPolicy } from "@/queries/identity-me";
@@ -68,13 +68,15 @@ import {
 import {
   lensEntry,
   sectionMetricKeys,
+  visibleDirections,
+  visibleSections,
   type ConcentrationFraming,
   type LensConfig,
   type SectionSpec,
 } from "@/lib/portal/lens-configs";
-import { DIRECTIONS } from "@/lib/portal/nav-model";
 import { buildTrendData, pickTrendBucket } from "@/lib/portal/trend-data";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
@@ -92,7 +94,7 @@ const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
  * (rule 6), and no individual is ever named (rule 10).
  */
 export function DomainLensView({
-  config,
+  config: declared,
   gridKeys: gridKeysProp,
 }: {
   config: LensConfig;
@@ -108,6 +110,15 @@ export function DomainLensView({
   gridKeys?: readonly string[];
 }) {
   const { period, dateRange } = usePortalPeriod();
+
+  // What this install shows, not what the registry declares: a gated metric
+  // takes its tile with it, and a section left with none of its own is gone
+  // rather than drawn empty (`visibleSections`).
+  const showPlanned = usePortalShowPlanned();
+  const config = useMemo(
+    () => visibleSections(declared, showPlanned),
+    [declared, showPlanned]
+  );
 
   const orgScope = useOrgScope();
   const { isFlat } = useVisibilityPolicy();
@@ -552,6 +563,7 @@ function CoverageLevelsSection({
   personIdByEntity: Map<string, string>;
 }) {
   const [openLevel, setOpenLevel] = useState<number | null>(null);
+  const showPlanned = usePortalShowPlanned();
   const { distribution, parts, people, thin, isPending, isError } =
     useScopeCoverage(memberIds);
   if (isPending) return <Pending label="Reading coverage…" />;
@@ -567,7 +579,9 @@ function CoverageLevelsSection({
   const counted = distribution.counted;
   if (counted === 0) return null;
 
-  const partCount = GROUPS.length;
+  // The same sections the coverage hook counted, or the denominator would name
+  // sections this install does not show.
+  const partCount = visibleGroups(showPlanned).length;
   const levels = [...distribution.byLevel.entries()].sort(
     (a, b) => b[0] - a[0]
   );
@@ -713,6 +727,8 @@ function CoverageLevelPeople({
   nameByEntity: Map<string, string>;
   personIdByEntity: Map<string, string>;
 }) {
+  // Every title, not just the visible ones: this only resolves ids that are
+  // already in a person's coverage states, which the hook gated on its way in.
   const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
   const rows = [...people].sort((a, b) =>
     (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
@@ -1452,23 +1468,30 @@ function DirectionCardsSection({
   memberIds: readonly string[];
 }) {
   const { openDirection } = usePortalNavActions();
-  const cards = DIRECTIONS.map((d) => {
-    const entry = lensEntry(d.id, "Overview");
-    if (!entry || "comingSoon" in entry) return null;
-    const headline = entry.sections.find(
-      (s): s is Extract<SectionSpec, { kind: "headline" }> =>
-        s.kind === "headline"
-    );
-    if (!headline) return null;
-    const keys =
-      variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
-    const observed = familyObserved(
-      grid.byKey,
-      sectionMetricKeys(entry),
-      memberIds
-    );
-    return { id: d.id, name: d.name, keys, observed };
-  }).filter((c): c is NonNullable<typeof c> => c != null);
+  const showPlanned = usePortalShowPlanned();
+  // The same directions the pane lists. A card for a direction the menu does
+  // not offer is a dead end that also announces a source is missing — which is
+  // exactly what an install marking that direction planned has said not to say.
+  const cards = visibleDirections(showPlanned)
+    .map((d) => {
+      const entry = lensEntry(d.id, "Overview");
+      if (!entry || "comingSoon" in entry) return null;
+      const gated = visibleSections(entry, showPlanned);
+      const headline = gated.sections.find(
+        (s): s is Extract<SectionSpec, { kind: "headline" }> =>
+          s.kind === "headline"
+      );
+      if (!headline) return null;
+      const keys =
+        variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
+      const observed = familyObserved(
+        grid.byKey,
+        sectionMetricKeys(gated),
+        memberIds
+      );
+      return { id: d.id, name: d.name, keys, observed };
+    })
+    .filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
 
   const go = (dir: string) => openDirection(dir, "Overview");
