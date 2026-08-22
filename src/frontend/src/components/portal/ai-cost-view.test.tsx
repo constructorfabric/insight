@@ -199,6 +199,8 @@ describe("AiCostView", () => {
   });
 
   it("omits the actual figure when the metric is served but nobody has a reading", () => {
+    // Served and empty is not the same as absent, and it is the state the daily
+    // metric reaches whenever the window holds no reading for these people.
     mocks.grid.byKey = new Map([
       ...mocks.grid.byKey,
       [
@@ -207,6 +209,13 @@ describe("AiCostView", () => {
           format: "currency",
           unit: "USD",
         } as never),
+      ],
+    ]);
+    mocks.tools.byKey = new Map([
+      ...mocks.tools.byKey,
+      [
+        "ai.daily_approximate_extra_usage_cost",
+        toolBreakdown("ai.daily_approximate_extra_usage_cost", []),
       ],
     ]);
     render(<AiCostView item={null} />);
