@@ -303,7 +303,8 @@ def parse_org_headcount(env: Mapping[str, str]) -> int:
                 f"{ORG_HEADCOUNT_ENV}={headcount} is over the {MAX_ORG_HEADCOUNT}-person "
                 "ceiling. Every extra person multiplies the per-day rows the silver "
                 "generators write, so the ceiling is deliberate; raise "
-                "`config.MAX_ORG_HEADCOUNT` if a stand really needs more.",
+                "`config.MAX_ORG_HEADCOUNT` if a stand really needs more — and check the "
+                "manifest still fits a ConfigMap (see the seeder's tests).",
             )
         )
     return headcount
