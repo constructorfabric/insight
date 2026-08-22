@@ -139,7 +139,7 @@ beforeEach(() => {
   // the potential one, which is the relationship the two figures always have.
   mocks.grid.byKey = new Map([
     ["ai.cost", metric("ai.cost", [[pid("a"), 100], [pid("b"), 50], [pid("c"), 0], [pid("d"), 0]], { format: "currency", unit: "USD" } as never)],
-    ["ai.extra_usage_cost", metric("ai.extra_usage_cost", [[pid("a"), 8], [pid("b"), 4], [pid("c"), 0], [pid("d"), 0]], { format: "currency", unit: "USD" } as never)],
+    ["ai.daily_approximate_extra_usage_cost", metric("ai.daily_approximate_extra_usage_cost", [[pid("a"), 8], [pid("b"), 4], [pid("c"), 0], [pid("d"), 0]], { format: "currency", unit: "USD" } as never)],
     ["ai.active_days", metric("ai.active_days", [[pid("a"), 5], [pid("b"), 3], [pid("c"), 1], [pid("d"), 0]])],
     ["ai.accepted_lines", metric("ai.accepted_lines", [[pid("a"), 700], [pid("b"), 200], [pid("c"), 100], [pid("d"), 0]])],
   ]);
@@ -147,7 +147,7 @@ beforeEach(() => {
   mocks.tools.byKey = new Map([
     ["ai.cost", toolBreakdown("ai.cost", [[pid("a"), "claude_code", 100], [pid("b"), "claude_code", 50]])],
     // `claude`, the code seat billing actually reports — not `claude_code`.
-    ["ai.extra_usage_cost", toolBreakdown("ai.extra_usage_cost", [
+    ["ai.daily_approximate_extra_usage_cost", toolBreakdown("ai.daily_approximate_extra_usage_cost", [
       [pid("a"), "claude", 8],
       [pid("b"), "claude", 4],
     ])],
@@ -188,7 +188,7 @@ describe("AiCostView", () => {
 
   it("omits the actual figure entirely when no seat data reaches us", () => {
     const drop = <T,>(m: Map<string, T>) =>
-      new Map([...m].filter(([key]) => key !== "ai.extra_usage_cost"));
+      new Map([...m].filter(([key]) => key !== "ai.daily_approximate_extra_usage_cost"));
     mocks.grid.byKey = drop(mocks.grid.byKey);
     mocks.tools.byKey = drop(mocks.tools.byKey);
     render(<AiCostView item={null} />);

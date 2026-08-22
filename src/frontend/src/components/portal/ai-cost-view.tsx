@@ -44,7 +44,9 @@ import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 const COST_KEY = "ai.cost";
-const ACTUAL_COST_KEY = "ai.extra_usage_cost";
+// INVARIANT: the per-day metric. The cumulative one is anchored to the first day
+// of its billing month and returns nothing for a window inside a month.
+const ACTUAL_COST_KEY = "ai.daily_approximate_extra_usage_cost";
 const LINES_KEY = "ai.accepted_lines";
 const DAYS_KEY = "ai.active_days";
 /** Grid columns for the cost-leaders scan. */
@@ -103,8 +105,8 @@ const PLANNED_KEYS = new Set(PLANNED_SLICES.map((d) => d.key));
  *  - only Claude Code is usage-metered → the cost total is Claude-only;
  *  - ChatGPT/Codex report usage but no per-user cost (subscription / token
  *    billing isn't ingested), so their cost reads "not tracked", never $0;
- *  - actual cost is a seat-month fact, so it does not narrow to a period
- *    shorter than a month while the potential figure beside it does.
+ *  - actual cost is the vendor's monthly bill spread over the days it was
+ *    spent, so it is exact in sum over a month and approximate within it.
  */
 export function AiCostView({ item }: { item: string | null }) {
   const cohortLabel = useCohortLabel();
@@ -444,8 +446,8 @@ export function AiCostView({ item }: { item: string | null }) {
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and
           Codex (token-based) report usage but no per-user cost yet — shown as
-          “not tracked”, not $0. Actual cost is a monthly figure, so a period
-          shorter than a month shows the whole month’s billed amount.
+          “not tracked”, not $0. Actual cost is the vendor’s monthly bill spread
+          over the days it was spent — exact over a month, approximate on a day.
         </p>
       </section>
 
@@ -599,8 +601,8 @@ function UnitSection({
       )}
       {dim && !dim.planned ? (
         <p className="text-xs text-muted-foreground">
-          Costs are Claude Code only (the usage-metered tool); actual cost is a
-          monthly figure.
+          Costs are Claude Code only (the usage-metered tool); actual cost is
+          spread over the days it was spent.
         </p>
       ) : null}
     </section>
