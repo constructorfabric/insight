@@ -608,8 +608,11 @@ streams:
         request_parameters:
           repo: "{{ stream_partition.repo_clone_url }}"
           page_size: "500"
-          include_patch: "true"
-          max_patch_bytes: "1048576"
+          # The diff text is not stored: it arrives truncated past
+          # max_patch_bytes and nothing downstream reads it, while producing it
+          # is the proxy's most expensive work — every page fetches the blobs
+          # behind each diff. Filenames, statuses and line counts are unaffected.
+          include_patch: "false"
       record_selector:
         type: RecordSelector
         extractor:
