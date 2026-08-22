@@ -3,27 +3,29 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Duration, Utc};
 
 #[derive(Debug, Clone)]
-pub struct StreamState {
-    pub namespace: String,
-    #[expect(dead_code, reason = "names the source stream; only the fold is read today")]
-    pub stream: String,
-    pub rows: u64,
-    /// `max(_airbyte_extracted_at)` over the stream. A stream holding no rows
-    /// answers with the Unix epoch rather than null, so the epoch is a sentinel
-    /// here and never a real extract.
-    pub newest_extract: Option<DateTime<Utc>>,
+pub(crate) struct StreamState {
+    pub(crate) namespace: String,
+    #[expect(
+        dead_code,
+        reason = "names the source stream; only the fold is read today"
+    )]
+    pub(crate) stream: String,
+    pub(crate) rows: u64,
+    // INVARIANT: an empty stream answers `max(_airbyte_extracted_at)` with the
+    // Unix epoch rather than null, so the epoch is a sentinel, never an extract.
+    pub(crate) newest_extract: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectorState {
-    pub namespace: String,
-    pub streams: usize,
-    pub populated_streams: usize,
-    pub rows: u64,
-    pub last_write: Option<DateTime<Utc>>,
+pub(crate) struct ConnectorState {
+    pub(crate) namespace: String,
+    pub(crate) streams: usize,
+    pub(crate) populated_streams: usize,
+    pub(crate) rows: u64,
+    pub(crate) last_write: Option<DateTime<Utc>>,
 }
 
-pub fn summarize(streams: &[StreamState]) -> Vec<ConnectorState> {
+pub(crate) fn summarize(streams: &[StreamState]) -> Vec<ConnectorState> {
     let mut by_namespace: BTreeMap<&str, ConnectorState> = BTreeMap::new();
 
     for s in streams {
@@ -52,25 +54,37 @@ fn extract_written(stream: &StreamState) -> Option<DateTime<Utc>> {
         .filter(|t| *t != DateTime::<Utc>::UNIX_EPOCH)
 }
 
-/// Each connector declares its own pair; there is no instance-wide window.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
-pub struct Thresholds {
-    pub warn_after: Duration,
-    pub error_after: Duration,
+#[allow(
+    dead_code,
+    reason = "the classifier is unused until the declared windows have a runtime source"
+)]
+pub(crate) struct Thresholds {
+    pub(crate) warn_after: Duration,
+    pub(crate) error_after: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
-pub enum Freshness {
+#[allow(
+    dead_code,
+    reason = "the classifier is unused until the declared windows have a runtime source"
+)]
+pub(crate) enum Freshness {
     NeverReceived,
     Fresh,
     Warn,
     Stale,
 }
 
-#[allow(dead_code, reason = "the classifier is unused until the declared windows have a runtime source")]
-pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<Utc>) -> Freshness {
+#[allow(
+    dead_code,
+    reason = "the classifier is unused until the declared windows have a runtime source"
+)]
+pub(crate) fn freshness(
+    state: &ConnectorState,
+    thresholds: Thresholds,
+    now: DateTime<Utc>,
+) -> Freshness {
     let Some(last_write) = state.last_write else {
         return Freshness::NeverReceived;
     };
@@ -86,34 +100,27 @@ pub fn freshness(state: &ConnectorState, thresholds: Thresholds, now: DateTime<U
     }
 }
 
-pub const BRONZE_PREFIX: &str = "bronze_";
+const BRONZE_PREFIX: &str = "bronze_";
 
 const EXTRACT_COLUMN: &str = "_airbyte_extracted_at";
 
-pub fn connector_name(namespace: &str) -> &str {
+pub(crate) fn connector_name(namespace: &str) -> &str {
     namespace.strip_prefix(BRONZE_PREFIX).unwrap_or(namespace)
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("unsafe identifier: {0}")]
-pub struct UnsafeIdentifier(pub String);
-
-/// Table names are spliced, not bound: splicing stays safe only while every
-/// name is a plain identifier.
-pub fn newest_extract_sql(
-    streams: &[(String, String)],
-) -> Result<Option<String>, UnsafeIdentifier> {
-    if streams.is_empty() {
-        return Ok(None);
-    }
-
+// SAFETY: table names are spliced, not bound, so a name that is not a plain
+// identifier is dropped rather than quoted.
+pub(crate) fn newest_extract_sql(streams: &[(String, String)]) -> Option<String> {
     let mut selects = Vec::with_capacity(streams.len());
 
     for (namespace, stream) in streams {
-        for name in [namespace, stream] {
-            if !is_plain_identifier(name) {
-                return Err(UnsafeIdentifier(name.clone()));
-            }
+        if !is_plain_identifier(namespace) || !is_plain_identifier(stream) {
+            tracing::warn!(
+                namespace = %namespace,
+                stream = %stream,
+                "skipping a bronze relation whose name is not a plain identifier"
+            );
+            continue;
         }
 
         selects.push(format!(
@@ -123,24 +130,36 @@ pub fn newest_extract_sql(
         ));
     }
 
-    Ok(Some(selects.join(" UNION ALL ")))
+    if selects.is_empty() {
+        return None;
+    }
+
+    Some(selects.join(" UNION ALL "))
 }
 
 fn is_plain_identifier(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Inactive parts are excluded; a merged-away part would otherwise count twice.
+// INVARIANT: inactive parts are excluded; a merged-away part would otherwise
+// count twice.
 const STREAM_CATALOGUE_SQL: &str = "\
     SELECT c.database AS namespace, \
            c.table AS stream, \
            p.rows AS rows \
     FROM system.columns AS c \
+    INNER JOIN system.tables AS t \
+        ON t.database = c.database AND t.name = c.table \
     LEFT JOIN ( \
         SELECT database, table, sum(rows) AS rows \
-        FROM system.parts WHERE active GROUP BY database, table \
+        FROM system.parts \
+        WHERE active AND startsWith(database, ?) \
+        GROUP BY database, table \
     ) AS p ON p.database = c.database AND p.table = c.table \
-    WHERE c.name = ? AND startsWith(c.database, ?) \
+    WHERE c.name = ? \
+      AND startsWith(c.database, ?) \
+      AND t.engine LIKE '%MergeTree' \
+      AND c.table NOT LIKE '.inner%' \
     ORDER BY namespace, stream";
 
 #[derive(Debug, clickhouse::Row, serde::Deserialize)]
@@ -158,11 +177,12 @@ struct ExtractRow {
     newest_extract: DateTime<Utc>,
 }
 
-pub async fn read_stream_states(
+pub(crate) async fn read_stream_states(
     ch: &insight_clickhouse::Client,
 ) -> Result<Vec<StreamState>, ReadError> {
     let catalogue: Vec<CatalogueRow> = ch
         .query(STREAM_CATALOGUE_SQL)
+        .bind(BRONZE_PREFIX)
         .bind(EXTRACT_COLUMN)
         .bind(BRONZE_PREFIX)
         .fetch_all()
@@ -173,7 +193,7 @@ pub async fn read_stream_states(
         .map(|r| (r.namespace.clone(), r.stream.clone()))
         .collect();
 
-    let Some(sql) = newest_extract_sql(&refs)? else {
+    let Some(sql) = newest_extract_sql(&refs) else {
         return Ok(Vec::new());
     };
 
@@ -197,11 +217,9 @@ pub async fn read_stream_states(
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ReadError {
+pub(crate) enum ReadError {
     #[error(transparent)]
     Clickhouse(#[from] clickhouse::error::Error),
-    #[error(transparent)]
-    Identifier(#[from] UnsafeIdentifier),
 }
 
 #[cfg(test)]
@@ -225,7 +243,7 @@ mod tests {
 
     #[test]
     fn an_instance_with_no_bronze_streams_yields_no_statement_to_run() {
-        assert_eq!(newest_extract_sql(&[]), Ok(None));
+        assert_eq!(newest_extract_sql(&[]), None);
     }
 
     #[test]
@@ -234,7 +252,6 @@ mod tests {
             stream_ref("bronze_example", "alpha"),
             stream_ref("bronze_example", "beta"),
         ])
-        .unwrap()
         .unwrap();
 
         assert_eq!(sql.matches("UNION ALL").count(), 1);
@@ -243,14 +260,44 @@ mod tests {
     }
 
     #[test]
-    fn a_stream_name_that_is_not_a_plain_identifier_is_refused() {
-        let refused =
-            newest_extract_sql(&[stream_ref("bronze_example", "alpha`; DROP TABLE x --")]);
+    fn a_stream_name_that_is_not_a_plain_identifier_is_skipped() {
+        let sql = newest_extract_sql(&[
+            stream_ref("bronze_example", "alpha`; DROP TABLE x --"),
+            stream_ref("bronze_example", "beta"),
+        ])
+        .unwrap();
 
+        assert!(!sql.contains("DROP TABLE"));
+        assert!(sql.contains("FROM `bronze_example`.`beta`"));
+        assert_eq!(sql.matches("UNION ALL").count(), 0);
+    }
+
+    #[test]
+    fn an_instance_whose_every_stream_name_is_unsafe_yields_no_statement() {
         assert_eq!(
-            refused,
-            Err(UnsafeIdentifier("alpha`; DROP TABLE x --".to_owned()))
+            newest_extract_sql(&[stream_ref("bronze_example", "a-b")]),
+            None
         );
+    }
+
+    #[test]
+    fn only_the_bronze_schemas_are_aggregated_for_row_counts() {
+        let parts = STREAM_CATALOGUE_SQL
+            .split_once("LEFT JOIN")
+            .expect("the catalogue reads part counts through a join")
+            .1;
+
+        assert!(parts.contains("startsWith(database, ?)"));
+    }
+
+    #[test]
+    fn relations_that_hold_no_parts_of_their_own_are_not_reported_as_streams() {
+        assert!(STREAM_CATALOGUE_SQL.contains("engine LIKE '%MergeTree'"));
+    }
+
+    #[test]
+    fn the_inner_tables_of_materialized_views_are_not_reported_as_streams() {
+        assert!(STREAM_CATALOGUE_SQL.contains("NOT LIKE '.inner%'"));
     }
 
     fn stream(
