@@ -92,10 +92,18 @@ impl Gear for AnalyticsApiGear {
 
         let contract_ch = ch.clone();
 
+        let anthropic = infra::anthropic::AnthropicClient::new(
+            &cfg.ai_assist.api_base,
+            std::time::Duration::from_secs(cfg.ai_assist.request_timeout_secs),
+        )?;
+        let ai_calls = Arc::new(tokio::sync::Semaphore::new(cfg.ai_assist.max_concurrent));
+
         let state = api::AppState {
             db,
             ch,
             identity,
+            anthropic,
+            ai_calls,
             config: cfg,
         };
 

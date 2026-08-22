@@ -32,6 +32,10 @@ pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "three table definitions read better together than split across helpers"
+    )]
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .create_table(

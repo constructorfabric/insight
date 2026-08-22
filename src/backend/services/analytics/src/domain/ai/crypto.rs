@@ -64,7 +64,10 @@ pub fn open(
     sealed: &Sealed,
 ) -> anyhow::Result<Zeroizing<String>> {
     if sealed.nonce.len() != NONCE_BYTES {
-        anyhow::bail!("stored nonce is {} bytes, expected {NONCE_BYTES}", sealed.nonce.len());
+        anyhow::bail!(
+            "stored nonce is {} bytes, expected {NONCE_BYTES}",
+            sealed.nonce.len()
+        );
     }
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
