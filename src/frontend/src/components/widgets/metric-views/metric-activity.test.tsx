@@ -348,11 +348,8 @@ describe("MetricActivity", () => {
   });
 
   it("reaches the current day, and draws it as not collected yet", () => {
-    // The period a total was measured on ends yesterday. A strip draws each day
-    // on its own and can say a day is incomplete, so it asks for today too —
-    // otherwise the day the sources now deliver is never on screen. The window
-    // is taken from the clock rather than pinned, because "yesterday" is what
-    // decides whether it is widened at all.
+    // Taken from the clock, not pinned: "yesterday" is what decides whether the
+    // window is widened at all.
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);

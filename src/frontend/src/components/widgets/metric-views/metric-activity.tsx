@@ -74,9 +74,8 @@ export function MetricActivity({
 }) {
   const grain = finestGrain(metric);
   const declared = useDeclaredMetricDimensions();
-  // The strip draws one day at a time and marks an incomplete one, so it asks
-  // for the current day. The period total beside it keeps the bound it was
-  // measured on.
+  // The strip marks an incomplete day, so it may ask for today. Its own request
+  // keeps that out of the period total beside it.
   const base = metric.selection
     ? evidenceSelection(
         metric.selection,
@@ -380,8 +379,8 @@ function DayStrip({
   columns: NonNullable<ReturnType<typeof useMetricDetail>["data"]>["columns"];
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
-  // INVARIANT: the same widening the drilldown asked for, or the calendar would
-  // stop a day short of the readings it draws.
+  // INVARIANT: the same widening the drilldown asked for, or the calendar stops
+  // a day short of the readings it draws.
   const selected = metric.selection?.period;
   const period = selected ? throughToday(selected) : undefined;
   const { collectedThrough, revisionWindowDays } = useCollectedThrough(

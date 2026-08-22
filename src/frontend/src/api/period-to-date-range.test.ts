@@ -159,8 +159,7 @@ describe("throughToday", () => {
   });
 
   it("refuses to extend past the request cap", () => {
-    // Exactly at the cap and ending yesterday: one more day would be rejected
-    // by the API, so the strip keeps the window it can actually ask for.
+    // At the cap and ending yesterday — one more day would be rejected.
     const from = new Date(2026, 5, 14);
     from.setDate(from.getDate() - (MAX_DATE_RANGE_DAYS - 1));
     const range = { from: toISODate(from), to: "2026-06-14" };

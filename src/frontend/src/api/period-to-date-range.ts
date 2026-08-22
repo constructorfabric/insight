@@ -111,14 +111,8 @@ export function periodToDateRange(period: PeriodValue): DateRange {
 
 /**
  * The same range, reaching today, for a surface that draws one day at a time.
- *
- * Presets end yesterday because a partial day must not enter a period total.
- * A strip draws each day on its own and marks an incomplete one, so it can ask
- * for the current day without moving the bound the totals are measured on.
- *
- * Only a range that stops exactly at yesterday is extended: one already
- * reaching today, one deliberately left in the past, and one that would outgrow
- * the request cap all come back unchanged.
+ * Only a range stopping exactly at yesterday is extended, so a window left in
+ * the past stays there and one at the request cap stays answerable.
  */
 export function throughToday(range: DateRange): DateRange {
   const today = localToday();
