@@ -617,8 +617,6 @@ function PersonSectionsNav() {
                 <SidebarMenuButton
                   isActive={active === g.id}
                   className={
-                    // Same demoted weight a planned ItemButton gets — the
-                    // Person pane has no "Planned" group to move the row into.
                     personSectionPlanned(g.id) ? "text-muted-foreground" : undefined
                   }
                   onClick={() => {

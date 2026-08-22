@@ -137,13 +137,13 @@ them as still in development, with the `nav` chart value rendered into
 ```yaml
 nav:
   hide:
-    - "zone:scorecard"                          # a rail zone
-    - "zone:aicost/item:idle-seats"             # a pane item
-    - "zone:directions/dir:sales"               # a whole direction
-    - "zone:directions/dir:dev/lens:git-output" # one lens, by URL slug
-    - "zone:person/section:git_output"          # a Person-zone section
+    - "zone:scorecard"
+    - "zone:aicost/item:idle-seats"
+    - "zone:directions/dir:sales"
+    - "zone:directions/dir:dev/lens:git-output"
+    - "zone:person/section:git_output"
   planned:
-    - "zone:reports/item:report-builder"        # same path forms as hide
+    - "zone:reports/item:report-builder"
 ```
 
 A hidden entry disappears from every menu and from default/deep-link

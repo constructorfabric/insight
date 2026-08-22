@@ -1,9 +1,3 @@
-/**
- * The install's nav policy applied across the navigation model: every nesting
- * level hides, `nav.planned` entries demote exactly like readiness-marked
- * ones, and the full catalog stays available where labels and telemetry read
- * it.
- */
 import { describe, expect, it } from "vitest";
 
 import { visibleDirections, visibleLenses } from "./lens-configs";
@@ -218,8 +212,6 @@ describe("directions under the install policy", () => {
 
 describe("what the install policy must NOT touch", () => {
   it("leaves the full item catalog for labels and telemetry", () => {
-    // zoneItems is deliberately unfiltered — screen labels and the usage
-    // catalog enumerate everything the model knows, hidden or not.
     expect(zoneItems("overview").map((i) => i.id)).toContain("trend");
   });
 });

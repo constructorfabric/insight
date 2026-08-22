@@ -1,43 +1,10 @@
 import { runtimeConfig } from "@/lib/runtime-config";
 
-/**
- * Per-installation navigation policy, read from `nav` in `/config.js`. Two
- * lists of typed paths name entries at any nesting level:
- *
- * - `nav.hide`    — gone entirely: not in any menu, not in the "Planned"
- *                   group, deaf to the reader's show-planned choice. The
- *                   operator's cut, not roadmap communication.
- * - `nav.planned` — this install marks the entry as still in development:
- *                   it behaves exactly like a `readiness`-marked entry in
- *                   code — demoted to the "Planned" group and toggled by the
- *                   reader's "Show planned sections" switch. An entry the
- *                   code already marks keeps its code tier.
- *
- * `hide` outranks `planned`: a path in both is simply gone. Path forms:
- *
- * - `zone:<id>`                              — a rail zone
- * - `zone:<id>/item:<id>`                    — a pane item of a theme /
- *                                              People / Manage zone
- * - `zone:directions/dir:<id>`               — a whole direction
- * - `zone:directions/dir:<id>/lens:<slug>`   — one lens (its URL slug)
- * - `zone:person/section:<id>`               — a Person-zone section
- *                                              (metric-group id)
- *
- * A path that matches nothing is ignored (malformed ones warn), so a config
- * outliving a rename degrades to a no-op rather than a crash.
- *
- * Presentation only, not authorization: a hand-typed URL may still render
- * the surface behind a hidden entry, and the server refuses on its own
- * regardless of what the menu draws (same stance as `adminOnly`).
- */
 export interface NavPathSet {
   zones: ReadonlySet<string>;
-  /** `<zoneId>/<itemId>` — item ids are unique only within their zone. */
   items: ReadonlySet<string>;
   directions: ReadonlySet<string>;
-  /** `<directionId>/<lensSlug>` — lenses are named by their URL slug. */
   lenses: ReadonlySet<string>;
-  /** Person-zone section ids — metric-group ids such as `git_output`. */
   personSections: ReadonlySet<string>;
 }
 
@@ -94,11 +61,10 @@ function parsePath(raw: string): NavPath | null {
   return null;
 }
 
-/** Parse one path list; anything unreadable warns (naming the field) and is skipped. */
 export function parseNavPaths(raw: unknown, field: string): NavPathSet {
   if (raw == null) return EMPTY_NAV_PATHS;
   if (!Array.isArray(raw)) {
-    console.warn(`[nav.${field}] ignored: expected a list of paths, got`, raw);
+    console.warn("[nav] ignored: expected a list of paths", { field, raw });
     return EMPTY_NAV_PATHS;
   }
 
@@ -110,7 +76,7 @@ export function parseNavPaths(raw: unknown, field: string): NavPathSet {
   for (const entry of raw) {
     const path = typeof entry === "string" ? parsePath(entry) : null;
     if (!path) {
-      console.warn(`[nav.${field}] ignored invalid entry:`, entry);
+      console.warn("[nav] ignored invalid entry", { field, entry });
       continue;
     }
     switch (path.kind) {
@@ -134,7 +100,6 @@ export function parseNavPaths(raw: unknown, field: string): NavPathSet {
   return { zones, items, directions, lenses, personSections };
 }
 
-/** Parse the raw `nav` config value into a full policy. */
 export function parseNavPolicy(nav: unknown): InstanceNavPolicy {
   if (nav == null) return EMPTY_NAV_POLICY;
   if (typeof nav !== "object" || Array.isArray(nav)) {
@@ -150,7 +115,6 @@ export function parseNavPolicy(nav: unknown): InstanceNavPolicy {
 
 let active: InstanceNavPolicy | undefined;
 
-/** This install's policy — parsed from `/config.js` once per page load. */
 export function navPolicy(): InstanceNavPolicy {
   active ??= parseNavPolicy(runtimeConfig().nav);
   return active;
@@ -224,11 +188,6 @@ export function personSectionPlanned(
   return policy.planned.personSections.has(sectionId);
 }
 
-/**
- * Whether the Person pane lists a section: hidden ones never, planned ones
- * only for a reader who opted into planned sections. The Person pane has no
- * demoted "Planned" group — a planned section renders in place, muted.
- */
 export function personSectionVisible(
   sectionId: string,
   showPlanned: boolean,

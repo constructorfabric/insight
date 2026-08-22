@@ -210,11 +210,6 @@ export function partitionByReadiness<T extends { readiness?: Readiness }>(
   return { live, planned };
 }
 
-/**
- * The install's `nav.planned` marking, folded into the same field the code
- * marks: downstream (partitioning, defaults) then needs no second concept.
- * A tier the code already assigned stays — the config cannot promote.
- */
 function withConfigReadiness(
   zoneId: string,
   item: PaneItem,
@@ -225,12 +220,6 @@ function withConfigReadiness(
   return { ...item, readiness: "planned" };
 }
 
-/**
- * A theme zone's pane groups through this install's policy: hidden items are
- * gone, `nav.planned` ones read as readiness-marked. A group whose every item
- * is hidden drops with them: an empty heading is a dead end, the same rule
- * `visibleDirections` applies to a direction with no lenses left.
- */
 export function zoneSections(
   zoneId: string,
   policy: InstanceNavPolicy = navPolicy(),
@@ -341,7 +330,6 @@ const FLAT_PEOPLE_ITEMS: readonly PaneItem[] = [
   { id: "employees", label: "Roster", icon: Users },
 ];
 
-/** The People pane for this deployment's shape, through the install policy. */
 export function peopleItemsFor(
   isFlat: boolean,
   policy: InstanceNavPolicy = navPolicy(),
@@ -381,38 +369,16 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
 
 /* ── Zone item resolution ────────────────────────────────────────────── */
 
-/**
- * Every pane item a zone lists, in display order, planned and instance-hidden
- * ones included: the full catalog, for labelling and telemetry. Navigation
- * reads the filtered accessors ({@link zoneSections}, {@link resolveZoneItem},
- * {@link peopleItemsFor}, {@link manageItemsFor}) instead.
- */
 export function zoneItems(zoneId: string): readonly PaneItem[] {
   if (zoneId === "people") return PEOPLE_ITEMS;
   if (zoneId === "manage") return MANAGE_ITEMS;
   return (ZONE_SECTIONS[zoneId] ?? []).flatMap((g) => g.items);
 }
 
-/**
- * A zone's first BUILT entry, install policy ignored — a STABLE structural
- * key (overview-configs names its registry entry with it), not what the pane
- * opens on. Navigation falls back through {@link resolveZoneItem}, which does
- * honor the policy.
- */
 export function defaultZoneItem(zoneId: string): string | null {
   return zoneItems(zoneId).find((i) => i.readiness == null)?.id ?? null;
 }
 
-/**
- * The item a zone is showing: the one the URL names if this zone lists it and
- * this install shows it, else the first entry the pane would render — built,
- * not hidden, and not demoted by `nav.planned` (a planned row is clickable
- * but is never what a bare zone opens on). Pane and content resolve through
- * here so the menu marks the view on screen — a bare `?zone=` used to
- * highlight nothing while the content rendered a default, an `item` left
- * behind by another zone matched nothing here while that zone's view fell
- * back, and a deep link into a hidden item lands the same way.
- */
 export function resolveZoneItem(
   zoneId: string,
   item: string | null,

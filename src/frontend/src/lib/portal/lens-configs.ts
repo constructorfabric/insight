@@ -95,11 +95,6 @@ export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
 }
 
-/**
- * Whether a lens reads as roadmap: a ComingSoon registry entry, or this
- * install marking it (or its whole direction) as planned. Roadmap lenses
- * render muted and hide for a reader who opted out of planned sections.
- */
 export function lensRoadmap(
   direction: Direction,
   lens: string,
@@ -113,10 +108,6 @@ export function lensRoadmap(
   );
 }
 
-/**
- * A direction's lenses in pane order, minus the roadmap ones a reader opted
- * out of and the ones this install hides.
- */
 export function visibleLenses(
   direction: Direction,
   showPlanned: boolean,
