@@ -33,6 +33,7 @@ IDP_SOURCE_TYPE=""
 WINDOW_DAYS=""
 ANCHOR_DATE=""
 ORG_HEADCOUNT=""
+MANIFEST_OUT=""
 CROSS_TENANT="0"
 FORCE="0"
 DRY_RUN=0
@@ -92,6 +93,7 @@ Output:
       --no-follow          apply the Job without following its logs
   -h, --help               this text
 
+      --manifest-out <path>  write the run's manifest here
   A completed --step all run also publishes the manifest to
   configmap/seed-stand-manifest, which outlives the Job's log.
 
@@ -142,6 +144,7 @@ while [[ $# -gt 0 ]]; do
     --days)              WINDOW_DAYS="${2:?--days needs a value}"; shift 2 ;;
     --anchor)            ANCHOR_DATE="${2:?--anchor needs a value}"; shift 2 ;;
     --org-headcount)     ORG_HEADCOUNT="${2:?--org-headcount needs a value}"; shift 2 ;;
+    --manifest-out)      MANIFEST_OUT="${2:?--manifest-out needs a value}"; shift 2 ;;
     --deadline)          DEADLINE_SECONDS="${2:?--deadline needs a value}"; shift 2 ;;
     --cross-tenant)      CROSS_TENANT="1"; shift ;;
     --force)             FORCE="1"; shift ;;
@@ -497,6 +500,33 @@ export SEED_CROSS_TENANT="$CROSS_TENANT"
 export SEED_FORCE="$FORCE"
 # Allowed to be empty: the seeder has its own default window.
 export SEED_WINDOW_DAYS="$WINDOW_DAYS"
+
+# The manifest is a pure function of this environment, so it is computed HERE
+# and the Job is told the same anchor rather than resolving one of its own.
+# INVARIANT: an unpinned anchor resolves per process — the pod and this script
+# would disagree across a UTC midnight and the manifest would describe a window
+# the rows do not sit in.
+# INVARIANT: these are the manifest-relevant variables seed-job.yaml.tpl gives
+# the container, and must track it; publish_manifest_configmap re-checks the
+# result against what the pod emitted.
+compute_local_manifest() {
+  need uv
+  need jq
+  env -i PATH="$PATH" HOME="${HOME:-/tmp}" \
+    DEV_USER_EMAIL="$DEV_EMAIL" \
+    TENANT_DEFAULT_ID="$TENANT" \
+    IDP_SOURCE_TYPE="$IDP_SOURCE_TYPE" \
+    SEED_CROSS_TENANT_FIXTURE="$CROSS_TENANT" \
+    SEED_SERVICE_PRINCIPALS="false" \
+    SEED_DAYS="$WINDOW_DAYS" \
+    SEED_ANCHOR_DATE="$ANCHOR_DATE" \
+    SEED_ORG_HEADCOUNT="$ORG_HEADCOUNT" \
+    uv run --project "$SCRIPT_DIR" --quiet insight-seed manifest
+}
+
+LOCAL_MANIFEST="$(compute_local_manifest)" \
+  || die "could not compute the seed manifest from this tree; uv and the seeder package are required."
+ANCHOR_DATE="$(jq -r '.anchor_date' <<<"$LOCAL_MANIFEST")"
 export SEED_ANCHOR_DATE="$ANCHOR_DATE"
 # Empty means the committed roster. Resolved here rather than in the template:
 # WORKAROUND: GNU envsubst emits `${VAR:-default}` verbatim, so a default
@@ -561,11 +591,29 @@ clear_manifest_configmap() {
     || echo "ERROR: could not clear configmap/$MANIFEST_CONFIGMAP; a reader may still see the previous seed." >&2
 }
 
+# The one document every consumer gets. The pod's wins when the run emitted
+# one — it describes the code that actually ran; the locally computed document
+# stands in when it did not, and a difference between them means the image is
+# not built from this checkout.
+resolve_manifest() {
+  local pod=""
+  [[ -z "$SEED_MANIFEST_SENTINEL" ]] || pod="${SEED_MANIFEST_SENTINEL#SEED_MANIFEST_JSON: }"
+  if [[ -z "$pod" ]]; then
+    printf '%s' "$LOCAL_MANIFEST"
+    return 0
+  fi
+  if ! diff -q <(jq -S . <<<"$LOCAL_MANIFEST") <(jq -S . <<<"$pod") >/dev/null 2>&1; then
+    echo "ERROR: this tree computes a different manifest than the seed Job emitted —" >&2
+    echo "       the image it ran is not built from this checkout. Using the Job's." >&2
+  fi
+  printf '%s' "$pod"
+}
+
 publish_manifest_configmap() {
   local tmp status=0
-  [[ -n "$SEED_MANIFEST_SENTINEL" ]] || return 0
+  [[ -n "$LOCAL_MANIFEST$SEED_MANIFEST_SENTINEL" ]] || return 0
   tmp="$(mktemp)"
-  printf '%s' "${SEED_MANIFEST_SENTINEL#SEED_MANIFEST_JSON: }" >"$tmp"
+  resolve_manifest >"$tmp"
   # WORKAROUND: --from-file needs a path, not a stream. --server-side because a
   # client-side apply stamps last-applied-configuration, whose 256 KiB cap the
   # document crosses well inside the supported roster range.
@@ -731,6 +779,9 @@ fi
 case "$STEP" in all) clear_manifest_configmap ;; esac
 run_seed_step "$STEP" || exit 1
 case "$STEP" in all) publish_manifest_configmap ;; esac
+if [[ -n "$MANIFEST_OUT" ]]; then
+  resolve_manifest >"$MANIFEST_OUT" && echo "==> manifest written: $MANIFEST_OUT"
+fi
 
 case "$STEP" in
   all|silver)

@@ -50,12 +50,26 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("analytics", help="MariaDB analytics catalogue seed")
     sub.add_parser("gold", help="rebuild the dbt gold models over the current identity map")
     sub.add_parser("all", help="run every step")
+    sub.add_parser(
+        "manifest",
+        help="print the manifest this environment describes; touches no database",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    if args.cmd == "manifest":
+        import os
+
+        from .manifest import assert_no_credentials, build_manifest, render_manifest
+
+        doc = build_manifest(os.environ, seeded=list(STEPS))
+        assert_no_credentials(doc)
+        print(render_manifest(doc))
+        return 0
 
     steps = STEPS if args.cmd == "all" else (args.cmd,)
 

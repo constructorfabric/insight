@@ -461,13 +461,11 @@ jobs:
             "${email_args[@]}" \
             --days 730 \
             "${force_args[@]}" \
+            --manifest-out "$RUNNER_TEMP/stand-manifest.json" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
-          # One plain sentinel line, or gzipped chunks past ~64 personas;
-          # manifest-from-log.sh normalises either form.
           manifest_rc=0
-          ./src/ingestion/tools/seed/manifest-from-log.sh "$RUNNER_TEMP/seed.log" \
-            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
+          jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1 || manifest_rc=1
 
           if [ "$seed_rc" -eq 0 ] && [ "$manifest_rc" -eq 0 ]; then
             personas="$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json")"
