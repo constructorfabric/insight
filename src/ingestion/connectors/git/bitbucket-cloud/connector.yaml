@@ -48,6 +48,26 @@ definitions:
     q: >-
       updated_on >= "{{ config['bitbucket_start_date'] }}"
 
+  # Repository listings are also where an operator's exclusions apply. The
+  # vendor's `q` cannot express a pattern — only case-insensitive substring —
+  # so the match is made here, on the record. The listing still pages, but a
+  # filtered repository never becomes a partition, so it is never cloned and
+  # never walked, which is where the cost is.
+  #
+  # `regex_search` returns the FIRST CAPTURE GROUP, or "" when the pattern has
+  # none — so the alternation is wrapped in parentheses or every pattern would
+  # match and filter nothing. `$^` is the unmatchable default that keeps an
+  # empty list collecting everything.
+  repos_selector: &repos_selector
+    type: RecordSelector
+    extractor:
+      type: DpathExtractor
+      field_path: [values]
+    record_filter:
+      type: RecordFilter
+      condition: >-
+        {{ not (record['slug'] | regex_search('(' ~ ((config.get('bitbucket_exclude_repositories') or ['$^']) | join('|')) ~ ')')) }}
+
   # Pull-request listings used as fan-out parents. The start date is a FLOOR,
   # not a window: everything from it to now, nothing older. A rolling window
   # would stop short of it and silently drop pull requests inside the range the
@@ -234,11 +254,7 @@ streams:
           fields: >-
             next,values.uuid,values.slug,values.name,values.full_name,values.is_private,values.has_issues,values.has_wiki,values.language,values.size,values.created_on,values.updated_on,values.mainbranch.name,values.workspace.slug,values.workspace.uuid,values.links.clone,values.description,values.website,values.scm,values.fork_policy,values.enforced_signed_commits,values.owner.username,values.owner.uuid,values.parent.full_name,values.project.key,values.project.name,values.project.uuid
         error_handler: *discovery_error_handler
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: [values]
+      record_selector: *repos_selector
       paginator:
         type: DefaultPaginator
         pagination_strategy:
@@ -465,11 +481,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -656,11 +668,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -831,11 +839,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.links.clone
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -1039,12 +1043,8 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -1388,12 +1388,8 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                          record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
                             pagination_strategy:
@@ -1713,12 +1709,8 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                          record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
                             pagination_strategy:
@@ -2076,12 +2068,8 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                          record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
                             pagination_strategy:
@@ -2386,12 +2374,8 @@ streams:
                             http_method: GET
                             request_parameters:
                               <<: *repos_since_start
-                              fields: next,values.uuid,values.full_name,values.updated_on
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
+                              fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                          record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
                             pagination_strategy:
@@ -2806,12 +2790,8 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -3047,12 +3027,8 @@ streams:
                   http_method: GET
                   request_parameters:
                     <<: *repos_since_start
-                    fields: next,values.uuid,values.full_name,values.updated_on
-                record_selector:
-                  type: RecordSelector
-                  extractor:
-                    type: DpathExtractor
-                    field_path: [values]
+                    fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
                   pagination_strategy:
@@ -3317,12 +3293,8 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: >-
-                                next,values.uuid,values.full_name,values.updated_on,values.links.clone
-                          record_selector:
-                            type: RecordSelector
-                            extractor:
-                              type: DpathExtractor
-                              field_path: [values]
+                                next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone
+                          record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
                             pagination_strategy:
@@ -3542,6 +3514,17 @@ spec:
         title: API Base URL
         default: "https://api.bitbucket.org/2.0"
         order: 9
+      bitbucket_exclude_repositories:
+        type: array
+        items:
+          type: string
+        default: []
+        description: >-
+          Regular expressions matched against a repository's slug; a repository matching any of them is never listed, cloned or walked. A workspace can carry thousands of mirrors whose updated_on moves without anyone committing, and the vendor exposes nothing that separates them — no archived flag, and they are not forks — so their name is the only signal. Matched with `search`, so anchor with `$` to mean "ends with". Empty collects everything.
+        title: Exclude Repositories Matching
+        examples:
+          - ['\.rospecs$', '\.vhispecs$']
+        order: 11
       bitbucket_api_calls_per_hour:
         # A string, not an integer: a Secret's values reach the source config as
         # strings, and the spec is validated against them, so an integer here
