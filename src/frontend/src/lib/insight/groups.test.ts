@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
   GROUPS,
   groupIdForMetricKey,
+  visibleGroups,
   type DrilldownBlock,
   type GroupId,
   type MetricGroup,
@@ -88,5 +90,61 @@ describe("groups registry", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("visibleGroups", () => {
+  const gate = (planned: string[], hide: string[] = []) => ({
+    hide: parseNavPaths(hide, "hide"),
+    planned: parseNavPaths(planned, "planned"),
+  });
+
+  it("returns the registry itself when the install gates nothing", () => {
+    expect(visibleGroups(false, gate(["zone:scorecard"]))).toBe(GROUPS);
+  });
+
+  it("drops a group whose every metric is gated", () => {
+    const groups = visibleGroups(false, gate(["metric:ai.*"]));
+
+    expect(groups.map((g) => g.id)).not.toContain("ai_adoption");
+    expect(groups.map((g) => g.id)).toContain("task_delivery");
+  });
+
+  it("drops a group whose Person-zone section the install marks planned", () => {
+    const groups = visibleGroups(false, gate(["zone:person/section:wiki"]));
+
+    expect(groups.map((g) => g.id)).not.toContain("wiki");
+  });
+
+  it("takes a gated metric out of the collection, the card and the drilldown", () => {
+    const groups = visibleGroups(false, gate(["metric:tasks.resolution_time"]));
+    const tasks = groups.find((g) => g.id === "task_delivery");
+
+    expect(tasks?.collection.metrics.map((m) => m.key)).not.toContain(
+      "tasks.resolution_time"
+    );
+    expect(tasks?.card.preview).not.toContain("tasks.resolution_time");
+    expect(
+      tasks?.drilldown.flatMap((b) => ("metrics" in b ? b.metrics : []))
+    ).not.toContain("tasks.resolution_time");
+  });
+
+  it("drops a drilldown block left with no metric of its own", () => {
+    const before = groupById("task_delivery").drilldown.length;
+    const after = visibleGroups(
+      false,
+      gate(["metric:tasks.resolution_time", "metric:tasks.pickup_time"])
+    ).find((g) => g.id === "task_delivery")?.drilldown.length;
+
+    expect(after).toBe(before - 2);
+  });
+
+  it("shows everything gated as planned to a reader who asked for it", () => {
+    const groups = visibleGroups(
+      true,
+      gate(["metric:ai.*", "zone:person/section:wiki"])
+    );
+
+    expect(groups).toEqual(GROUPS);
   });
 });

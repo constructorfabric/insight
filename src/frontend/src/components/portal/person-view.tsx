@@ -1,8 +1,7 @@
 import { MetricGroupsView } from "@/components/portal/metric-groups-view";
 import { PersonHeader } from "@/components/portal/person-header";
 import { SingleGroupView } from "@/components/portal/single-group-view";
-import { GROUPS, type GroupId } from "@/lib/insight/groups";
-import { visiblePersonSections } from "@/lib/portal/nav-policy";
+import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { usePortalItem, usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 
@@ -22,9 +21,7 @@ export function PersonView({ person }: { person: string }) {
   const item = usePortalItem();
   const { setItem } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
-  const groupIds = visiblePersonSections(GROUPS, showPlanned).map(
-    (group) => group.id
-  );
+  const groupIds = visibleGroups(showPlanned).map((group) => group.id);
   const isSection = item != null && (groupIds as string[]).includes(item);
 
   return (

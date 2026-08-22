@@ -7,6 +7,13 @@ import type {
   MetricTimeseriesTableConfig,
 } from "@/lib/metrics/timeseries-table";
 import type { MetricTimeseriesChartConfig } from "@/lib/metrics/timeseries-chart";
+import {
+  gatesAnyMetric,
+  metricVisible,
+  navPolicy,
+  visiblePersonSections,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
 
 /**
  * Dashboard composition registry: named groups of metrics and the KPI row.
@@ -594,4 +601,44 @@ export function groupIdForMetricKey(metricKey: string): GroupId | null {
     if (def.collection.metrics.some((m) => m.key === metricKey)) return def.id;
   }
   return null;
+}
+
+/**
+ * The groups this install shows, with the metrics it gates removed.
+ *
+ * Two gates, both from the per-install nav policy: a group whose Person-zone
+ * section the install hides or marks planned is not part of what this
+ * deployment measures, and neither is a group left with no visible metric of
+ * its own. Both matter beyond the menu — the coverage screen counts sections to
+ * say how much of a person's work the product can see, and counting a section
+ * this install does not show would report our own backlog as a gap in their
+ * data.
+ */
+export function visibleGroups(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): readonly MetricGroup[] {
+  if (!gatesAnyMetric(policy) && policy.hide.personSections.size === 0 &&
+      policy.planned.personSections.size === 0) {
+    return GROUPS;
+  }
+
+  const kept: MetricGroup[] = [];
+  for (const group of visiblePersonSections(GROUPS, showPlanned, policy)) {
+    const metrics = group.collection.metrics.filter((m) =>
+      metricVisible(m.key, showPlanned, policy)
+    );
+    if (!metrics.length) continue;
+    const keep = (key: string) => metricVisible(key, showPlanned, policy);
+    kept.push({
+      ...group,
+      collection: { ...group.collection, metrics },
+      card: { preview: group.card.preview.filter(keep) },
+      drilldown: group.drilldown.flatMap((block) => {
+        const blockMetrics = block.metrics.filter(keep);
+        return blockMetrics.length ? [{ ...block, metrics: blockMetrics }] : [];
+      }),
+    });
+  }
+  return kept;
 }
