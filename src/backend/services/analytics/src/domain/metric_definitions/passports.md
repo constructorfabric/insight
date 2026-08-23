@@ -188,14 +188,6 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
-## git.test_change_share — Test change share
-
-- Source: git (git_metric_observations)
-- Reads: test_lines_added, test_and_code_lines_added
-- Formula: 100 * (test_lines_added / test_and_code_lines_added)
-- Shape: percent, neutral
-- Notes: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
-
 ## git.default_branch_lines_added — Lines added on the default branch
 
 - Source: git (git_metric_observations)
@@ -211,6 +203,14 @@ this file and the registry disagree.
 - Formula: sum(non_default_lines_added)
 - Shape: integer, neutral, unit lines
 - Notes: Lines added whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges.
+
+## git.test_change_share — Test change share
+
+- Source: git (git_metric_observations)
+- Reads: test_lines_added, test_and_code_lines_added
+- Formula: 100 * (test_lines_added / test_and_code_lines_added)
+- Shape: percent, neutral
+- Notes: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
 
 ## git.lines_removed — Lines removed
 

@@ -85,6 +85,7 @@ sources:
       - key: pr_review_to_merge_hours
         evidence_granularity: event
       - key: pr_approval_to_merge_hours
+        evidence_granularity: event
       - key: default_commit_count
         evidence_granularity: event
       - key: non_default_commit_count

@@ -1,8 +1,8 @@
 spec_version: 1
 description: >-
   Git output split by branch scope. Three people whose per-metric numbers are
-  identical, so every peer quantile is that number and the expectations stay
-  readable — but each arrives at its default-branch total a different way:
+  identical, but below the peer percentile disclosure threshold. Each arrives
+  at its default-branch total a different way:
   alice by the connector's flag, bob by the flag too, carol by a merged pull
   request into the default branch while her flag still says otherwise. Carol is
   the case that matters: `is_default_branch` is reachability at sync time, and
@@ -163,7 +163,7 @@ cases:
       - metric: git.default_branch_commits
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_commits
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -179,7 +179,7 @@ cases:
       - metric: git.non_default_branch_commits
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_commits
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -201,7 +201,7 @@ cases:
       - metric: git.default_branch_code_lines
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 10, p25: 10, median: 10, p75: 10, min: 10, max: 10, n: 3}
+        equal: {target_value: 10, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_code_lines
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -217,7 +217,7 @@ cases:
       - metric: git.non_default_branch_code_lines
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 20, p25: 20, median: 20, p75: 20, min: 20, max: 20, n: 3}
+        equal: {target_value: 20, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_code_lines
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -234,7 +234,7 @@ cases:
       - metric: git.default_branch_lines_added
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 10, p25: 10, median: 10, p75: 10, min: 10, max: 10, n: 3}
+        equal: {target_value: 10, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_lines_added
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -250,7 +250,7 @@ cases:
       - metric: git.non_default_branch_lines_added
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 20, p25: 20, median: 20, p75: 20, min: 20, max: 20, n: 3}
+        equal: {target_value: 20, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_lines_added
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -271,7 +271,7 @@ cases:
       - metric: git.default_branch_lines_removed
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_lines_removed
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -287,7 +287,7 @@ cases:
       - metric: git.non_default_branch_lines_removed
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 2, p25: 2, median: 2, p75: 2, min: 2, max: 2, n: 3}
+        equal: {target_value: 2, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_lines_removed
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -305,7 +305,7 @@ cases:
       - metric: git.default_branch_prs_created
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_prs_created
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -321,7 +321,7 @@ cases:
       - metric: git.non_default_branch_prs_created
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_prs_created
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -338,7 +338,7 @@ cases:
       - metric: git.default_branch_prs_merged
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.default_branch_prs_merged
         view: timeseries
         find: {entity_id: alice@example.com}
@@ -354,7 +354,7 @@ cases:
       - metric: git.non_default_branch_prs_merged
         view: peer
         find: {entity_id: alice@example.com}
-        equal: {target_value: 1, p25: 1, median: 1, p75: 1, min: 1, max: 1, n: 3}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
       - metric: git.non_default_branch_prs_merged
         view: timeseries
         find: {entity_id: alice@example.com}
