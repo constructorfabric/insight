@@ -25,13 +25,29 @@ export interface TrendSnapshotContext {
  * explaining on this chart is how the lines move against each other — a single
  * flattened series would lose exactly that.
  */
+export interface TrendChartInput {
+  title: string;
+  series: readonly SectionTrendSeries[];
+  data: readonly SectionTrendPoint[];
+}
+
 export function trendSnapshot(
-  series: SectionTrendSeries[],
-  data: SectionTrendPoint[],
+  charts: TrendChartInput[],
   { title, bucket, since, until, people }: TrendSnapshotContext
 ): MetricSnapshot {
+  // Every chart on the page, each line named by the chart it belongs to: the
+  // reading worth having is how they move against each other, and a lone
+  // "People" or "Total" label loses which measure it counted.
+  const series = charts.flatMap((chart) =>
+    chart.series.map((s) => ({
+      label:
+        chart.series.length > 1 ? `${chart.title} — ${s.label}` : chart.title,
+      points: chart.data.map((row) => numberAt(row, s.key)),
+    }))
+  );
+
   return {
-    metric_key: series.map((s) => s.key).join(","),
+    metric_key: charts.map((c) => c.title).join(", "),
     label: title,
     value: "",
     period: bucket,
@@ -42,10 +58,7 @@ export function trendSnapshot(
     help: "",
     trend: [],
     scope: "organisation",
-    series: series.map((s) => ({
-      label: s.label,
-      points: data.map((row) => numberAt(row, s.key)),
-    })),
+    series,
   };
 }
 

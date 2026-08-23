@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
-import { buildTrendData, pickTrendBucket } from "./trend-data";
+import {
+  buildActiveContributorData,
+  buildTrendData,
+  pickTrendBucket,
+} from "./trend-data";
 
 const RANGE_30D = { from: "2026-06-24", to: "2026-07-23" };
 
@@ -78,5 +82,82 @@ describe("buildTrendData", () => {
       { date: "2026-06-29", m: 1 },
       { date: "2026-07-06", m: 5 },
     ]);
+  });
+});
+
+describe("buildActiveContributorData", () => {
+  const result = {
+    metric_key: "git.prs_merged",
+    computation: "sum",
+    timeseries: {
+      view: "timeseries",
+      bucket: "week",
+      series: [
+        {
+          entity_id: "a",
+          points: [
+            { bucket_start: "2026-06-29", value: 2 },
+            { bucket_start: "2026-07-06", value: 0 },
+          ],
+        },
+        {
+          entity_id: "b",
+          points: [
+            { bucket_start: "2026-06-29", value: 1 },
+            { bucket_start: "2026-07-06", value: 4 },
+          ],
+        },
+      ],
+    },
+  } as unknown as NormalizedMetricResult;
+
+  const byKey = new Map([["git.prs_merged", result]]);
+
+  it("counts the people who contributed in each bucket", () => {
+    const data = buildActiveContributorData("git.prs_merged", byKey, ["a", "b"]);
+
+    expect(data).toEqual([
+      { date: "2026-06-29", active: 2 },
+      { date: "2026-07-06", active: 1 },
+    ]);
+  });
+
+  it("counts a person once however many readings they have", () => {
+    const twice = {
+      ...result,
+      timeseries: {
+        ...result.timeseries,
+        series: [
+          {
+            entity_id: "a",
+            points: [
+              { bucket_start: "2026-06-29", value: 1 },
+              { bucket_start: "2026-06-29", value: 3 },
+            ],
+          },
+        ],
+      },
+    } as unknown as NormalizedMetricResult;
+
+    const data = buildActiveContributorData(
+      "git.prs_merged",
+      new Map([["git.prs_merged", twice]]),
+      ["a"]
+    );
+
+    expect(data).toEqual([{ date: "2026-06-29", active: 1 }]);
+  });
+
+  it("leaves out people outside the roster", () => {
+    const data = buildActiveContributorData("git.prs_merged", byKey, ["a"]);
+
+    expect(data).toEqual([
+      { date: "2026-06-29", active: 1 },
+      { date: "2026-07-06", active: 0 },
+    ]);
+  });
+
+  it("is empty when the metric was never fetched", () => {
+    expect(buildActiveContributorData("missing", byKey, ["a"])).toEqual([]);
   });
 });

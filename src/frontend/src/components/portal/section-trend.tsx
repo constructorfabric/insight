@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
   Card,
@@ -58,8 +56,6 @@ export interface SectionTrendProps {
   isPending?: boolean;
   isError?: boolean;
   onRetry?: () => void;
-  /** Rendered in the header's top-right corner, opposite the title. */
-  action?: ReactNode;
 }
 
 const DEFAULT_CHART_KEYS = ["chart-1", "chart-2", "chart-3", "chart-4", "chart-5"];
@@ -76,7 +72,6 @@ export function SectionTrend({
   isPending,
   isError,
   onRetry,
-  action,
 }: SectionTrendProps) {
   if (isPending) {
     return <Skeleton className="h-48 w-full rounded-lg" />;
@@ -136,7 +131,6 @@ export function SectionTrend({
           <CardDescription className="text-xs">{description}</CardDescription>
         ) : null}
       </CardHeader>
-      {action}
       <CardContent>
         <ChartContainer
           config={config}

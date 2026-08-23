@@ -26,7 +26,16 @@ export type ConcentrationFraming = "bus-factor" | "load-balance";
 export type SectionSpec =
   | { kind: "headline"; metrics: readonly string[] }
   | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
-  | { kind: "trend"; metrics: readonly string[] }
+  | {
+      kind: "trend";
+      metrics: readonly string[];
+      /**
+       * Chart the roster's active contributors alongside the totals, derived
+       * from this metric's own per-person rows. A total says how much; this
+       * says how many people it came from.
+       */
+      activeContributorsFor?: string;
+    }
   | {
       kind: "distribution";
       metric: string;
