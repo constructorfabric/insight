@@ -191,11 +191,23 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
     },
     {
       key: "git.prs_merged",
-      views: [{ view: "period" }, { view: "peer" }],
+      // `branch_scope` splits landed work from work still in flight. Two
+      // groups, so the summary card's ribbon always lights up — and one
+      // breakdown per card, because a second dimension cross-tabs into
+      // "GitHub · Default branch" instead of giving the plain pair.
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
     },
     {
       key: "git.lines_added",
-      views: [{ view: "period" }, { view: "peer" }],
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
     },
     {
       key: "git.pr_cycle_time_h",
@@ -209,8 +221,22 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       key: "git.commit_size",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
-    { key: "git.code_lines", views: [{ view: "period" }, { view: "peer" }] },
-    { key: "git.prs_created", views: [{ view: "period" }, { view: "peer" }] },
+    {
+      key: "git.code_lines",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
+    {
+      key: "git.prs_created",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
     { key: "git.merge_rate", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "git.commits_per_active_day",
@@ -420,6 +446,29 @@ export const GROUPS: readonly MetricGroup[] = [
               includeRemainder: true,
             },
           },
+        },
+      },
+      {
+        // Landed work against work still in flight. Two groups only, so no
+        // limits: `branch_scope` is a partition, not a long tail.
+        id: "output-by-branch-scope",
+        view: "timeseries",
+        metrics: [
+          "git.commits",
+          "git.prs_merged",
+          "git.lines_added",
+          "git.lines_removed",
+        ],
+        defaultPresentation: "table",
+        table: {
+          columns: [
+            { metric: "git.commits" },
+            { metric: "git.prs_merged", labelSource: "short" },
+            GIT_LINES_TABLE_COLUMN,
+          ],
+        },
+        groupBy: {
+          default: "branch_scope",
         },
       },
       {
