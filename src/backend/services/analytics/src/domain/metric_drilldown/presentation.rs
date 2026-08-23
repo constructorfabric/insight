@@ -236,7 +236,15 @@ pub(super) fn evidence_presentation(
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: false,
         },
-        ("git", "pr_cycle_hours" | "pr_change_size") => EvidencePresentation {
+        (
+            "git",
+            "pr_cycle_hours"
+            | "pr_change_size"
+            | "pr_first_review_hours"
+            | "pr_review_wait_share"
+            | "pr_review_to_merge_hours"
+            | "pr_approval_to_merge_hours",
+        ) => EvidencePresentation {
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: true,
         },
@@ -503,9 +511,6 @@ mod tests {
     fn evidence_presentations_cover_domain_shapes() {
         assert!(!evidence_presentation("git", "pr_merged", EvidenceGranularity::Event).show_value);
         assert!(
-            evidence_presentation("git", "pr_cycle_hours", EvidenceGranularity::Event).show_value
-        );
-        assert!(
             evidence_presentation(
                 "task",
                 "average_slip",
@@ -522,6 +527,28 @@ mod tests {
             evidence_presentation("collab", "messages", EvidenceGranularity::SourceSummary)
                 .show_value
         );
+    }
+
+    #[test]
+    fn git_pull_request_values_keep_their_numeric_column() {
+        for measure_key in [
+            "pr_cycle_hours",
+            "pr_change_size",
+            "pr_first_review_hours",
+            "pr_review_wait_share",
+            "pr_review_to_merge_hours",
+            "pr_approval_to_merge_hours",
+        ] {
+            let presentation =
+                evidence_presentation("git", measure_key, EvidenceGranularity::Event);
+
+            assert!(presentation.show_value, "{measure_key}");
+            assert_eq!(
+                presentation.detail_keys,
+                &["ref", "title", "repository", "author"],
+                "{measure_key}"
+            );
+        }
     }
 
     #[test]
