@@ -14,19 +14,21 @@ import { cn } from "@/lib/utils";
 
 export interface ExplainWithAiProps {
   snapshot: MetricSnapshot;
+  /** Layout override for a host that places the trigger itself. */
+  className?: string;
 }
 
 /**
- * The sparkle in a tile's corner, and the answer it opens.
+ * The sparkle beside what it explains, and the answer it opens.
  *
  * Renders nothing at all until the deployment offers explanations AND this
  * person has stored a key: an affordance that only reports its own
- * unavailability costs the row's scarcest space and gives nothing back.
+ * unavailability costs scarce space and gives nothing back.
  *
- * INVARIANT: mounted as a SIBLING of the tile card, never inside it — the card
- * itself renders as a `<button>`, and a button inside a button is invalid.
+ * Positioned absolutely by default, for a host that overlays it on a card;
+ * a host laying it out itself passes `className` to override that.
  */
-export function ExplainWithAi({ snapshot }: ExplainWithAiProps) {
+export function ExplainWithAi({ snapshot, className }: ExplainWithAiProps) {
   const { featureOn, hasKey } = useAiAvailable();
   const [open, setOpen] = useState(false);
   const explain = useExplainMetric();
@@ -55,7 +57,8 @@ export function ExplainWithAi({ snapshot }: ExplainWithAiProps) {
               "text-muted-foreground transition-colors",
               "hover:bg-accent hover:text-foreground",
               "focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
-              open && "bg-accent text-foreground"
+              open && "bg-accent text-foreground",
+              className
             )}
           >
             <Sparkles className="size-3.5" aria-hidden />
@@ -117,5 +120,21 @@ function ExplanationBody({
     );
   }
 
-  return <p className="text-sm leading-relaxed whitespace-pre-line">{text}</p>;
+  // Paragraphs, not one block: the answer argues in steps — what this is, what
+  // moved, why — and a wall of text hides the steps from a reader who is
+  // scanning it beside the chart it describes.
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="flex max-h-[26rem] flex-col gap-3 overflow-y-auto pr-1">
+      {paragraphs.map((paragraph, i) => (
+        <p key={i} className="text-sm leading-relaxed">
+          {paragraph}
+        </p>
+      ))}
+    </div>
+  );
 }
