@@ -344,6 +344,18 @@ models:
                   - pr_review_wait_share
                   - pr_review_to_merge_hours
                   - pr_approval_to_merge_hours
+                  - default_commit_count
+                  - non_default_commit_count
+                  - default_code_lines_added
+                  - non_default_code_lines_added
+                  - default_lines_added
+                  - non_default_lines_added
+                  - default_lines_removed
+                  - non_default_lines_removed
+                  - default_pr_created
+                  - non_default_pr_created
+                  - default_pr_merged
+                  - non_default_pr_merged
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
