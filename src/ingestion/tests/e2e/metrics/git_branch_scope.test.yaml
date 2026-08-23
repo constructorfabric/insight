@@ -45,6 +45,17 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-rel, id: 22, number: 22, author_login: bob, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-bob-rel}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-main, id: 31, number: 31, author_login: carol, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-main}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-rel, id: 32, number: 32, author_login: carol, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-rel}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else
+    # — bronze `pull_requests` carries only the login. Without a row per
+    # request the author does not resolve, and gold drops the request rather
+    # than attributing it to nobody.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-main, pull_number: 11, additions: 10, deletions: 1, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-rel, pull_number: 12, additions: 20, deletions: 2, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-main, pull_number: 21, additions: 10, deletions: 1, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-rel, pull_number: 22, additions: 20, deletions: 2, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-main, pull_number: 31, additions: 10, deletions: 1, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-rel, pull_number: 32, additions: 20, deletions: 2, author_email: carol@example.com}
   bronze_github.pull_request_commits:
     # Carol only. Her default-branch request carries the commit whose flag says
     # non-default — that link is the heal. Her release request carries the

@@ -91,6 +91,46 @@ describe("groups registry", () => {
       },
     ]);
   });
+
+  // Looked up by id, not by index: the sibling test above pins positions, and
+  // two positional readings of one array is how a later insertion breaks a
+  // test that has nothing to do with it.
+  it("splits git output by branch scope, uncapped and on the totals", () => {
+    const git = groupById("git_output");
+    const byScope = git.drilldown.find(
+      (block): block is Extract<DrilldownBlock, { id: string }> =>
+        "id" in block && block.id === "output-by-branch-scope"
+    );
+    expect(byScope?.groupBy).toEqual({ default: "branch_scope" });
+    // A partition has no long tail, so no limits and no remainder bucket.
+    expect(byScope?.groupBy?.limits).toBeUndefined();
+    expect(byScope?.metrics).toEqual([
+      "git.commits",
+      "git.prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+    ]);
+
+    // The ribbon on a summary card comes from the metric's own breakdown view,
+    // and it only renders for a dimension with two groups — which is what
+    // `branch_scope` is. The split metrics deliberately do NOT carry it: inside
+    // `git.default_branch_commits` the dimension is a constant.
+    const scoped = git.collection.metrics
+      .filter((metric) =>
+        metric.views.some(
+          (view) =>
+            view.view === "breakdown" &&
+            view.dimensions.includes("branch_scope")
+        )
+      )
+      .map((metric) => metric.key);
+    expect(scoped).toEqual([
+      "git.prs_merged",
+      "git.lines_added",
+      "git.code_lines",
+      "git.prs_created",
+    ]);
+  });
 });
 
 describe("visibleGroups", () => {

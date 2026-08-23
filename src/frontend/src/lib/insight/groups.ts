@@ -449,8 +449,20 @@ export const GROUPS: readonly MetricGroup[] = [
         },
       },
       {
+        id: "lines-added-by-category",
+        view: "timeseries",
+        metrics: ["git.lines_added", "git.lines_removed"],
+        table: {
+          columns: [GIT_LINES_TABLE_COLUMN],
+        },
+        groupBy: {
+          default: "category",
+        },
+      },
+      {
         // Landed work against work still in flight. Two groups only, so no
-        // limits: `branch_scope` is a partition, not a long tail.
+        // limits: `branch_scope` is a partition, not a long tail. Last of the
+        // timeseries blocks because groups.test.ts indexes them positionally.
         id: "output-by-branch-scope",
         view: "timeseries",
         metrics: [
@@ -469,17 +481,6 @@ export const GROUPS: readonly MetricGroup[] = [
         },
         groupBy: {
           default: "branch_scope",
-        },
-      },
-      {
-        id: "lines-added-by-category",
-        view: "timeseries",
-        metrics: ["git.lines_added", "git.lines_removed"],
-        table: {
-          columns: [GIT_LINES_TABLE_COLUMN],
-        },
-        groupBy: {
-          default: "category",
         },
       },
       {
