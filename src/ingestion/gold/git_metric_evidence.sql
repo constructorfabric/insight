@@ -490,6 +490,7 @@ pull_request_measures AS (
         ),
         if(
             first_review_hours IS NOT NULL
+                AND review_to_merge_hours IS NOT NULL
                 AND cycle_hours IS NOT NULL
                 AND cycle_hours > 0
                 AND closed_on IS NOT NULL,

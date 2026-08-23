@@ -29,6 +29,7 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-dave, id: 4, number: 4, author_login: dave, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-dave}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-erin, id: 5, number: 5, author_login: erin, closed_at: "2026-10-01T13:00:00Z", merged_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-erin}
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-frank, id: 6, number: 6, author_login: frank, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-grace, id: 7, number: 7, author_login: grace, closed_at: "2026-10-01T09:00:00Z", merged_at: "2026-10-01T09:00:00Z", merge_commit_sha: merge-grace}
   bronze_github.pull_request_diff_stats:
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice, pull_number: 1, additions: 10, author_email: alice@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob, pull_number: 2, additions: 20, author_email: bob@example.com}
@@ -36,6 +37,7 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-dave, pull_number: 4, additions: 40, author_email: dave@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-erin, pull_number: 5, additions: 50, author_email: erin@example.com}
     - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-frank, pull_number: 6, additions: 10, author_email: frank@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-grace, pull_number: 7, additions: 10, author_email: grace@example.com}
   bronze_github.pull_request_reviews:
     - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-alice, id: 101, pull_number: 1, author_login: reviewer-one, author_id: 101, submitted_at: "2026-10-01T08:30:00Z"}
     - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-bob, id: 102, pull_number: 2, author_login: reviewer-one, author_id: 101, submitted_at: "2026-10-01T09:00:00Z"}
@@ -43,8 +45,24 @@ bronze:
     - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-dave, id: 104, pull_number: 4, author_login: reviewer-one, author_id: 101, submitted_at: "2026-10-01T10:00:00Z"}
     - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-erin-one, id: 105, pull_number: 5, author_login: reviewer-one, author_id: 101, submitted_at: "2026-10-01T10:30:00Z"}
     - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-erin-two, id: 106, pull_number: 5, author_login: reviewer-two, author_id: 102, submitted_at: "2026-10-01T10:30:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: review-grace, id: 107, pull_number: 7, author_login: reviewer-one, author_id: 101, submitted_at: "2026-10-01T10:00:00Z"}
 
 cases:
+  - name: Reviews submitted after merge do not contribute wait share
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [grace@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.review_wait_share
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.review_wait_share, view: period, find: {entity_id: grace@example.com}, equal: {value: null}}
+
   - name: Repository rollups pool observations across people
     request:
       url: /v1/metric-results

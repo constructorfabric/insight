@@ -3,7 +3,7 @@ use std::fmt::Write;
 use toolkit_canonical_errors::CanonicalError;
 
 use crate::domain::metric_definitions::ComputationSpec;
-use crate::domain::metric_definitions::definition::MetricInputRole;
+use crate::domain::metric_definitions::definition::{MetricInputRole, RatioDenominatorAggregation};
 
 use super::cursor::CursorKey;
 use super::dto::{
@@ -97,6 +97,21 @@ fn compile_ratio_query(
         .iter()
         .find(|input| input.role == MetricInputRole::Denominator)
         .ok_or_else(config_error)?;
+    let ComputationSpec::Ratio {
+        denominator_aggregation,
+        ..
+    } = &req.plan.definition.spec
+    else {
+        return Err(config_error());
+    };
+    let denominator_expr = match denominator_aggregation {
+        RatioDenominatorAggregation::Sum => {
+            "sumIf(ifNull(evidence.contribution, 0), evidence.measure_key = ?)"
+        }
+        RatioDenominatorAggregation::DistinctCount => {
+            "toFloat64(uniqExactIf(evidence.subject_key, evidence.measure_key = ? AND evidence.subject_key IS NOT NULL))"
+        }
+    };
     let mut params = vec![
         numerator.measure_key.clone(),
         denominator.measure_key.clone(),
@@ -131,7 +146,7 @@ fn compile_ratio_query(
                    toString(evidence.metric_date) AS record_id, 'daily_ratio' AS record_kind, \
                    CAST(NULL AS Nullable(Float64)) AS contribution, \
                    sumIf(ifNull(evidence.contribution, 0), evidence.measure_key = ?) AS numerator, \
-                   sumIf(ifNull(evidence.contribution, 0), evidence.measure_key = ?) AS denominator, \
+                   {denominator_expr} AS denominator, \
                    '' AS subject_key, any(toJSONString(evidence.dimensions)) AS dimensions_json, \
                    CAST(map() AS Map(String, String)) AS details \
             FROM {database}.{table} AS evidence \
@@ -373,5 +388,44 @@ mod tests {
                 "org/repo",
             ]
         );
+    }
+
+    #[test]
+    fn ratio_query_uses_distinct_denominator_aggregation() {
+        let numerator = input(MetricInputRole::Numerator, "commit_count");
+        let denominator = input(MetricInputRole::Denominator, "commit_day");
+        let plan = plan(
+            ComputationSpec::Ratio {
+                numerator: numerator.clone(),
+                denominator: denominator.clone(),
+                scale: 1.0,
+                denominator_aggregation: RatioDenominatorAggregation::DistinctCount,
+            },
+            vec![
+                EvidenceInput {
+                    role: MetricInputRole::Numerator,
+                    measure_key: numerator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+                EvidenceInput {
+                    role: MetricInputRole::Denominator,
+                    measure_key: denominator.measure_key,
+                    presentation: EvidencePresentation {
+                        detail_keys: &[],
+                        show_value: true,
+                    },
+                },
+            ],
+        );
+        let request = validated(plan);
+
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(sql.contains("uniqExactIf(evidence.subject_key"));
+        assert_eq!(sql.matches('?').count(), params.len());
     }
 }
