@@ -35,16 +35,30 @@ export function trendSnapshot(
   charts: TrendChartInput[],
   { title, bucket, since, until, people }: TrendSnapshotContext
 ): MetricSnapshot {
+  // One axis for every line. Each chart only carries buckets its own metric
+  // was measured in, so unpadded arrays of different lengths would line up
+  // point 3 of one measure against point 3 of another and invite the model to
+  // read a divergence that never happened.
+  const dates = [
+    ...new Set(charts.flatMap((c) => c.data.map((row) => String(row.date)))),
+  ].sort();
+
   // Every chart on the page, each line named by the chart it belongs to: the
   // reading worth having is how they move against each other, and a lone
   // "People" or "Total" label loses which measure it counted.
-  const series = charts.flatMap((chart) =>
-    chart.series.map((s) => ({
+  const series = charts.flatMap((chart) => {
+    const rowByDate = new Map(
+      chart.data.map((row) => [String(row.date), row])
+    );
+    return chart.series.map((s) => ({
       label:
         chart.series.length > 1 ? `${chart.title} — ${s.label}` : chart.title,
-      points: chart.data.map((row) => numberAt(row, s.key)),
-    }))
-  );
+      points: dates.map((date) => {
+        const row = rowByDate.get(date);
+        return row ? numberAt(row, s.key) : null;
+      }),
+    }));
+  });
 
   return {
     metric_key: charts.map((c) => c.title).join(", "),
@@ -58,6 +72,7 @@ export function trendSnapshot(
     help: "",
     trend: [],
     scope: "organisation",
+    bucket_starts: dates,
     series,
   };
 }

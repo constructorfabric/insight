@@ -140,6 +140,9 @@ pub struct MetricSnapshot {
     /// Whose reading this is. Absent means one person's.
     #[serde(default)]
     pub scope: SnapshotScope,
+    /// Bucket start dates every series is indexed by, oldest first.
+    #[serde(default)]
+    pub bucket_starts: Vec<String>,
     /// The chart's lines, when the reading is a chart rather than a tile.
     #[serde(default)]
     pub series: Vec<SnapshotSeries>,
@@ -185,6 +188,12 @@ fn clip_snapshot(snapshot: &MetricSnapshot) -> MetricSnapshot {
             .copied()
             .collect(),
         scope: snapshot.scope,
+        bucket_starts: snapshot
+            .bucket_starts
+            .iter()
+            .take(MAX_TREND_POINTS)
+            .map(|d| clip(d))
+            .collect(),
         series: snapshot
             .series
             .iter()
@@ -225,6 +234,7 @@ mod tests {
             help: "Tasks moved to a closed state in the window.".to_owned(),
             trend: vec![Some(1.0), None, Some(3.0)],
             scope: SnapshotScope::Person,
+            bucket_starts: Vec::new(),
             series: Vec::new(),
         }
     }
@@ -312,6 +322,23 @@ mod tests {
             parsed["series"][0]["points"].as_array().map(Vec::len),
             Some(64)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_chart_carries_the_dates_its_lines_are_indexed_by() -> Result<(), serde_json::Error> {
+        let mut chart = snapshot();
+        chart.bucket_starts = (0..100).map(|i| format!("2026-08-{i:02}")).collect();
+
+        let message = snapshot_message(&chart);
+        let json = message
+            .split_once("\n\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(json)?;
+
+        assert_eq!(parsed["bucket_starts"].as_array().map(Vec::len), Some(64));
+        assert_eq!(parsed["bucket_starts"][0], "2026-08-00");
         Ok(())
     }
 

@@ -114,6 +114,19 @@ vi.mock("@/components/portal/section-trend", () => ({
     <div data-testid="section-trend" data-series={JSON.stringify(series ?? []).length} />
   ),
 }));
+// The sparkle reads the AI config through react-query; this suite renders the
+// view without a client, and what it explains is covered by its own tests.
+vi.mock("@/components/widgets/dashboard/explain-with-ai", () => ({
+  ExplainWithAi: () => null,
+}));
+// The drilldown fetches per member; this suite is about which drilldown the
+// view asks for, so the dialog reports the state it was handed instead.
+vi.mock("@/components/portal/trend-drilldown-dialog", () => ({
+  TrendDrilldownDialog: ({ state }: { state: unknown }) =>
+    state ? (
+      <div data-testid="drilldown" data-state={JSON.stringify(state)} />
+    ) : null,
+}));
 
 
 import type { LensConfig } from "@/lib/portal/lens-configs";
@@ -531,5 +544,114 @@ describe("coverage section (#2408)", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /5 of 5/ })).toBeDisabled();
+  });});
+
+/* ── trend ───────────────────────────────────────────────────────────── */
+
+const TREND_CONFIG: LensConfig = {
+  title: "Dev · Test",
+  sections: [
+    { kind: "trend", metrics: ["t.commits"], activeContributorsFor: "t.commits" },
+  ],
+};
+
+function timeseries(
+  key: string,
+  byEntity: Record<string, Array<[string, number | null]>>,
+): NormalizedMetricResult {
+  return {
+    metric_key: key,
+    label: key,
+    unit: null,
+    computation: "sum",
+    format: "integer",
+    direction: "higher_is_better",
+    timeseries: {
+      view: "timeseries",
+      bucket: "day",
+      series: Object.entries(byEntity).map(([entity_id, points]) => ({
+        entity_id,
+        points: points.map(([bucket_start, value]) => ({ bucket_start, value })),
+      })),
+    },
+  } as unknown as NormalizedMetricResult;
+}
+
+/** Two buckets: one person contributes in the first, two in the second. */
+function trendWorld() {
+  const trend = emptyCollection();
+  trend.byKey = new Map([
+    [
+      "t.commits",
+      timeseries("t.commits", {
+        [pid("a")]: [
+          ["2026-07-20", 3],
+          ["2026-07-21", 4],
+        ],
+        [pid("b")]: [
+          ["2026-07-20", 0],
+          ["2026-07-21", 3],
+        ],
+      }),
+    ],
+  ]);
+  mocks.collections = [trend, emptyCollection(), emptyCollection()];
+}
+
+function openedDrilldown(): {
+  metricKey: string | null;
+  members: Array<{ person_id: string; name: string }>;
+  breakdown: Array<{ date: string; total: number; contributors: string[] }>;
+} {
+  const node = screen.getByTestId("drilldown");
+  return JSON.parse(node.getAttribute("data-state") ?? "{}");
+}
+
+describe("trend section", () => {
+  it("charts each trend measure on its own card, plus the derived contributors", () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    expect(
+      screen.getByRole("button", { name: "Open Commits details" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Open Active contributors · Commits details",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("drills a measure into its own catalog metric", async () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Commits details" }),
+    );
+
+    const state = openedDrilldown();
+    expect(state.metricKey).toBe("t.commits");
+    expect(state.members.map((m) => m.name).length).toBe(4);
+    expect(state.breakdown.map((b) => b.total)).toEqual([3, 7]);
+  });
+
+  it("drills the derived card into periods only, having no records of its own", async () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Open Active contributors · Commits details",
+      }),
+    );
+
+    const state = openedDrilldown();
+    expect(state.metricKey).toBeNull();
+    // Still counted from the metric it is derived from.
+    expect(state.breakdown.map((b) => b.contributors)).toEqual([
+      ["a"],
+      ["a", "b"],
+    ]);
   });
 });

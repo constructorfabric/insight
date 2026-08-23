@@ -88,6 +88,36 @@ describe("trendSnapshot", () => {
     expect(snapshot.label).toBe("Overview · Trend");
   });
 
+  it("indexes every line by one shared axis of bucket dates", () => {
+    // PRs merged has no June reading; contributors has no August one. Sent
+    // unpadded the two arrays would be the same length and describe different
+    // months, and the model would read a divergence that never happened.
+    const shortPrs: TrendChartInput = {
+      ...PRS,
+      data: [
+        { date: "2026-07-01", "git.prs_merged": 14 },
+        { date: "2026-08-01", "git.prs_merged": 9 },
+      ],
+    };
+    const shortAuthors: TrendChartInput = {
+      ...AUTHORS,
+      data: [
+        { date: "2026-06-01", active: 4 },
+        { date: "2026-07-01", active: 6 },
+      ],
+    };
+
+    const snapshot = trendSnapshot([shortPrs, shortAuthors], CONTEXT);
+
+    expect(snapshot.bucket_starts).toEqual([
+      "2026-06-01",
+      "2026-07-01",
+      "2026-08-01",
+    ]);
+    expect(snapshot.series?.[0]?.points).toEqual([null, 14, 9]);
+    expect(snapshot.series?.[1]?.points).toEqual([4, 6, null]);
+  });
+
   it("leaves the cohort line empty when the rollup covers nobody", () => {
     const snapshot = trendSnapshot([PRS], { ...CONTEXT, people: 0 });
 

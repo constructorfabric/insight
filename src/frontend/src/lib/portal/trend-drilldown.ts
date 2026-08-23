@@ -78,17 +78,20 @@ export function bucketBreakdown(
   const result = byKey.get(key);
   if (!result) return [];
 
-  const buckets = new Map<string, { total: number; contributors: string[] }>();
+  // A person counted once per bucket however many readings they have in it:
+  // one contributor with two positive points is one active contributor, and
+  // the count here has to agree with the line the chart draws.
+  const buckets = new Map<string, { total: number; contributors: Set<string> }>();
   for (const member of members) {
     for (const s of forEntity(result, member.person_id).series) {
       for (const p of s.points) {
         const bucket = buckets.get(p.bucket_start) ?? {
           total: 0,
-          contributors: [],
+          contributors: new Set<string>(),
         };
         const value = p.value ?? 0;
         bucket.total += value;
-        if (value > 0) bucket.contributors.push(member.name);
+        if (value > 0) bucket.contributors.add(member.name);
         buckets.set(p.bucket_start, bucket);
       }
     }

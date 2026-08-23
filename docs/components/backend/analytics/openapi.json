@@ -1574,6 +1574,13 @@
       "MetricSnapshot": {
         "description": "The reading as the viewer sees it, handed to the model as the thing to explain.",
         "properties": {
+          "bucket_starts": {
+            "description": "Bucket start dates every series is indexed by, oldest first.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "delta": {
             "description": "The tile's own change line, empty when it has none.",
             "type": "string"

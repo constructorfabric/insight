@@ -180,6 +180,18 @@ function Records({
     );
   }
 
+  // "No records" is a claim about the data. Only make it when the data was
+  // actually read: if every request failed, what is true is that nothing
+  // could be read.
+  if (failed === state.members.length && failed > 0) {
+    return (
+      <p className="text-muted-foreground p-5 text-sm">
+        Nobody in this scope could be read, so nothing is claimed here. Try
+        again in a moment.
+      </p>
+    );
+  }
+
   if (!rows.length) {
     return (
       <p className="text-muted-foreground p-5 text-sm">

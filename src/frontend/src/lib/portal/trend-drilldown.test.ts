@@ -100,6 +100,25 @@ const MEMBERS = [
   { person_id: "b", name: "Grace" },
 ];
 
+
+function multiSeriesResult(): NormalizedMetricResult {
+  return {
+    timeseries: {
+      bucket: "day",
+      series: [
+        {
+          entity_id: "a",
+          points: [{ bucket_start: "2026-08-01", value: 2 }],
+        },
+        {
+          entity_id: "a",
+          points: [{ bucket_start: "2026-08-01", value: 3 }],
+        },
+      ],
+    },
+  } as unknown as NormalizedMetricResult;
+}
+
 describe("bucketBreakdown", () => {
   it("totals each bucket and names who contributed to it", () => {
     const byKey = new Map([
@@ -149,6 +168,14 @@ describe("bucketBreakdown", () => {
     expect(
       bucketBreakdown("git.prs_merged", byKey, MEMBERS).map((r) => r.date),
     ).toEqual(["2026-08-01", "2026-08-09"]);
+  });
+
+  it("counts a person once in a bucket they have several readings in", () => {
+    const byKey = new Map([["git.prs_merged", multiSeriesResult()]]);
+
+    expect(bucketBreakdown("git.prs_merged", byKey, MEMBERS)).toEqual([
+      { date: "2026-08-01", total: 5, contributors: ["Ada"] },
+    ]);
   });
 
   it("answers with nothing for a metric the response does not carry", () =>

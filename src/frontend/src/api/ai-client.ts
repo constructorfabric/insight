@@ -78,6 +78,8 @@ export interface MetricSnapshot {
   help: string;
   trend: (number | null)[];
   scope?: SnapshotScope;
+  /** Bucket start dates the series are indexed by, oldest first. */
+  bucket_starts?: string[];
   /** The chart's lines, when the reading is a chart rather than a tile. */
   series?: SnapshotSeries[];
 }
