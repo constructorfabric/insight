@@ -20,6 +20,10 @@ export type ContextScope = "tenant" | "person";
 export interface AiConfig {
   enabled: boolean;
   model: string;
+  /** The stand pays with its own key, so nobody stores one. */
+  stand_key?: boolean;
+  /** Only admins may ask for an explanation here. */
+  admin_only?: boolean;
 }
 
 export interface AiCredentialStatus {

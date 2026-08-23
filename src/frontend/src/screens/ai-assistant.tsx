@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 export function AiAssistantBody() {
   const config = useAiConfig();
   const featureOn = config.data?.enabled === true;
+  const standKey = config.data?.stand_key === true;
   const { isAdmin } = useIsAdmin();
 
   if (config.isPending) {
@@ -86,7 +87,7 @@ export function AiAssistantBody() {
 
   return (
     <Shell>
-      <KeyCard />
+      {standKey ? <StandKeyCard /> : <KeyCard />}
       {isAdmin ? <SystemPromptCard /> : null}
       <ContextCard
         scope="person"
@@ -101,6 +102,24 @@ export function AiAssistantBody() {
         canWrite={isAdmin}
       />
     </Shell>
+  );
+}
+
+/**
+ * Said rather than left blank: a reader who came here to paste a key needs to
+ * know why there is nowhere to paste it.
+ */
+function StandKeyCard() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>This deployment supplies the key</CardTitle>
+        <CardDescription>
+          Explanations are paid for by a key an operator configured for the
+          whole stand, so there is nothing to set here.
+        </CardDescription>
+      </CardHeader>
+    </Card>
   );
 }
 

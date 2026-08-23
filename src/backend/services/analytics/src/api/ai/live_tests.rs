@@ -56,7 +56,31 @@ fn enabled_config() -> GearConfig {
             token_encryption_key: BASE64.encode([11_u8; KEY_BYTES]),
             api_base: "http://127.0.0.1:1".to_owned(),
             request_timeout_secs: 1,
+            // Identity is unreachable in this harness, so an admin check
+            // could only ever fail closed. The explain paths below are about
+            // the key and the upstream; the gate has its own test.
+            admin_only: false,
             ..AiAssistConfig::default()
+        },
+        ..GearConfig::default()
+    }
+}
+
+fn admin_gated_config() -> GearConfig {
+    GearConfig {
+        ai_assist: AiAssistConfig {
+            admin_only: true,
+            ..enabled_config().ai_assist
+        },
+        ..GearConfig::default()
+    }
+}
+
+fn stand_key_config() -> GearConfig {
+    GearConfig {
+        ai_assist: AiAssistConfig {
+            api_key: "sk-ant-stand-key".to_owned(),
+            ..enabled_config().ai_assist
         },
         ..GearConfig::default()
     }
@@ -452,6 +476,47 @@ async fn explaining_without_a_stored_key_says_so() -> TestResult {
     assert!(
         serde_json::to_string(&body)?.contains("no Anthropic key"),
         "the refusal should name the missing key: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn explaining_needs_an_admin_check_that_can_answer() -> TestResult {
+    let Some(db) = connect_or_skip().await? else {
+        return Ok(());
+    };
+
+    let resp = app(db, Uuid::now_v7(), admin_gated_config())
+        .oneshot(json_req("POST", "/v1/ai/explain", &snapshot())?)
+        .await?;
+
+    assert_ne!(
+        resp.status(),
+        StatusCode::OK,
+        "an unreachable identity must fail closed on an admin-gated explain"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn a_stand_key_answers_for_a_caller_who_stored_none() -> TestResult {
+    let Some(db) = connect_or_skip().await? else {
+        return Ok(());
+    };
+
+    // Nothing is stored for this tenant, so without the stand's own key this
+    // is the 400 the test above asserts. Reaching the upstream instead is the
+    // evidence that the stand key was used.
+    let resp = app(db, Uuid::now_v7(), stand_key_config())
+        .oneshot(json_req("POST", "/v1/ai/explain", &snapshot())?)
+        .await?;
+
+    assert_ne!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a stand key means no caller needs one of their own"
     );
     Ok(())
 }

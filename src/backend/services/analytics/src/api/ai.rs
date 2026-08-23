@@ -22,6 +22,7 @@ use super::error::AiError;
 use crate::domain::ai::dto::AiConfigResponse;
 
 pub(crate) const ADMIN_ONLY_CONTEXT: &str = "admin role required to write organisation context";
+pub(crate) const ADMIN_ONLY_EXPLAIN: &str = "admin role required to ask for an explanation";
 pub(crate) const ADMIN_ONLY_PROMPT: &str = "admin role required to write the system prompt";
 
 /// `GET /v1/ai/config` — whether this deployment offers explanations.
@@ -35,6 +36,8 @@ pub async fn get_ai_config(
     Ok(Json(AiConfigResponse {
         enabled: state.config.ai_assist.enabled,
         model: state.config.ai_assist.model.clone(),
+        stand_key: state.config.ai_assist.has_stand_key(),
+        admin_only: state.config.ai_assist.admin_only,
     }))
 }
 
@@ -53,6 +56,12 @@ pub(crate) fn ensure_enabled(state: &AppState) -> Result<(), CanonicalError> {
 pub(crate) fn admin_only_context() -> CanonicalError {
     AiError::permission_denied()
         .with_reason(ADMIN_ONLY_CONTEXT)
+        .create()
+}
+
+pub(crate) fn admin_only_explain() -> CanonicalError {
+    AiError::permission_denied()
+        .with_reason(ADMIN_ONLY_EXPLAIN)
         .create()
 }
 

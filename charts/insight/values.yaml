@@ -494,6 +494,10 @@ analytics:
     # keys people store. Rotating it makes every stored key unreadable, and
     # each person has to paste theirs again.
     tokenEncryptionKey: ""
+    # One Anthropic key for the whole stand. Set it and nobody stores their
+    # own: every explanation is paid for by this key, and the SPA offers no
+    # place to paste a personal one.
+    apiKey: ""
     model: "claude-sonnet-5"
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the

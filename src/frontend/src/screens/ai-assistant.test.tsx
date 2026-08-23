@@ -9,7 +9,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   config: { enabled: true, model: "claude-sonnet-5" } as
-    | { enabled: boolean; model: string }
+    | {
+        enabled: boolean;
+        model: string;
+        stand_key?: boolean;
+        admin_only?: boolean;
+      }
     | undefined,
   configPending: false,
   isAdmin: true,
@@ -195,6 +200,22 @@ describe("AiAssistantBody", () => {
     );
 
     expect(state.deleteEntry).toHaveBeenCalledWith("p1");
+  });
+
+  it("offers nowhere to paste a key when the stand supplies one", () => {
+    state.config = {
+      enabled: true,
+      model: "claude-sonnet-5",
+      stand_key: true,
+    };
+
+    render(<AiAssistantBody />);
+
+    // Said, not left blank: someone who came to paste a key needs the reason.
+    expect(
+      screen.getByText("This deployment supplies the key")
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Anthropic key/i)).toBeNull();
   });
 
   it("leaves organisation entries read-only for a non-admin", () => {

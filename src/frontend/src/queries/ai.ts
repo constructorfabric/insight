@@ -26,6 +26,7 @@ import {
   type MetricSnapshot,
   type UpdateContextRequest,
 } from "@/api/ai-client";
+import { useIsAdmin } from "@/queries/identity-me";
 
 const CONFIG_KEY = ["ai", "config"] as const;
 const CREDENTIAL_KEY = ["ai", "credentials"] as const;
@@ -51,16 +52,28 @@ export function useAiCredentialStatus(
 }
 
 /**
- * The two gates the tile affordance waits on: the deployment offers the
- * feature, and this person has stored a key. Both must be true before anything
- * about the assistant is drawn.
+ * The gates the sparkle waits on: the deployment offers the feature, a key
+ * will pay for the call, and the caller is allowed to spend it.
+ *
+ * A stand that carries its own key answers for everybody, so no personal key
+ * is read and none is asked for. Where the stand has none, it is the reader's
+ * own stored key or nothing.
+ *
+ * `admin_only` is the server's rule, not this hook's — `/v1/ai/explain`
+ * re-checks it. Hiding the sparkle only saves the reader a refusal.
  */
 export function useAiAvailable(): { featureOn: boolean; hasKey: boolean } {
   const config = useAiConfig();
+  const { isAdmin } = useIsAdmin();
   const featureOn = config.data?.enabled === true;
-  const credential = useAiCredentialStatus(featureOn);
+  const standKey = config.data?.stand_key === true;
+  const credential = useAiCredentialStatus(featureOn && !standKey);
+  const mayAsk = config.data?.admin_only !== true || isAdmin;
 
-  return { featureOn, hasKey: credential.data?.configured === true };
+  return {
+    featureOn,
+    hasKey: mayAsk && (standKey || credential.data?.configured === true),
+  };
 }
 
 export function useAiSettings(enabled: boolean): UseQueryResult<AiSettings> {

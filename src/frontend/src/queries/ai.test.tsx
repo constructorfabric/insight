@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/api/ai-client", () => mocks);
 
+const admin = vi.hoisted(() => ({ isAdmin: true }));
+vi.mock("@/queries/identity-me", () => ({
+  useIsAdmin: () => admin,
+}));
+
 import {
   useAiAvailable,
   useAiContext,
@@ -51,6 +56,7 @@ function wrapper() {
 }
 
 beforeEach(() => {
+  admin.isAdmin = true;
   Object.values(mocks).forEach((fn) => fn.mockReset());
   mocks.getAiConfig.mockResolvedValue({ enabled: true, model: "m" });
   mocks.getAiCredentialStatus.mockResolvedValue({
@@ -69,6 +75,55 @@ beforeEach(() => {
 });
 
 describe("useAiAvailable", () => {
+  it("opens on a stand that carries its own key, with nothing stored", async () => {
+    mocks.getAiConfig.mockResolvedValue({
+      enabled: true,
+      model: "m",
+      stand_key: true,
+    });
+    mocks.getAiCredentialStatus.mockResolvedValue({
+      configured: false,
+      hint: "",
+    });
+    const { Wrapper } = wrapper();
+
+    const { result } = renderHook(() => useAiAvailable(), { wrapper: Wrapper });
+
+    await waitFor(() => expect(result.current.hasKey).toBe(true));
+    // Nobody's own key is read where the stand supplies one.
+    expect(mocks.getAiCredentialStatus).not.toHaveBeenCalled();
+  });
+
+  it("stays shut for a non-admin where the stand allows only admins to ask", async () => {
+    admin.isAdmin = false;
+    mocks.getAiConfig.mockResolvedValue({
+      enabled: true,
+      model: "m",
+      stand_key: true,
+      admin_only: true,
+    });
+    const { Wrapper } = wrapper();
+
+    const { result } = renderHook(() => useAiAvailable(), { wrapper: Wrapper });
+
+    await waitFor(() => expect(result.current.featureOn).toBe(true));
+    expect(result.current.hasKey).toBe(false);
+  });
+
+  it("opens for an admin on the same stand", async () => {
+    mocks.getAiConfig.mockResolvedValue({
+      enabled: true,
+      model: "m",
+      stand_key: true,
+      admin_only: true,
+    });
+    const { Wrapper } = wrapper();
+
+    const { result } = renderHook(() => useAiAvailable(), { wrapper: Wrapper });
+
+    await waitFor(() => expect(result.current.hasKey).toBe(true));
+  });
+
   it("is open only when the deployment offers it and a key is stored", async () => {
     const { Wrapper } = wrapper();
 

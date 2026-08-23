@@ -154,6 +154,10 @@ pub struct AiConfigResponse {
     pub enabled: bool,
     /// The model explanations are asked of.
     pub model: String,
+    /// The stand pays for explanations with its own key, so nobody stores one.
+    pub stand_key: bool,
+    /// Only admins may ask for an explanation on this deployment.
+    pub admin_only: bool,
 }
 impl toolkit::api::api_dto::ResponseApiDto for AiConfigResponse {}
 

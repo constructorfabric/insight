@@ -10,9 +10,9 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use utoipa::ToSchema;
 
-use super::super::AppState;
 use super::super::error::AiError;
-use super::{context, credentials, ensure_enabled, settings};
+use super::super::{AppState, require_admin};
+use super::{admin_only_explain, context, credentials, ensure_enabled, settings};
 use crate::domain::ai::crypto;
 use crate::domain::ai::prompt::{self, MetricSnapshot};
 use crate::infra::anthropic::AnthropicError;
@@ -40,9 +40,13 @@ impl toolkit::api::api_dto::ResponseApiDto for ExplainResponse {}
 pub async fn explain_metric(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ExplainRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     ensure_enabled(&state)?;
+    if state.config.ai_assist.admin_only {
+        require_admin(&state, &headers, admin_only_explain).await?;
+    }
 
     let tenant = ctx.subject_tenant_id();
     let person = ctx.subject_id();
@@ -81,7 +85,7 @@ pub async fn explain_metric(
             &user,
         )
         .await
-        .map_err(|error| upstream_error(&error))?;
+        .map_err(|error| upstream_error(&error, state.config.ai_assist.has_stand_key()))?;
 
     tracing::info!(
         metric_key = %req.snapshot.metric_key,
@@ -98,11 +102,22 @@ pub async fn explain_metric(
     }))
 }
 
+/// The key this call is paid for with.
+///
+/// The stand's own key wins where one is set: the deployment is buying the
+/// answers, and a personal key left over from before should not quietly start
+/// paying again.
 async fn caller_token(
     state: &AppState,
     tenant: uuid::Uuid,
     person: uuid::Uuid,
 ) -> Result<zeroize::Zeroizing<String>, CanonicalError> {
+    if state.config.ai_assist.has_stand_key() {
+        return Ok(zeroize::Zeroizing::new(
+            state.config.ai_assist.api_key.trim().to_owned(),
+        ));
+    }
+
     let row = credentials::load(state, tenant, person)
         .await?
         .ok_or_else(|| {
@@ -131,8 +146,18 @@ async fn caller_token(
     })
 }
 
-fn upstream_error(error: &AnthropicError) -> CanonicalError {
+fn upstream_error(error: &AnthropicError, stand_key: bool) -> CanonicalError {
     match error {
+        // Whose key was rejected decides who can do anything about it: telling
+        // a reader to replace a key in settings they have no field for sends
+        // them looking for a control that is not there.
+        AnthropicError::TokenRejected if stand_key => AiError::invalid_argument()
+            .with_field_violation(
+                "token",
+                "the Anthropic key configured for this deployment",
+                "the deployment's Anthropic key was rejected; an operator has to replace it",
+            )
+            .create(),
         AnthropicError::TokenRejected => AiError::invalid_argument()
             .with_field_violation(
                 "token",

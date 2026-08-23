@@ -3,6 +3,10 @@
     "schemas": {
       "AiConfigResponse": {
         "properties": {
+          "admin_only": {
+            "description": "Only admins may ask for an explanation on this deployment.",
+            "type": "boolean"
+          },
           "enabled": {
             "description": "Whether this deployment offers AI explanations at all.",
             "type": "boolean"
@@ -10,11 +14,17 @@
           "model": {
             "description": "The model explanations are asked of.",
             "type": "string"
+          },
+          "stand_key": {
+            "description": "The stand pays for explanations with its own key, so nobody stores one.",
+            "type": "boolean"
           }
         },
         "required": [
           "enabled",
-          "model"
+          "model",
+          "stand_key",
+          "admin_only"
         ],
         "type": "object"
       },
