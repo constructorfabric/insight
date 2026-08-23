@@ -376,6 +376,7 @@ const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
 const AI_BASE = "/api/analytics/v1/ai";
 
 let mockCredential = { configured: true, hint: "wxyz" };
+let mockContextSeq = 0;
 let mockSystemPrompt: string | null = null;
 
 const DEFAULT_SYSTEM_PROMPT = [
@@ -1120,8 +1121,9 @@ function aiAssistHandlers() {
         title: string;
         body: string;
       };
+      mockContextSeq += 1;
       const entry = {
-        id: `ctx-${mockContext.size + 1}`,
+        id: `ctx-${mockContextSeq}`,
         scope: body.scope,
         title: body.title,
         body: body.body,

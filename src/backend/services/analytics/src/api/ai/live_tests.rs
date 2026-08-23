@@ -34,14 +34,19 @@ const TOKEN: &str = "sk-ant-api03-live-test-token-wxyz";
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-async fn connect_or_skip() -> Option<DatabaseConnection> {
+/// The live DB, or `None` when this run is not meant to have one.
+///
+/// A set-but-unreachable URL is an error, never a skip: swallowing it would
+/// turn a broken database into a green suite.
+async fn connect_or_skip() -> Result<Option<DatabaseConnection>, Box<dyn std::error::Error>> {
     let Ok(url) = std::env::var(ENV_VAR) else {
         eprintln!("skipping: {ENV_VAR} not set");
-        return None;
+        return Ok(None);
     };
     let mut opts = ConnectOptions::new(url);
     opts.max_connections(4).sqlx_logging(false);
-    Database::connect(opts).await.ok()
+
+    Ok(Some(Database::connect(opts).await?))
 }
 
 fn enabled_config() -> GearConfig {
@@ -136,7 +141,7 @@ async fn body_json(resp: Response) -> Result<Value, Box<dyn std::error::Error>> 
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn config_reports_the_stand_switch_when_it_is_off() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let app = app(db, Uuid::now_v7(), GearConfig::default());
@@ -151,7 +156,7 @@ async fn config_reports_the_stand_switch_when_it_is_off() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn a_stand_with_the_switch_off_hides_every_other_route() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let tenant = Uuid::now_v7();
@@ -167,7 +172,7 @@ async fn a_stand_with_the_switch_off_hides_every_other_route() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn a_key_round_trips_as_its_last_four_characters_only() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let tenant = Uuid::now_v7();
@@ -216,7 +221,7 @@ async fn a_key_round_trips_as_its_last_four_characters_only() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn two_saves_at_once_leave_one_row_and_the_later_key() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let tenant = Uuid::now_v7();
@@ -255,7 +260,7 @@ async fn two_saves_at_once_leave_one_row_and_the_later_key() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn a_blank_key_is_refused() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -274,7 +279,7 @@ async fn a_blank_key_is_refused() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn a_tenant_without_its_own_prompt_reads_the_shipped_one() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -297,7 +302,7 @@ async fn a_tenant_without_its_own_prompt_reads_the_shipped_one() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn writing_the_prompt_needs_an_admin_check_that_can_answer() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -320,7 +325,7 @@ async fn writing_the_prompt_needs_an_admin_check_that_can_answer() -> TestResult
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn a_person_writes_reads_and_removes_their_own_context() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let tenant = Uuid::now_v7();
@@ -373,7 +378,7 @@ async fn a_person_writes_reads_and_removes_their_own_context() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn an_entry_with_no_title_is_refused() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -392,7 +397,7 @@ async fn an_entry_with_no_title_is_refused() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn organisation_context_is_not_a_persons_to_write() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -415,7 +420,7 @@ async fn organisation_context_is_not_a_persons_to_write() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn editing_someone_elses_entry_reads_as_absent() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -434,7 +439,7 @@ async fn editing_someone_elses_entry_reads_as_absent() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn explaining_without_a_stored_key_says_so() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
 
@@ -454,7 +459,7 @@ async fn explaining_without_a_stored_key_says_so() -> TestResult {
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn an_unreachable_model_reads_as_busy_rather_than_broken() -> TestResult {
-    let Some(db) = connect_or_skip().await else {
+    let Some(db) = connect_or_skip().await? else {
         return Ok(());
     };
     let tenant = Uuid::now_v7();

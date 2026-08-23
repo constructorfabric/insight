@@ -32,6 +32,8 @@ vi.mock("@/queries/ai", () => ({
   useExplainMetric: () => mocks.explain,
 }));
 
+import { beforeEach } from "vitest";
+
 import { ExplainWithAi } from "./explain-with-ai";
 import type { MetricSnapshot } from "@/api/ai-client";
 
@@ -48,6 +50,13 @@ const SNAPSHOT: MetricSnapshot = {
   trend: [],
 };
 
+
+beforeEach(() => {
+  mocks.mutate.mockClear();
+  mocks.explain.isPending = false;
+  mocks.explain.isError = false;
+  mocks.explain.data = undefined;
+});
 
 describe("ExplainWithAi", () => {
   it("draws nothing where the deployment does not offer explanations", () => {
@@ -120,16 +129,34 @@ describe("ExplainWithAi", () => {
     mocks.explain.isError = false;
   });
 
-  it("shows it is working rather than an empty answer", async () => {
+  it("spends one call however many times the sparkle is pressed", async () => {
     mocks.available = { featureOn: true, hasKey: true };
-    mocks.explain.isPending = true;
     const user = userEvent.setup();
 
-    render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    const view = render(<ExplainWithAi snapshot={SNAPSHOT} />);
+    const sparkle = screen.getByLabelText("Explain Tasks closed with AI");
+    await user.click(sparkle);
+
+    mocks.explain.isPending = true;
+    view.rerender(<ExplainWithAi snapshot={SNAPSHOT} />);
+    await user.click(sparkle);
+    await user.click(sparkle);
+
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows it is working rather than an empty answer", async () => {
+    mocks.available = { featureOn: true, hasKey: true };
+    const user = userEvent.setup();
+
+    const view = render(<ExplainWithAi snapshot={SNAPSHOT} />);
     await user.click(screen.getByLabelText("Explain Tasks closed with AI"));
 
+    // The call is in flight only after the press the popover opened on.
+    mocks.explain.isPending = true;
+    view.rerender(<ExplainWithAi snapshot={SNAPSHOT} />);
+
     expect(document.querySelector("[aria-busy]")).not.toBeNull();
-    mocks.explain.isPending = false;
   });
 
 });

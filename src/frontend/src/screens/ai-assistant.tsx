@@ -45,6 +45,29 @@ export function AiAssistantBody() {
     return <Shell>Loading…</Shell>;
   }
 
+  // A failed check is not the same answer as "switched off" — saying "off"
+  // here would send an admin to the chart to fix a network blip.
+  if (config.isError) {
+    return (
+      <Shell>
+        <Card>
+          <CardHeader>
+            <CardTitle>Could not check whether AI is available</CardTitle>
+            <CardDescription>
+              The request failed, so this page cannot tell whether explanations
+              are switched on here.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button size="sm" variant="outline" onClick={() => void config.refetch()}>
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
+      </Shell>
+    );
+  }
+
   if (!featureOn) {
     return (
       <Shell>
@@ -211,7 +234,9 @@ function SystemPromptCard() {
             size="sm"
             variant="outline"
             onClick={() => reset.mutate(undefined, { onSuccess: () => setDraft(null) })}
-            disabled={reset.isPending || settings.data?.is_default === true}
+            // Only once the read confirms a tenant prompt exists: enabled on an
+            // unknown state, a mis-click would delete a prompt nobody has seen.
+            disabled={reset.isPending || settings.data?.is_default !== false}
           >
             Reset to default
           </Button>

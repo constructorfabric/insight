@@ -33,8 +33,11 @@ export function ExplainWithAi({ snapshot }: ExplainWithAiProps) {
 
   if (!featureOn || !hasKey) return null;
 
+  // One call at a time: the sparkle and Try again both spend the reader's own
+  // quota, so a second press while one is in flight must do nothing.
   const ask = () => {
     setOpen(true);
+    if (explain.isPending) return;
     explain.mutate(snapshot);
   };
 
@@ -46,6 +49,7 @@ export function ExplainWithAi({ snapshot }: ExplainWithAiProps) {
             type="button"
             aria-label={`Explain ${snapshot.label} with AI`}
             onClick={ask}
+            disabled={explain.isPending}
             className={cn(
               "absolute top-2 right-2 z-10 grid size-7 place-items-center rounded-md",
               "text-muted-foreground transition-colors",
@@ -74,7 +78,7 @@ export function ExplainWithAi({ snapshot }: ExplainWithAiProps) {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => explain.mutate(snapshot)}
+            onClick={ask}
             disabled={explain.isPending}
           >
             Try again

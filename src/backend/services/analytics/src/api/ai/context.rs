@@ -11,8 +11,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use chrono::Utc;
 use sea_orm::{
-    ActiveModelTrait as _, ColumnTrait, Condition, EntityTrait, Order, PaginatorTrait as _,
-    QueryFilter, QueryOrder, Set,
+    ActiveModelTrait as _, ColumnTrait, Condition, ConnectionTrait, EntityTrait, Order,
+    PaginatorTrait as _, QueryFilter, QueryOrder, QuerySelect as _, Set, TransactionError,
+    TransactionTrait as _,
 };
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -60,8 +61,6 @@ pub async fn create_context(
 
     let tenant = ctx.subject_tenant_id();
     let owner = owner_of(req.scope, ctx.subject_id());
-    refuse_when_scope_is_full(&state, tenant, req.scope, owner).await?;
-
     let now = Utc::now();
     let row = entries::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -74,10 +73,21 @@ pub async fn create_context(
         updated_at: Set(now),
     };
 
-    let stored = row
-        .insert(&state.db)
+    // Counting and inserting in one transaction, with the scope's rows locked:
+    // two requests that each counted 19 free rows would otherwise both insert
+    // and leave the scope over its cap.
+    let stored = state
+        .db
+        .transaction::<_, entries::Model, CanonicalError>(move |tx| {
+            Box::pin(async move {
+                refuse_when_scope_is_full(tx, tenant, req.scope, owner).await?;
+                row.insert(tx)
+                    .await
+                    .map_err(|e| write_error(&e, "context insert"))
+            })
+        })
         .await
-        .map_err(|e| write_error(&e, "context insert"))?;
+        .map_err(unwrap_transaction_error)?;
 
     Ok((StatusCode::CREATED, Json(to_response(stored))))
 }
@@ -211,7 +221,7 @@ async fn writable_row(
 }
 
 async fn refuse_when_scope_is_full(
-    state: &AppState,
+    db: &impl ConnectionTrait,
     tenant: Uuid,
     scope: Scope,
     owner: Option<Uuid>,
@@ -225,7 +235,8 @@ async fn refuse_when_scope_is_full(
 
     let count = entries::Entity::find()
         .filter(condition)
-        .count(&state.db)
+        .lock_exclusive()
+        .count(db)
         .await
         .map_err(|e| read_error(&e, "context count"))?;
 
@@ -243,6 +254,15 @@ async fn refuse_when_scope_is_full(
     }
 
     Ok(())
+}
+
+/// A transaction reports either our own refusal or a database failure; the
+/// caller only ever sees a canonical error either way.
+fn unwrap_transaction_error(error: TransactionError<CanonicalError>) -> CanonicalError {
+    match error {
+        TransactionError::Transaction(inner) => inner,
+        TransactionError::Connection(e) => write_error(&e, "context transaction"),
+    }
 }
 
 fn owner_of(scope: Scope, caller: Uuid) -> Option<Uuid> {

@@ -58,11 +58,18 @@ pub async fn explain_metric(
 
     // INVARIANT: the permit is held across the upstream await on purpose — the
     // cap is on calls in flight, not on calls started.
-    let _permit = state
-        .ai_calls
-        .acquire()
-        .await
-        .map_err(|_| CanonicalError::internal("failed to schedule the model call").create())?;
+    //
+    // Refused rather than queued: waiting for a permit would hold the request
+    // task and the decrypted key in memory behind a slow upstream, and the
+    // caller would see a hang where the contract promises a "busy" answer.
+    let Ok(_permit) = state.ai_calls.try_acquire() else {
+        tracing::warn!("explain refused: every in-flight slot is taken");
+        return Err(AiError::resource_exhausted(
+            "too many explanations in flight; try again in a moment",
+        )
+        .with_quota_violation("ai_calls", "this instance caps concurrent model calls")
+        .create());
+    };
 
     let answer = state
         .anthropic
