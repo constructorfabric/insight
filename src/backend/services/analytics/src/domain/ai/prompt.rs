@@ -68,20 +68,23 @@ pub fn build_system_prompt(base: &str, tenant: &[Entry], person: &[Entry]) -> St
 
 /// Whose reading this is.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    utoipa::ToSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotScope {
     /// One person's own figure.
+    #[default]
     Person,
     /// A rollup over a group of people.
     Organisation,
-}
-
-impl Default for SnapshotScope {
-    fn default() -> Self {
-        Self::Person
-    }
 }
 
 /// One line of a chart, as it is drawn.
