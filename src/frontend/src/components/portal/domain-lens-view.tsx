@@ -67,8 +67,8 @@ import {
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
+  overviewCardDirections,
   sectionMetricKeys,
-  visibleDirections,
   visibleSections,
   type ConcentrationFraming,
   type LensConfig,
@@ -1469,10 +1469,7 @@ function DirectionCardsSection({
 }) {
   const { openDirection } = usePortalNavActions();
   const showPlanned = usePortalShowPlanned();
-  // The same directions the pane lists. A card for a direction the menu does
-  // not offer is a dead end that also announces a source is missing — which is
-  // exactly what an install marking that direction planned has said not to say.
-  const cards = visibleDirections(showPlanned)
+  const cards = overviewCardDirections(showPlanned)
     .map((d) => {
       const entry = lensEntry(d.id, "Overview");
       if (!entry || "comingSoon" in entry) return null;

@@ -127,6 +127,15 @@ export function visibleDirections(
   );
 }
 
+export function overviewCardDirections(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): Direction[] {
+  return visibleDirections(showPlanned, policy).filter((d) =>
+    visibleLenses(d, showPlanned, policy).includes("Overview")
+  );
+}
+
 /** Unique metric keys a config needs in its period+peer grid. */
 export function sectionMetricKeys(config: LensConfig): string[] {
   const keys = new Set<string>();

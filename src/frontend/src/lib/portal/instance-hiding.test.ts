@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { GROUPS, visibleGroups } from "@/lib/insight/groups";
-import { visibleDirections, visibleLenses, visibleSections } from "./lens-configs";
+import {
+  overviewCardDirections,
+  visibleDirections,
+  visibleLenses,
+  visibleSections,
+} from "./lens-configs";
 import { DEFAULT_OVERVIEW_ITEM, OVERVIEW_ITEMS } from "./overview-configs";
 import { landingDecision } from "./landing-zone";
 import { parseNavPolicy, visiblePersonSections } from "./nav-policy";
@@ -209,6 +214,26 @@ describe("directions under the install policy", () => {
     expect(visibleDirections(false, policy).map((d) => d.id)).not.toContain(
       "dev"
     );
+  });
+
+  it("offers no Overview card for a direction whose Overview lens is hidden", () => {
+    const policy = hide(["zone:directions/dir:dev/lens:overview"]);
+
+    expect(visibleDirections(true, policy).map((d) => d.id)).toContain("dev");
+    expect(overviewCardDirections(true, policy).map((d) => d.id)).not.toContain(
+      "dev"
+    );
+  });
+
+  it("toggles the Overview card of a planned Overview lens with the reader's choice", () => {
+    const policy = planned(["zone:directions/dir:dev/lens:overview"]);
+
+    expect(overviewCardDirections(true, policy).map((d) => d.id)).toContain(
+      "dev"
+    );
+    expect(
+      overviewCardDirections(false, policy).map((d) => d.id)
+    ).not.toContain("dev");
   });
 });
 
