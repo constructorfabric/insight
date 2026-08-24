@@ -7,12 +7,13 @@ use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
     BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, RankingQueryRow,
-    TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, dimension_aliases,
+    RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE,
+    dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
-    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, TimeseriesDto,
-    TimeseriesPointDto,
+    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, RollupValueDto,
+    TimeseriesDto, TimeseriesPointDto,
 };
 use super::validation::{
     HISTOGRAM_BINS, ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large,
@@ -51,7 +52,7 @@ pub fn build_period_view(
 ) -> MetricResultViewDto {
     let values_by_entity: HashMap<String, Option<f64>> = rows
         .into_iter()
-        .map(|row| (row.entity_id, row.value))
+        .map(|row| (req.entity.canonicalize_entity_id(row.entity_id), row.value))
         .collect();
     // `entity_id` IS the canonical contract on the wire and in the relations;
     // the selection renders the ids in that form, one rule for every view
@@ -93,8 +94,9 @@ pub fn build_timeseries_view(
         } else {
             row_dimensions(&row.extra, dimensions)?
         };
+        let entity_id = req.entity.canonicalize_entity_id(row.entity_id);
         let data = by_series
-            .entry((row.entity_id, remainder, dims))
+            .entry((entity_id, remainder, dims))
             .or_insert_with(|| SeriesData::new(row.rank, remainder, row.group_label.clone()));
         if row.is_total != 0 {
             data.total = row.value;
@@ -180,6 +182,7 @@ pub fn build_peer_view(rows: Vec<PeerQueryRow>) -> MetricResultViewDto {
 }
 
 pub fn build_breakdown_view(
+    req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
     rows: Vec<BreakdownQueryRow>,
 ) -> Result<MetricResultViewDto, CanonicalError> {
@@ -187,7 +190,7 @@ pub fn build_breakdown_view(
         .into_iter()
         .map(|row| {
             Ok(BreakdownValueDto {
-                entity_id: row.entity_id,
+                entity_id: req.entity.canonicalize_entity_id(row.entity_id),
                 dimensions: row_dimensions(&row.extra, dimensions)?
                     .into_iter()
                     .map(|(key, value, label)| MetricDimensionDto { key, value, label })
@@ -198,6 +201,38 @@ pub fn build_breakdown_view(
         .collect::<Result<Vec<_>, CanonicalError>>()?;
     Ok(MetricResultViewDto::Breakdown {
         dimensions: dimensions.iter().map(|d| (*d).clone()).collect(),
+        values,
+    })
+}
+
+pub fn build_rollup_view(
+    dimensions: &[String],
+    rows: Vec<RollupQueryRow>,
+) -> Result<MetricResultViewDto, CanonicalError> {
+    let values = rows
+        .into_iter()
+        .map(|row| {
+            let remainder = row.remainder != 0;
+            let dimensions = if remainder {
+                Vec::new()
+            } else {
+                row_dimensions(&row.extra, dimensions)?
+                    .into_iter()
+                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .collect()
+            };
+            Ok(RollupValueDto {
+                dimensions,
+                value: row.value,
+                contributing_entity_count: row.contributing_entity_count.unwrap_or(0),
+                rank: row.rank,
+                remainder: remainder.then_some(true),
+                label: row.group_label,
+            })
+        })
+        .collect::<Result<Vec<_>, CanonicalError>>()?;
+    Ok(MetricResultViewDto::Rollup {
+        dimensions: dimensions.to_vec(),
         values,
     })
 }
@@ -219,7 +254,8 @@ pub fn build_histogram_view(
 
     let mut by_entity: HashMap<String, EntityBins> = HashMap::new();
     for row in rows {
-        let entry = by_entity.entry(row.entity_id).or_insert(EntityBins {
+        let entity_id = req.entity.canonicalize_entity_id(row.entity_id);
+        let entry = by_entity.entry(entity_id).or_insert(EntityBins {
             lo: row.entity_lo,
             hi: row.entity_hi,
             counts: HashMap::new(),
@@ -312,6 +348,7 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         }
         MetricResultViewDto::Peer { values } => values.len(),
         MetricResultViewDto::Breakdown { values, .. } => values.len(),
+        MetricResultViewDto::Rollup { values, .. } => values.len(),
         MetricResultViewDto::Histogram { values } => {
             values.iter().map(|value| value.bins.len()).sum()
         }
@@ -358,7 +395,9 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::metric_definitions::definition::ValueTransform;
+    use crate::domain::metric_definitions::definition::{
+        RatioDenominatorAggregation, ValueTransform,
+    };
     use chrono::NaiveDate;
     use serde_json::json;
 
@@ -414,6 +453,7 @@ mod tests {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
     }
@@ -501,6 +541,25 @@ mod tests {
         assert_eq!(values[0].value, None);
         assert_eq!(values[1].entity_id, "00000000-0000-0000-0000-00000000000a");
         assert_eq!(values[1].value, Some(5.0));
+    }
+
+    #[test]
+    fn tenant_period_view_exposes_the_session_tenant_not_the_storage_key() {
+        let tenant_id = Uuid::from_u128(0x1967);
+        let mut req = request(Vec::new(), "2026-01-01", "2026-01-31");
+        req.entity = ValidatedEntitySelection::Tenant { id: tenant_id };
+        let rows = vec![PeriodQueryRow {
+            entity_id: "default".to_owned(),
+            value: Some(5.0),
+        }];
+
+        let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
+        else {
+            panic!("expected period view");
+        };
+
+        assert_eq!(values[0].entity_id, tenant_id.to_string());
+        assert_eq!(values[0].value, Some(5.0));
     }
 
     #[test]
@@ -829,8 +888,13 @@ mod tests {
             extra,
         }];
         let dimensions = vec!["tool".to_owned()];
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
         let Ok(MetricResultViewDto::Breakdown { values, .. }) =
-            build_breakdown_view(&dimensions, rows)
+            build_breakdown_view(&req, &dimensions, rows)
         else {
             panic!("expected breakdown view");
         };
@@ -841,11 +905,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rollup_keeps_contributor_count_and_marks_remainder() {
+        let rows = vec![
+            RollupQueryRow {
+                value: Some(4.0),
+                contributing_entity_count: Some(2),
+                rank: Some(1),
+                remainder: 0,
+                group_label: None,
+                extra: HashMap::from([
+                    ("dim_0_value".to_owned(), json!("example/repository")),
+                    ("dim_0_label".to_owned(), json!("Example repository")),
+                ]),
+            },
+            RollupQueryRow {
+                value: Some(3.0),
+                contributing_entity_count: Some(2),
+                rank: None,
+                remainder: 1,
+                group_label: Some("Other".to_owned()),
+                extra: HashMap::new(),
+            },
+        ];
+
+        let Ok(MetricResultViewDto::Rollup { values, .. }) =
+            build_rollup_view(&["repository".to_owned()], rows)
+        else {
+            panic!("expected rollup view");
+        };
+        assert_eq!(values[0].contributing_entity_count, 2);
+        assert_eq!(values[0].rank, Some(1));
+        assert_eq!(values[1].dimensions.len(), 0);
+        assert_eq!(values[1].remainder, Some(true));
+        assert_eq!(values[1].label.as_deref(), Some("Other"));
+    }
+
     fn selection(metric_key: &str) -> super::super::dto::MetricResultSelectionDto {
         super::super::dto::MetricResultSelectionDto {
             metric_key: metric_key.to_owned(),
-            entity: super::super::dto::MetricResultsEntityDto {
-                r#type: "person".to_owned(),
+            entity: super::super::dto::MetricResultsEntityDto::Person {
                 ids: vec!["person@example.com".to_owned()],
             },
             period: super::super::dto::MetricResultsPeriodDto {

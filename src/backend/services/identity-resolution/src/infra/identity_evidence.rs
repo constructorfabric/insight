@@ -13,6 +13,7 @@ use insight_clickhouse::{Client, Config};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::domain::login_bootstrap::MAX_VALUE_ID_CHARS;
 use crate::domain::review_queue::AccountDescription;
 use crate::domain::seed::SourceAccountKey;
 
@@ -29,6 +30,10 @@ pub struct AccountEvidence {
     /// The account's latest event is a closure signal — it is deactivated at
     /// the source and must not be surfaced for review.
     pub is_closed: bool,
+    /// A connector states an account id for it, so the persons-seed can write
+    /// a binding. False means no seed run ever will: the only paths left are an
+    /// operator decision and a sign-in through the account.
+    pub states_binding_id: bool,
 }
 
 /// The whole evidence read, with the one fact about the read itself a consumer
@@ -60,7 +65,8 @@ pub struct EvidenceSnapshot {
 ///
 /// No ORDER BY: both readers wrap this and order it their own way, and a sort
 /// here would be thrown away by one of them.
-const FOLD_SQL: &str = r"
+/// The fold, with `{MAX_ID_CHARS}` still to substitute — [`fold_sql`] does it.
+const FOLD_SQL_TEMPLATE: &str = r"
     SELECT
         ifNull(insight_source_type, '')                 AS source_type,
         ifNull(toString(insight_source_id), '')         AS source_id,
@@ -101,17 +107,31 @@ const FOLD_SQL: &str = r"
         argMaxIf(
             ifNull(value, ''), (_synced_at, _version),
             value_type = 'parent_email' AND operation_type = 'UPSERT' AND value != ''
-        )                                               AS manager_email
+        )                                               AS manager_email,
+        argMaxIf(
+            ifNull(value, ''), (_synced_at, _version),
+            value_type = 'id' AND operation_type = 'UPSERT' AND value != ''
+            AND lengthUTF8(value) <= {MAX_ID_CHARS}
+        )                                               AS binding_id
     FROM identity.identity_inputs
     WHERE source_account_id IS NOT NULL AND source_account_id != ''
     GROUP BY source_type, source_id, account_id
 ";
 
+/// INVARIANT: the id cap is the seed's, not a second opinion. `route_value`
+/// DROPS an over-long `id`, so the seed reads such an account as stating none;
+/// a fold that called it bindable would classify it `pending` and hide from the
+/// operator the one account nothing will ever bind.
+fn fold_sql() -> String {
+    FOLD_SQL_TEMPLATE.replace("{MAX_ID_CHARS}", &MAX_VALUE_ID_CHARS.to_string())
+}
+
 /// The fold's own columns, named rather than `SELECT *`: the row struct is
 /// decoded positionally, so a reordered or added fold column would otherwise
 /// mis-decode in silence.
 const FOLD_COLUMNS: &str = "source_type, source_id, account_id, latest_op, email, username, \
-     display_name, first_name, last_name, job_title, department, status, manager_email";
+     display_name, first_name, last_name, job_title, department, status, manager_email, \
+     binding_id";
 
 /// The name a source sends in parts, as [`compose_name`] assembles it. The
 /// order key needs it because a row described by parts alone still shows one.
@@ -197,6 +217,9 @@ struct FoldedRow {
     department: String,
     status: String,
     manager_email: String,
+    /// The `value_type='id'` value the source itself states for this account
+    /// (ADR-0002's binding row). Empty when no connector emits one.
+    binding_id: String,
     /// The listing's order key, computed by the query so no second definition
     /// of it can drift from the one that sorted the rows. Empty on reads that
     /// do not order (the whole-tenant fold).
@@ -268,8 +291,9 @@ impl ClickHouseEvidenceReader {
         // ceiling over an unordered read takes whichever rows arrive first, so
         // two reads could describe different subsets and the rates would move
         // with no data behind it.
+        let fold = fold_sql();
         let sql = format!(
-            "SELECT {FOLD_COLUMNS}, '' AS order_label FROM ({FOLD_SQL}) \
+            "SELECT {FOLD_COLUMNS}, '' AS order_label FROM ({fold}) \
              ORDER BY source_type, source_id, account_id LIMIT {MAX_EVIDENCE_ACCOUNTS}"
         );
         let rows: Vec<FoldedRow> = match self.client.query(&sql).fetch_all().await {
@@ -401,6 +425,7 @@ fn map_row(row: FoldedRow) -> anyhow::Result<AccountEvidence> {
         username: non_empty(row.username),
         description,
         is_closed: row.latest_op == "DELETE",
+        states_binding_id: !row.binding_id.trim().is_empty(),
     })
 }
 
@@ -411,7 +436,7 @@ fn list_sql(filtered: bool, resuming: bool) -> String {
     // be substituted after the resume clause is spliced in.
     LIST_SQL
         .replace("{COLUMNS}", FOLD_COLUMNS)
-        .replace("{FOLD}", FOLD_SQL)
+        .replace("{FOLD}", &fold_sql())
         .replace("{FILTER}", if filtered { FILTER_SQL } else { "" })
         .replace("{RESUME}", if resuming { RESUME_SQL } else { "" })
         .replace("{LABEL}", ORDER_LABEL_SQL)
@@ -598,6 +623,30 @@ fn non_empty(value: String) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_fold_reads_a_stated_id_as_bindable_and_a_missing_one_as_not() -> anyhow::Result<()> {
+        assert!(map_row(folded("UPSERT", "sam@corp.com", "sam"))?.states_binding_id);
+
+        let mut silent = folded("UPSERT", "sam@corp.com", "sam");
+        silent.binding_id = String::new();
+        assert!(
+            !map_row(silent)?.states_binding_id,
+            "an account no connector states an id for is not bindable"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_fold_caps_the_id_at_the_seed_s_limit() {
+        // `route_value` DROPS an over-long id, so the seed reads such an account
+        // as stating none. A fold that called it bindable would classify it
+        // `pending` and hide the one account nothing will ever bind.
+        assert!(
+            fold_sql().contains(&format!("lengthUTF8(value) <= {MAX_VALUE_ID_CHARS}")),
+            "the fold must carry the seed's cap, not a second opinion"
+        );
+    }
+
     fn folded(latest_op: &str, email: &str, username: &str) -> FoldedRow {
         FoldedRow {
             source_type: "github".to_owned(),
@@ -613,6 +662,7 @@ mod tests {
             department: String::new(),
             status: String::new(),
             manager_email: String::new(),
+            binding_id: "gh-1".to_owned(),
             order_label: String::new(),
         }
     }

@@ -28,7 +28,7 @@ function valueFor(entityId: string, metricKey: string, salt = ""): number {
   return (hash(`${entityId}|${metricKey}|${salt}`) % 900) + 50;
 }
 
-function metaFor(metricKey: string): Omit<MetricResult, "views"> {
+export function metaFor(metricKey: string): Omit<MetricResult, "views"> {
   const fixture = metricResultFixtureByKey(metricKey);
   if (fixture) {
     const { views: _views, ...meta } = fixture;
@@ -67,7 +67,10 @@ const MOCK_TOOLS = [
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
-  const ids = request.entity.ids;
+  const ids =
+    request.entity.type === "person"
+      ? request.entity.ids
+      : ["00000000-0000-4000-8000-00000000c0de"];
   const metrics: MetricResult[] = request.metrics.map((metricRequest) => {
     const meta = metaFor(metricRequest.metric_key);
     const key = metricRequest.metric_key;
@@ -134,6 +137,20 @@ export function buildMetricResultsResponse(
                 value: valueFor(entityId, key, dimension.value),
               })),
             ),
+          };
+        case "rollup":
+          return {
+            view: "rollup",
+            dimensions: view.dimensions,
+            values: MOCK_TOOLS.map((dimension) => ({
+              dimensions: view.dimensions.map((key) => ({
+                key,
+                value: dimension.value,
+                label: dimension.label,
+              })),
+              value: valueFor("rollup", key, dimension.value),
+              contributing_entity_count: ids.length,
+            })),
           };
         case "histogram":
           return {

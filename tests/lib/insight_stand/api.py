@@ -24,13 +24,15 @@ and the media-type cases whose whole point is that the body was refused.
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from . import coverage
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import httpx
     from pydantic import BaseModel
 
 
@@ -164,8 +166,18 @@ class ApiClient:
     #: wants to must say so.
     edge_fronted: bool = True
 
+    _http: httpx.Client | None = field(default=None, init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
+
+    def _transport(self) -> httpx.Client:
+        import httpx
+
+        if self._http is None:
+            self._http = httpx.Client(timeout=self.timeout_s, follow_redirects=False)
+            atexit.register(self._http.close)
+        return self._http
 
     # -- construction ------------------------------------------------------
 
@@ -200,23 +212,23 @@ class ApiClient:
         if json_body is not None and content is not None:
             raise ValueError("pass json_body or content, not both")
 
-        import httpx
-
         checked_path = self._checked_path(path)
         url = f"{self.base_url}{checked_path}"
         merged: dict[str, str] = dict(self.session.headers()) if self.session else {}
         if headers:
             merged.update(headers)
 
-        with httpx.Client(timeout=self.timeout_s, follow_redirects=False) as client:
-            response = client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                content=content,
-                headers=merged,
-            )
+        client = self._transport()
+        # SAFETY: a pooled jar would carry a cookie into the unauthenticated client.
+        client.cookies.clear()
+        response = client.request(
+            method,
+            url,
+            params=params,
+            json=json_body,
+            content=content,
+            headers=merged,
+        )
         # Every request the suite makes passes through here, which is what lets
         # the coverage ledger be a byproduct of the tests rather than a list
         # somebody maintains. Metadata only — never the body.

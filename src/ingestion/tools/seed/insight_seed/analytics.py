@@ -38,9 +38,6 @@ LOG = logging.getLogger("seed.analytics")
 DEFINITION_ROW_ID = "e1e1e1e1-0000-4000-8000-000000000010"
 
 #: The label constant lives in `manifest` rather than here: `PROFILE.md` is
-#: rendered by a tool that must import no third-party package, and this module
-#: needs pymysql. The manifest owns the NAMES; this module owns writing the rows.
-from .manifest import OVERRIDE_LABEL  # noqa: E402
 
 
 def _bin(u: str) -> bytes:
@@ -198,6 +195,10 @@ _OVERRIDE_SOURCE = "SELECT id, metric_key, updated_at FROM seed_definition_overr
 #: column's ON UPDATE clause across too, so without this the UPDATE below would
 #: stamp the copy with the current time and the clone would stop being faithful
 #: in the one column nobody would think to check.
+#: Written onto the overridden definition. Distinguishable on sight, so a
+#: listing that served the product default instead is obvious in a failure.
+OVERRIDE_LABEL = "Stand tenant override"
+
 _OVERRIDE_APPLY = (
     "UPDATE seed_definition_override "
     "SET id = %s, tenant_id = %s, label = %s, origin = 'custom', updated_at = %s"

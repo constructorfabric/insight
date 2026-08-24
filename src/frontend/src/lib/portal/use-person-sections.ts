@@ -1,7 +1,8 @@
-import { GROUPS, type GroupId } from "@/lib/insight/groups";
+import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { groupHasData } from "@/lib/insight/group-data";
 import { partState, reachableMetricKeys } from "@/lib/insight/coverage";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import {
   gradeSectionStanding,
   rankCounts,
@@ -13,6 +14,7 @@ import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import type { Status } from "@/lib/status";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useMetricCollectionSet } from "@/queries/metric-results";
 
@@ -59,9 +61,11 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
   const { dateRange } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const entity = { type: "person" as const, ids: [entityId] };
+  const showPlanned = usePortalShowPlanned();
+  const groups = visibleGroups(showPlanned);
 
   const groupData = useMetricCollectionSet(
-    GROUPS.map((def) => ({
+    groups.map((def) => ({
       key: def.id,
       collection: projectViews(def.collection, ["period", "peer"]),
     })),
@@ -77,7 +81,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
   const cohortIds = usePersonCohort(entityId);
   const cohortGroup = useMetricCollectionSet(
     cohortIds.length
-      ? GROUPS.map((def) => ({
+      ? groups.map((def) => ({
           key: def.id,
           collection: projectViews(def.collection, ["period"]),
         }))
@@ -88,7 +92,7 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
 
   const reachable = reachableMetricKeys(definitions.data?.metrics ?? []);
 
-  return GROUPS.map((def) => {
+  return groups.map((def) => {
     const result = groupData.get(def.id);
     const cohort = cohortGroup.get(def.id);
     const byKey =
@@ -109,7 +113,13 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       });
       return [{ row: m.key, rank: standing.rank }];
     });
-    const counts = rankCounts(ranks);
+    const counts = rankCounts(
+      countableSignals(
+        ranks,
+        (entry) => entry.row,
+        (entry) => entry.rank,
+      ),
+    );
 
     return {
       id: def.id,

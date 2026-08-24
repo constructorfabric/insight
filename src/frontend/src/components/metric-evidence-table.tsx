@@ -30,12 +30,16 @@ import {
   summaryLine,
   type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
-import { evidenceRecordLinks } from "@/lib/metrics/git-links";
+import {
+  evidenceRecordLinks,
+  evidenceRefText,
+} from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
+  if (column.key === "type") return { basisRem: 8, grow: 0 };
   if (column.key === "repository") return { basisRem: 12, grow: 0.5 };
   if (column.key === "author") return { basisRem: 10, grow: 0.25 };
   if (column.key === "date") return { basisRem: 8, grow: 0 };
@@ -136,7 +140,10 @@ export function MetricEvidenceTable({
     <div className="relative min-h-0 flex-1">
       <Table
         role="table"
-        aria-rowcount={rows.length}
+        // Counting the header row, which is row 1: `aria-rowindex` below starts
+        // the data at 2, so a total of `rows.length` would make the last row
+        // "n+1 of n".
+        aria-rowcount={rows.length + 1}
         containerRef={setViewport}
         containerClassName="h-full overflow-auto"
         className="grid min-w-full"
@@ -263,7 +270,14 @@ export function MetricEvidenceTable({
                   const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
-                  const line = summaryLine(text);
+                  const full = summaryLine(text);
+                  // The ref column shows the issue number alone; the tooltip
+                  // keeps the repository, which is the only place a row states
+                  // it when the metric declares no `source` to link from.
+                  const line =
+                    column.key === "ref"
+                      ? evidenceRefText(metricKey ?? "", full)
+                      : full;
                   return (
                     <TableCell
                       role="cell"
@@ -275,7 +289,7 @@ export function MetricEvidenceTable({
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      title={line}
+                      title={full}
                     >
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">

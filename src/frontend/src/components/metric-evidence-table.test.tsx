@@ -21,7 +21,7 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-vi.mock("sonner", () => ({
+vi.mock("@/components/ui/sonner", () => ({
   toast: { error: mocks.toastError },
 }));
 
@@ -69,7 +69,7 @@ describe("MetricEvidenceTable", () => {
     renderTable();
 
     const table = screen.getByRole("table");
-    expect(table).toHaveAttribute("aria-rowcount", "2");
+    expect(table).toHaveAttribute("aria-rowcount", "3");
     expect(screen.getAllByRole("rowgroup")).toHaveLength(2);
     expect(screen.getAllByRole("columnheader")).toHaveLength(4);
     expect(screen.getAllByRole("row")[1]).toHaveAttribute("aria-rowindex", "2");

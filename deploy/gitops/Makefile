@@ -416,7 +416,8 @@ keycloak-realm: kube-ctx values-present
 	echo "$(C_GRN)→$(C_RST) generating Keycloak realm (dev-lead $$DEV_EMAIL; redirects $$REDIRECT, $$LB_REDIRECT)"; \
 	TENANT_ID="$$(yq -r '.global.tenantDefaultId // ""' $(VALUES))"; \
 	[ -n "$$TENANT_ID" ] || { echo "$(C_RED)global.tenantDefaultId is required to generate the realm$(C_RST)"; exit 1; }; \
-	TENANT_DEFAULT_ID="$$TENANT_ID" uv run --project "$$SEED_DIR" insight-seed-realm --dev-email "$$DEV_EMAIL" \
+	[ -z "$$SEED_ORG_HEADCOUNT" ] || echo "$(C_GRN)→$(C_RST) realm sized for SEED_ORG_HEADCOUNT=$$SEED_ORG_HEADCOUNT people"; \
+	SEED_ORG_HEADCOUNT="$$SEED_ORG_HEADCOUNT" TENANT_DEFAULT_ID="$$TENANT_ID" uv run --project "$$SEED_DIR" insight-seed-realm --dev-email "$$DEV_EMAIL" \
 	  --authenticator-redirect "$$REDIRECT" \
 	  --authenticator-redirect "$$LB_REDIRECT" \
 	  --authenticator-secret "$$AUTH_SECRET" \
@@ -898,6 +899,7 @@ verify-ci-credential: vpn-up kube-ctx
 	check yes "create jobs in $(NS_APP) (seed stage renders a Job)"          create jobs -n $(NS_APP); \
 	check yes "get pods/log in $(NS_APP) (seed + diagnostics)"               get pods/log -n $(NS_APP); \
 	check yes "create secrets in $(NS_APP) (helm release storage)"          create secrets -n $(NS_APP); \
+	check yes "create configmaps in $(NS_APP) (seed-stand.sh publishes the manifest)" create configmaps -n $(NS_APP); \
 	check yes "update deployments in $(NS_APP) (helm upgrade, rollout)"     update deployments.apps -n $(NS_APP); \
 	check yes "create Roles in $(NS_APP) (chart renders its own RBAC)"      create roles.rbac.authorization.k8s.io -n $(NS_APP); \
 	check yes "create WorkflowTemplates in $(NS_APP)"                        create workflowtemplates.argoproj.io -n $(NS_APP); \

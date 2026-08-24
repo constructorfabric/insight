@@ -621,7 +621,14 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
 
     let router = OperationBuilder::get("/v1/visible-persons")
         .operation_id("identity_resolution.visible_persons.list")
-        .summary("List the persons the caller may see")
+        .summary("List the org members the caller may see")
+        .description(
+            "The organisation's roster: persons a connector claims as an account \
+             holder. An address seen only in someone else's data — a commit author \
+             nobody here holds — is an identity the journal carries, not a member, \
+             and is left out. The POST sibling confirms visibility over any person \
+             id, so it answers for a wider set than this lists.",
+        )
         .authenticated()
         .query_param(
             "q",

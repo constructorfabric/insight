@@ -51,6 +51,10 @@ describe("resolveScopeRoster", () => {
   it("narrows to direct reports", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-lead1", directOnly: true });
     expect(s.roster?.map((r) => r.person_id).sort()).toEqual(["p-ic1", "p-lead2"]);
+    expect(s.reportPeople?.map((person) => person.entityId).sort()).toEqual([
+      "p-ic1",
+      "p-lead2",
+    ]);
   });
   it("falls back to the viewer when root is outside the tree", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-stranger", directOnly: false });
@@ -105,39 +109,77 @@ describe("flatOrgScope", () => {
     { person_id: "p-c", display_name: "Cyd" },
   ];
 
-  it("counts everyone the viewer may see except the viewer", () => {
-    // The org zones read the roster as "the people this frame is about"; the
-    // viewer reads their own numbers on their Person page, as in a subtree.
-    const scope = flatOrgScope(roster, "p-me");
+  it("counts everyone the viewer may see, the viewer included", () => {
+    // The scope counts the ORGANISATION: a head-count that changed with who
+    // is looking disagreed with the roster listed right beside it (#2724).
+    const scope = flatOrgScope(roster);
 
-    expect(scope.roster?.map((r) => r.person_id)).toEqual(["p-b", "p-c"]);
-    expect(scope.count).toBe(2);
+    expect(scope.roster?.map((r) => r.person_id)).toEqual(["p-me", "p-b", "p-c"]);
+    expect(scope.count).toBe(3);
   });
 
   it("offers no manager nodes and no direct-only cut", () => {
     // Nothing to pick and nothing to narrow: one organisation, one cohort.
-    const scope = flatOrgScope(roster, "p-me");
+    const scope = flatOrgScope(roster);
 
     expect(scope.managerNodes).toEqual([]);
     expect(scope.canDirectOnly).toBe(false);
   });
 
   it("names the organisation rather than a person", () => {
-    const scope = flatOrgScope(roster, "p-me");
+    const scope = flatOrgScope(roster);
 
     expect(scope.label).toBe("Whole organisation");
   });
 
-  it("keeps a roster it cannot place the viewer in", () => {
-    // A viewer absent from their own roster is a bug elsewhere; dropping every
-    // row here would report it as "you can see nobody".
-    const scope = flatOrgScope(roster, "p-unknown");
+  it("carries every naming field a person label reads (#2711)", () => {
+    // The roster entry is what the zones label people by; dropping username
+    // here would blank every person the org chart never named.
+    const scope = flatOrgScope([
+      { person_id: "p-h", display_name: "", username: "handle", email: "" },
+    ]);
 
-    expect(scope.count).toBe(3);
+    expect(scope.roster).toEqual([
+      {
+        person_id: "p-h",
+        display_name: "",
+        username: "handle",
+        email: "",
+        supervisor_person_id: null,
+        is_direct: false,
+      },
+    ]);
   });
 
+  it("carries report people from the visible roster", () => {
+    const scope = flatOrgScope([
+      {
+        person_id: "p-h",
+        display_name: "Handle",
+        email: "handle@example.com",
+        job_title: "Engineer",
+        status: "active",
+      },
+    ]);
+
+    expect(scope.reportPeople).toEqual([
+      {
+        entityId: "p-h",
+        name: "Handle",
+        email: "handle@example.com",
+        division: "",
+        department: "",
+        jobTitle: "Engineer",
+        managerName: "",
+        managerEmail: "",
+        status: "active",
+      },
+    ]);
+  });
+
+
   it("has no roster before the answer arrives", () => {
-    const scope = flatOrgScope(null, "p-me");
+    const scope = flatOrgScope(null);
 
     expect(scope.roster).toBeNull();
     expect(scope.count).toBe(0);

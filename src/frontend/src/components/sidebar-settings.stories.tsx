@@ -38,7 +38,7 @@ export const Default: Story = {};
 export const TestToggleRowsShowTheirWholeLabel: Story = {
   tags: ["test"],
   play: async ({ canvas }) => {
-    for (const name of [/portal/i, /planned sections/i, /explanations/i]) {
+    for (const name of [/planned sections/i, /explanations/i]) {
       const row = canvas.getByRole("button", { name });
       const children = [...row.children];
       const gap = parseFloat(getComputedStyle(row).columnGap);

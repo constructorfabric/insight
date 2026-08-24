@@ -117,9 +117,22 @@ async fn page_of_persons(
         person_id: key.person_id,
     });
 
-    person_listing::list_persons(&state.db, tenant, values, named, None, after, limit + 1)
-        .await
-        .map_err(|e| read_err(&e))
+    // Every identity, claimed or not: an address nobody holds yet is exactly
+    // what an operator opens this picker to attach to someone.
+    person_listing::list_persons(
+        &state.db,
+        tenant,
+        values,
+        named,
+        person_listing::Restrict {
+            listed: person_listing::Listed::EveryIdentity,
+            visible_to: None,
+        },
+        after,
+        limit + 1,
+    )
+    .await
+    .map_err(|e| read_err(&e))
 }
 
 /// Drop the probe row and, when it was there, mint the cursor that resumes

@@ -168,6 +168,19 @@ ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_dat
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_default_branch_commits
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, source_id, project_key, repo_slug, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.git_metric_evidence
 (
     `tenant_id` String,
@@ -249,7 +262,10 @@ CREATE TABLE IF NOT EXISTS insight.task_issue_state
     `tenant_id` Nullable(String),
     `entity_id` Nullable(String),
     `insight_source_id` String,
+    `data_source` String,
     `issue_id` String,
+    `id_readable` String,
+    `title` Nullable(String),
     `status_category` String,
     `issue_type` String,
     `issue_kind` String,

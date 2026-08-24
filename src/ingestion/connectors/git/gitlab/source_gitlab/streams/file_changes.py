@@ -11,41 +11,54 @@ from source_gitlab.streams.base import GitlabStream, GitlabSubstream, parse_diff
 from source_gitlab.streams.concurrency import RequestGate
 from source_gitlab.streams.windowing import CommittedDateWindowing
 
+_RefKey = tuple[Any, str | None]
 
-class _DefaultHeadFrontier:
-    """Advance a project's default_head only after all its diff tasks are emitted."""
+
+class _HeadFrontier:
+    """Advance a walked ref's stored head only after all its diff tasks are emitted.
+
+    Keyed by (project_id, branch), where branch is None for the default one.
+    A branch whose diffs partly failed keeps its old head, so the next sync
+    re-walks the range instead of stepping over the gap.
+    """
 
     def __init__(self, stream: CommitFileChangesStream) -> None:
         self._stream = stream
-        self._pending: dict[Any, dict[str, Any]] = {}
+        self._pending: dict[_RefKey, dict[str, Any]] = {}
 
-    def open(self, project_id: Any, head: str) -> None:
-        self._pending[project_id] = {
+    def open(self, key: _RefKey, head: str) -> None:
+        self._pending[key] = {
             "head": head,
             "remaining": 0,
             "done": False,
             "advanced": False,
         }
 
-    def add_one(self, project_id: Any) -> None:
-        self._pending[project_id]["remaining"] += 1
+    def add_one(self, key: _RefKey) -> None:
+        self._pending[key]["remaining"] += 1
 
-    def finish_enum(self, project_id: Any) -> None:
-        self._pending[project_id]["done"] = True
-        self._maybe_advance(project_id)
+    def finish_enum(self, key: _RefKey) -> None:
+        self._pending[key]["done"] = True
+        self._maybe_advance(key)
 
-    def complete_one(self, project_id: Any) -> None:
-        entry = self._pending.get(project_id)
+    def complete_one(self, key: _RefKey) -> None:
+        entry = self._pending.get(key)
         if entry is None:
             return
         entry["remaining"] -= 1
-        self._maybe_advance(project_id)
+        self._maybe_advance(key)
 
-    def _maybe_advance(self, project_id: Any) -> None:
-        entry = self._pending[project_id]
-        if entry["done"] and entry["remaining"] == 0 and not entry["advanced"]:
-            self._stream._project_state(project_id)["default_head"] = entry["head"]
-            entry["advanced"] = True
+    def _maybe_advance(self, key: _RefKey) -> None:
+        entry = self._pending[key]
+        if not (entry["done"] and entry["remaining"] == 0 and not entry["advanced"]):
+            return
+        project_id, branch = key
+        pstate = self._stream._project_state(project_id)
+        if branch is None:
+            pstate["default_head"] = entry["head"]
+        else:
+            pstate.setdefault("branches", {})[branch] = entry["head"]
+        entry["advanced"] = True
 
 
 class CommitFileChangesStream(GitlabSubstream, IncrementalMixin):
@@ -93,16 +106,14 @@ class CommitFileChangesStream(GitlabSubstream, IncrementalMixin):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any] | AirbyteMessage]:
-        frontier = _DefaultHeadFrontier(self)
+        frontier = _HeadFrontier(self)
         for task, records in concurrency.imap_bounded(
             self._gate, self._diff_tasks(frontier), self._fetch_diff
         ):
             yield from records
-            frontier.complete_one(task["project_id"])
+            frontier.complete_one(task["ref_key"])
 
-    def _diff_tasks(
-        self, frontier: _DefaultHeadFrontier
-    ) -> Iterable[Mapping[str, Any]]:
+    def _diff_tasks(self, frontier: _HeadFrontier) -> Iterable[Mapping[str, Any]]:
         for project in self._iter_unique_projects():
             project_id = project.get("id")
             default = project.get("default_branch")
@@ -121,22 +132,74 @@ class CommitFileChangesStream(GitlabSubstream, IncrementalMixin):
             )
             if not default_head:
                 continue
-            stored = (
-                self._state.get("projects", {}).get(str(project_id), {}).get("default_head")
-            )
-            if not stored:
-                ref = default
-            elif stored != default_head:
-                ref = f"{stored}..{default_head}"
-            else:
-                continue
-            frontier.open(project_id, default_head)
-            for sha in self._iter_shas({"project_id": project_id, "ref": ref}):
-                frontier.add_one(project_id)
-                yield {"project_id": project_id, "sha": sha}
-            frontier.finish_enum(project_id)
+            pstate = self._state.get("projects", {}).get(str(project_id), {})
 
-    def _iter_shas(self, enum_slice: Mapping[str, Any]) -> Iterable[str]:
+            stored = pstate.get("default_head")
+            if not stored:
+                yield from self._walk_ref(frontier, project_id, None, default, default_head)
+            elif stored != default_head:
+                yield from self._walk_ref(
+                    frontier, project_id, None, f"{stored}..{default_head}", default_head
+                )
+
+            # Mirrors the commits stream: the default ref is walked whole and
+            # every other branch only as `default_head..head`, so a commit is
+            # diffed under exactly one ref per sync. A branch head equal to the
+            # default's adds nothing.
+            stored_branches = pstate.get("branches") or {}
+            for branch in branch_records:
+                name = branch.get("name")
+                if name == default:
+                    continue
+                head = branch.get("commit_sha")
+                if not head or head == default_head:
+                    continue
+                if stored_branches.get(name) == head:
+                    continue
+                yield from self._walk_ref(
+                    frontier,
+                    project_id,
+                    name,
+                    f"{default_head}..{head}",
+                    head,
+                    # A head that moved on since the branch listing leaves the
+                    # range unresolvable; skipping costs this branch one sync,
+                    # while raising would cost the whole run.
+                    skippable=frozenset({404}),
+                )
+
+            self._prune_branches(project_id, {b.get("name") for b in branch_records})
+
+    def _walk_ref(
+        self,
+        frontier: _HeadFrontier,
+        project_id: Any,
+        branch: str | None,
+        ref: str,
+        head: str,
+        *,
+        skippable: frozenset[int] = frozenset(),
+    ) -> Iterable[Mapping[str, Any]]:
+        key: _RefKey = (project_id, branch)
+        frontier.open(key, head)
+        for sha in self._iter_shas(
+            {"project_id": project_id, "ref": ref}, skippable=skippable
+        ):
+            frontier.add_one(key)
+            yield {"project_id": project_id, "sha": sha, "ref_key": key}
+        frontier.finish_enum(key)
+
+    def _prune_branches(self, project_id: Any, current: set[Any]) -> None:
+        stored = self._state.get("projects", {}).get(str(project_id), {}).get("branches")
+        if not stored:
+            return
+        self._project_state(project_id)["branches"] = {
+            name: head for name, head in stored.items() if name in current
+        }
+
+    def _iter_shas(
+        self, enum_slice: Mapping[str, Any], *, skippable: frozenset[int] = frozenset()
+    ) -> Iterable[str]:
         base = {**enum_slice, "since": self._start_date}
         for commit in concurrency.walk_window(
             strategy=self._strategy,
@@ -147,7 +210,7 @@ class CommitFileChangesStream(GitlabSubstream, IncrementalMixin):
             envelope_fn=self._commit_min,
             headers=self._headers(),
             gate=self._gate,
-            skippable=frozenset(),
+            skippable=skippable,
         ):
             if commit.get("id") and (commit.get("parent_count") or 0) <= 1:
                 yield str(commit["id"])

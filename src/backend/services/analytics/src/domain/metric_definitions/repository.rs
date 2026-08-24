@@ -10,7 +10,7 @@ use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, Schem
 use crate::domain::metric_definitions::definition::{
     ComputationSpec, CustomObservationSql, MetricBase, MetricComputation, MetricDefinition,
     MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
-    ObservationSource, SourceKind, ValueTransform,
+    ObservationSource, RatioDenominatorAggregation, SourceKind, ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -28,6 +28,7 @@ struct DefinitionRow {
     entity_type: String,
     computation_type: String,
     scale: Option<f64>,
+    denominator_aggregation: String,
     transform_multiplier: Option<f64>,
     transform_offset: Option<f64>,
     transform_clamp_min: Option<f64>,
@@ -223,6 +224,7 @@ async fn fetch_definition_rows(
             d.entity_type AS entity_type, \
             d.computation_type AS computation_type, \
             CAST(d.scale AS DOUBLE) AS scale, \
+            d.denominator_aggregation AS denominator_aggregation, \
             CAST(d.transform_multiplier AS DOUBLE) AS transform_multiplier, \
             CAST(d.transform_offset AS DOUBLE) AS transform_offset, \
             CAST(d.transform_clamp_min AS DOUBLE) AS transform_clamp_min, \
@@ -524,10 +526,20 @@ fn build_definition(
             let scale = row.scale.ok_or_else(|| {
                 config_error(&format!("missing ratio scale for {}", row.metric_key))
             })?;
+            let denominator_aggregation = RatioDenominatorAggregation::from_db(
+                &row.denominator_aggregation,
+            )
+            .ok_or_else(|| {
+                config_error(&format!(
+                    "unknown ratio denominator aggregation for {}",
+                    row.metric_key
+                ))
+            })?;
             ComputationSpec::Ratio {
                 numerator,
                 denominator,
                 scale,
+                denominator_aggregation,
             }
         }
         MetricComputation::Median => ComputationSpec::Median {
@@ -849,6 +861,7 @@ mod tests {
             entity_type: "person".to_owned(),
             computation_type: "sum".to_owned(),
             scale: None,
+            denominator_aggregation: "sum".to_owned(),
             transform_multiplier: None,
             transform_offset: None,
             transform_clamp_min: None,

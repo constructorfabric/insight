@@ -12,6 +12,11 @@ exception to that, and this is its exact shape:
    universe, and a stand suite has no business editing it.
 4. Teardown deletes are best-effort — a delete-case test has already removed its
    row, so a 404 there is expected rather than a failure.
+5. The correction journal cannot be deleted from, so its rows are made
+   recognisable instead: every correction goes under `SCRATCH_SOURCE_TYPE` /
+   `SCRATCH_SOURCE_ID`, the pair the seed preflight exempts. One written under
+   any other connector blocks the next seed of the stand — which is what a
+   `merge` or `detach` happy-path would write, so those stay out of bounds.
 
 Rule 2 exists to make rule 1 checkable. Every name is registered here, and
 `conftest.py`'s session-scoped detector fails the run if any survives it. The
@@ -37,7 +42,23 @@ from .schemas import CustomMetric, ListResponse, SavedQuery
 _Named = ListResponse[dict[str, object]]
 
 #: Marks every row this suite creates, so a leak is identifiable on sight.
+#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_PREFIX — the seed
+#: preflight uses it to recognise this suite's leftover journal rows.
 SCRATCH_PREFIX: Final[str] = "stand-scratch"
+
+#: The connector instance every correction this suite writes is filed under — the
+#: other half of what makes an undeletable journal row recognisable (rule 5).
+#: Fixed, not random: a stable pair keeps those rows attributable to this suite.
+#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_SOURCE_TYPE, and the
+#: literal `github` segment in `operations.py`'s account-read template — the
+#: coverage gate folds a recorded path onto a template by exact segment equality,
+#: so a divergence here makes that operation read as never exercised.
+SCRATCH_SOURCE_TYPE: Final[str] = "github"
+
+#: INVARIANT: must match insight_seed.config.STAND_SCRATCH_SOURCE_ID. Unlike the
+#: type, this segment is a `{source_id}` in the coverage template, so it folds
+#: whatever its value.
+SCRATCH_SOURCE_ID: Final[str] = "01900000-0000-7000-8000-00000000feed"
 
 #: One token per session: a leak becomes attributable to the run that made it.
 RUN_TAG: Final[str] = uuid.uuid4().hex[:8]
@@ -281,6 +302,8 @@ __all__: Sequence[str] = (
     "SCRATCH_OBSERVATION_SQL",
     "SCRATCH_PREFIX",
     "SCRATCH_QUERY_REF",
+    "SCRATCH_SOURCE_ID",
+    "SCRATCH_SOURCE_TYPE",
     "UNKNOWN_ID",
     "UNKNOWN_METRIC_KEY",
     "create_custom_metric",

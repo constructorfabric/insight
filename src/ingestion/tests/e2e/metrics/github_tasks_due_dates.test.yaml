@@ -1,0 +1,120 @@
+spec_version: 1
+description: >
+  Task Delivery - due-date compliance from a native GitHub issue field - the
+  configuration path end to end.
+
+  This is the fixture that proves the binding layer, not just the metric. A due
+  date is not a GitHub issue property: it is a field the organization defined,
+  so gold can only read it if an operator bound that field to the `duedate`
+  role. Nothing about it is derivable from the vendor.
+
+  It also exercises the one genuinely subtle thing in the ingest: GitHub names
+  the same field two ways. The REST issue payload states a numeric
+  `issue_field_id`, the timeline states a node id, and they meet only through
+  `field_database_id` in the catalogue. Seeding a snapshot value under the
+  numeric id and binding the role under the node id proves that bridge holds —
+  if it does not, the value resolves to no field and every due-date measure
+  goes silent rather than wrong.
+
+  Carol closes two issues on 2026-03-25, both carrying a Target date: one due
+  the 26th (on time) and one due the 20th (five days late). Compliance is
+  therefore 1 of 2, and the average slip is five days over the single late
+  issue. A third issue closes with no due date at all and must count toward
+  closures while staying out of both due-date measures — a denominator that
+  swept in undated work would flatter the number.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    - $ref: templates/github_task.yaml#/templates/role_state
+    - $ref: templates/github_task.yaml#/templates/role_assignees
+    - $ref: templates/github_task.yaml#/templates/role_type
+    # The binding names the field by its node id, which is what history carries.
+    - { $ref: templates/github_task.yaml#/templates/role_state, field_id: IFD_target, unique_key: gh-role-duedate, role: duedate }
+
+  config.task_value_map:
+    - $ref: templates/github_task.yaml#/templates/value_open
+    - $ref: templates/github_task.yaml#/templates/value_closed_completed
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  bronze_github.issue_types:
+    - $ref: templates/github_task.yaml#/templates/issue_type_task
+
+  # The catalogue is the bridge: `field_database_id` is what the REST snapshot
+  # names, `field_id` is what the timeline and the binding name.
+  bronze_github.issue_fields:
+    - unique_key: gh-field-target
+      tenant_id: "11111111-1111-1111-1111-111111111111"
+      source_id: github-test
+      data_source: github
+      collected_at: "2026-03-01T00:00:00Z"
+      org: acme
+      field_id: IFD_target
+      field_database_id: "42359250"
+      field_name: Target date
+      data_type: DATE
+      is_multi: false
+      options_json: "[]"
+      _airbyte_raw_id: gh-field-target
+      _airbyte_extracted_at: "2026-03-01T00:00:00Z"
+      _airbyte_meta: '{"changes":[]}'
+      _airbyte_generation_id: 1
+
+  bronze_github.issues:
+    # due the 26th, closed the 25th -> on time
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
+        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_1", "data_type": "date", "issue_field_name": "Target date", "value": "2026-03-26"}]' }
+    # due the 20th, closed the 25th -> five days late
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
+        issue_field_values_json: '[{"issue_field_id": 42359250, "node_id": "IFDV_2", "data_type": "date", "issue_field_name": "Target date", "value": "2026-03-20"}]' }
+    # no due date at all: counts as closed, stays out of both due-date measures
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 3, number: 3, unique_key: gh-issue-3, assignee_logins: carol, assignee_ids: "1003", author_id: 1003 }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2, event_id: CE_2, item_number: 2, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-3, event_id: CE_3, item_number: 3, actor_id: 1003 }
+
+cases:
+  - name: due dates read through the bound native field
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - { metric_key: tasks.closed, views: [{ view: period }] }
+          - { metric_key: tasks.due_date_compliance, views: [{ view: period }] }
+          - { metric_key: tasks.on_time_delivery, views: [{ view: period }] }
+          - { metric_key: tasks.avg_slip, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      # All three closed, including the one carrying no due date.
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 3 }
+      # One of the two dated issues met its date. An undated issue must not
+      # enter the denominator: 1/2, not 1/3.
+      - metric: tasks.due_date_compliance
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 50 }
+      # On-time delivery measures against everything closed instead, so the
+      # undated issue does count here: 1/3.
+      - metric: tasks.on_time_delivery
+        view: period
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) > 33.0 && double(v.value) < 34.0)"
+      # Five days late over one late issue.
+      - metric: tasks.avg_slip
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 5 }

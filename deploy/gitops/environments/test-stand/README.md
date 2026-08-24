@@ -182,8 +182,9 @@ script stops and names `--email` — a statement about the stand (realm absent, 
 step 3 hasn't run), since seeding is downstream of deploying.
 
 The seeder's manifest (personas, fixtures, tenant, window — what the smoke suite
-reads) is printed to the seed Job's stdout. Capture it from the Job log before
-the TTL reaps it, and treat it as run-internal: it carries persona addresses,
+reads) is printed to the seed Job's stdout and, on a completed `--step all`,
+published to `configmap/seed-stand-manifest`, which outlives the Job's TTL.
+Read it from there, and treat it as run-internal: it carries persona addresses,
 UUIDs and in-cluster URLs, so it must never become a CI artifact on a public
 repo.
 

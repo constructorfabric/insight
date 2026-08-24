@@ -9,8 +9,8 @@ name: E2E — Compose stand
 # Nothing here builds by default: `test-stand up` pulls the frontend and the
 # four backend services at their charts' appVersions, which name main's build.
 # A ref that changes one of those trees has to run it or the lane reports on
-# code it never tested. Pull requests load backend images already built for the
-# same commit; events without that image workflow retain the source-build path.
+# code it never tested. Merge-queue runs load backend images already built for
+# the same commit; events without that image workflow retain the source-build path.
 # Frontend changes continue to build the SPA in this job.
 #
 # INVARIANT: Both lane checks report independently from one stand lifecycle.
@@ -21,12 +21,10 @@ name: E2E — Compose stand
 #                the checkout on every event, so the ref's own test code is
 #                what executes.
 #
-# Neither is required on its own; `Stand E2E` below is the one stable context
-# for branch protection. The workflow starts on every pull request so that
-# required context always reports; the cheap `changes` job decides whether the
-# two stand lanes need to run. Relevant changes run on the pull request, once
-# per queue batch on merge_group, nightly, and on dispatch. Superseded PR runs
-# are cancelled by the concurrency group. Wall-clock and flake history are in
+# The two lane names are stable required contexts. The workflow starts on every
+# pull request so those contexts report as skipped, but the stand runs only for
+# merge groups, nightly runs, and manual dispatches. Superseded PR runs are
+# cancelled by the concurrency group. Wall-clock and flake history are in
 # .cf-studio/.plans/stage1-compose-e2e-suite/out/ci-wiring.md.
 #
 # Every stand operation goes through ./dev-compose.sh test-stand — never the
@@ -175,7 +173,7 @@ jobs:
           if echo "$changed" | grep -qE '^(src/backend/services/identity-resolution/|src/backend/libs/insight-clickhouse/|src/backend/docker-entrypoint\.sh$|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(build-images|e2e-stand)\.yml$)'; then identity_resolution=true; fi
           if echo "$changed" | grep -qE '^(src/backend/services/gateway/|src/backend/tools/routegen/|src/backend/Cargo\.(toml|lock)$|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/prebuilt_images\.py$)'; then gateway=true; fi
           if echo "$changed" | grep -qE '^(src/backend/tools/routegen/|src/backend/services/gateway/|src/backend/services/authenticator/|src/backend/libs/authenticator-sdk/|src/backend/Cargo\.(toml|lock)$|src/ingestion/tools/seed/insight_seed/|\.github/workflows/(gateway|build-images|e2e-stand)\.yml$|scripts/ci/(prebuilt_images|test_prebuilt_images)\.py$)'; then gateway_checks=true; fi
-          if [[ "$GITHUB_EVENT_NAME" == pull_request || "$GITHUB_EVENT_NAME" == merge_group ]] && \
+          if [[ "$GITHUB_EVENT_NAME" == merge_group ]] && \
              [[ "$analytics" == true || "$authenticator" == true || "$identity_resolution" == true || "$gateway" == true ]]; then
             backend_artifacts=true
           fi
@@ -184,7 +182,7 @@ jobs:
   build-pr-images:
     name: Build PR images
     needs: changes
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group'
     permissions:
       contents: write
       packages: write
@@ -192,47 +190,42 @@ jobs:
       attestations: write
     uses: ./.github/workflows/build-images.yml
 
-  bronze-to-api:
-    name: Bronze to API
-    needs: build-pr-images
-    if: github.event_name == 'pull_request' && needs.build-pr-images.result == 'success'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/e2e-bronze-to-api.yml
-
   bronze-to-api-report:
     name: Run E2E suite
-    needs: bronze-to-api
+    needs: changes
     if: github.event_name == 'pull_request' && !cancelled()
     runs-on: ubuntu-latest
     steps:
-      - name: Require the Bronze-to-API workflow to pass
+      - name: Defer Bronze-to-API to the merge queue
         env:
-          RESULT: ${{ needs.bronze-to-api.result }}
+          CHANGES: ${{ needs.changes.result }}
         run: |
-          if [ "$RESULT" != success ]; then
-            echo "::error::Bronze-to-API checks did not pass ($RESULT)."
+          if [ "$CHANGES" != success ]; then
+            echo "::error::stand relevance could not be evaluated ($CHANGES)."
             exit 1
           fi
+          echo "Bronze-to-API is deferred to the merge queue."
 
   gateway:
     name: Gateway checks
     needs: [changes, build-pr-images]
     if: |
       !cancelled()
-      && github.event_name == 'pull_request'
+      && github.event_name == 'merge_group'
       && needs.changes.outputs.gateway_checks == 'true'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/gateway.yml
+    with:
+      gateway_changed: ${{ needs.changes.outputs.gateway == 'true' }}
+      authenticator_changed: ${{ needs.changes.outputs.authenticator == 'true' }}
 
   resolve-target:
     name: resolve-target
     needs: changes
-    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    if: ${{ github.event_name != 'pull_request' && needs.changes.outputs.relevant == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -264,6 +257,7 @@ jobs:
     needs: [changes, resolve-target, build-pr-images]
     if: |
       !cancelled()
+      && github.event_name != 'pull_request'
       && needs.resolve-target.result == 'success'
       && needs.resolve-target.outputs.target == 'compose'
       && (needs.build-pr-images.result == 'success' || needs.build-pr-images.result == 'skipped')
@@ -292,7 +286,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Load PR-built backend images
+      - name: Load merge-group backend images
         if: needs.changes.outputs.backend_artifacts == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -545,7 +539,7 @@ jobs:
   api-smoke:
     name: api-smoke
     needs: [changes, stand-runner]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -573,7 +567,7 @@ jobs:
   ui-journeys:
     name: ui-journeys
     needs: [changes, stand-runner]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -598,17 +592,15 @@ jobs:
           fi
           echo "UI journeys passed"
 
-  # ─── the required check ───────────────────────────────────────────────────
-  # One stable context name for branch protection on both pull_request and
-  # merge_group. It runs whenever the workflow was not cancelled, including
-  # when `changes` deemed the diff irrelevant and the lanes were skipped.
+  # ─── aggregate result ─────────────────────────────────────────────────────
+  # Merge groups and explicit stand runs get one aggregate result in addition
+  # to the stable lane contexts. Pull requests defer the aggregate with them.
   #
-  # A skipped lane is a pass only when `changes` explicitly reported the diff
-  # irrelevant. If relevance is unknown or relevant, every lane must succeed.
+  # A skipped lane passes only when `changes` reported the diff irrelevant.
   stand-suite:
     name: Stand E2E
     needs: [changes, api-smoke, ui-journeys]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

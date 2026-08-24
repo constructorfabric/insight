@@ -35,6 +35,7 @@ Each of these owns a slice of the work. Some are still being built out here, so 
 | `drive-ui` | getting an *authenticated* browser on any stand — the Keycloak realm login and the `DEV_USER_EMAIL` seed locally, a passkey attach on a remote one — plus the routes and the evidence set | any UI defect, local or remote |
 | `metric-parity` | the full bronze → silver → gold walk | collecting the same query at every layer |
 | `release-verify` | install and seed health | settling "product bug, or empty instance?" |
+| `probe-merged-change` | the exploratory pass over a change that just merged | findings arrive here from that pass, already reproduced |
 
 One collection step belongs here rather than in `drive-ui`: whenever a value on screen looks wrong, capture the browser console and the API response behind it (`playwright-cli console`, then `requests` and `request <n>`) and attach both. Whether the wrong number arrived from the API or was rendered wrong is the single most useful fact in the report — and it is an observation, not a diagnosis, as long as you paste what the response actually contained.
 
@@ -75,6 +76,10 @@ Collect first, write second. The evidence must let someone else reproduce this.
 - **UI bugs** — reproduce it in a browser first (`drive-ui` owns the stand and the browser; `playwright-cli` owns the commands), then lead with a tight annotated shot of the broken widget plus a contrast shot of something that renders correctly. The stand URL belongs in your commands, never in the issue.
 - **Pipeline / config bugs with no UI** — the failure signal itself: the exact error and stack, or a row-count contrast that runs the code's own filter (returns 0) against the unfiltered count (>0). **If the failure is silent** — completes "successfully" with zero effect — say so explicitly. That is the key symptom.
 - **What the metric is *supposed* to do** lives in the model under `src/ingestion/` and the definition registry in `src/backend/services/analytics/`. Read the intent before calling behaviour wrong.
+
+**Volume and destructive proof belongs on a stand you can throw away.** A cap, a flood, a rate limit, a migration against a warm database — each needs writes nobody else is reading. Stand one up rather than reaching for a shared instance, and expect a mass write to a shared stand to be refused outright.
+
+Split deliberately when a finding has two halves. Prove the volume behaviour where you can write freely, and confirm the half that needs no volume — a response carrying no paging field, a parameter being ignored — where the change is actually deployed. Say in the report which half came from where, naming the state and never the environment.
 
 ## Type and priority
 

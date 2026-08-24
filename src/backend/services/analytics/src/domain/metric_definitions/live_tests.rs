@@ -102,7 +102,7 @@ async fn listing_resolves_tenant_override_over_product() -> anyhow::Result<()> {
     let label = format!("override-{}", Uuid::now_v7().simple());
     insert_definition(&db, tenant, &metric_key, &label).await?;
 
-    let response = list_definition_views(&db, tenant).await?;
+    let response = list_definition_views(&db, tenant, false).await?;
 
     let keys = response
         .metrics

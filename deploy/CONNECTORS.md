@@ -155,7 +155,10 @@ stringData:
 ```
 
 ```yaml
-# ⚠ CDK connector; baked url_base
+# Declarative Bitbucket Cloud connector on the git-cli-proxy: commit-level data
+# comes from a bare clone served by the proxy instead of one vendor API call per
+# commit. Needs a deployed git-cli-proxy (gitCliProxy.deploy); its address and
+# token are injected by reconcile, so this Secret carries neither.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -165,8 +168,10 @@ metadata:
   annotations: { insight.cyberfabric.com/connector: bitbucket-cloud, insight.cyberfabric.com/source-id: bitbucket-cloud-main }
 type: Opaque
 stringData:
-  bitbucket_token:      "CHANGE_ME"    # Atlassian ATCTT access token (NOT an ATATT API token)
-  bitbucket_workspaces: "workspace-a,workspace-b"
+  bitbucket_token:      "CHANGE_ME"    # workspace access token, or an App Password with bitbucket_username
+  bitbucket_username:   ""             # required only for an App Password / personal API token
+  bitbucket_workspaces: '["acme"]'     # JSON array of workspace slugs
+  bitbucket_start_date: "2026-01-01"
 ```
 
 ```yaml

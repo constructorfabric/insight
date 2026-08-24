@@ -29,12 +29,17 @@ import {
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
-import { normalizePersonId } from "@/lib/metrics/entity";
+import { formatMetricNumber } from "@/lib/format";
+import { metricVisible } from "@/lib/portal/nav-policy";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
+import {
+  clampGranularity,
+  periodTooShortReason,
+} from "@/lib/reports/granularity-for-period";
 import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
-import { collectReportPeople } from "@/lib/reports/roster-columns";
 import { recordUsageEvent } from "@/telemetry";
 import {
   bucketsInRange,
@@ -66,7 +71,9 @@ export function ReportBuilderView() {
   const computations = useMetricComputations();
 
   const [selected, setSelected] = useState<string[]>([]);
-  const [granularity, setGranularity] = useState<ReportGranularity>("month");
+  const [pickedGranularity, setPickedGranularity] =
+    useState<ReportGranularity>("month");
+  const granularity = clampGranularity(pickedGranularity, dateRange);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(
     null,
   );
@@ -82,9 +89,18 @@ export function ReportBuilderView() {
   // unreachable key outright, so it must not be selectable — but dropping it
   // silently takes whole families off the screen and leaves the reader hunting
   // for a section that is simply not measured here.
+  //
+  // A metric the INSTALL gates is different, and is dropped: it is not offered
+  // anywhere else on the screen either, so listing it here as unavailable would
+  // advertise the one place a reader could still name it.
+  const showPlanned = usePortalShowPlanned();
   const catalogue = useMemo(
-    () => (definitions.data?.metrics ?? []).filter((metric) => metric.is_enabled),
-    [definitions.data],
+    () =>
+      (definitions.data?.metrics ?? []).filter(
+        (metric) =>
+          metric.is_enabled && metricVisible(metric.metric_key, showPlanned),
+      ),
+    [definitions.data, showPlanned],
   );
   // The additivity restriction belongs to the rollup, not to the report. At a
   // bucket the server has, it computed each value itself — a ratio is that
@@ -107,13 +123,7 @@ export function ReportBuilderView() {
     [catalogue, computations.data, granularity],
   );
 
-  const people = useMemo(() => {
-    const attrs = collectReportPeople(scope.pivot);
-    return (scope.roster ?? []).flatMap((entry) => {
-      const person = attrs.get(normalizePersonId(entry.person_id));
-      return person ? [person] : [];
-    });
-  }, [scope.pivot, scope.roster]);
+  const people = scope.reportPeople ?? [];
 
   const selectedMetrics = useMemo(
     () =>
@@ -236,21 +246,44 @@ export function ReportBuilderView() {
         <CardContent className="flex flex-col gap-4 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <span className={TEXT_LABEL}>Granularity</span>
-            <ToggleGroup
-              value={[granularity]}
-              onValueChange={(value) => {
-                const next = Array.isArray(value) ? value[0] : value;
-                if (next) setGranularity(next as ReportGranularity);
-              }}
-              variant="outline"
-              size="sm"
-            >
-              {GRANULARITIES.map((option) => (
-                <ToggleGroupItem key={option.value} value={option.value}>
-                  {option.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+            <TooltipProvider delay={300}>
+              <ToggleGroup
+                value={[granularity]}
+                onValueChange={(value) => {
+                  const next = Array.isArray(value) ? value[0] : value;
+                  if (next) setPickedGranularity(next as ReportGranularity);
+                }}
+                variant="outline"
+                size="sm"
+              >
+                {GRANULARITIES.map((option) => {
+                  const reason = periodTooShortReason(option.value, dateRange);
+                  return (
+                    <Tooltip key={option.value}>
+                      <TooltipTrigger
+                        render={
+                          <ToggleGroupItem
+                            value={option.value}
+                            disabled={Boolean(reason)}
+                            title={reason ?? undefined}
+                          >
+                            {option.label}
+                          </ToggleGroupItem>
+                        }
+                      />
+                      {reason ? (
+                        <TooltipContent
+                          side="top"
+                          className="max-w-xs text-xs leading-relaxed"
+                        >
+                          {reason}
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  );
+                })}
+              </ToggleGroup>
+            </TooltipProvider>
             <span className="text-xs text-muted-foreground">
               The period comes from the bar above.
             </span>
@@ -459,7 +492,9 @@ export function ReportBuilderView() {
                           key={cellIndex}
                           className="whitespace-nowrap tabular-nums"
                         >
-                          {cell ?? "—"}
+                          {typeof cell === "number" && table.formats[cellIndex]
+                            ? formatMetricNumber(cell, table.formats[cellIndex])
+                            : cell ?? "—"}
                         </TableCell>
                       ))}
                     </TableRow>

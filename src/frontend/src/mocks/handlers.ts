@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 
+import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
 import type {
   CustomMetric,
@@ -7,6 +8,7 @@ import type {
 } from "@/api/metrics-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
+import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { buildMetricResultsResponse } from "./metric-results-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
@@ -367,6 +369,51 @@ function customMetricHandlers() {
 /** Whoever the person mode has open holds the two accounts it lists for them. */
 const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
 
+/**
+ * AI assist (`/v1/ai/*`) — on in mock so the sparkle, the settings screen and
+ * an answer all have a dev and Storybook path. Synthetic data only; no request
+ * leaves the browser.
+ */
+const AI_BASE = "/api/analytics/v1/ai";
+
+let mockCredential = { configured: true, hint: "wxyz" };
+let mockContextSeq = 0;
+let mockSystemPrompt: string | null = null;
+
+const DEFAULT_SYSTEM_PROMPT = [
+  "You explain one workplace metric to the person it describes.",
+  "",
+  "Say what the number is, how it moved, and how it sits against the team median. Offer the most likely reading, and name what would confirm or rule it out. Describe the system, never judge the person. If the data is too thin to support a reading, say so and stop.",
+  "",
+  "Four sentences at most. No headings, no bullet lists.",
+].join("\n");
+
+const mockContext = new Map<
+  string,
+  { id: string; scope: "tenant" | "person"; title: string; body: string; updated_at: string }
+>([
+  [
+    "ctx-org-1",
+    {
+      id: "ctx-org-1",
+      scope: "tenant",
+      title: "How Example Corp reads these metrics",
+      body: "Numbers describe systems, not people. Never rank a person against a peer; explain what a movement could mean and what would confirm it.",
+      updated_at: "2026-08-12T09:00:00Z",
+    },
+  ],
+  [
+    "ctx-me-1",
+    {
+      id: "ctx-me-1",
+      scope: "person",
+      title: "How my week is shaped",
+      body: "Tuesdays and Thursdays are meeting-heavy by design, so focus time dips there and it is not a problem to flag.",
+      updated_at: "2026-08-14T09:00:00Z",
+    },
+  ],
+]);
+
 export const handlers = [
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
@@ -379,18 +426,42 @@ export const handlers = [
       .catch(() => null)) as MetricResultsRequest | null;
     if (
       !body ||
-      !Array.isArray(body.entity?.ids) ||
+      !body.entity ||
       !Array.isArray(body.metrics)
     ) {
       return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
     }
+
+    const entityType: unknown = (body.entity as { type?: unknown }).type;
+    if (entityType !== "person" && entityType !== "tenant") {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "entity.type" },
+        { status: 400 },
+      );
+    }
+
     // Mirror the real endpoint since the identity cutover: entity ids are
     // person UUIDs and an email is a 400. Without this the mock would happily
     // answer a stale email fixture and hide the very regression it exists to
     // catch.
-    if (!body.entity.ids.every((id) => typeof id === "string" && isPersonId(id))) {
+    if (
+      body.entity.type === "person" &&
+      (!Array.isArray(body.entity.ids) ||
+        !body.entity.ids.every((id) => typeof id === "string" && isPersonId(id)))
+    ) {
       return HttpResponse.json(
         { error: "invalid_argument", field: "entity.ids" },
+        { status: 400 },
+      );
+    }
+    if (
+      body.entity.type === "tenant" &&
+      body.metrics.some((metric) =>
+        metric.views.some((view) => view.view === "peer"),
+      )
+    ) {
+      return HttpResponse.json(
+        { error: "invalid_argument", field: "metrics.views" },
         { status: 400 },
       );
     }
@@ -418,7 +489,7 @@ export const handlers = [
   // through to the network, and in a proxy-configured dev run the resulting
   // 401 bounces the whole mock session to the real IdP.
   http.get("/api/analytics/v1/metric-definitions", () =>
-    HttpResponse.json({ metrics: [] }),
+    HttpResponse.json({ metrics: buildMetricDefinitions() }),
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
@@ -796,7 +867,7 @@ export const handlers = [
           candidates: [],
         },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_evidence: 2, excluded: 1 },
+      rates: { observed: 60, bound: 55, pending: 3, no_source_id: 0, no_evidence: 2, excluded: 1 },
       truncated: false,
       items_truncated: false,
     });
@@ -847,7 +918,89 @@ export const handlers = [
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
   ...usageHandlers(),
+  ...feedbackHandlers(),
+  ...aiAssistHandlers(),
 ];
+
+// ── Product feedback (`/v1/feedback`) ──────────────────────────
+// An in-memory store, so the dialog's send and the usage surface's listing
+// round-trip in mock, Storybook, and `VITE_ENABLE_MOCKS=true` dev runs.
+
+interface MockFeedback {
+  feedback_id: string;
+  ts: string;
+  person_id: string;
+  display_name: string;
+  username: string;
+  message: string;
+  path: string;
+}
+
+/** Mirrors the service's own cap. */
+const MOCK_FEEDBACK_LIMIT = 200;
+
+function mockSender(person: (typeof PEOPLE)[number] | undefined) {
+  return {
+    person_id: person?.person_id ?? "",
+    display_name: person?.name ?? "",
+    username: person?.email.split("@")[0] ?? "",
+  };
+}
+
+const feedbackStore: MockFeedback[] = [
+  {
+    feedback_id: "22222222-2222-2222-2222-222222222222",
+    ts: "2026-08-20 09:14:00",
+    ...mockSender(PEOPLE[1]),
+    message: "The cohort control does not say what it compares against.",
+    path: "/portal/overview",
+  },
+  {
+    feedback_id: "33333333-3333-3333-3333-333333333333",
+    ts: "2026-08-19 16:02:00",
+    ...mockSender(PEOPLE[2]),
+    message: "Let me export the people table to a spreadsheet.",
+    path: "/portal/people",
+  },
+];
+
+function feedbackHandlers() {
+  return [
+    http.post("/api/analytics/v1/feedback", async ({ request }) => {
+      const body = (await request.json().catch(() => null)) as {
+        message?: string;
+        path?: string;
+      } | null;
+      const message = body?.message?.trim();
+      if (!message || [...message].length > FEEDBACK_MESSAGE_MAX) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      feedbackStore.unshift({
+        feedback_id: `mock-${feedbackStore.length + 1}`,
+        ts: new Date().toISOString().replace("T", " ").slice(0, 19),
+        ...mockSender(defaultPerson),
+        message,
+        path: body?.path ?? "",
+      });
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get("/api/analytics/v1/feedback", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const since = params.get("since") ?? "";
+      const until = params.get("until") ?? "";
+      // Answering the window the caller asked for, as the service does: a mock
+      // that ignores it hides every date-range regression from mock runs.
+      const items = feedbackStore
+        .filter((row) => {
+          const day = row.ts.slice(0, 10);
+          return (!since || day >= since) && (!until || day <= until);
+        })
+        .slice(0, MOCK_FEEDBACK_LIMIT);
+
+      return HttpResponse.json({ since, until, items });
+    }),
+  ];
+}
 
 // ── Platform usage (`/v1/usage/*`) ─────────────────────────────
 
@@ -922,6 +1075,99 @@ function usageHandlers() {
           { path: "/portal/manage/metric-catalog", views: 42, visitors: 2 },
           { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
         ],
+      });
+    }),
+  ];
+}
+
+function aiAssistHandlers() {
+  return [
+    http.get(`${AI_BASE}/config`, () =>
+      HttpResponse.json({ enabled: true, model: "claude-sonnet-5" })
+    ),
+    http.get(`${AI_BASE}/credentials`, () => HttpResponse.json(mockCredential)),
+    http.put(`${AI_BASE}/credentials`, async ({ request }) => {
+      const body = (await request.json()) as { token?: string };
+      const token = body.token ?? "";
+      mockCredential = { configured: true, hint: token.slice(-4) };
+      return HttpResponse.json(mockCredential);
+    }),
+    http.delete(`${AI_BASE}/credentials`, () => {
+      mockCredential = { configured: false, hint: "" };
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get(`${AI_BASE}/settings`, () =>
+      HttpResponse.json({
+        system_prompt: mockSystemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        is_default: mockSystemPrompt === null,
+      })
+    ),
+    http.put(`${AI_BASE}/settings`, async ({ request }) => {
+      const body = (await request.json()) as { system_prompt?: string };
+      mockSystemPrompt = body.system_prompt ?? "";
+      return HttpResponse.json({
+        system_prompt: mockSystemPrompt,
+        is_default: false,
+      });
+    }),
+    http.delete(`${AI_BASE}/settings`, () => {
+      mockSystemPrompt = null;
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get(`${AI_BASE}/context`, () =>
+      HttpResponse.json({ items: [...mockContext.values()] })
+    ),
+    http.post(`${AI_BASE}/context`, async ({ request }) => {
+      const body = (await request.json()) as {
+        scope: "tenant" | "person";
+        title: string;
+        body: string;
+      };
+      mockContextSeq += 1;
+      const entry = {
+        id: `ctx-${mockContextSeq}`,
+        scope: body.scope,
+        title: body.title,
+        body: body.body,
+        updated_at: new Date().toISOString(),
+      };
+      mockContext.set(entry.id, entry);
+      return HttpResponse.json(entry, { status: 201 });
+    }),
+    http.patch(`${AI_BASE}/context/:id`, async ({ params, request }) => {
+      const id = String(params.id);
+      const existing = mockContext.get(id);
+      if (!existing) return new HttpResponse(null, { status: 404 });
+      const body = (await request.json()) as { title?: string; body?: string };
+      const updated = {
+        ...existing,
+        ...(body.title === undefined ? {} : { title: body.title }),
+        ...(body.body === undefined ? {} : { body: body.body }),
+        updated_at: new Date().toISOString(),
+      };
+      mockContext.set(id, updated);
+      return HttpResponse.json(updated);
+    }),
+    http.delete(`${AI_BASE}/context/:id`, ({ params }) => {
+      mockContext.delete(String(params.id));
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.post(`${AI_BASE}/explain`, async ({ request }) => {
+      const snapshot = (await request.json()) as {
+        label?: string;
+        value?: string;
+        peer?: string;
+      };
+      return HttpResponse.json({
+        text: [
+          `${snapshot.label ?? "This metric"} reads ${snapshot.value ?? "—"} for the period, and the line under it has been flat for three buckets rather than moving in one go.`,
+          `${snapshot.peer ?? "There is no cohort comparison"} — treat that as a direction, not a target, since the cohort is small.`,
+          "Your own context says meeting-heavy days are deliberate, so part of this shape was chosen rather than drifted into.",
+          "Worth checking before concluding anything: the window holds fewer working days than a full month.",
+        ].join("\n\n"),
+        model: "claude-sonnet-5",
+        tenant_context_entries: [...mockContext.values()].filter((e) => e.scope === "tenant").length,
+        person_context_entries: [...mockContext.values()].filter((e) => e.scope === "person").length,
       });
     }),
   ];

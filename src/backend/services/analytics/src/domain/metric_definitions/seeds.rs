@@ -110,8 +110,8 @@ async fn upsert_metric(db: &impl ConnectionTrait, metric: &MetricSeed) -> Result
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, short_label, subject, description, explanation, unit, format, direction, entity_type, \
              computation_type, scale, transform_multiplier, transform_offset, transform_clamp_min, \
-             transform_clamp_max, peer_cohort_key, origin, is_enabled) \
-         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', TRUE) \
+             transform_clamp_max, peer_cohort_key, denominator_aggregation, origin, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'builtin', TRUE) \
          ON DUPLICATE KEY UPDATE \
             label = VALUES(label), \
             short_label = VALUES(short_label), \
@@ -129,6 +129,7 @@ async fn upsert_metric(db: &impl ConnectionTrait, metric: &MetricSeed) -> Result
             transform_clamp_min = VALUES(transform_clamp_min), \
             transform_clamp_max = VALUES(transform_clamp_max), \
             peer_cohort_key = VALUES(peer_cohort_key), \
+            denominator_aggregation = VALUES(denominator_aggregation), \
             origin = VALUES(origin), \
             is_enabled = VALUES(is_enabled)",
         [
@@ -153,6 +154,7 @@ async fn upsert_metric(db: &impl ConnectionTrait, metric: &MetricSeed) -> Result
             nullable_f64(metric.transform.and_then(|t| t.clamp_min)),
             nullable_f64(metric.transform.and_then(|t| t.clamp_max)),
             nullable_str(metric.peer_cohort_key.map(CohortKey::as_db)),
+            Value::from(metric.computation.denominator_aggregation().as_db()),
         ],
     ))
     .await?;

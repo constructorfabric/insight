@@ -104,6 +104,61 @@ seat_month_priced AS (
         ON  prices.tenant_id = seat.tenant_id
         AND prices.source = seat.source
         AND prices.period_month = seat.period_month
+),
+-- Every reading of a seat inside its billing month. The vendor reports a
+-- cumulative month-to-date figure, so a day's spend is the step between two
+-- readings and nothing else.
+seat_day_source AS (
+    SELECT
+        insight_tenant_id                       AS tenant_id,
+        source,
+        source_id,
+        account_id,
+        lower(email)                            AS entity_id,
+        snapshot_date                           AS metric_date,
+        toDateTime64(collected_at, 3)           AS observed_at,
+        period_month,
+        CAST(
+            [
+                tuple('tool', tool, {{ ai_tool_label('tool') }}),
+                tuple('seat_tier', coalesce(seat_tier, 'unknown'), CAST(NULL AS Nullable(String)))
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
+        )                                       AS seat_dimensions,
+        used_amount_cents
+    FROM {{ ref('class_ai_overage_daily') }} FINAL
+    WHERE email IS NOT NULL
+      AND email != ''
+      AND snapshot_date IS NOT NULL
+),
+-- INVARIANT: the suffix minimum is what keeps every step non-negative and makes
+-- the steps add up to the month's final reading, which the monthly metric serves.
+seat_day_corrected AS (
+    SELECT
+        *,
+        min(used_amount_cents) OVER (
+            PARTITION BY tenant_id, source, source_id, account_id, period_month
+            ORDER BY metric_date
+            ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+        )                                       AS corrected_cents
+    FROM seat_day_source
+),
+seat_day_step AS (
+    SELECT
+        *,
+        corrected_cents - lagInFrame(corrected_cents, 1, toUInt32(0)) OVER w
+                                                AS step_cents,
+        -- INVARIANT: covers_days spans from the previous reading, or from the 1st
+        -- for a month's first one — above 1 the step is not one day's spend.
+        toUInt16(dateDiff(
+            'day',
+            lagInFrame(metric_date, 1, toDate(period_month) - 1) OVER w,
+            metric_date
+        ))                                      AS covers_days
+    FROM seat_day_corrected
+    WINDOW w AS (
+        PARTITION BY tenant_id, source, source_id, account_id, period_month
+        ORDER BY metric_date
+    )
 )
 
 SELECT
@@ -156,6 +211,39 @@ ARRAY JOIN arrayConcat(
         []
     )
 ) AS seat_measure
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id)                    AS tenant_id,
+    'ai_cost'                                   AS source_key,
+    'person'                                    AS entity_type,
+    assumeNotNull(entity_id)                    AS entity_id,
+    assumeNotNull(metric_date)                  AS metric_date,
+    toNullable(observed_at)                     AS observed_at,
+    'daily_extra_usage_usd'                     AS measure_key,
+    -- Keyed on the read day: unlike the month rows, the day IS the grain here.
+    concat(
+        toString(metric_date), ':daily_extra_usage_usd:',
+        hex(sipHash64(concat(coalesce(source_id, ''), ':', coalesce(account_id, ''))))
+    )                                           AS record_id,
+    'seat_day'                                  AS record_kind,
+    'source_summary'                            AS granularity,
+    formatDateTime(metric_date, '%Y-%m-%d')     AS record_label,
+    toNullable(toFloat64(step_cents) / 100)     AS contribution,
+    CAST(NULL AS Nullable(String))              AS subject_key,
+    seat_dimensions                             AS dimensions,
+    map(
+        'billing_month', toString(period_month),
+        'month_to_date_usd', toString(toFloat64(corrected_cents) / 100),
+        -- Above 1 the figure is a span, not a day: say so rather than let a
+        -- reader take it for one day's spend.
+        'covers_days', toString(covers_days)
+    )                                           AS details
+FROM seat_day_step
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL

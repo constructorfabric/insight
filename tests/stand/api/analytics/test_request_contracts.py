@@ -61,6 +61,7 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("PUT", f"/v1/metrics/{scratch.UNKNOWN_METRIC_KEY}"),
     ("POST", "/v1/metrics/import"),
     ("POST", "/v1/usage/events"),
+    ("POST", "/v1/feedback"),
 )
 
 

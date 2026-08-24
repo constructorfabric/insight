@@ -182,7 +182,7 @@ describe("AiCostView", () => {
     expect(screen.queryByText("$162")).not.toBeInTheDocument();
     // The average carries the same pair: 150/3 against 12/3, never 162/3.
     expect(screen.getAllByText("$50").length).toBeGreaterThan(0);
-    expect(screen.getByText("actual $4 / active user")).toBeInTheDocument();
+    expect(screen.getByText("avg actual $4 / active user")).toBeInTheDocument();
     expect(screen.queryByText("$54")).not.toBeInTheDocument();
   });
 

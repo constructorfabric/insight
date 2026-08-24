@@ -73,6 +73,9 @@ pub struct SeedSummary {
     pub skipped_closed: usize,
     #[serde(rename = "accounts_skipped_no_email")]
     pub skipped_no_email: usize,
+    /// Accounts no connector states an id for — left unbound, never minted.
+    #[serde(rename = "accounts_skipped_no_source_id")]
+    pub skipped_no_source_id: usize,
     pub observations_inserted: u64,
     pub org_chart_rows_rebuilt: u64,
     /// Divergent e-mail groups with no operator-authored binding (surfaced).
@@ -153,6 +156,7 @@ where
         minted: outcome.minted,
         skipped_closed: outcome.skipped_closed,
         skipped_no_email: outcome.skipped_no_email,
+        skipped_no_source_id: outcome.skipped_no_source_id,
         observations_inserted: counts.observations_inserted,
         org_chart_rows_rebuilt: counts.org_chart_rows_rebuilt,
         known_binding_conflicts: outcome.known_binding_conflicts,
@@ -274,10 +278,16 @@ mod tests {
     async fn seed_from_rows_wires_pipeline_end_to_end() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         // Anna across two sources (shared email) + Boris; empty store → all mint.
+        // Every account states its own id, as a connector's identity inputs do:
+        // that row is what becomes the binding, and without one the seed mints
+        // nobody.
         let rows = vec![
+            input("bamboohr", "5001", "id", "5001", t),
             input("bamboohr", "5001", "email", "anna@corp.com", t),
             input("bamboohr", "5001", "display_name", "Anna P", t),
+            input("slack", "U777", "id", "U777", t),
             input("slack", "U777", "email", "anna@corp.com", t),
+            input("bamboohr", "5000", "id", "5000", t),
             input("bamboohr", "5000", "email", "boris@corp.com", t),
         ];
         let store = FakeStore {
@@ -302,8 +312,9 @@ mod tests {
         );
         assert_eq!(summary.reused_known, 0);
         assert_eq!(summary.linked_by_email, 0);
-        // Anna: email+display_name (5001) + email (U777) = 3; Boris: email = 1.
-        assert_eq!(summary.observations_inserted, 4);
+        // Anna: id+email+display_name (5001) + id+email (U777) = 5;
+        // Boris: id+email = 2.
+        assert_eq!(summary.observations_inserted, 7);
         Ok(())
     }
 

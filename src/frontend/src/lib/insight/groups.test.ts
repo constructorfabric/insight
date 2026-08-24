@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
   GROUPS,
   groupIdForMetricKey,
+  visibleGroups,
   type DrilldownBlock,
   type GroupId,
   type MetricGroup,
@@ -88,5 +90,117 @@ describe("groups registry", () => {
         ],
       },
     ]);
+  });
+
+  // Looked up by id, not by index: the sibling test above pins positions, and
+  // two positional readings of one array is how a later insertion breaks a
+  // test that has nothing to do with it.
+  it("splits git output by branch scope, uncapped and on the totals", () => {
+    const git = groupById("git_output");
+    const byScope = git.drilldown.find(
+      (block): block is Extract<DrilldownBlock, { id: string }> =>
+        "id" in block && block.id === "output-by-branch-scope"
+    );
+    expect(byScope?.groupBy).toEqual({ default: "branch_scope" });
+    // A partition has no long tail, so no limits and no remainder bucket.
+    expect(byScope?.groupBy?.limits).toBeUndefined();
+    expect(byScope?.metrics).toEqual([
+      "git.commits",
+      "git.prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+    ]);
+
+    // The ribbon on a summary card comes from the metric's own breakdown view,
+    // and it only renders for a dimension with two groups — which is what
+    // `branch_scope` is. The split metrics deliberately do NOT carry it: inside
+    // `git.default_branch_commits` the dimension is a constant.
+    const scoped = git.collection.metrics
+      .filter((metric) =>
+        metric.views.some(
+          (view) =>
+            view.view === "breakdown" &&
+            view.dimensions.includes("branch_scope")
+        )
+      )
+      .map((metric) => metric.key);
+    expect(scoped).toEqual([
+      "git.prs_merged",
+      "git.lines_added",
+      "git.code_lines",
+      "git.prs_created",
+    ]);
+  });
+
+  it("gives each default-branch split a value and a peer comparison", () => {
+    const git = groupById("git_output");
+    const byKey = new Map(git.collection.metrics.map((m) => [m.key, m]));
+
+    for (const key of [
+      "git.default_branch_commits",
+      "git.default_branch_prs_merged",
+    ]) {
+      // The number alone says nothing: "commits that landed" is only readable
+      // against the pool's middle, which is what the peer view carries. The
+      // sibling test above pins that neither takes a `branch_scope` breakdown.
+      const views = byKey.get(key)?.views.map((view) => view.view);
+      expect(views, key).toEqual(expect.arrayContaining(["period", "peer"]));
+    }
+  });
+});
+
+describe("visibleGroups", () => {
+  const gate = (planned: string[], hide: string[] = []) => ({
+    hide: parseNavPaths(hide, "hide"),
+    planned: parseNavPaths(planned, "planned"),
+  });
+
+  it("returns the registry itself when the install gates nothing", () => {
+    expect(visibleGroups(false, gate(["zone:scorecard"]))).toBe(GROUPS);
+  });
+
+  it("drops a group whose every metric is gated", () => {
+    const groups = visibleGroups(false, gate(["metric:ai.*"]));
+
+    expect(groups.map((g) => g.id)).not.toContain("ai_adoption");
+    expect(groups.map((g) => g.id)).toContain("task_delivery");
+  });
+
+  it("drops a group whose Person-zone section the install marks planned", () => {
+    const groups = visibleGroups(false, gate(["zone:person/section:wiki"]));
+
+    expect(groups.map((g) => g.id)).not.toContain("wiki");
+  });
+
+  it("takes a gated metric out of the collection, the card and the drilldown", () => {
+    const groups = visibleGroups(false, gate(["metric:tasks.resolution_time"]));
+    const tasks = groups.find((g) => g.id === "task_delivery");
+
+    expect(tasks?.collection.metrics.map((m) => m.key)).not.toContain(
+      "tasks.resolution_time"
+    );
+    expect(tasks?.card.preview).not.toContain("tasks.resolution_time");
+    expect(
+      tasks?.drilldown.flatMap((b) => ("metrics" in b ? b.metrics : []))
+    ).not.toContain("tasks.resolution_time");
+  });
+
+  it("drops a drilldown block left with no metric of its own", () => {
+    const before = groupById("task_delivery").drilldown.length;
+    const after = visibleGroups(
+      false,
+      gate(["metric:tasks.resolution_time", "metric:tasks.pickup_time"])
+    ).find((g) => g.id === "task_delivery")?.drilldown.length;
+
+    expect(after).toBe(before - 2);
+  });
+
+  it("shows everything gated as planned to a reader who asked for it", () => {
+    const groups = visibleGroups(
+      true,
+      gate(["metric:ai.*", "zone:person/section:wiki"])
+    );
+
+    expect(groups).toEqual(GROUPS);
   });
 });

@@ -1,7 +1,18 @@
 import {
+  directionHidden,
+  directionPlanned,
+  gatesAnyMetric,
+  lensHidden,
+  lensPlanned,
+  metricVisible,
+  navPolicy,
+  visibleMetricKeys,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
+import {
   DIRECTIONS,
+  lensSlug,
   type Direction,
-  type Readiness,
 } from "@/lib/portal/nav-model";
 
 /**
@@ -18,7 +29,16 @@ export type ConcentrationFraming = "bus-factor" | "load-balance";
 export type SectionSpec =
   | { kind: "headline"; metrics: readonly string[] }
   | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
-  | { kind: "trend"; metrics: readonly string[] }
+  | {
+      kind: "trend";
+      metrics: readonly string[];
+      /**
+       * Chart the roster's active contributors alongside the totals, derived
+       * from this metric's own per-person rows. A total says how much; this
+       * says how many people it came from.
+       */
+      activeContributorsFor?: string;
+    }
   | {
       kind: "distribution";
       metric: string;
@@ -67,15 +87,8 @@ export interface LensConfig {
   notIngested?: string;
 }
 
-/**
- * A lens that renders nothing yet, and WHY — the two causes must not look
- * alike. `planned`: the product does not model this metric family yet (same
- * for every tenant). `unbuilt`: the data path exists and the screen is ours to
- * build. See `Readiness` in nav-model.
- */
 export interface LensRoadmap {
   comingSoon: string;
-  readiness: Readiness;
 }
 
 /** Either a lens we render or one we only name — the pane treats the two differently. */
@@ -86,14 +99,25 @@ export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
 }
 
-/** A direction's lenses in pane order, minus the roadmap ones a reader opted out of. */
+export function lensRoadmap(
+  direction: Direction,
+  lens: string,
+  policy: InstanceNavPolicy = navPolicy()
+): boolean {
+  return (
+    directionPlanned(direction.id, policy) ||
+    lensPlanned(direction.id, lensSlug(lens), policy)
+  );
+}
+
 export function visibleLenses(
   direction: Direction,
-  showPlanned: boolean
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
 ): string[] {
   return direction.lenses.filter((lens) => {
-    const entry = lensEntry(direction.id, lens);
-    return !entry || !("comingSoon" in entry) || showPlanned;
+    if (lensHidden(direction.id, lensSlug(lens), policy)) return false;
+    return !lensRoadmap(direction, lens, policy) || showPlanned;
   });
 }
 
@@ -101,8 +125,24 @@ export function visibleLenses(
  * Directions worth listing: a branch whose every lens is filtered out expands
  * into nothing, so it is a dead end rather than a place to look.
  */
-export function visibleDirections(showPlanned: boolean): Direction[] {
-  return DIRECTIONS.filter((d) => visibleLenses(d, showPlanned).length > 0);
+export function visibleDirections(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): Direction[] {
+  return DIRECTIONS.filter(
+    (d) =>
+      !directionHidden(d.id, policy) &&
+      visibleLenses(d, showPlanned, policy).length > 0
+  );
+}
+
+export function overviewCardDirections(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): Direction[] {
+  return visibleDirections(showPlanned, policy).filter((d) =>
+    visibleLenses(d, showPlanned, policy).includes("Overview")
+  );
 }
 
 /** Unique metric keys a config needs in its period+peer grid. */
@@ -151,12 +191,63 @@ export function sectionMetricKeys(config: LensConfig): string[] {
   return [...keys];
 }
 
+/**
+ * The lens as this install shows it: sections lose the metrics it gates, and a
+ * section left with none of its own is dropped rather than drawn empty.
+ *
+ * The data layer already refuses to fetch a gated metric, so a tile or a row
+ * would simply not appear — but a section that draws its own frame (a title, a
+ * participation card counting people rather than reading a value) would keep
+ * standing over the hole. Composition is where that is settled.
+ */
+export function visibleSections(
+  config: LensConfig,
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): LensConfig {
+  if (!gatesAnyMetric(policy)) return config;
+
+  const sections: SectionSpec[] = [];
+  for (const s of config.sections) {
+    switch (s.kind) {
+      case "headline":
+      case "stat-tiles":
+      case "trend":
+      case "concentration":
+      case "participation":
+      case "attention": {
+        const metrics = visibleMetricKeys(s.metrics, showPlanned, policy);
+        if (metrics.length) sections.push({ ...s, metrics });
+        break;
+      }
+      case "distribution":
+      case "composition":
+      case "event-histogram":
+        if (metricVisible(s.metric, showPlanned, policy)) sections.push(s);
+        break;
+      case "direction-cards":
+      case "coverage-levels":
+        // Neither names a metric of its own: the cards read each direction's
+        // own Overview lens (gated where that lens is composed) and coverage
+        // counts sections.
+        sections.push(s);
+        break;
+      default: {
+        const _exhaustive: never = s;
+        throw new Error(
+          `Unhandled section kind: ${JSON.stringify(_exhaustive)}`
+        );
+      }
+    }
+  }
+  return { ...config, sections };
+}
+
 /* ── Development ─────────────────────────────────────────────────────── */
 
 /** Product-side gap: the metric family is not in the semantic layer yet. */
-const DEV_PLANNED = (what: string): LensRoadmap => ({
+const PRODUCT_GAP = (what: string): LensRoadmap => ({
   comingSoon: `${what} — not available yet.`,
-  readiness: "planned",
 });
 
 /**
@@ -164,9 +255,8 @@ const DEV_PLANNED = (what: string): LensRoadmap => ({
  * (repository / project / file_extension / change_type), so this is frontend
  * work we owe, not a data request. Worded so nobody schedules a metric task.
  */
-const DEV_UNBUILT = (what: string): LensRoadmap => ({
+const SCREEN_GAP = (what: string): LensRoadmap => ({
   comingSoon: `${what} — the data is there (git observations carry the dimensions); this view is still in development.`,
-  readiness: "unbuilt",
 });
 
 const DEV: Record<string, LensEntry> = {
@@ -201,11 +291,21 @@ const DEV: Record<string, LensEntry> = {
     title: "Development · Git output",
     sections: [
       {
+        // Each split key sits beside the total it refines, so a reader meets
+        // the two together rather than as unrelated tiles. Only the
+        // default-branch side is drawn: the other half is the total minus it,
+        // and naming both would spend four tiles on two facts.
+        //
+        // The two big figures are per ACTIVE person, each over its own active
+        // count, so they are not a share of one another — the team totals
+        // under them are what divide.
         kind: "headline",
         metrics: [
           "git.commits",
+          "git.default_branch_commits",
           "git.prs_created",
           "git.prs_merged",
+          "git.default_branch_prs_merged",
           "git.code_lines",
         ],
       },
@@ -279,11 +379,11 @@ const DEV: Record<string, LensEntry> = {
       },
     ],
   },
-  Activity: DEV_PLANNED("Per-person activity-day metrics"),
-  Quality: DEV_PLANNED("Review / reopen quality metrics"),
-  Continuity: DEV_PLANNED("Longitudinal continuity metrics"),
-  Repositories: DEV_UNBUILT("Repository-level rollups"),
-  Elements: DEV_UNBUILT("Element-level (file/module) analytics"),
+  Activity: PRODUCT_GAP("Per-person activity-day metrics"),
+  Quality: PRODUCT_GAP("Review / reopen quality metrics"),
+  Continuity: PRODUCT_GAP("Longitudinal continuity metrics"),
+  Repositories: SCREEN_GAP("Repository-level rollups"),
+  Elements: SCREEN_GAP("Element-level (file/module) analytics"),
 };
 
 /* ── Collaboration (ported unchanged from ModalityView configs) ──────── */
@@ -525,11 +625,9 @@ const WIKI: Record<string, LensEntry> = {
 
 const SALES_NOTE: LensRoadmap = {
   comingSoon: "HubSpot data is not available yet.",
-  readiness: "planned",
 };
 const SUPPORT_NOTE: LensRoadmap = {
   comingSoon: "Zendesk data is not available yet.",
-  readiness: "planned",
 };
 
 const SALES: Record<string, LensEntry> = Object.fromEntries(

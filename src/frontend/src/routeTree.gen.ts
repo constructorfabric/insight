@@ -9,35 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WhatsNewRouteImport } from './routes/whats-new'
-import { Route as QueriesRouteImport } from './routes/queries'
-import { Route as PortalRouteImport } from './routes/portal'
-import { Route as MetricsRouteImport } from './routes/metrics'
-import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
+import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as PortalRouteImport } from './routes/portal'
+import { Route as QueriesRouteImport } from './routes/queries'
+import { Route as WhatsNewRouteImport } from './routes/whats-new'
 import { Route as IcPersonRouteImport } from './routes/ic.$person'
 import { Route as IcPersonIndexRouteImport } from './routes/ic.$person.index'
-import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.personal'
+import { Route as IcPersonTeamRouteImport } from './routes/ic.$person.team'
 
-const WhatsNewRoute = WhatsNewRouteImport.update({
-  id: '/whats-new',
-  path: '/whats-new',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const QueriesRoute = QueriesRouteImport.update({
-  id: '/queries',
-  path: '/queries',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PortalRoute = PortalRouteImport.update({
-  id: '/portal',
-  path: '/portal',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MetricsRoute = MetricsRouteImport.update({
-  id: '/metrics',
-  path: '/metrics',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CustomMetricsRoute = CustomMetricsRouteImport.update({
@@ -45,9 +30,24 @@ const CustomMetricsRoute = CustomMetricsRouteImport.update({
   path: '/custom-metrics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const MetricsRoute = MetricsRouteImport.update({
+  id: '/metrics',
+  path: '/metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalRoute = PortalRouteImport.update({
+  id: '/portal',
+  path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QueriesRoute = QueriesRouteImport.update({
+  id: '/queries',
+  path: '/queries',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WhatsNewRoute = WhatsNewRouteImport.update({
+  id: '/whats-new',
+  path: '/whats-new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IcPersonRoute = IcPersonRouteImport.update({
@@ -60,14 +60,14 @@ const IcPersonIndexRoute = IcPersonIndexRouteImport.update({
   path: '/',
   getParentRoute: () => IcPersonRoute,
 } as any)
-const IcPersonTeamRoute = IcPersonTeamRouteImport.update({
-  id: '/team',
-  path: '/team',
-  getParentRoute: () => IcPersonRoute,
-} as any)
 const IcPersonPersonalRoute = IcPersonPersonalRouteImport.update({
   id: '/personal',
   path: '/personal',
+  getParentRoute: () => IcPersonRoute,
+} as any)
+const IcPersonTeamRoute = IcPersonTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => IcPersonRoute,
 } as any)
 
@@ -157,32 +157,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/whats-new': {
-      id: '/whats-new'
-      path: '/whats-new'
-      fullPath: '/whats-new'
-      preLoaderRoute: typeof WhatsNewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/queries': {
-      id: '/queries'
-      path: '/queries'
-      fullPath: '/queries'
-      preLoaderRoute: typeof QueriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/portal': {
-      id: '/portal'
-      path: '/portal'
-      fullPath: '/portal'
-      preLoaderRoute: typeof PortalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/metrics': {
-      id: '/metrics'
-      path: '/metrics'
-      fullPath: '/metrics'
-      preLoaderRoute: typeof MetricsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/custom-metrics': {
@@ -192,11 +171,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CustomMetricsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/metrics': {
+      id: '/metrics'
+      path: '/metrics'
+      fullPath: '/metrics'
+      preLoaderRoute: typeof MetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal': {
+      id: '/portal'
+      path: '/portal'
+      fullPath: '/portal'
+      preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/queries': {
+      id: '/queries'
+      path: '/queries'
+      fullPath: '/queries'
+      preLoaderRoute: typeof QueriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/whats-new': {
+      id: '/whats-new'
+      path: '/whats-new'
+      fullPath: '/whats-new'
+      preLoaderRoute: typeof WhatsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/ic/$person': {
@@ -213,18 +213,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IcPersonIndexRouteImport
       parentRoute: typeof IcPersonRoute
     }
-    '/ic/$person/team': {
-      id: '/ic/$person/team'
-      path: '/team'
-      fullPath: '/ic/$person/team'
-      preLoaderRoute: typeof IcPersonTeamRouteImport
-      parentRoute: typeof IcPersonRoute
-    }
     '/ic/$person/personal': {
       id: '/ic/$person/personal'
       path: '/personal'
       fullPath: '/ic/$person/personal'
       preLoaderRoute: typeof IcPersonPersonalRouteImport
+      parentRoute: typeof IcPersonRoute
+    }
+    '/ic/$person/team': {
+      id: '/ic/$person/team'
+      path: '/team'
+      fullPath: '/ic/$person/team'
+      preLoaderRoute: typeof IcPersonTeamRouteImport
       parentRoute: typeof IcPersonRoute
     }
   }

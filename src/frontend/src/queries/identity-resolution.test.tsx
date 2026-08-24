@@ -93,7 +93,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1"), item("a2")],
-      rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
+      rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_source_id: 0, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("applied"));
 
@@ -117,7 +117,7 @@ describe("useBindAccount cache behavior", () => {
     const { queryClient, wrapper } = harness();
     queryClient.setQueryData(ATTENTION_KEY, {
       items: [item("a1")],
-      rates: { persons: 1, observed: 1, bound: 0, pending: 1, no_evidence: 0, excluded: 0 },
+      rates: { persons: 1, observed: 1, bound: 0, pending: 1, no_source_id: 0, no_evidence: 0, excluded: 0 },
     });
     bindAccount.mockResolvedValueOnce(outcome("refused"));
 
@@ -383,7 +383,7 @@ describe("the prune across cached limits", () => {
     for (const key of [ATTENTION_KEY, longer]) {
       queryClient.setQueryData(key, {
         items: [item("a1"), item("a2")],
-        rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_evidence: 0, excluded: 0 },
+        rates: { persons: 2, observed: 2, bound: 0, pending: 2, no_source_id: 0, no_evidence: 0, excluded: 0 },
       });
     }
     bindAccount.mockResolvedValue(outcome("applied"));
@@ -410,7 +410,7 @@ describe("useAttention", () => {
   it("asks the service for the limit it is keyed on", async () => {
     vi.mocked(identityClient.getAttention).mockResolvedValue({
       items: [],
-      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+      rates: { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 },
     });
     const { queryClient, wrapper } = harness();
 
@@ -431,7 +431,7 @@ describe("useAttention", () => {
   it("keeps the shorter answer on screen while the longer one is read", async () => {
     vi.mocked(identityClient.getAttention).mockResolvedValue({
       items: [],
-      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+      rates: { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 },
     });
     const { queryClient, wrapper } = harness();
     const { result, rerender } = renderHook(({ limit }) => useAttention(limit), {
@@ -453,7 +453,7 @@ describe("useAttention", () => {
     expect(result.current.isPlaceholderData).toBe(true);
     resolve({
       items: [],
-      rates: { observed: 0, bound: 0, pending: 0, no_evidence: 0, excluded: 0 },
+      rates: { observed: 0, bound: 0, pending: 0, no_source_id: 0, no_evidence: 0, excluded: 0 },
     });
     await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
     queryClient.clear();

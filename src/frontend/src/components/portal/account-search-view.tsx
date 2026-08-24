@@ -1,23 +1,24 @@
 /**
  * Finding an account, and the window it is decided in.
  *
- * Two surfaces use one field. The accounts mode arrives with a value in hand —
- * a git login from a review, an address from a ticket — the question neither
- * other mode can answer, because both are entered through a person; there a
- * blank field lists what the connectors reported, since the accounts nobody
- * asks about are exactly the ones nobody finds by searching. Inside one person
- * the same field is how an account gets re-bound to them, and a blank field
- * lists nothing: the whole fold would bury the accounts they actually hold.
+ * The mode arrives with a value in hand — a git login from a review, an address
+ * from a ticket — the question neither other mode can answer, because both are
+ * entered through a person. A blank field lists what the connectors reported,
+ * since the accounts nobody asks about are exactly the ones nobody finds by
+ * searching.
+ *
+ * A row opens the account, on the click itself: the queue's rows behave that
+ * way, and a listing one tab across that demanded a button instead made the
+ * same gesture mean two things.
  */
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ScanSearch, Search } from "lucide-react";
 
-import type { AccountMatch, PersonSummary } from "@/api/identity-client";
+import type { AccountMatch } from "@/api/identity-client";
 import { CaseDialog, type CaseRow } from "@/components/portal/case-dialog";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Empty,
@@ -34,6 +35,8 @@ import { useAutoLoadOnScroll } from "@/hooks/use-auto-load-on-scroll";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { accountKey } from "@/lib/identities/account-key";
 import { KIND_SEARCH_MATCH } from "@/lib/identities/cases";
+import { personDisplayName } from "@/lib/identities/person-display";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { usePortalSearch } from "@/lib/portal/portal-search";
 import {
@@ -42,54 +45,27 @@ import {
   MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   useAccountList,
-  type AccountListIntent,
 } from "@/queries/identity-resolution";
 import { cn } from "@/lib/utils";
-
-/** The accounts mode: the field over the whole fold, nothing else on screen. */
-export function AccountSearchView() {
-  const { t } = useTranslation();
-  return (
-    <AccountFinder
-      intent="browse"
-      placeholder={t("identities.accounts.placeholder")}
-    />
-  );
-}
 
 /**
  * The field, its results, and the one case window they open into.
  *
  * INVARIANT: the window lives here and nowhere else on the surface. It is
  * opened by `?acct=` alone, so a second one on the same screen would open
- * beside this one on the same link. A surface that lists accounts of its own
- * hands them over as `alsoOpenable` instead of rendering a window for them.
+ * beside this one on the same link.
  */
-export function AccountFinder({
-  intent,
-  placeholder,
-  /** Rows the surface already lists, so its own accounts open in this window. */
-  alsoOpenable = [],
-  /** Offer binding straight to this person — the one the surface has open. */
-  bindTo,
-  className,
-}: {
-  intent: AccountListIntent;
-  placeholder: string;
-  alsoOpenable?: CaseRow[];
-  bindTo?: PersonSummary | null;
-  className?: string;
-}) {
+export function AccountSearchView() {
   const { t } = useTranslation();
   const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const [query, setQuery] = useState("");
   const debounced = useDebouncedValue(query, SEARCH_DEBOUNCE_MS);
-  const search = useAccountList(debounced, intent);
+  const search = useAccountList(debounced, "browse");
 
   // Never rows the query did not ask for: under the floor the listing is not
   // this field's answer, and kept pages would be the previous term's.
-  const lists = listsAnyAccount(debounced, intent);
+  const lists = listsAnyAccount(debounced, "browse");
   const items = lists
     ? (search.data?.pages ?? []).flatMap((page) => page.items)
     : [];
@@ -122,7 +98,7 @@ export function AccountFinder({
   // No candidates: this list answers "whose is it", not "whose could it be".
   // The holder travels as the holder, so the window names them without the
   // window mistaking them for somebody to bind the account to.
-  const asCases: CaseRow[] = items.map((m) => ({
+  const openable: CaseRow[] = items.map((m) => ({
     kind: KIND_SEARCH_MATCH,
     source: m.source,
     source_id: m.source_id,
@@ -133,26 +109,17 @@ export function AccountFinder({
     candidates: [],
     holder: m.person ?? null,
   }));
-  // Matches first: they are what the reader just went looking for, and the
-  // prev/next footer walks this order.
-  //
-  // INVARIANT: one entry per account. A match can also be a row the surface
-  // already lists — searching inside a person finds the accounts they hold — and
-  // the footer walks `ordered` by index, so a key listed twice sends `next` back
-  // to the first copy instead of onward.
-  const openable = uniqueByAccount([...asCases, ...alsoOpenable]);
-  const ordered = openable.map((item) => accountKey(item));
 
   return (
-    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col gap-4", className)}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
       <div className="relative shrink-0">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder={placeholder}
-          aria-label={placeholder}
+          placeholder={t("identities.accounts.placeholder")}
+          aria-label={t("identities.accounts.placeholder")}
           className="ps-9"
         />
         {loading ? (
@@ -177,15 +144,12 @@ export function AccountFinder({
       {/* Two different emptinesses: terms that matched nothing, and nothing to
           list. The second one does not claim the tenant is empty — the service
           answers an empty list for a fold it cannot read yet, and an operator
-          cannot tell that from a tenant nobody has connected. A field that
-          lists nothing until asked is a third thing: it is simply waiting, and
-          says so by showing nothing at all. */}
+          cannot tell that from a tenant nobody has connected. */}
       {!loading &&
       !tooShort &&
       !stale &&
       items.length === 0 &&
-      !search.isError &&
-      (asked || intent === "browse") ? (
+      !search.isError ? (
         <Empty className="rounded-lg border">
           <EmptyHeader>
             {asked ? null : (
@@ -253,24 +217,10 @@ export function AccountFinder({
       <CaseDialog
         acct={acct}
         items={openable}
-        ordered={ordered}
-        bindTo={bindTo}
-        onSelect={setAcct}
         onClose={() => setAcct(null)}
       />
     </div>
   );
-}
-
-/** The first row for each account wins — the earlier one carries the match. */
-function uniqueByAccount(rows: CaseRow[]): CaseRow[] {
-  const seen = new Set<string>();
-  return rows.filter((row) => {
-    const key = accountKey(row);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function AccountRow({
@@ -290,21 +240,46 @@ function AccountRow({
     item.account_id;
   return (
     // Fixed columns, not content-sized ones: a list is read down a column, and
-    // holders whose names differ in length would otherwise step the cards and
-    // the verbs sideways on every row. Only where there is room for all four —
-    // the trailing tracks are ~29rem, and taking them from a narrower window
-    // would leave the address, the one value this mode answers with, an
-    // ellipsis. Below that the row stacks instead.
+    // holders whose names differ in length would otherwise step the cards
+    // sideways on every row. Only where there is room — taking the trailing
+    // tracks from a narrower window would leave the address, the one value this
+    // mode answers with, an ellipsis. Below that the row stacks instead.
     <div
+      role="button"
+      tabIndex={0}
+      onClick={(event) => {
+        if (activatesRow(event)) onOpen();
+      }}
+      onKeyDown={(event) => {
+        if (!activatesRowByKey(event)) return;
+        event.preventDefault();
+        onOpen();
+      }}
+      aria-pressed={selected}
+      // Without a label the accessible name is computed from everything inside,
+      // which reads out the holder's whole card before the account is named.
+      aria-label={[
+        label,
+        item.source,
+        item.person
+          ? t("identities.queue.bound_to", {
+              name: personDisplayName(item.person),
+            })
+          : item.excluded
+            ? t("identities.accounts.excluded")
+            : t("identities.accounts.unbound"),
+      ]
+        .filter(Boolean)
+        .join(", ")}
       className={cn(
-        "grid grid-cols-1 items-center gap-2 rounded-md border p-3",
-        "lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)_minmax(0,11rem)_auto]",
-        selected ? "border-ring bg-muted" : "border-transparent",
+        "grid cursor-pointer grid-cols-1 items-center gap-2 rounded-md border p-3 text-start select-text",
+        "lg:grid-cols-[minmax(0,1fr)_minmax(0,18rem)_minmax(0,11rem)]",
+        selected ? "border-ring bg-muted" : "border-transparent hover:bg-muted/60",
       )}
     >
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium select-text">{label}</div>
-        <div className="truncate font-mono text-xs text-muted-foreground select-text">
+        <div className="truncate text-sm font-medium">{label}</div>
+        <div className="truncate font-mono text-xs text-muted-foreground">
           {item.source} · {item.account_id}
         </div>
       </div>
@@ -314,7 +289,7 @@ function AccountRow({
       {item.person ? (
         <PersonCell person={item.person} />
       ) : item.excluded ? (
-        <Badge variant="secondary" className="justify-self-start font-normal">
+        <Badge variant="outline" className="justify-self-start font-normal">
           {t("identities.accounts.excluded")}
         </Badge>
       ) : (
@@ -322,17 +297,13 @@ function AccountRow({
           {t("identities.accounts.unbound")}
         </span>
       )}
-      <Badge
-        variant={item.bound_by_operator ? "secondary" : "outline"}
-        className="justify-self-start font-normal"
-      >
+      {/* Who decided the binding, as a line: the two answers are two states
+          of one fact, and only one of them used to carry a shape. */}
+      <Badge variant="outline" className="justify-self-start font-normal">
         {item.bound_by_operator
           ? t("identities.person_accounts.by_operator")
           : t("identities.person_accounts.by_automation")}
       </Badge>
-      <Button type="button" size="xs" variant="outline" onClick={onOpen}>
-        {t("identities.person_accounts.open")}
-      </Button>
     </div>
   );
 }

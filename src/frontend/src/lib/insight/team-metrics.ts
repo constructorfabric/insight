@@ -1,4 +1,5 @@
 import type { MetricGroup } from "@/lib/insight/groups";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import {
   forEntity,
   type NormalizedMetricResult,
@@ -110,12 +111,17 @@ export function metricBelowCounts(
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const memberId of memberIds) {
-    let below = 0;
-    for (const metricConfig of def.collection.metrics) {
+    const read = def.collection.metrics.flatMap((metricConfig) => {
       const metric = byKey.get(metricConfig.key);
-      if (!metric) continue;
-      if (memberMetricStanding(metric, memberId) === "bottom") below += 1;
-    }
+      if (!metric) return [];
+      const standing = memberMetricStanding(metric, memberId);
+      return standing == null ? [] : [{ key: metric.metric_key, standing }];
+    });
+    const below = countableSignals(
+      read,
+      (entry) => entry.key,
+      (entry) => entry.standing,
+    ).filter((entry) => entry.standing === "bottom").length;
     if (below > 0) out.set(memberId, below);
   }
   return out;

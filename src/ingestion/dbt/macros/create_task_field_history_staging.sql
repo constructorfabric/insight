@@ -22,6 +22,7 @@
             data_source         String,
             issue_id            String,
             id_readable         String,
+            title               Nullable(String),
             event_id            String,
             event_at            DateTime64(3),
             event_kind          Enum8('changelog' = 1, 'synthetic_initial' = 2),
@@ -46,6 +47,11 @@
         )
         ENGINE = ReplacingMergeTree(_version)
         ORDER BY (unique_key)
+    ") %}
+
+    {% do run_query("
+        ALTER TABLE staging.jira__task_field_history
+        ADD COLUMN IF NOT EXISTS title Nullable(String) AFTER id_readable
     ") %}
 
     {% if execute %}

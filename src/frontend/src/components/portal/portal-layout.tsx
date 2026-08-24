@@ -6,13 +6,19 @@ import { ContextPane } from "@/components/portal/context-pane";
 import { LensRail } from "@/components/portal/lens-rail";
 import { PortalTopBar } from "@/components/portal/portal-topbar";
 import { ZoneContent } from "@/components/portal/zone-content";
-import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import {
-  usePortalNavActions,
-  usePortalZone,
-} from "@/lib/portal/portal-nav";
+  SidebarInset,
+  SidebarProvider,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { usePortalNavActions, usePortalZone } from "@/lib/portal/portal-nav";
 import { landingDecision } from "@/lib/portal/landing-zone";
-import { useShellLayout, type ShellLayout } from "@/lib/portal/use-shell-layout";
+import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
+import {
+  useShellLayout,
+  type ShellLayout,
+} from "@/lib/portal/use-shell-layout";
 import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
 
@@ -31,7 +37,12 @@ export function PortalLayout() {
   // the admin role opens regardless of reports. The rules live in
   // `landingDecision` (pure, table-tested); this effect only applies them.
   const { canSeeOthers, isPending } = useViewerReach();
-  const { isAdmin, isPending: adminPending, isError: adminError } = useIsAdmin();
+  const {
+    isAdmin,
+    isPending: adminPending,
+    isError: adminError,
+  } = useIsAdmin();
+  const showPlanned = usePortalShowPlanned();
   const zone = usePortalZone();
   const landed = useRef(false);
   useEffect(() => {
@@ -46,12 +57,23 @@ export function PortalLayout() {
       // retries itself until an answer lands.
       adminPending: adminPending || adminError,
       isAdmin,
+      overviewVisible:
+        !zoneHidden("overview") && (!zonePlanned("overview") || showPlanned),
     });
     if (decision.kind === "wait") return;
     landed.current = true;
     if (decision.kind === "pin-overview") replaceZone("overview");
     if (decision.kind === "reset") replaceZone(null);
-  }, [isPending, canSeeOthers, adminPending, adminError, isAdmin, zone, replaceZone]);
+  }, [
+    isPending,
+    canSeeOthers,
+    adminPending,
+    adminError,
+    isAdmin,
+    showPlanned,
+    zone,
+    replaceZone,
+  ]);
 
   return (
     <SidebarProvider

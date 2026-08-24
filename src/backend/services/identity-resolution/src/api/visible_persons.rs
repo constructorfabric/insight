@@ -78,6 +78,11 @@ impl toolkit::api::api_dto::ResponseApiDto for VisiblePersonsPageResponse {}
 
 /// Self-scoped and not admin-gated, like the POST: it enumerates only what the
 /// caller's visible set already contains.
+///
+/// Lists the ROSTER, not the journal: only persons a connector claims as an
+/// account holder. So this answers for a narrower set than the POST confirms —
+/// deliberately, and in the safe direction (a person listed here is a person
+/// that filter would confirm, never the reverse).
 pub async fn list_visible_persons(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -99,11 +104,17 @@ pub async fn list_visible_persons(
         tenant,
         &terms,
         &[],
-        Some(VisibleTo {
-            viewer_person_id: caller,
-            org_source_type: &state.config.org_chart_source_type,
-            policy: state.config.visibility_policy,
-        }),
+        // The roster is who the organisation IS. An address a commit carried
+        // becomes a person in the journal without anyone here holding it, and
+        // listing those alongside the members reads as a directory of strangers.
+        person_listing::Restrict {
+            listed: person_listing::Listed::AccountHolders,
+            visible_to: Some(VisibleTo {
+                viewer_person_id: caller,
+                org_source_type: &state.config.org_chart_source_type,
+                policy: state.config.visibility_policy,
+            }),
+        },
         resume.as_ref().map(|key| person_listing::After {
             order_key: &key.order_key,
             person_id: key.person_id,

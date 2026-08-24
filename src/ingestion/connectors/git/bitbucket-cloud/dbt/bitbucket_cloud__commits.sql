@@ -3,100 +3,46 @@
     materialized='incremental',
     unique_key='unique_key',
     order_by=['unique_key'],
+    on_schema_change='append_new_columns',
     settings={'allow_nullable_key': 1},
     schema='staging',
     tags=['bitbucket-cloud', 'silver:class_git_commits']
 ) }}
 
-WITH file_change_generations AS (
-    SELECT
-        tenant_id,
-        source_id,
-        repository_uuid,
-        sha,
-        generation_id,
-        countIf(record_type = 'item') AS observed_count,
-        maxIf(snapshot_item_count, record_type = 'snapshot_complete') AS expected_count,
-        maxIf(_airbyte_extracted_at, record_type = 'snapshot_complete') AS completed_at,
-        countIf(record_type = 'snapshot_complete' AND snapshot_available) AS completion_count
-    FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} FINAL
-    GROUP BY tenant_id, source_id, repository_uuid, sha, generation_id
-    HAVING completion_count > 0 AND observed_count = expected_count
-),
-latest_file_change_generation AS (
-    SELECT
-        tenant_id,
-        source_id,
-        repository_uuid,
-        sha,
-        argMax(generation_id, completed_at) AS generation_id,
-        max(completed_at) AS latest_completed_at
-    FROM file_change_generations
-    GROUP BY tenant_id, source_id, repository_uuid, sha
-),
-file_changes AS (
-    SELECT
-        change.tenant_id,
-        change.source_id,
-        change.repository_uuid,
-        change.sha,
-        count() AS files_changed,
-        if(countIf(change.additions IS NULL OR change.deletions IS NULL) > 0, NULL, sum(change.additions)) AS lines_added,
-        if(countIf(change.additions IS NULL OR change.deletions IS NULL) > 0, NULL, sum(change.deletions)) AS lines_removed,
-        max(latest.latest_completed_at) AS completed_at
-    FROM {{ source('bronze_bitbucket_cloud', 'file_changes') }} AS change FINAL
-    INNER JOIN latest_file_change_generation AS latest
-        USING (tenant_id, source_id, repository_uuid, sha, generation_id)
-    WHERE change.record_type = 'item'
-    GROUP BY change.tenant_id, change.source_id, change.repository_uuid, change.sha
-),
-empty_file_changes AS (
-    SELECT
-        latest.tenant_id,
-        latest.source_id,
-        latest.repository_uuid,
-        latest.sha,
-        0 AS files_changed,
-        CAST(0, 'Nullable(Int64)') AS lines_added,
-        CAST(0, 'Nullable(Int64)') AS lines_removed,
-        latest.latest_completed_at AS completed_at
-    FROM latest_file_change_generation AS latest
-    LEFT ANTI JOIN file_changes AS change
-        USING (tenant_id, source_id, repository_uuid, sha)
-),
-complete_file_changes AS (
-    SELECT * FROM file_changes
-    UNION ALL
-    SELECT * FROM empty_file_changes
-)
+-- branch is '' by construction: the proxy walks a repository once rather than
+-- once per branch, so a commit carries no branch name, only the membership
+-- flag below.
+-- INVARIANT: is_in_default_branch is reachability AT SYNC TIME. A commit first
+-- seen on a feature branch stays 0 unless a later sync re-reads it, so a merge
+-- outside the connector's lookback_window never corrects it.
 SELECT
-    c.tenant_id,
-    c.source_id,
-    c.entity_key AS unique_key,
-    COALESCE(c.workspace, '') AS project_key,
-    COALESCE(c.repo_slug, '') AS repo_slug,
-    COALESCE(c.hash, '') AS commit_hash,
-    COALESCE(c.branch_name, '') AS branch,
-    COALESCE(c.author_name, '') AS author_name,
-    COALESCE(c.author_email, '') AS author_email,
-    COALESCE(c.committer_name, '') AS committer_name,
-    COALESCE(c.committer_email, '') AS committer_email,
-    COALESCE(c.message, '') AS message,
-    parseDateTimeBestEffortOrNull(c.date) AS date,
-    CAST(fc.files_changed, 'Nullable(Int64)') AS files_changed,
-    CAST(fc.lines_added, 'Nullable(Int64)') AS lines_added,
-    CAST(fc.lines_removed, 'Nullable(Int64)') AS lines_removed,
-    if(JSONLength(COALESCE(toString(c.parent_hashes), '[]')) > 1, 1, 0) AS is_merge_commit,
+    tenant_id,
+    source_id,
+    unique_key,
+    arrayElement(splitByChar('/', COALESCE(repository, '')), -2) AS project_key,
+    replaceRegexpOne(arrayElement(splitByChar('/', COALESCE(repository, '')), -1), '\\.git$', '') AS repo_slug,
+    COALESCE(sha, '') AS commit_hash,
+    '' AS branch,
+    CAST(is_in_default_branch AS Nullable(UInt8)) AS is_default_branch,
+    COALESCE(author_name, '') AS author_name,
+    COALESCE(author_email, '') AS author_email,
+    COALESCE(committer_name, '') AS committer_name,
+    COALESCE(committer_email, '') AS committer_email,
+    COALESCE(message, '') AS message,
+    parseDateTimeBestEffortOrNull(committed_date) AS date,
+    toNullable(COALESCE(changed_files, 0)) AS files_changed,
+    toNullable(COALESCE(additions, 0)) AS lines_added,
+    toNullable(COALESCE(deletions, 0)) AS lines_removed,
+    if(COALESCE(is_merge, false), 1, 0) AS is_merge_commit,
     'insight_bitbucket_cloud' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    greatest(c._airbyte_extracted_at, COALESCE(fc.completed_at, c._airbyte_extracted_at)) AS _airbyte_extracted_at
-FROM {{ source('bronze_bitbucket_cloud', 'commits') }} AS c FINAL
-LEFT JOIN complete_file_changes AS fc ON fc.sha = c.hash
-    AND fc.tenant_id = c.tenant_id
-    AND fc.source_id = c.source_id
-    AND fc.repository_uuid = c.repository_uuid
-WHERE c.record_type = 'item'
+    _airbyte_extracted_at
+-- FINAL: the lookback window re-reads a commit under the same unique_key, and
+-- its membership flag can differ between the two rows. Without FINAL a
+-- full-refresh build inserts both into staging under one now64() _version, and
+-- union_by_tag's dedup orders by that column — a tie it cannot break. See
+-- ADR-0001.
+FROM {{ source('bronze_bitbucket_cloud', 'commits') }} FINAL
 {% if is_incremental() %}
-AND greatest(c._airbyte_extracted_at, COALESCE(fc.completed_at, c._airbyte_extracted_at))
-    > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
+WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})
 {% endif %}

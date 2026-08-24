@@ -42,12 +42,14 @@ expect.set_options(timeout=15_000)
 def context(context: BrowserContext) -> BrowserContext:
     """Every journey drives the legacy dashboard shell, stated explicitly.
 
-    The portal became opt-out (an ABSENT `insight.portal` key renders it), so
-    a fresh browser context stopped meaning "the shell these journeys were
-    written against" and every selector started timing out inside the portal.
-    The suite's tested surface stays the legacy shell until portal journeys
-    exist; the init script runs before any app code on every page, which is
-    the one moment the flag is guaranteed to precede the first read.
+    The portal is the product's only interface now: `insight.portal` is gone,
+    and `insight.legacyShell` is the hatch that survives it — written by this
+    fixture and by nothing else, so no reader carries it. Without it a fresh
+    context stops meaning "the shell these journeys were written against" and
+    every selector times out inside the portal. The suite's tested surface
+    stays the legacy shell until portal journeys replace these; the init script
+    runs before any app code on every page, which is the one moment the key is
+    guaranteed to precede the first read.
     """
-    context.add_init_script("window.localStorage.setItem('insight.portal', 'false')")
+    context.add_init_script("window.localStorage.setItem('insight.legacyShell', 'true')")
     return context

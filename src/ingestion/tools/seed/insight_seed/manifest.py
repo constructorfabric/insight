@@ -25,12 +25,62 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from . import config, profiles
-from .golden_metrics import GOLDEN_METRICS, GOLDEN_METRICS_NOTE
+from .manifest_sentinel import emit_manifest_sentinel
 
-MANIFEST_VERSION = 1
+
+class PersonaEntry(TypedDict):
+    """One roster entry. `fixtures` names the same shape by the role it plays."""
+
+    email: str
+    display_name: str
+    team: str | None
+    role: str
+    uuid: str
+    org_unit: str
+    realm_roles: list[str]
+
+
+class RealmRef(TypedDict):
+    name: str
+    issuer: str
+
+
+class TenantRefs(TypedDict):
+    default: str
+    other: str
+
+
+class Capabilities(TypedDict):
+    ingestion: bool
+    service_principals: bool
+    idp: str
+
+
+class Manifest(TypedDict):
+    """The seeded stand's description, as it travels on the wire.
+
+    INVARIANT: `tests/lib/insight_stand/manifest.py` parses this shape. Changing
+    the field set is a wire change — bump `MANIFEST_VERSION` with it.
+    """
+
+    manifest_version: int
+    tenant: str
+    tenants: TenantRefs
+    realm: RealmRef
+    personas: list[PersonaEntry]
+    service_urls: dict[str, str]
+    fixtures: dict[str, PersonaEntry]
+    capabilities: Capabilities
+    seed_revision: str
+    data_window: str
+    anchor_date: str
+    seeded: list[str]
+
+
+MANIFEST_VERSION = 2
 
 # Values shared with `keycloak_realm`, which builds the Keycloak realm from
 # this same roster. The two must agree exactly or a persona will authenticate
@@ -88,19 +138,30 @@ CANONICAL_ENV: dict[str, str] = {
 # Literals that must never reach the manifest. Checked before the file is
 # written, so a future field that accidentally carries a secret fails loudly
 # instead of shipping.
-_FORBIDDEN_LITERALS = frozenset(
+_STATIC_FORBIDDEN_LITERALS = frozenset(
     {
         "insight-dev",  # keycloak_realm dev password (the default)
-        # The runtime persona password too, when a stand overrides the default —
-        # mirrors keycloak_realm.DEV_PASSWORD without importing it (no cycle).
-        os.environ.get(
-            "INSIGHT_SEED_PERSONA_PASSWORD", "insight-dev"
-        ),  # RULE-DEFAULTS-OK: same tagged default as keycloak_realm.DEV_PASSWORD
         "insight-authenticator-dev-secret",  # keycloak_realm client secret
         "insight-local",  # MariaDB / ClickHouse dev password
         "root-local",  # MariaDB root password
     }
 )
+
+
+def _forbidden_literals(env: Mapping[str, str]) -> frozenset[str]:
+    """The dev credentials, plus the persona password when a stand overrides it.
+
+    SAFETY: an empty override is dropped rather than added. The scan is a
+    substring test, so `""` matches every document — and it runs after every
+    database write, in a Job with `backoffLimit: 0`, where refusing reports a
+    correctly seeded stand as a failure that cannot be retried.
+    """
+    override = (env.get(config.PERSONA_PASSWORD_ENV) or "").strip()
+    if not override:
+        return _STATIC_FORBIDDEN_LITERALS
+    return _STATIC_FORBIDDEN_LITERALS | {override}
+
+
 _FORBIDDEN_KEY_SUBSTRINGS = ("password", "secret", "token", "credential", "passwd")
 
 
@@ -140,7 +201,7 @@ def seed_revision() -> str:
     return digest.hexdigest()[:16]
 
 
-def _persona(person: profiles.Person) -> dict[str, Any]:
+def _persona(person: profiles.Person) -> PersonaEntry:
     """One roster entry. Fields are named explicitly, never spread from the
     Person object, so a future attribute cannot leak into the document."""
     # Mirrors `keycloak_realm._org_unit`: teamless people are the CEO
@@ -163,7 +224,7 @@ def _persona(person: profiles.Person) -> dict[str, Any]:
     }
 
 
-def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _fixtures(personas: list[PersonaEntry]) -> dict[str, PersonaEntry]:
     """Named catalog the test suite declares its data needs against.
 
     Names are stable contracts — renaming one breaks every test that declares
@@ -171,7 +232,7 @@ def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """
     by_uuid = {p["uuid"]: p for p in personas}
 
-    def ref(person: dict[str, Any]) -> dict[str, Any]:
+    def ref(person: PersonaEntry) -> PersonaEntry:
         return {
             "uuid": person["uuid"],
             "email": person["email"],
@@ -182,7 +243,7 @@ def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "realm_roles": person["realm_roles"],
         }
 
-    catalog: dict[str, dict[str, Any]] = {}
+    catalog: dict[str, PersonaEntry] = {}
     if profiles.DEV_LEAD_UUID in by_uuid:
         catalog["dev_lead"] = ref(by_uuid[profiles.DEV_LEAD_UUID])
     if profiles.CEO_UUID in by_uuid:
@@ -217,44 +278,11 @@ def _fixtures(personas: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return catalog
 
 
-#: Label written onto the overridden definition. Distinguishable on sight, so a
-#: listing that served the product default instead is obvious in a failure.
-OVERRIDE_LABEL = "Stand tenant override"
-
-
-def canonical_catalogue() -> dict[str, Any]:
-    """What `seed analytics` writes, minus what only a live run can know.
-
-    The table rows are static, so the committed PROFILE can name them. WHICH
-    definition gets overridden is resolved against the database at seed time, so
-    it stays absent here — a canonical page must not invent a metric_key.
-    """
-    return {"definition_override": None}
-
-
-def _catalogue(written: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalise the analytics seed's report into a stable manifest shape.
-
-    Always the same keys, so a consumer branches on emptiness rather than on a
-    key being absent — the difference between "not seeded" and "seeded nothing"
-    is not one a reader should have to infer from a KeyError.
-    """
-    written = written or {}
-    return {"definition_override": written.get("definition_override") or None}
-
-
 def build_manifest(
     env: Mapping[str, str],
     seeded: list[str] | None = None,
-    catalogue: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build the manifest document. Pure: no I/O beyond reading own sources.
-
-    `catalogue` carries what the analytics seed WROTE — the table names it
-    catalogued and which definition it overrode. Passed in rather than looked
-    up, because one of those facts (the overridden metric_key) is only knowable
-    against a live database and this function reads none.
-    """
+) -> Manifest:
+    """Build the manifest document. Pure: no I/O beyond reading own sources."""
     dev_email = (env.get("DEV_USER_EMAIL") or "").strip().lower()
     if not dev_email:
         dev_email = CANONICAL_ENV["DEV_USER_EMAIL"]
@@ -268,7 +296,7 @@ def build_manifest(
     # wrote them (`identity.py` reads the same switch). Advertising a fixture
     # whose row does not exist would turn every test that declares
     # `requires_seed("other_tenant_lead")` from a skip into a failure.
-    roster = list(profiles.build_roster(dev_email))
+    roster = list(profiles.build_seeded_roster(dev_email, config.parse_org_headcount(env)))
     if config.cross_tenant_fixture_enabled(env):
         roster += profiles.build_other_tenant_roster()
 
@@ -291,13 +319,6 @@ def build_manifest(
         "personas": personas,
         "service_urls": dict(SERVICE_URLS),
         "fixtures": _fixtures(personas),
-        # What the analytics seed catalogued, so a test names it instead of
-        # hardcoding a table or guessing which definition was overridden. Empty
-        # on a stand seeded without that step — which is a real state, not a
-        # bug, so consumers must treat it as "cannot assert" rather than fail.
-        "catalogue": _catalogue(catalogue),
-        "golden_metrics": list(GOLDEN_METRICS),
-        "golden_metrics_note": GOLDEN_METRICS_NOTE,
         "capabilities": {
             # Compose seeds silver/gold directly; no connector ever runs, so
             # the ingestion path is not exercised on this stand.
@@ -312,10 +333,10 @@ def build_manifest(
     }
 
 
-def assert_no_credentials(doc: dict[str, Any]) -> None:
+def assert_no_credentials(doc: Mapping[str, Any], env: Mapping[str, str] | None = None) -> None:
     """Fail loudly if a secret ever reaches the document."""
     blob = json.dumps(doc, ensure_ascii=False)
-    for literal in _FORBIDDEN_LITERALS:
+    for literal in _forbidden_literals(os.environ if env is None else env):
         if literal in blob:
             raise RuntimeError(
                 f"manifest would contain the credential literal {literal!r}; "
@@ -336,35 +357,12 @@ def assert_no_credentials(doc: dict[str, Any]) -> None:
     walk(doc)
 
 
-def render_manifest(doc: dict[str, Any]) -> str:
+def render_manifest(doc: Manifest) -> str:
     """Serialise deterministically: sorted keys, fixed indent, LF, trailing newline."""
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
-#: The line CI greps for: `grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2-`.
-#: A single physical line, so the pod-log transport needs no parser.
-SENTINEL_PREFIX = "SEED_MANIFEST_JSON: "
-
-#: CRI reassembles a container's log line up to this many bytes; longer and
-#: `grep -m1` on the far side would capture a fragment, not the document.
-_SENTINEL_MAX_BYTES = 16 * 1024
-
-
-def emit_manifest_sentinel(doc: dict[str, Any]) -> None:
-    """Print the compact-JSON sentinel line the CI capture step greps for."""
-    line = SENTINEL_PREFIX + json.dumps(
-        doc, separators=(",", ":"), sort_keys=True, ensure_ascii=False
-    )
-    size = len(line.encode("utf-8"))
-    if size > _SENTINEL_MAX_BYTES:
-        raise RuntimeError(
-            f"manifest sentinel line is {size} bytes, over the {_SENTINEL_MAX_BYTES}-byte "
-            "CRI line-reassembly bound"
-        )
-    print(line)
-
-
-def write_manifest(doc: dict[str, Any], path: Path | None = None) -> Path:
+def write_manifest(doc: Manifest, path: Path | None = None) -> Path:
     # The scrub gate runs before either transport touches `doc`: the sentinel
     # line and the file are two renderings of the one object it already cleared.
     assert_no_credentials(doc)

@@ -65,7 +65,7 @@ def default_manifest_path(environ: Mapping[str, str] | None = None) -> Path:
 
 # The schema revision this model was written against. A stand emitting a
 # different version is a hard error, not something to parse optimistically.
-SUPPORTED_MANIFEST_VERSION: Final[int] = 1
+SUPPORTED_MANIFEST_VERSION: Final[int] = 2
 
 # Capability fields that answer yes/no, and so can back a `requires_*` marker.
 # `idp` is excluded on purpose: it carries a value, not a yes/no.
@@ -184,39 +184,6 @@ class Capabilities:
 
 
 @dataclass(frozen=True)
-class GoldenMetric:
-    """One `golden_metrics[]` entry: an exact, hand-sourced expectation.
-
-    Currently always absent — `golden_metrics` is `[]` on every stand, by
-    design. See `src/ingestion/tools/seed/golden_metrics.py` for why, and read
-    `Manifest.golden_metrics_note` to tell "none measured yet" apart from
-    "measured and genuinely zero".
-
-    No test under `stand/` reads this yet: the harness that did is being
-    migrated separately. It is parsed regardless because `Manifest` models the
-    document the seed writes — dropping the field would mean a manifest missing
-    it stopped being an error, which is the opposite of what a reader is for.
-    """
-
-    metric_key: str
-    expected: float | int | str
-    scope: str
-    window: str
-    derivation: str
-
-    @classmethod
-    def parse(cls, doc: Mapping[str, Any], where: str) -> GoldenMetric:
-        return cls(
-            metric_key=_require(doc, "metric_key", str, where),
-            # The phase-3 schema declares this as number|string; do not narrow.
-            expected=_require(doc, "expected", (int, float, str), where),
-            scope=_require(doc, "scope", str, where),
-            window=_require(doc, "window", str, where),
-            derivation=_require(doc, "derivation", str, where),
-        )
-
-
-@dataclass(frozen=True)
 class Tenants:
     """Every tenant the stand seeded, named.
 
@@ -244,49 +211,6 @@ class Tenants:
 
 
 @dataclass(frozen=True)
-class DefinitionOverride:
-    """The product definition the seed re-labelled for this tenant."""
-
-    metric_key: str
-    label: str
-
-    @classmethod
-    def parse(cls, doc: Mapping[str, Any], where: str) -> DefinitionOverride:
-        return cls(
-            metric_key=_require(doc, "metric_key", str, where),
-            label=_require(doc, "label", str, where),
-        )
-
-
-@dataclass(frozen=True)
-class Catalogue:
-    """Rows no endpoint creates, seeded by `src/ingestion/tools/seed/analytics.py`.
-
-    It is optional and a test must treat absence as "cannot assert" rather than
-    as failure: a stand seeded without the `analytics` step is a real state.
-    `tests/stand/conftest.py`'s `requires_catalogue` marker is how a test
-    declares it needs it, so the skip carries a reason instead of the test
-    quietly asserting against an empty universe.
-    """
-
-    definition_override: DefinitionOverride | None
-
-    @classmethod
-    def parse(cls, doc: Mapping[str, Any], where: str) -> Catalogue:
-        override = doc.get("definition_override")
-        return cls(
-            definition_override=(
-                None
-                if override is None
-                else DefinitionOverride.parse(
-                    _as_mapping(override, f"{where}.definition_override"),
-                    f"{where}.definition_override",
-                )
-            ),
-        )
-
-
-@dataclass(frozen=True)
 class Manifest:
     """The whole document, field for field."""
 
@@ -297,9 +221,6 @@ class Manifest:
     personas: tuple[Person, ...]
     service_urls: Mapping[str, str]
     fixtures: Mapping[str, Person]
-    catalogue: Catalogue
-    golden_metrics: tuple[GoldenMetric, ...]
-    golden_metrics_note: str
     capabilities: Capabilities
     seed_revision: str
     data_window: str
@@ -368,23 +289,6 @@ class Manifest:
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in urls_raw.items()):
             raise ManifestError(f"{where}.service_urls: every key and value must be a string")
 
-        golden_raw = _require(doc, "golden_metrics", list, where)
-        golden = tuple(
-            GoldenMetric.parse(
-                _as_mapping(entry, f"{where}.golden_metrics[{i}]"),
-                f"{where}.golden_metrics[{i}]",
-            )
-            for i, entry in enumerate(golden_raw)
-        )
-
-        # Optional, unlike every field above: a manifest written before the
-        # analytics seed step existed is still readable, and reports an empty
-        # catalogue rather than failing to parse.
-        catalogue = Catalogue.parse(
-            _as_mapping(doc.get("catalogue") or {}, f"{where}.catalogue"),
-            f"{where}.catalogue",
-        )
-
         seeded_raw = _require(doc, "seeded", list, where)
         if not all(isinstance(step, str) for step in seeded_raw):
             raise ManifestError(f"{where}.seeded: every entry must be a string")
@@ -393,8 +297,8 @@ class Manifest:
         return cls(
             manifest_version=version,
             tenant=tenant,
-            # Optional, like `catalogue`: a manifest written before the second
-            # tenant existed still parses, and reports `other` as absent.
+            # Optional, unlike every field above: a manifest written before the
+            # second tenant existed still parses, and reports `other` as absent.
             tenants=Tenants.parse(
                 _as_mapping(doc.get("tenants") or {}, f"{where}.tenants"),
                 tenant,
@@ -404,9 +308,6 @@ class Manifest:
             personas=personas,
             service_urls=dict(urls_raw),
             fixtures=fixtures,
-            catalogue=catalogue,
-            golden_metrics=golden,
-            golden_metrics_note=_require(doc, "golden_metrics_note", str, where),
             capabilities=Capabilities.parse(
                 _as_mapping(_require(doc, "capabilities", dict, where), f"{where}.capabilities")
             ),
@@ -481,9 +382,6 @@ __all__: Sequence[str] = (
     "MANIFEST_PATH_ENV",
     "SUPPORTED_MANIFEST_VERSION",
     "Capabilities",
-    "Catalogue",
-    "DefinitionOverride",
-    "GoldenMetric",
     "Manifest",
     "Person",
     "Realm",

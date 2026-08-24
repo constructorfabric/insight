@@ -13,6 +13,8 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
+import "@/i18n";
+
 import { portalRouter } from "@/test/portal-router";
 
 import { render, screen, within } from "@testing-library/react";
@@ -23,6 +25,11 @@ const mocks = vi.hoisted(() => ({
   layout: "phone" as "phone" | "narrow" | "wide",
   zone: { activeZone: "overview", activePerson: "boss@x" },
   isManager: true,
+  openFeedback: vi.fn(),
+}));
+
+vi.mock("@/components/feedback-context", () => ({
+  useFeedbackDialog: () => ({ openFeedback: mocks.openFeedback }),
 }));
 
 vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => mocks.layout === "phone" }));
@@ -71,8 +78,14 @@ vi.mock("@/auth", () => ({ useViewer: () => ({ email: "boss@x" }) }));
 // The settings menu pulls in viewer/theme/i18n plumbing; its presence is what
 // matters here — on a phone it is only reachable through this drawer.
 vi.mock("@/components/app-sidebar-footer", () => ({
-  AppSidebarFooter: ({ onNavigate }: { onNavigate?: () => void }) => (
-    <div data-testid="settings-menu">
+  AppSidebarFooter: ({
+    onNavigate,
+    showFeedback = true,
+  }: {
+    onNavigate?: () => void;
+    showFeedback?: boolean;
+  }) => (
+    <div data-testid="settings-menu" data-shows-feedback={String(showFeedback)}>
       <button type="button" onClick={onNavigate}>
         Go somewhere
       </button>
@@ -105,6 +118,7 @@ beforeEach(() => {
   mocks.layout = "phone";
   mocks.zone = { activeZone: "overview", activePerson: "boss@x" };
   mocks.isManager = true;
+  mocks.openFeedback.mockClear();
   act(() => {
     portalRouter.set({ item: undefined });
   });
@@ -223,6 +237,36 @@ describe("shell layout: phone", () => {
     await user.click(screen.getByRole("button", { name: "Go somewhere" }));
 
     expect(screen.queryByTestId("settings-menu")).not.toBeInTheDocument();
+  });
+
+  it("offers feedback from the drawer itself, not from inside the settings menu", async () => {
+    render(<Shell />);
+    const user = await openDrawer();
+
+    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+
+    expect(mocks.openFeedback).toHaveBeenCalled();
+  });
+
+  it("closes the drawer with the feedback box, which opens behind it", async () => {
+    render(<Shell />);
+    const user = await openDrawer();
+
+    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+
+    expect(screen.queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
+  it("leaves feedback out of the settings menu the drawer already offers it beside", async () => {
+    render(<Shell />);
+    const user = await openDrawer();
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+
+    expect(screen.getByTestId("settings-menu")).toHaveAttribute(
+      "data-shows-feedback",
+      "false",
+    );
   });
 
   it("drops the header — the zone row already names the zone", async () => {

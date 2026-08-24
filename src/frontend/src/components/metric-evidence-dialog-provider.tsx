@@ -14,6 +14,8 @@ import {
   EvidenceDialogContext,
   type EvidenceDialogOptions,
   type EvidenceDialogState,
+  type EvidenceDialogTarget,
+  type EvidencePeopleView,
 } from "@/components/metric-evidence-context";
 import { MetricEvidenceDialog } from "@/components/metric-evidence-dialog";
 import { recordUsageEvent } from "@/telemetry";
@@ -42,7 +44,7 @@ export function MetricEvidenceDialogProvider({
   }, [queryClient, sessionScope]);
   const openEvidenceTargets = useCallback(
     (
-      targets: readonly EvidenceDialogState["targets"][number][],
+      targets: readonly EvidenceDialogTarget[],
       options?: EvidenceDialogOptions
     ) => {
       const uniqueTargets = [
@@ -60,6 +62,7 @@ export function MetricEvidenceDialogProvider({
         : first.selection.metric_key;
       recordUsageEvent("drill", active);
       setState({
+        kind: "records",
         targets: [first, ...uniqueTargets.slice(1)],
         activeMetricKey: active,
         title: options?.title,
@@ -70,23 +73,33 @@ export function MetricEvidenceDialogProvider({
   );
   const openEvidence = useCallback(
     (
-      selection: EvidenceDialogState["targets"][number]["selection"],
+      selection: EvidenceDialogTarget["selection"],
       label: string
     ) => openEvidenceTargets([{ selection, label }]),
     [openEvidenceTargets]
   );
+  const openEvidencePeople = useCallback(
+    (view: EvidencePeopleView) => {
+      if (!view.rows.length) return;
+      // Same usage event as a records drill: it counts a reader going one step
+      // down from a figure, and under the same metric key, so the series stays
+      // comparable whether or not the metric can be drilled to records.
+      recordUsageEvent("drill", view.metricKey);
+      setState({ kind: "people", view, sessionScope });
+    },
+    [sessionScope]
+  );
   const selectEvidenceMetric = useCallback((metricKey: string) => {
     setState((current) =>
-      current?.targets.some(
-        (target) => target.selection.metric_key === metricKey
-      )
+      current?.kind === "records" &&
+      current.targets.some((target) => target.selection.metric_key === metricKey)
         ? { ...current, activeMetricKey: metricKey }
         : current
     );
   }, []);
   const value = useMemo(
-    () => ({ openEvidence, openEvidenceTargets }),
-    [openEvidence, openEvidenceTargets]
+    () => ({ openEvidence, openEvidenceTargets, openEvidencePeople }),
+    [openEvidence, openEvidenceTargets, openEvidencePeople]
   );
   const visibleState = state?.sessionScope === sessionScope ? state : null;
   return (

@@ -164,9 +164,11 @@ class PersonAccountsResponse(BaseModel):
 class PersonResponse(BaseModel):
     """
     A person node in the org tree (subordinate of a profile), matching the .NET
-    `PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain
-    strings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`
-    fields serialize as `null` rather than being dropped.
+    `PersonResponse` plus `username`, which the .NET shape never carried — the
+    UI labels a nameless person by their handle (#2711). Unlike
+    `ProfileResponse`, the attribute fields are plain strings (empty when
+    absent, not omitted) and the `supervisor_*`/`parent_*` fields serialize as
+    `null` rather than being dropped.
     """
     model_config = ConfigDict(
         extra='forbid',
@@ -186,6 +188,7 @@ class PersonResponse(BaseModel):
     subordinates: list[PersonResponse]
     supervisor_email: str | None = None
     supervisor_name: str | None = None
+    username: str
 
 
 class PersonRoleResponse(BaseModel):
@@ -341,7 +344,7 @@ class QueueItemResponse(BaseModel):
     display_name: str | None = Field(None, description='How the source describes the account. Nothing here is matchable — it is\nwhat lets an operator recognise whose account this is when automation\ncannot, which is exactly the case for the ones only they can bind.')
     email: str | None = None
     job_title: str | None = None
-    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_evidence`.')
+    kind: str = Field(..., description='`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_source_id` | `no_evidence`.')
     manager_email: str | None = None
     source: str
     source_id: UUID
@@ -364,6 +367,7 @@ class ResolutionRatesResponse(BaseModel):
     bound: int = Field(..., ge=0)
     excluded: int = Field(..., ge=0)
     no_evidence: int = Field(..., ge=0)
+    no_source_id: int = Field(..., ge=0)
     observed: int = Field(..., ge=0)
     pending: int = Field(..., ge=0)
 

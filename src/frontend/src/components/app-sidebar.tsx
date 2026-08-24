@@ -21,6 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { personName } from "@/lib/identities/person-display";
 import { personIdFromPath } from "@/lib/metrics/entity";
 import { useIcPerson } from "@/queries/ic-dashboard";
 import type { IdentityPerson } from "@/types/insight";
@@ -80,7 +81,7 @@ function PersonNode({
           )}
           {hasReports ? <Users /> : <User />}
           <span className="truncate">
-            {node.display_name || node.email || UNNAMED_PERSON}
+            {personName(node) ?? UNNAMED_PERSON}
           </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
