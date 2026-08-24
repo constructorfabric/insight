@@ -134,7 +134,8 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           </span>
         </div>
         {ownMedian != null ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
+          // 24px matches the ⋯ box beside it, so both sit on one centre line.
+          <span className="shrink-0 text-xs leading-6 text-muted-foreground">
             Median{" "}
             <span className="font-semibold text-foreground tabular-nums">
               {formatMetricNumber(ownMedian, metric.format)}
@@ -144,7 +145,9 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
         ) : null}
       </div>
       {evidence ? (
-        <CardAction>
+        // Pulls the ⋯ out to the card's 16px corner inset, so laying it out in
+        // flow costs the title column nothing.
+        <CardAction className="-mr-2">
           <MetricCardActions
             evidence={evidence}
             label={metric.label}

@@ -105,6 +105,17 @@ function expectHeadlineClearOfActions(canvasElement: HTMLElement) {
   expect(button, "the card renders its actions button").not.toBeNull();
   expect(headline, "the card renders its median headline").not.toBeUndefined();
 
+  // A flex or grid headline draws no box for the whitespace between the label
+  // and the value, while textContent still reads "Median 749 hours".
+  const label = document.createRange();
+  label.selectNodeContents(headline!.firstChild!);
+  const value = headline!.querySelector("span")!.getBoundingClientRect();
+
+  expect(
+    value.left - label.getBoundingClientRect().right,
+    'the space between "Median" and its value is drawn',
+  ).toBeGreaterThan(1);
+
   const buttonBox = button!.getBoundingClientRect();
   const headlineBox = headline!.getBoundingClientRect();
 
@@ -116,6 +127,29 @@ function expectHeadlineClearOfActions(canvasElement: HTMLElement) {
       headlineBox.left,
     )}–${Math.round(headlineBox.right)})`,
   ).toBeGreaterThan(0);
+
+  const glyph = button!.querySelector("svg")!.getBoundingClientRect();
+  const centre = (box: DOMRect) => box.top + box.height / 2;
+
+  expect(
+    Math.round(Math.abs(centre(glyph) - centre(headlineBox))),
+    `the ⋯ glyph sits on the median's centre line (glyph ${Math.round(
+      centre(glyph),
+    )}, value ${Math.round(centre(headlineBox))})`,
+  ).toBeLessThanOrEqual(1);
+}
+
+/** The ⋯ column takes its width from the subtitle's line. */
+function expectSubtitleOnOneLine(canvasElement: HTMLElement) {
+  const subtitle = canvasElement.querySelector<HTMLElement>(
+    '[data-slot="card-header"] span.truncate + span',
+  )!;
+  const lineHeight = parseFloat(getComputedStyle(subtitle).lineHeight);
+
+  expect(
+    Math.round(subtitle.getBoundingClientRect().height / lineHeight),
+    `the subtitle "${subtitle.textContent}" stays on one line`,
+  ).toBe(1);
 }
 
 /** Measured card width in the three-up grid at a 1280 px viewport. */
@@ -129,6 +163,7 @@ export const TestHeadlineClearOfActionsWide: Story = {
     ),
   ],
   play: async ({ canvasElement }) => {
+    expectSubtitleOnOneLine(canvasElement);
     expectHeadlineClearOfActions(canvasElement);
   },
 };

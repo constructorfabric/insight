@@ -43,9 +43,8 @@ export function MetricCardActions({
             )}
             aria-label={`More actions for ${label}`}
             onClick={(event) => event.stopPropagation()}
-          >
-            <Ellipsis />
-          </Button>
+            icon={<Ellipsis />}
+          />
         }
       />
       <DropdownMenuContent align="end" className="w-48">
