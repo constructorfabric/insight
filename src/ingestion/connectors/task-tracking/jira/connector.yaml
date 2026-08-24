@@ -6602,30 +6602,17 @@ streams:
               - string
               - "null"
           items:
-            anyOf:
-              - type: string
-              - type: array
-                items:
-                  type: object
-                  properties:
-                    field:
-                      type: string
-                    fieldId:
-                      type: string
-                    fieldtype:
-                      type: string
-                    from:
-                      type: string
-                    fromString:
-                      type: string
-                    to:
-                      type: string
-                    toString:
-                      type: string
-                    tmpFromAccountId:
-                      type: string
-                    tmpToAccountId:
-                      type: string
+            # Plain string, NOT `anyOf: [string, array]`. The AddFields
+            # transformation renders this column with `| tojson`; the CDK then
+            # re-parses that render with ast.literal_eval, which fails on JSON
+            # `null` and leaves the value a string. Under a string/array union
+            # the destination JSON-encodes that string, storing an escaped blob
+            # `"[{\"field\": ...}]"` that JSONExtractArrayRaw cannot read —
+            # every changelog item whose previous value was empty is lost that
+            # way. A plain string declaration stores the render verbatim.
+            type:
+              - string
+              - "null"
           tenant_id:
             type:
               - string
