@@ -1,5 +1,5 @@
 name: bitbucket-cloud
-version: "2.1.0"
+version: "2.1.1"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.
