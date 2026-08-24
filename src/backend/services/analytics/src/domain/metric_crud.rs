@@ -303,15 +303,45 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
 
     let roles: Vec<MetricInputRole> = graph.inputs.iter().map(|input| input.role).collect();
     match graph.computation {
-        MetricComputation::Sum | MetricComputation::Median | MetricComputation::DistinctCount => {
+        MetricComputation::Sum
+        | MetricComputation::Median
+        | MetricComputation::Stddev
+        | MetricComputation::DistinctCount => {
             if roles != [MetricInputRole::Value] {
                 return Err(violation(
                     "inputs",
-                    "sum/median/distinct_count take exactly one value input",
+                    "sum/median/stddev/distinct_count take exactly one value input",
                 ));
             }
             if graph.scale.is_some() {
-                return Err(violation("scale", "only ratio metrics carry a scale"));
+                return Err(violation(
+                    "scale",
+                    "only ratio and percentile metrics carry a scale",
+                ));
+            }
+        }
+        MetricComputation::Percentile => {
+            if roles != [MetricInputRole::Value] {
+                return Err(violation(
+                    "inputs",
+                    "percentile takes exactly one value input",
+                ));
+            }
+            // `scale` doubles as the quantile for percentile metrics.
+            match graph.scale {
+                None => {
+                    return Err(violation(
+                        "scale",
+                        "percentile metrics require the quantile in scale",
+                    ));
+                }
+                Some(q) if !(0.0..=1.0).contains(&q) => {
+                    return Err(violation(
+                        "scale",
+                        "percentile quantile must be within [0, 1]",
+                    ));
+                }
+                Some(_) => {}
             }
         }
         MetricComputation::Ratio => {

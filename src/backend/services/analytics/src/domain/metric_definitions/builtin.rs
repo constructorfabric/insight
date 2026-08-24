@@ -51,6 +51,8 @@ pub enum SeedComputation {
     Sum,
     Ratio { scale: f64 },
     Median,
+    Percentile { q: f64 },
+    Stddev,
     DistinctCount,
 }
 
@@ -60,14 +62,20 @@ impl SeedComputation {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
+            Self::Percentile { .. } => MetricComputation::Percentile,
+            Self::Stddev => MetricComputation::Stddev,
             Self::DistinctCount => MetricComputation::DistinctCount,
         }
     }
 
+    /// The definition's `scale` storage column: the ratio's scale factor, or
+    /// the percentile's quantile `q` — one numeric slot, meaning keyed by
+    /// `computation_type` (the table's CHECK constraint enforces the pairing).
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum | Self::Median | Self::DistinctCount => None,
+            Self::Sum | Self::Median | Self::Stddev | Self::DistinctCount => None,
             Self::Ratio { scale } => Some(scale),
+            Self::Percentile { q } => Some(q),
         }
     }
 }
@@ -203,8 +211,8 @@ mod tests {
 
     #[test]
     fn registry_declares_the_expected_counts() {
-        assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 66, "builtin metric count");
+        assert_eq!(builtin_sources().len(), 7, "builtin source count");
+        assert_eq!(builtin_metrics().len(), 75, "builtin metric count");
     }
 
     #[test]

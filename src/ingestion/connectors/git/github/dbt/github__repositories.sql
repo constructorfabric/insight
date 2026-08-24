@@ -28,7 +28,8 @@ SELECT
     '' AS metadata,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
+    _airbyte_extracted_at,
+    toNullable(default_branch) AS default_branch
 FROM {{ source('bronze_github', 'repositories') }} FINAL
 {% if is_incremental() %}
 WHERE _airbyte_extracted_at > (SELECT max(_airbyte_extracted_at) FROM {{ this }})

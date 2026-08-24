@@ -85,6 +85,12 @@ fn formula(metric: &MetricSeed) -> String {
     let base = match metric.computation {
         SeedComputation::Sum => format!("sum({})", measure(MetricInputRole::Value)),
         SeedComputation::Median => format!("median({})", measure(MetricInputRole::Value)),
+        SeedComputation::Percentile { q } => format!(
+            "p{}({})",
+            fmt_num(q * 100.0),
+            measure(MetricInputRole::Value)
+        ),
+        SeedComputation::Stddev => format!("stddev({})", measure(MetricInputRole::Value)),
         SeedComputation::DistinctCount => {
             format!("distinct_count({})", measure(MetricInputRole::Value))
         }

@@ -148,6 +148,8 @@ pub enum ComputationDto {
     Sum,
     Ratio { scale: f64 },
     Median,
+    Percentile { q: f64 },
+    Stddev,
     DistinctCount,
 }
 

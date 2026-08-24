@@ -41,6 +41,16 @@ models:
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"
 
+  - name: github__ci_runs
+    description: "GitHub Actions workflow runs -> staging, feeds class_git_ci_runs (one row per run attempt; gate + duration semantics live here)"
+
+  - name: github__deployments
+    description: "GitHub deployments -> staging, feeds class_git_deployments (no outcome — that is the events class)"
+
+  - name: github__deployment_events
+    description: "GitHub deployment statuses -> staging, feeds class_git_deployment_events"
+
+
   - name: github__repository_branches
     description: "GitHub branches -> staging, feeds class_git_repository_branches"
 

@@ -279,6 +279,8 @@ pub fn build_metric_result(
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
         ComputationSpec::Median { .. } => ComputationDto::Median,
+        ComputationSpec::Percentile { q, .. } => ComputationDto::Percentile { q: *q },
+        ComputationSpec::Stddev { .. } => ComputationDto::Stddev,
         ComputationSpec::DistinctCount { .. } => ComputationDto::DistinctCount,
     };
     MetricResultDto {

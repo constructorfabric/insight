@@ -298,6 +298,13 @@ const DEV: Record<string, LensEntry> = {
   },
   Activity: PRODUCT_GAP("Per-person activity-day metrics"),
   Quality: PRODUCT_GAP("Review / reopen quality metrics"),
+  // The ci.* tenant metrics are served (issue #2803); this lens needs a
+  // tenant-entity view — DomainLensView is person-roster-shaped and cannot
+  // render org-grain metrics without fabricating a per-person split.
+  CI: {
+    comingSoon:
+      "CI pipeline metrics — the org-level ci.* metrics are live on the API; this view is still in development.",
+  },
   Continuity: PRODUCT_GAP("Longitudinal continuity metrics"),
   Repositories: SCREEN_GAP("Repository-level rollups"),
   Elements: SCREEN_GAP("Element-level (file/module) analytics"),

@@ -422,6 +422,10 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
+        ComputationSpec::Percentile { q, .. } => {
+            format!("quantileExactIf({q})(value, value IS NOT NULL)")
+        }
+        ComputationSpec::Stddev { .. } => "stddevSampIf(value, value IS NOT NULL)".to_owned(),
         ComputationSpec::DistinctCount { .. } => {
             "toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL))".to_owned()
         }
@@ -787,6 +791,23 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
                 .to_owned()
         }
+        ComputationSpec::Percentile { value, q } => {
+            // Honest-null like Median — same event-grain shape, different point
+            // on the distribution.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            format!(
+                "quantileExactIfOrNull({q})(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+            )
+        }
+        ComputationSpec::Stddev { value } => {
+            // Honest-null like Median; sample stddev, so a single observation
+            // reads NULL (no spread is measurable), never a fabricated 0.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            "stddevSampIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+                .to_owned()
+        }
         ComputationSpec::DistinctCount { value } => {
             // OrNull like sum: an entity present via another measure but with
             // no rows for this one comes back NULL, not 0, so it never enters
@@ -916,6 +937,8 @@ fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
         .flat_map(|def| match &def.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => {
                 vec![(value.source_key.clone(), value.measure_key.clone())]
             }
@@ -966,6 +989,8 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
         | ComputationSpec::DistinctCount { .. } => {
             format!(
                 "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
@@ -997,6 +1022,8 @@ fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
         ],
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
         | ComputationSpec::DistinctCount { .. } => Vec::new(),
     }
 }
@@ -1005,6 +1032,8 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
+        | ComputationSpec::Percentile { value, .. }
+        | ComputationSpec::Stddev { value }
         | ComputationSpec::DistinctCount { value } => vec![
             req.tenant_id.to_string(),
             value.source_key.clone(),

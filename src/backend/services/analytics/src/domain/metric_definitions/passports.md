@@ -4,6 +4,78 @@ Generated from `registry.yaml` by `analytics passports`. Do not edit by hand —
 regenerate and commit. A drift test (`metric_definitions::passport`) fails when
 this file and the registry disagree.
 
+## ci.runs — CI runs
+
+- Source: ci (ci_metric_observations)
+- Reads: runs
+- Formula: sum(runs)
+- Shape: integer, higher_is_better
+- Notes: Every CI pipeline run that reached a decided outcome in the period, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
+
+## ci.gate_pass_rate — Gate pass rate
+
+- Source: ci (ci_metric_observations)
+- Reads: gate_passed, gate_runs
+- Formula: 100 * (gate_passed / gate_runs)
+- Shape: percent, higher_is_better
+- Notes: Success share of gate runs — runs triggered by a push or pull request that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
+
+## ci.gate_first_try_pass_rate — First-try pass rate
+
+- Source: ci (ci_metric_observations)
+- Reads: gate_first_try_passed, gate_runs
+- Formula: 100 * (gate_first_try_passed / gate_runs)
+- Shape: percent, higher_is_better
+- Notes: Gate runs that passed on their first attempt, as a share of all gate runs. The gap to the plain pass rate is the retry tax — green that had to be bought with a re-run.
+
+## ci.gate_retry_share — Retried gate runs
+
+- Source: ci (ci_metric_observations)
+- Reads: gate_retried, gate_runs
+- Formula: 100 * (gate_retried / gate_runs)
+- Shape: percent, lower_is_better
+- Notes: Gate runs whose final state came from a re-run, as a share of all gate runs. A retried run counts once, at its last attempt.
+
+## ci.run_duration_min — Gate run duration
+
+- Source: ci (ci_metric_observations)
+- Reads: run_duration_min
+- Formula: median(run_duration_min)
+- Shape: decimal, lower_is_better, unit min
+- Notes: Median wall-clock minutes from a gate run's start to its decision, over runs decided in the period. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
+
+## ci.run_duration_min_p90 — Gate run duration p90
+
+- Source: ci (ci_metric_observations)
+- Reads: run_duration_min
+- Formula: p90(run_duration_min)
+- Shape: decimal, lower_is_better, unit min
+- Notes: The 90th percentile of gate run duration — nine in ten runs finish faster. The gap to the median is the bad-day penalty a developer actually waits for.
+
+## ci.run_duration_min_stddev — Gate run duration spread
+
+- Source: ci (ci_metric_observations)
+- Reads: run_duration_min
+- Formula: stddev(run_duration_min)
+- Shape: decimal, lower_is_better, unit min
+- Notes: Sample standard deviation of gate run durations, in minutes. A pipeline whose duration swings wildly is harder to plan around than a slow but steady one.
+
+## ci.run_hours — CI hours
+
+- Source: ci (ci_metric_observations)
+- Reads: run_hours
+- Formula: sum(run_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: Wall-clock hours all decided runs spent executing, whatever the trigger. Not billable compute minutes — parallel jobs inside one run count as the run's elapsed time, not their sum. Filter by outcome to see hours burned on red runs.
+
+## ci.deployments — Deployments
+
+- Source: ci (ci_metric_observations)
+- Reads: deployments
+- Formula: sum(deployments)
+- Shape: integer, higher_is_better
+- Notes: Deployments recorded in the period. The outcome is the latest status the deployment reached; one with no status yet shows as pending rather than being rounded away.
+
 ## ai.accepted_lines — AI-added lines
 
 - Source: ai_usage (ai_metric_observations)

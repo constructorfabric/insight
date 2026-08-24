@@ -186,6 +186,21 @@ _SESSION_START_TRUNCATE = [
     # duplicate keys.
     ("staging", "chatgpt_team__ai_dev_usage"),
     ("staging", "chatgpt_team__ai_assistant_usage"),
+    # CI specs share seed unique_keys across files and sit behind strict
+    # incremental watermarks (staging `_airbyte_extracted_at >`, silver
+    # `_version >`). On a warm re-run the stale staging max blocks every
+    # re-seeded row (same fixed timestamps) and silver keeps the PREVIOUS
+    # session's runs; stale bronze rows with the same unique_key but different
+    # payload also tie the RMT version. Reset the whole chain at session start.
+    ("bronze_github", "workflow_runs"),
+    ("bronze_github", "deployments"),
+    ("bronze_github", "deployment_statuses"),
+    ("staging", "github__ci_runs"),
+    ("staging", "github__deployments"),
+    ("staging", "github__deployment_events"),
+    ("silver", "class_git_ci_runs"),
+    ("silver", "class_git_deployments"),
+    ("silver", "class_git_deployment_events"),
 ]
 
 

@@ -533,6 +533,27 @@ fn build_definition(
         MetricComputation::Median => ComputationSpec::Median {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
+        MetricComputation::Percentile => {
+            // The `scale` column doubles as the quantile for percentile
+            // metrics (see SeedComputation::scale); the CHECK constraint
+            // pairs it with the computation type.
+            let q = row.scale.ok_or_else(|| {
+                config_error(&format!("missing percentile q for {}", row.metric_key))
+            })?;
+            if !(0.0..=1.0).contains(&q) {
+                return Err(config_error(&format!(
+                    "percentile q must be within [0, 1] for {}",
+                    row.metric_key
+                )));
+            }
+            ComputationSpec::Percentile {
+                value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+                q,
+            }
+        }
+        MetricComputation::Stddev => ComputationSpec::Stddev {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
         MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },

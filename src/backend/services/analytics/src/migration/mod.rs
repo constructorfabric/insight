@@ -61,6 +61,7 @@ mod m20260806_000001_metric_custom_observation_sql;
 mod m20260810_000001_metric_definition_subject;
 mod m20260810_000002_metric_definition_tags;
 pub mod m20260822_000001_feedback;
+mod m20260824_000001_metric_percentile_stddev_computation;
 pub(crate) use m20260822_000001_feedback::feedback_schema;
 
 use sea_orm_migration::prelude::*;
@@ -132,6 +133,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260810_000001_metric_definition_subject::Migration),
             Box::new(m20260810_000002_metric_definition_tags::Migration),
             Box::new(m20260822_000001_feedback::Migration),
+            Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
         ]
     }
 }

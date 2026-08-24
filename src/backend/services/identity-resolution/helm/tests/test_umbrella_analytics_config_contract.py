@@ -29,9 +29,11 @@ def _analytics_secret(manifests: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("extra", "expected"), [((), False), (("--set", "analytics.metricCatalog.tenantMetricsEnabled=true"), True)]
+    ("extra", "expected"), [((), True), (("--set", "analytics.metricCatalog.tenantMetricsEnabled=false"), False)]
 )
-def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[str, ...], expected: bool) -> None:
+def test_tenant_metrics_are_on_by_default_and_opt_out_per_installation(
+    umbrella_deps, extra: tuple[str, ...], expected: bool
+) -> None:
     code, out, err = render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}", *extra)
     assert code == 0, err
 
