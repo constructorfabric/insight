@@ -4,10 +4,12 @@ import {
   BarList,
   Delta,
   Pending,
+} from "@/components/portal/domain-lens-view";
+import {
   toBarRows,
   UNSPLIT_SEGMENT,
   type BarEntry,
-} from "@/components/portal/domain-lens-view";
+} from "@/lib/portal/bar-rows";
 import {
   SectionTrend,
   type SectionTrendPoint,
