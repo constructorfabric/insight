@@ -2,6 +2,8 @@
 
 Run multiple isolated browser sessions concurrently with state persistence.
 
+A session can die immediately after `open`, with no error until the next command reports the browser is not open. Confirm a new session with a cheap `eval` before building on it, and prefer reusing one healthy session over opening a second.
+
 ## Named Browser Sessions
 
 Use `-s` flag to isolate browser contexts:

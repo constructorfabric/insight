@@ -74,11 +74,20 @@ def rendered_rows(table: Locator) -> Table:
 
 
 def claimed_row_count(table: Locator) -> int:
-    """What the grid says its full result set holds, virtualization aside."""
+    """How many DATA rows the grid says its full result set holds.
+
+    `aria-rowcount` counts every row of the full table, its header rows
+    included, while an export writes the header apart from its records — so the
+    headers come off before the two counts are compared. Their number is read
+    from the grid rather than assumed, because a grid that grows a second
+    header row would otherwise shift this by one without failing here.
+    """
     declared = table.get_attribute("aria-rowcount")
     assert declared is not None, "grid declares no aria-rowcount to reconcile the export against"
 
-    return int(declared)
+    headers = table.locator('[role="row"]:has([role="columnheader"]), thead tr').count()
+
+    return int(declared) - headers
 
 
 def data_rows(table: Table, *, after: int) -> Table:

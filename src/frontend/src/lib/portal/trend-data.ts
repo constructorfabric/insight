@@ -73,6 +73,42 @@ function monthIndex(timestamp: number): number {
 }
 
 /**
+ * How many of the roster actually contributed to a metric in each bucket.
+ *
+ * Derived from the same per-entity rows the totals are summed from, so it
+ * needs no catalog metric of its own: forty merged pull requests read very
+ * differently at four contributors than at twenty, and that second number is
+ * already in the response.
+ *
+ * A bucket a person has a reading in but no value counts as inactive — a
+ * measured zero is not a contribution.
+ */
+export function buildActiveContributorData(
+  key: string,
+  byKey: Map<string, NormalizedMetricResult>,
+  memberIds: readonly string[],
+): SectionTrendPoint[] {
+  const result = byKey.get(key);
+  if (!result) return [];
+
+  const contributorsByDate = new Map<string, Set<string>>();
+  for (const id of memberIds) {
+    for (const s of forEntity(result, id).series) {
+      for (const p of s.points) {
+        const contributors =
+          contributorsByDate.get(p.bucket_start) ?? new Set<string>();
+        if ((p.value ?? 0) > 0) contributors.add(id);
+        contributorsByDate.set(p.bucket_start, contributors);
+      }
+    }
+  }
+
+  return [...contributorsByDate.entries()]
+    .map(([date, contributors]) => ({ date, active: contributors.size }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
  * Sum each metric's per-bucket timeseries points across a roster into a single
  * org/team series per bucket, sorted by date. Shared by every portal view that
  * draws a "team totals over time" chart (Overview, Directions, Collaboration)

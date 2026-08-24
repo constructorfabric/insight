@@ -25,11 +25,37 @@ service serialises timestamps with no offset. See `common.UnzonedDatetime`.
 from __future__ import annotations
 
 from .common import UnzonedDatetime
-from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 from datetime import date as date_aliased
+
+
+class AiConfigResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    admin_only: bool = Field(..., description='Only admins may ask for an explanation on this deployment.')
+    enabled: bool = Field(..., description='Whether this deployment offers AI explanations at all.')
+    model: str = Field(..., description='The model explanations are asked of.')
+    stand_key: bool = Field(..., description='The stand pays for explanations with its own key, so nobody stores one.')
+
+
+class AiCredentialResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool
+    hint: str = Field(..., description='Last four characters of the stored key; empty when none is stored.')
+
+
+class AiSettingsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    is_default: bool = Field(..., description='True while the tenant has written none of its own.')
+    system_prompt: str
 
 
 class Bucket(StrEnum):
@@ -108,6 +134,16 @@ class EvidenceGranularity(StrEnum):
     event = 'event'
     source_summary = 'source_summary'
     derived_population = 'derived_population'
+
+
+class ExplainResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    model: str = Field(..., description='The model that produced it.')
+    person_context_entries: int = Field(..., description="How many of the caller's own entries fed the prompt.", ge=0)
+    tenant_context_entries: int = Field(..., description='How many organisation entries fed the prompt.', ge=0)
+    text: str = Field(..., description='The answer, as plain prose.')
 
 
 class FeedbackEntry(BaseModel):
@@ -612,6 +648,20 @@ class Problem(BaseModel):
     type: str
 
 
+class PutCredentialRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    token: str
+
+
+class PutSettingsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    system_prompt: str
+
+
 class RollupValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -686,6 +736,33 @@ class SchemaStatus(StrEnum):
     unchecked = 'unchecked'
 
 
+class Scope(StrEnum):
+    """
+    Who a context entry belongs to.
+    """
+    tenant = 'tenant'
+    person = 'person'
+
+
+class SnapshotScope(StrEnum):
+    """
+    Whose reading this is.
+    """
+    person = 'person'
+    organisation = 'organisation'
+
+
+class SnapshotSeries(BaseModel):
+    """
+    One line of a chart, as it is drawn.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    label: str
+    points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
+
+
 class TelemetryRecord(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -705,6 +782,14 @@ class TimeseriesPointDto(BaseModel):
     )
     bucket_start: str
     value: float | None = None
+
+
+class UpdateContextRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str | None = None
+    title: str | None = None
 
 
 class UpdateSavedQueryRequest(BaseModel):
@@ -812,6 +897,33 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class ContextEntryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str
+    id: str
+    scope: Scope
+    title: str
+    updated_at: str
+
+
+class ContextListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[ContextEntryResponse]
+
+
+class CreateContextRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str
+    scope: Scope
+    title: str
 
 
 class CustomMetricInput(BaseModel):
@@ -960,6 +1072,28 @@ class MetricResultsRequest(BaseModel):
     period: MetricResultsPeriod
 
 
+class MetricSnapshot(BaseModel):
+    """
+    The reading as the viewer sees it, handed to the model as the thing to explain.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bucket_starts: list[str] | None = Field(None, description='Bucket start dates every series is indexed by, oldest first.')
+    delta: str | None = Field(None, description="The tile's own change line, empty when it has none.")
+    help: str | None = Field(None, description="The catalog's description of the metric, empty when it has none.")
+    label: str = Field(..., description='The label the tile shows.')
+    metric_key: str = Field(..., description='Catalog key, e.g. `tasks.closed`.')
+    peer: str | None = Field(None, description="The tile's peer-comparison line, empty when it has none.")
+    period: str = Field(..., description='What the period is called on screen, e.g. `month`.')
+    scope: SnapshotScope | None = Field(None, description="Whose reading this is. Absent means one person's.")
+    series: list[SnapshotSeries] | None = Field(None, description="The chart's lines, when the reading is a chart rather than a tile.")
+    since: str = Field(..., description='Inclusive start of the window, `YYYY-MM-DD`.')
+    trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
+    until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
+    value: str = Field(..., description='The formatted value the tile shows.')
+
+
 class SavedQueryListResponse(BaseModel):
     """
     Response envelope for `GET /v1/queries` (`{ "items": [SavedQuerySummary] }`).
@@ -1037,6 +1171,12 @@ class CustomMetricListResponse(BaseModel):
         extra='forbid',
     )
     items: list[CustomMetricSummary]
+
+
+class ExplainRequest(MetricSnapshot):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
 
 
 class ExportCustomMetricsResponse(BaseModel):

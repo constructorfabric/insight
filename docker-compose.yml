@@ -219,6 +219,14 @@ services:
       APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       APP__gears__analytics__config__identity_url: "http://identity-resolution:8082"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"
+      # Explaining a metric with an LLM. Off unless .env.compose turns it on;
+      # enabled without a sealing key stops the service at boot, so the two
+      # move together.
+      APP__gears__analytics__config__ai_assist__enabled: "${AI_ASSIST_ENABLED:-false}"
+      APP__gears__analytics__config__ai_assist__token_encryption_key: "${AI_ASSIST_TOKEN_ENCRYPTION_KEY:-}"
+      APP__gears__analytics__config__ai_assist__api_key: "${AI_ASSIST_API_KEY:-}"
+      APP__gears__analytics__config__ai_assist__admin_only: "${AI_ASSIST_ADMIN_ONLY:-true}"
+      APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
       # cf-gears-oidc-authn-plugin. Its config is nested/list-shaped (not
       # env-injectable) and resolves the JWKS via OIDC discovery over HTTPS ONLY,
@@ -454,7 +462,11 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: "8085"
       JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
-    ports: ["8085:8085"]
+    # Host port is configurable like every other service's, so a second
+    # instance (or another stack already on 8085) does not block the edge.
+    # A changed port needs KEYCLOAK_HOSTNAME and AUTHENTICATOR_OIDC_ISSUER
+    # moved with it — the issuer is baked into the tokens.
+    ports: ["${KEYCLOAK_PORT:-8085}:8085"]
     volumes:
       - ./deploy/compose/keycloak/realm-insight.generated.json:/opt/keycloak/data/import/realm-insight.json:ro
     # `insight`, not `default` — every other service in this stack (see

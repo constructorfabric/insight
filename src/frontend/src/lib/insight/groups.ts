@@ -190,6 +190,17 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
+      // INVARIANT: no `branch_scope` breakdown on a metric already scoped to
+      // one branch. Not merely because the dimension would be constant —
+      // `/v1/metric-results` refuses a dimension a metric does not declare,
+      // and the call is all-or-nothing, so it would blank the whole section.
+      //
+      // The split keys stay in this collection even with no block of their
+      // own: `lens-configs.ts` may only name keys a group declares.
+      key: "git.default_branch_commits",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "git.prs_merged",
       // `branch_scope` splits landed work from work still in flight. Two
       // groups, so the summary card's ribbon always lights up — and one
@@ -200,6 +211,10 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
         { view: "peer" },
         { view: "breakdown", dimensions: ["branch_scope"] },
       ],
+    },
+    {
+      key: "git.default_branch_prs_merged",
+      views: [{ view: "period" }, { view: "peer" }],
     },
     {
       key: "git.lines_added",

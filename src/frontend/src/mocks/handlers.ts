@@ -369,6 +369,51 @@ function customMetricHandlers() {
 /** Whoever the person mode has open holds the two accounts it lists for them. */
 const HELD_BY = "2517cd48-4961-52b3-a401-b0e5a03858a4";
 
+/**
+ * AI assist (`/v1/ai/*`) — on in mock so the sparkle, the settings screen and
+ * an answer all have a dev and Storybook path. Synthetic data only; no request
+ * leaves the browser.
+ */
+const AI_BASE = "/api/analytics/v1/ai";
+
+let mockCredential = { configured: true, hint: "wxyz" };
+let mockContextSeq = 0;
+let mockSystemPrompt: string | null = null;
+
+const DEFAULT_SYSTEM_PROMPT = [
+  "You explain one workplace metric to the person it describes.",
+  "",
+  "Say what the number is, how it moved, and how it sits against the team median. Offer the most likely reading, and name what would confirm or rule it out. Describe the system, never judge the person. If the data is too thin to support a reading, say so and stop.",
+  "",
+  "Four sentences at most. No headings, no bullet lists.",
+].join("\n");
+
+const mockContext = new Map<
+  string,
+  { id: string; scope: "tenant" | "person"; title: string; body: string; updated_at: string }
+>([
+  [
+    "ctx-org-1",
+    {
+      id: "ctx-org-1",
+      scope: "tenant",
+      title: "How Example Corp reads these metrics",
+      body: "Numbers describe systems, not people. Never rank a person against a peer; explain what a movement could mean and what would confirm it.",
+      updated_at: "2026-08-12T09:00:00Z",
+    },
+  ],
+  [
+    "ctx-me-1",
+    {
+      id: "ctx-me-1",
+      scope: "person",
+      title: "How my week is shaped",
+      body: "Tuesdays and Thursdays are meeting-heavy by design, so focus time dips there and it is not a problem to flag.",
+      updated_at: "2026-08-14T09:00:00Z",
+    },
+  ],
+]);
+
 export const handlers = [
   http.get("/auth/me", () =>
     HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
@@ -874,6 +919,7 @@ export const handlers = [
   ...customMetricHandlers(),
   ...usageHandlers(),
   ...feedbackHandlers(),
+  ...aiAssistHandlers(),
 ];
 
 // ── Product feedback (`/v1/feedback`) ──────────────────────────
@@ -1029,6 +1075,99 @@ function usageHandlers() {
           { path: "/portal/manage/metric-catalog", views: 42, visitors: 2 },
           { path: "/portal/manage/platform-usage", views: 23, visitors: 1 },
         ],
+      });
+    }),
+  ];
+}
+
+function aiAssistHandlers() {
+  return [
+    http.get(`${AI_BASE}/config`, () =>
+      HttpResponse.json({ enabled: true, model: "claude-sonnet-5" })
+    ),
+    http.get(`${AI_BASE}/credentials`, () => HttpResponse.json(mockCredential)),
+    http.put(`${AI_BASE}/credentials`, async ({ request }) => {
+      const body = (await request.json()) as { token?: string };
+      const token = body.token ?? "";
+      mockCredential = { configured: true, hint: token.slice(-4) };
+      return HttpResponse.json(mockCredential);
+    }),
+    http.delete(`${AI_BASE}/credentials`, () => {
+      mockCredential = { configured: false, hint: "" };
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get(`${AI_BASE}/settings`, () =>
+      HttpResponse.json({
+        system_prompt: mockSystemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        is_default: mockSystemPrompt === null,
+      })
+    ),
+    http.put(`${AI_BASE}/settings`, async ({ request }) => {
+      const body = (await request.json()) as { system_prompt?: string };
+      mockSystemPrompt = body.system_prompt ?? "";
+      return HttpResponse.json({
+        system_prompt: mockSystemPrompt,
+        is_default: false,
+      });
+    }),
+    http.delete(`${AI_BASE}/settings`, () => {
+      mockSystemPrompt = null;
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.get(`${AI_BASE}/context`, () =>
+      HttpResponse.json({ items: [...mockContext.values()] })
+    ),
+    http.post(`${AI_BASE}/context`, async ({ request }) => {
+      const body = (await request.json()) as {
+        scope: "tenant" | "person";
+        title: string;
+        body: string;
+      };
+      mockContextSeq += 1;
+      const entry = {
+        id: `ctx-${mockContextSeq}`,
+        scope: body.scope,
+        title: body.title,
+        body: body.body,
+        updated_at: new Date().toISOString(),
+      };
+      mockContext.set(entry.id, entry);
+      return HttpResponse.json(entry, { status: 201 });
+    }),
+    http.patch(`${AI_BASE}/context/:id`, async ({ params, request }) => {
+      const id = String(params.id);
+      const existing = mockContext.get(id);
+      if (!existing) return new HttpResponse(null, { status: 404 });
+      const body = (await request.json()) as { title?: string; body?: string };
+      const updated = {
+        ...existing,
+        ...(body.title === undefined ? {} : { title: body.title }),
+        ...(body.body === undefined ? {} : { body: body.body }),
+        updated_at: new Date().toISOString(),
+      };
+      mockContext.set(id, updated);
+      return HttpResponse.json(updated);
+    }),
+    http.delete(`${AI_BASE}/context/:id`, ({ params }) => {
+      mockContext.delete(String(params.id));
+      return new HttpResponse(null, { status: 204 });
+    }),
+    http.post(`${AI_BASE}/explain`, async ({ request }) => {
+      const snapshot = (await request.json()) as {
+        label?: string;
+        value?: string;
+        peer?: string;
+      };
+      return HttpResponse.json({
+        text: [
+          `${snapshot.label ?? "This metric"} reads ${snapshot.value ?? "—"} for the period, and the line under it has been flat for three buckets rather than moving in one go.`,
+          `${snapshot.peer ?? "There is no cohort comparison"} — treat that as a direction, not a target, since the cohort is small.`,
+          "Your own context says meeting-heavy days are deliberate, so part of this shape was chosen rather than drifted into.",
+          "Worth checking before concluding anything: the window holds fewer working days than a full month.",
+        ].join("\n\n"),
+        model: "claude-sonnet-5",
+        tenant_context_entries: [...mockContext.values()].filter((e) => e.scope === "tenant").length,
+        person_context_entries: [...mockContext.values()].filter((e) => e.scope === "person").length,
       });
     }),
   ];
