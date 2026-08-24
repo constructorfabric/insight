@@ -59,6 +59,28 @@ describe("DIRECTION_LENSES registry", () => {
     }
   });
 
+  it("explains a derived dimension where a label cannot", () => {
+    const entry = lensEntry("dev", "Overview");
+    const composition = (entry as LensConfig).sections.find(
+      (section): section is Extract<SectionSpec, { kind: "composition" }> =>
+        section.kind === "composition" && section.dimension === "category",
+    );
+
+    // The lead states the precedence, which is the part a reader cannot guess
+    // from the labels, and every category the warehouse can emit is named.
+    const notes = composition?.notes ?? [];
+    expect(notes[0]).toMatch(/first rule that matches wins/i);
+    for (const label of [
+      "Vendored / Generated",
+      "Tests",
+      "Documentation",
+      "Configuration",
+      "Code",
+    ]) {
+      expect(notes.some((note) => note.startsWith(label)), label).toBe(true);
+    }
+  });
+
   it("stays under the API metric cap per lens", () => {
     for (const lenses of Object.values(DIRECTION_LENSES)) {
       for (const entry of Object.values(lenses)) {

@@ -59,6 +59,12 @@ export type SectionSpec =
       dimension: string;
       title: string;
       splitBy?: string;
+      /**
+       * Lines shown under the bars, for a dimension whose values are derived
+       * rather than reported — a reader cannot tell how a bucket was decided
+       * from its label alone. One line each, the first is the lead.
+       */
+      notes?: readonly string[];
     }
   // Flow-depth sections: event-histogram merges per-entity server bins when
   // edges align (they don't on the current API — honest fallback, see design §7);
@@ -259,6 +265,23 @@ const SCREEN_GAP = (what: string): LensRoadmap => ({
   comingSoon: `${what} — the data is there (git observations carry the dimensions); this view is still in development.`,
 });
 
+/**
+ * How the git file-category taxonomy is decided, in the order the warehouse
+ * applies it (`git_file_category` in the dbt macros). Wording stays behavioural
+ * — what lands in a bucket — rather than quoting the regexes, which change.
+ *
+ * Frontend copy on purpose: a dimension value carries a label over the wire and
+ * nothing else, so there is no server field to put this in.
+ */
+const GIT_CATEGORY_NOTES = [
+  "Every file gets one category, from its path — the first rule that matches wins.",
+  "Vendored / Generated — dependency folders, build output, minified and generated files, lockfiles.",
+  "Tests — files named *.test.* or *.spec.*, and anything under test/, tests/ or __tests__/.",
+  "Documentation — .md, .rst and .adoc files, and anything under docs/.",
+  "Configuration — .yaml, .toml, .cfg and .ini files, and lockfiles not already counted as generated.",
+  "Code — whatever the other categories did not claim.",
+] as const;
+
 const DEV: Record<string, LensEntry> = {
   Overview: {
     title: "Development",
@@ -284,6 +307,11 @@ const DEV: Record<string, LensEntry> = {
         metric: "git.lines_added",
         dimension: "category",
         title: "Lines by category",
+        // The taxonomy is a path match in the warehouse, so the labels alone
+        // do not say what landed where — and the order is the part a reader
+        // cannot guess: one file has one category, decided by the first rule
+        // that matches it.
+        notes: GIT_CATEGORY_NOTES,
       },
     ],
   },

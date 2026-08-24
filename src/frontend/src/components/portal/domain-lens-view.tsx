@@ -1738,6 +1738,7 @@ function CompositionSection({
       rows={rows}
       format={r?.format ?? "integer"}
       unit={r?.unit ?? null}
+      notes={spec.notes}
     />
   );
 }
@@ -2046,6 +2047,7 @@ function BarList({
   format,
   unit,
   showShare = true,
+  notes,
 }: {
   title: string;
   rows: BarRow[];
@@ -2053,6 +2055,8 @@ function BarList({
   unit: string | null;
   /** False for per-capita values, where a share-of-total percent would mislead. */
   showShare?: boolean;
+  /** Below the bars, not above: it explains what was read, not what to read. */
+  notes?: readonly string[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
@@ -2183,6 +2187,15 @@ function BarList({
               </button>
             ) : null}
           </TooltipProvider>
+          {notes?.length ? (
+            <div className="mt-4 flex flex-col gap-1 border-t pt-3">
+              {notes.map((note) => (
+                <p key={note} className="text-xs text-muted-foreground">
+                  {note}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </section>
