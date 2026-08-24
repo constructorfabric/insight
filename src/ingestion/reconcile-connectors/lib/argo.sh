@@ -3,7 +3,8 @@
 # Sourceable; NO top-level CLI.
 #
 # Public surface:
-#   argo_cron_workflow_name  CONNECTOR TENANT
+#   argo_cron_workflow_name              CONNECTOR TENANT
+#   argo_cron_workflow_name_full_tenant  CONNECTOR TENANT
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
 #                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
@@ -42,6 +43,31 @@ argo_cron_workflow_name() {
   printf '%s-%s-sync' "$connector" "$tenant_prefix"
 }
 
+# An installation may still hold a CronWorkflow named with the whole tenant id.
+# It schedules independently of the bounded-name object, so both existing would
+# sync the connector twice per window.
+argo_cron_workflow_name_full_tenant() {
+  local connector="$1" tenant="$2"
+  printf '%s-%s-sync' "$connector" "$tenant"
+}
+
+_argo_delete_cronworkflow_named() {
+  local name="$1"
+  local del_out
+  # Pin the namespace explicitly. The rendered CronWorkflow lives in
+  # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
+  # falls back to the current context's default, and `--ignore-not-found`
+  # then silently no-ops when contexts disagree — leaving the orphan in
+  # place while the reconcile cascade believes it cleaned up.
+  if ! del_out="$(kubectl -n "${INSIGHT_NAMESPACE}" \
+        delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
+    printf '%s: kubectl delete failed: %s\n' \
+      "$name" "$del_out" >&2
+    return 1
+  fi
+  printf '%s\n' "$del_out"
+}
+
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
@@ -74,25 +100,26 @@ argo_apply_cronworkflow() {
     return 1
   fi
   printf '%s\n' "$apply_out"
+
+  # The sweep is idempotent, so a failure here is picked up by the next
+  # reconcile pass; it must not turn a successful apply into a failed one.
+  local bounded_name full_tenant_name
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")"
+  full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
+  if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
+    _argo_delete_cronworkflow_named "${full_tenant_name}" >/dev/null || true
+  fi
 }
 
 argo_delete_cronworkflow() {
   local connector="$1" tenant="$2"
-  local name
-  name="$(argo_cron_workflow_name "$connector" "$tenant")"
-  local del_out
-  # Pin the namespace explicitly. The rendered CronWorkflow lives in
-  # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
-  # falls back to the current context's default, and `--ignore-not-found`
-  # then silently no-ops when contexts disagree — leaving the orphan in
-  # place while the reconcile cascade believes it cleaned up.
-  if ! del_out="$(kubectl -n "${INSIGHT_NAMESPACE}" \
-        delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
-    printf '%s: kubectl delete failed: %s\n' \
-      "$name" "$del_out" >&2
-    return 1
+  local bounded_name full_tenant_name
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")"
+  full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
+  _argo_delete_cronworkflow_named "${bounded_name}" || return 1
+  if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
+    _argo_delete_cronworkflow_named "${full_tenant_name}" || return 1
   fi
-  printf '%s\n' "$del_out"
 }
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
