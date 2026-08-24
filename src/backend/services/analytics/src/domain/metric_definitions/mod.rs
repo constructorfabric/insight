@@ -13,7 +13,7 @@ pub mod validator;
 
 pub use definition::{
     CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation, MetricDefinition,
-    MetricDirection, MetricFormat, ObservationSource,
+    MetricDirection, MetricFormat, ObservationSource, RatioDenominatorAggregation,
 };
 pub use repository::load_definitions;
 pub(crate) use repository::load_definitions_with_ids;

@@ -159,6 +159,7 @@ playwright-cli run-code "async page => await page.context().grantPermissions(['g
 playwright-cli run-code --filename=script.js
 playwright-cli tracing-start
 playwright-cli tracing-stop
+# these can report success and write no file — read references/video-recording.md before relying on them
 playwright-cli video-start video.webm
 playwright-cli video-chapter "Chapter Title" --description="Details" --duration=2000
 playwright-cli video-stop

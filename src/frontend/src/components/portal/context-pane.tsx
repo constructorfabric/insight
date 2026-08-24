@@ -1,4 +1,5 @@
 import {
+  Bug,
   ChevronRight,
   Layers,
   LayoutGrid,
@@ -6,8 +7,10 @@ import {
   Settings2,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AppSidebarFooter } from "@/components/app-sidebar-footer";
+import { useFeedbackDialog } from "@/components/feedback-context";
 import { OrgTree } from "@/components/org-tree";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -16,7 +19,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { GROUPS } from "@/lib/insight/groups";
+import { visibleGroups } from "@/lib/insight/groups";
 import { usePersonSectionStandings } from "@/lib/portal/use-person-sections";
 import { STATUS_BG_CLASS } from "@/lib/status";
 import {
@@ -55,7 +58,6 @@ import {
 } from "@/lib/portal/nav-model";
 import {
   personSectionPlanned,
-  personSectionVisible,
 } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import {
@@ -146,11 +148,12 @@ export function ContextPane() {
       </SidebarContent>
       {isPhone ? (
         <SidebarFooter>
-          {/* One row, not six: inline the settings menu and it takes a third of
-              the drawer, crowding out the sections that are the point of it.
-              Same affordance the rail gives desktop — an icon that opens the
-              menu on demand. */}
           <SidebarMenu>
+            <FeedbackItem onPicked={dismissDrawer} />
+            {/* One row, not six: inline the settings menu and it takes a third
+                of the drawer, crowding out the sections that are the point of
+                it. Same affordance the rail gives desktop — an icon that opens
+                the menu on demand. */}
             <SidebarMenuItem>
               <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
                 <PopoverTrigger
@@ -170,6 +173,7 @@ export function ContextPane() {
                       one here does — and the popover with it, which on a phone
                       covers the surface just asked for. */}
                   <AppSidebarFooter
+                    showFeedback={false}
                     onNavigate={() => {
                       setSettingsOpen(false);
                       dismissDrawer();
@@ -182,6 +186,28 @@ export function ContextPane() {
         </SidebarFooter>
       ) : null}
     </Sidebar>
+  );
+}
+
+/** Its own drawer row: inside the settings menu nobody found it. */
+function FeedbackItem({ onPicked }: { onPicked: () => void }) {
+  const { t } = useTranslation();
+  const feedback = useFeedbackDialog();
+
+  if (!feedback) return null;
+
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        onClick={() => {
+          feedback.openFeedback();
+          onPicked();
+        }}
+      >
+        <Bug aria-hidden />
+        <span>{t("feedback.nav_label")}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
@@ -590,7 +616,7 @@ function PersonSectionsNav() {
   const standings = usePersonSectionStandings(activePerson);
   const standingById = new Map(standings.map((st) => [st.id as string, st]));
   const showPlanned = usePortalShowPlanned();
-  const groups = GROUPS.filter((g) => personSectionVisible(g.id, showPlanned));
+  const groups = visibleGroups(showPlanned);
   const groupIds = groups.map((g) => g.id) as string[];
   const glance = active == null || !groupIds.includes(active);
   return (

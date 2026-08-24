@@ -77,7 +77,8 @@ CREATE TABLE IF NOT EXISTS bronze_gitlab.commits
     `parent_count` Nullable(Int64),
     `stats_additions` Nullable(Int64),
     `stats_deletions` Nullable(Int64),
-    `stats_total` Nullable(Int64)
+    `stats_total` Nullable(Int64),
+    `is_in_default_branch` Nullable(Bool)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

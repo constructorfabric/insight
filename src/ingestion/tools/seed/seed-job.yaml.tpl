@@ -23,6 +23,7 @@
 #   SEED_FORCE                0 | 1 — seed a tenant holding foreign person rows
 #   SEED_WINDOW_DAYS          activity-window length, empty for the seeder's own
 #   SEED_ANCHOR_DATE          last day of activity, empty for the seeder's own
+#   SEED_ORG_HEADCOUNT        organisation size, empty for the committed roster
 #   SEED_PULL_SECRETS         YAML flow sequence of pull secrets, `[]` for none
 apiVersion: batch/v1
 kind: Job
@@ -129,6 +130,10 @@ spec:
               value: "${SEED_WINDOW_DAYS}"
             - name: SEED_ANCHOR_DATE
               value: "${SEED_ANCHOR_DATE}"
+            # Empty (or 0) is the committed roster; a larger value APPENDS, so
+            # the committed personas keep their uuids, emails and names.
+            - name: SEED_ORG_HEADCOUNT
+              value: "${SEED_ORG_HEADCOUNT}"
             # The pod's filesystem dies with it and the manifest is echoed to
             # the log, so this only has to be somewhere writable — the package
             # is installed in the image and its working directory is not.

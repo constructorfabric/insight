@@ -15,6 +15,10 @@ fn row_of(req: &FeedbackRequest) -> Option<feedback::ActiveModel> {
     to_row(req, Uuid::now_v7(), Uuid::now_v7(), Utc::now()).ok()
 }
 
+fn refusal_for(req: &FeedbackRequest) -> Option<CanonicalError> {
+    to_row(req, Uuid::now_v7(), Uuid::now_v7(), Utc::now()).err()
+}
+
 #[test]
 fn the_session_decides_identity_not_the_payload() {
     let tenant = Uuid::now_v7();
@@ -49,11 +53,41 @@ fn a_stored_message_carries_no_surrounding_whitespace() {
 }
 
 #[test]
-fn an_oversized_message_is_clipped_to_the_column_budget() {
-    let budget = feedback_schema::max_message();
-    let long = "x".repeat(budget * 2);
+fn a_message_past_the_budget_is_refused_rather_than_shortened_in_silence() {
+    let long = "x".repeat(feedback_schema::max_message() + 1);
 
-    let row = row_of(&request(&long));
+    assert!(row_of(&request(&long)).is_none());
+}
+
+#[test]
+fn the_refusal_of_a_long_message_names_the_field_and_the_budget() -> Result<(), serde_json::Error> {
+    let long = "x".repeat(feedback_schema::max_message() + 1);
+
+    let Some(error) = refusal_for(&request(&long)) else {
+        panic!("an over-long message is refused")
+    };
+    let refused = problem(error)?;
+
+    assert_eq!(refused["status"], 400);
+    assert_eq!(
+        refused["context"]["field_violations"][0]["field"],
+        "message"
+    );
+    assert!(
+        refused
+            .to_string()
+            .contains(&feedback_schema::max_message().to_string()),
+        "the sender is told what the limit is: {refused}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_message_that_exactly_fills_the_budget_is_stored_whole() {
+    let budget = feedback_schema::max_message();
+    let full = "x".repeat(budget);
+
+    let row = row_of(&request(&full));
 
     assert_eq!(
         row.as_ref()
@@ -61,6 +95,13 @@ fn an_oversized_message_is_clipped_to_the_column_budget() {
             .map(|m| m.chars().count()),
         Some(budget)
     );
+}
+
+#[test]
+fn the_budget_counts_characters_not_the_bytes_they_take() {
+    let full = "\u{1f642}".repeat(feedback_schema::max_message());
+
+    assert!(row_of(&request(&full)).is_some());
 }
 
 #[test]

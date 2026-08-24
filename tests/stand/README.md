@@ -72,13 +72,22 @@ uv run --project tests --frozen pytest tests/stand -ra \
   --stand-manifest /path/to/stand-manifest.json
 ```
 
-The manifest is the seed's own record of what it wrote, and on a cluster
-stand it exists only in the seed Job's log — recover it from there while the
-Job survives:
+The manifest is the seed's own record of what it wrote. A completed
+`--step all` publishes it to a ConfigMap that outlives the seed Job, so read it
+from there:
 
 ```bash
-kubectl -n <namespace> logs job/<the seed job> \
-  | grep -m1 '^SEED_MANIFEST_JSON: ' | cut -d' ' -f2- > stand-manifest.json
+kubectl -n <namespace> get configmap seed-stand-manifest \
+  -o 'go-template={{index .data "manifest"}}' > stand-manifest.json
+```
+
+On a stand seeded before that existed, recover it from the Job log instead —
+only while the Job survives its one-hour TTL:
+
+```bash
+kubectl -n <namespace> logs job/<the seed job> --tail=-1 \
+  | src/ingestion/tools/seed/manifest-from-log.sh \
+  | cut -d' ' -f2- > stand-manifest.json
 ```
 
 It names personas and in-cluster addresses, so it stays on the machine that

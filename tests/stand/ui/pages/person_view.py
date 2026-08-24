@@ -31,7 +31,11 @@ class GitOutputDetails(GroupDialog):
         super().__init__(page, "Git output")
 
     def repository_table(self) -> Locator:
-        return self.dialog.get_by_role("table").filter(has_text="PRs merged")
+        return (
+            self.dialog.get_by_role("heading", name="By repository")
+            .locator('xpath=ancestor::*[@data-slot="card"][1]')
+            .get_by_role("table")
+        )
 
     def table(self) -> Locator:
         return self.repository_table()

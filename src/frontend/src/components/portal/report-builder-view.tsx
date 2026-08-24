@@ -30,6 +30,8 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
 import { downloadMatrixCsv, downloadMatrixXlsx } from "@/lib/export/matrix";
 import { formatMetricNumber } from "@/lib/format";
+import { metricVisible } from "@/lib/portal/nav-policy";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { unavailableReason } from "@/lib/reports/availability";
 import { byFamily } from "@/lib/reports/families";
@@ -81,9 +83,18 @@ export function ReportBuilderView() {
   // unreachable key outright, so it must not be selectable — but dropping it
   // silently takes whole families off the screen and leaves the reader hunting
   // for a section that is simply not measured here.
+  //
+  // A metric the INSTALL gates is different, and is dropped: it is not offered
+  // anywhere else on the screen either, so listing it here as unavailable would
+  // advertise the one place a reader could still name it.
+  const showPlanned = usePortalShowPlanned();
   const catalogue = useMemo(
-    () => (definitions.data?.metrics ?? []).filter((metric) => metric.is_enabled),
-    [definitions.data],
+    () =>
+      (definitions.data?.metrics ?? []).filter(
+        (metric) =>
+          metric.is_enabled && metricVisible(metric.metric_key, showPlanned),
+      ),
+    [definitions.data, showPlanned],
   );
   // The additivity restriction belongs to the rollup, not to the report. At a
   // bucket the server has, it computed each value itself — a ratio is that

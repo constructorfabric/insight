@@ -39,6 +39,55 @@ FROM (
 
 
 WITH
+-- The default branch NAME per repository, which is what a pull request's
+-- destination has to be compared against. Every git connector reports it.
+-- min() rather than any() so a repository that somehow claims two default
+-- branches resolves the same way on every read.
+repository_default_branches AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        min(branch_name) AS branch_name
+    FROM {{ ref('class_git_repository_branches') }} FINAL
+    WHERE is_default = 1
+    GROUP BY tenant_id, source_id, project_key, repo_slug
+),
+-- Commits that reached the default branch through a merged pull request.
+--
+-- `is_default_branch` alone is reachability AT SYNC TIME: a commit first seen
+-- on a feature branch stays 0, and only a re-read corrects it. That is the
+-- wrong tense for a `branch_scope` that means "did this work land". A merged
+-- request whose destination IS the default branch is standing proof that its
+-- commits landed, and it is proof the sources keep indefinitely.
+--
+-- INVARIANT: this cannot see a branch merged by a fast-forward push with no
+-- pull request. GitLab still corrects those itself (advancing the default head
+-- re-walks the range), the proxy-backed sources only within their lookback
+-- window.
+merged_default_branch_commits AS (
+    SELECT DISTINCT
+        links.tenant_id AS tenant_id,
+        links.source_id AS source_id,
+        links.project_key AS project_key,
+        links.repo_slug AS repo_slug,
+        links.commit_hash AS commit_hash
+    FROM {{ ref('class_git_pull_requests_commits') }} AS links FINAL
+    INNER JOIN {{ ref('class_git_pull_requests') }} AS prs FINAL
+        ON prs.tenant_id = links.tenant_id
+        AND prs.source_id = links.source_id
+        AND prs.project_key = links.project_key
+        AND prs.repo_slug = links.repo_slug
+        AND prs.pr_id = links.pr_id
+    INNER JOIN repository_default_branches AS defaults
+        ON defaults.tenant_id = links.tenant_id
+        AND defaults.source_id = links.source_id
+        AND defaults.project_key = links.project_key
+        AND defaults.repo_slug = links.repo_slug
+    WHERE prs.state = 'MERGED'
+      AND prs.destination_branch = defaults.branch_name
+),
 commits_source AS (
     SELECT
         tenant_id,
@@ -53,6 +102,19 @@ commits_source AS (
         toDate(date) AS metric_date,
         lines_added,
         lines_removed,
+        -- A semi-join by tuple rather than a LEFT JOIN: the answer is
+        -- membership, and a nullable joined column would need guarding under
+        -- either join_use_nulls setting.
+        if(
+            is_default_branch = 1
+                OR (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
+                    SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
+                    FROM merged_default_branch_commits
+                ),
+            'default',
+            'non_default'
+        ) AS branch_scope_value,
+        {{ git_branch_scope_label('branch_scope_value') }} AS branch_scope_label,
         if(coalesce(project_key, '') = '', '__unknown__', concat(coalesce(toString(source_id), ''), ':', project_key)) AS project_value,
         if(coalesce(project_key, '') = '', 'Unknown', project_key) AS project_label,
         concat(coalesce(toString(source_id), ''), ':', coalesce(project_key, ''), '/', coalesce(repo_slug, '')) AS repository_value,
@@ -61,6 +123,7 @@ commits_source AS (
         {{ git_source_label('source_value') }} AS source_label,
         CAST(
             [
+                tuple('branch_scope', branch_scope_value, branch_scope_label),
                 tuple('repository', repository_value, repository_label),
                 tuple('project', project_value, project_label),
                 tuple('source', source_value, source_label)
@@ -164,6 +227,7 @@ authored_commits AS (
         commits.author_name AS author_name,
         commits.repository_label AS repository_label,
         commits.source_value AS source_value,
+        commits.branch_scope_value AS branch_scope_value,
         commits.source_dimensions AS source_dimensions,
         -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
         -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
@@ -217,8 +281,14 @@ file_changes_source AS (
         file_changes.lines_removed AS lines_removed,
         commits.repository_value AS repository_value,
         commits.repository_label AS repository_label,
+        -- Inherited, not recomputed: lines belong to the bucket their commit
+        -- belongs to. A commit in `default` whose lines read `non_default` is
+        -- exactly the column disagreement #2464 was about.
+        commits.branch_scope_value AS branch_scope_value,
+        commits.branch_scope_label AS branch_scope_label,
         CAST(
             [
+                tuple('branch_scope', branch_scope_value, branch_scope_label),
                 tuple('file_extension', file_extension, file_extension_label),
                 tuple('change_type', change_type, change_type_label),
                 tuple('repository', repository_value, repository_label),
@@ -228,6 +298,7 @@ file_changes_source AS (
         ) AS file_source_dimensions,
         CAST(
             [
+                tuple('branch_scope', branch_scope_value, branch_scope_label),
                 tuple('category', category, category_label),
                 tuple('file_extension', file_extension, file_extension_label),
                 tuple('change_type', change_type, change_type_label),
@@ -302,6 +373,23 @@ pr_commit_emails AS (
     WHERE email_count = max_count
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
+pull_request_review_summary AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        pr_id,
+        uniqExactIf(
+            reviewer_uuid,
+            reviewer_uuid != '' AND (reviewed_at IS NOT NULL OR approved = 1)
+        ) AS reviewer_count,
+        max(approved) AS has_approval,
+        minIfOrNull(reviewed_at, reviewed_at IS NOT NULL) AS first_reviewed_at,
+        maxIfOrNull(reviewed_at, approved = 1 AND reviewed_at IS NOT NULL) AS last_approved_at
+    FROM {{ ref('class_git_pull_requests_reviewers') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+),
 pull_requests_source AS (
     SELECT
         prs.tenant_id AS tenant_id,
@@ -318,6 +406,10 @@ pull_requests_source AS (
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
+        coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
+        coalesce(review_summary.has_approval, 0) AS has_approval,
+        review_summary.first_reviewed_at AS first_reviewed_at,
+        review_summary.last_approved_at AS last_approved_at,
         prs.lines_added + prs.lines_removed AS change_size,
         if(
             prs.state = 'MERGED'
@@ -327,16 +419,51 @@ pull_requests_source AS (
             dateDiff('second', prs.created_on, prs.closed_on) / 3600.0,
             CAST(NULL AS Nullable(Float64))
         ) AS cycle_hours,
+        if(
+            prs.created_on IS NOT NULL
+                AND review_summary.first_reviewed_at IS NOT NULL
+                AND review_summary.first_reviewed_at >= prs.created_on,
+            dateDiff('second', prs.created_on, review_summary.first_reviewed_at) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS first_review_hours,
+        if(
+            prs.state = 'MERGED'
+                AND prs.closed_on IS NOT NULL
+                AND review_summary.first_reviewed_at IS NOT NULL
+                AND prs.closed_on >= review_summary.first_reviewed_at,
+            dateDiff('second', review_summary.first_reviewed_at, prs.closed_on) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS review_to_merge_hours,
+        if(
+            prs.state = 'MERGED'
+                AND prs.closed_on IS NOT NULL
+                AND review_summary.last_approved_at IS NOT NULL
+                AND prs.closed_on >= review_summary.last_approved_at,
+            dateDiff('second', review_summary.last_approved_at, prs.closed_on) / 3600.0,
+            CAST(NULL AS Nullable(Float64))
+        ) AS approval_to_merge_hours,
         if(coalesce(prs.project_key, '') = '', '__unknown__', concat(coalesce(toString(prs.source_id), ''), ':', prs.project_key)) AS project_value,
         if(coalesce(prs.project_key, '') = '', 'Unknown', prs.project_key) AS project_label,
         concat(coalesce(toString(prs.source_id), ''), ':', coalesce(prs.project_key, ''), '/', coalesce(prs.repo_slug, '')) AS repository_value,
         if(coalesce(prs.project_key, '') = '', coalesce(prs.repo_slug, ''), concat(prs.project_key, '/', prs.repo_slug)) AS repository_label,
         if(prs.destination_branch = '', '__unknown__', prs.destination_branch) AS destination_branch_value,
         if(prs.destination_branch = '', 'Unknown', prs.destination_branch) AS destination_branch_label,
+        -- A request targets the default branch or it does not. An unreported
+        -- destination, and a repository whose default branch is unknown, both
+        -- read `non_default` — the agreed reading for an absent signal, which
+        -- keeps default + non_default = total.
+        if(
+            prs.destination_branch != ''
+                AND prs.destination_branch = coalesce(defaults.branch_name, ''),
+            'default',
+            'non_default'
+        ) AS branch_scope_value,
+        {{ git_branch_scope_label('branch_scope_value') }} AS branch_scope_label,
         replaceOne(prs.data_source, 'insight_', '') AS source_value,
         {{ git_source_label('source_value') }} AS source_label,
         CAST(
             [
+                tuple('branch_scope', branch_scope_value, branch_scope_label),
                 tuple('destination_branch', destination_branch_value, destination_branch_label),
                 tuple('repository', repository_value, repository_label),
                 tuple('project', project_value, project_label),
@@ -351,6 +478,17 @@ pull_requests_source AS (
         AND pr_commit_emails.project_key = prs.project_key
         AND pr_commit_emails.repo_slug = prs.repo_slug
         AND pr_commit_emails.pr_id = prs.pr_id
+    LEFT JOIN pull_request_review_summary AS review_summary
+        ON review_summary.tenant_id = prs.tenant_id
+        AND review_summary.source_id = prs.source_id
+        AND review_summary.project_key = prs.project_key
+        AND review_summary.repo_slug = prs.repo_slug
+        AND review_summary.pr_id = prs.pr_id
+    LEFT JOIN repository_default_branches AS defaults
+        ON defaults.tenant_id = prs.tenant_id
+        AND defaults.source_id = prs.source_id
+        AND defaults.project_key = prs.project_key
+        AND defaults.repo_slug = prs.repo_slug
 ),
 pull_request_measures AS (
     SELECT
@@ -374,9 +512,45 @@ pull_request_measures AS (
             [tuple('pr_created', toFloat64(1), toDateTime64(assumeNotNull(created_on), 3))],
             []
         ),
+        -- The scope picks the key, so exactly one of the pair receives the
+        -- request and default + non_default = total holds by construction
+        -- rather than by a later reconciliation.
         if(
-            created_on IS NOT NULL AND state = 'MERGED',
-            [tuple('pr_created_merged', toFloat64(1), toDateTime64(assumeNotNull(created_on), 3))],
+            created_on IS NOT NULL,
+            [tuple(
+                if(branch_scope_value = 'default', 'default_pr_created', 'non_default_pr_created'),
+                toFloat64(1),
+                toDateTime64(assumeNotNull(created_on), 3)
+            )],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple(
+                'pr_created_merged',
+                toFloat64(state = 'MERGED'),
+                toDateTime64(assumeNotNull(created_on), 3)
+            )],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_abandoned', toFloat64(closed_on IS NOT NULL AND state != 'MERGED'), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_reviewed', toFloat64(reviewer_count > 0), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_reviewer_count', toFloat64(reviewer_count), toDateTime64(assumeNotNull(created_on), 3))],
+            []
+        ),
+        if(
+            created_on IS NOT NULL,
+            [tuple('pr_multi_reviewed', toFloat64(reviewer_count > 1), toDateTime64(assumeNotNull(created_on), 3))],
             []
         ),
         if(
@@ -390,8 +564,46 @@ pull_request_measures AS (
             []
         ),
         if(
+            state = 'MERGED' AND closed_on IS NOT NULL,
+            [tuple('pr_merged_without_approval', toFloat64(has_approval = 0), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            state = 'MERGED' AND closed_on IS NOT NULL,
+            [tuple(
+                if(branch_scope_value = 'default', 'default_pr_merged', 'non_default_pr_merged'),
+                toFloat64(1),
+                toDateTime64(assumeNotNull(closed_on), 3)
+            )],
+            []
+        ),
+        if(
             cycle_hours IS NOT NULL AND closed_on IS NOT NULL,
             [tuple('pr_cycle_hours', toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            first_review_hours IS NOT NULL AND first_reviewed_at IS NOT NULL,
+            [tuple('pr_first_review_hours', toFloat64(assumeNotNull(first_review_hours)), toDateTime64(assumeNotNull(first_reviewed_at), 3))],
+            []
+        ),
+        if(
+            review_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
+            [tuple('pr_review_to_merge_hours', toFloat64(assumeNotNull(review_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            approval_to_merge_hours IS NOT NULL AND closed_on IS NOT NULL,
+            [tuple('pr_approval_to_merge_hours', toFloat64(assumeNotNull(approval_to_merge_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
+            []
+        ),
+        if(
+            first_review_hours IS NOT NULL
+                AND review_to_merge_hours IS NOT NULL
+                AND cycle_hours IS NOT NULL
+                AND cycle_hours > 0
+                AND closed_on IS NOT NULL,
+            [tuple('pr_review_wait_share', 100.0 * toFloat64(assumeNotNull(first_review_hours)) / toFloat64(assumeNotNull(cycle_hours)), toDateTime64(assumeNotNull(closed_on), 3))],
             []
         )
     ) AS Array(Tuple(measure_key String, contribution Float64, observed_at DateTime64(3)))) AS pr_measure
@@ -422,6 +634,43 @@ file_change_measures AS (
             category = 'code' AND lines_added IS NOT NULL,
             [tuple('code_lines_added', toFloat64(assumeNotNull(lines_added)), file_source_dimensions)],
             []
+        ),
+        if(
+            category IN ('code', 'test') AND lines_added IS NOT NULL,
+            [tuple('test_lines_added', if(category = 'test', toFloat64(assumeNotNull(lines_added)), 0.0), file_source_dimensions)],
+            []
+        ),
+        if(
+            category IN ('code', 'test') AND lines_added IS NOT NULL,
+            [tuple('test_and_code_lines_added', toFloat64(assumeNotNull(lines_added)), file_source_dimensions)],
+            []
+        ),
+        if(
+            lines_added IS NOT NULL,
+            [tuple(
+                if(branch_scope_value = 'default', 'default_lines_added', 'non_default_lines_added'),
+                toFloat64(assumeNotNull(lines_added)),
+                category_source_dimensions
+            )],
+            []
+        ),
+        if(
+            lines_removed IS NOT NULL,
+            [tuple(
+                if(branch_scope_value = 'default', 'default_lines_removed', 'non_default_lines_removed'),
+                toFloat64(assumeNotNull(lines_removed)),
+                category_source_dimensions
+            )],
+            []
+        ),
+        if(
+            category = 'code' AND lines_added IS NOT NULL,
+            [tuple(
+                if(branch_scope_value = 'default', 'default_code_lines_added', 'non_default_code_lines_added'),
+                toFloat64(assumeNotNull(lines_added)),
+                file_source_dimensions
+            )],
+            []
         )
     ) AS Array(Tuple(
         measure_key String,
@@ -430,10 +679,6 @@ file_change_measures AS (
     ))) AS file_measure
 ),
 measure_observations AS (
-    {{ presence_measure('commit_day', ['commits_source']) }}
-
-    UNION ALL
-
     SELECT
         tenant_id,
         entity_id,
@@ -479,6 +724,34 @@ SELECT
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
     assumeNotNull(metric_date) AS metric_date,
+    CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
+    'commit_day' AS measure_key,
+    concat(
+        toString(metric_date),
+        ':commit_day:',
+        hex(sipHash128(toString(arrayMap(d -> tuple(d.1, d.2), source_dimensions))))
+    ) AS record_id,
+    'commit_day' AS record_kind,
+    'derived_population' AS granularity,
+    'commit day' AS record_label,
+    toNullable(toFloat64(1)) AS contribution,
+    toNullable(toString(metric_date)) AS subject_key,
+    source_dimensions AS dimensions,
+    CAST(map() AS Map(String, String)) AS details
+FROM commits_source
+WHERE tenant_id IS NOT NULL
+  AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+GROUP BY tenant_id, entity_id, metric_date, source_dimensions
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'git' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     commit_measure.1 AS measure_key,
     concat(source_value, ':', commit_hash, ':', commit_measure.1) AS record_id,
@@ -499,6 +772,10 @@ SELECT
 FROM authored_commits
 ARRAY JOIN arrayConcat(
     [tuple('commit_count', toFloat64(1))],
+    [tuple(
+        if(branch_scope_value = 'default', 'default_commit_count', 'non_default_commit_count'),
+        toFloat64(1)
+    )],
     if(
         lines_added IS NOT NULL AND lines_removed IS NOT NULL,
         [tuple('commit_change_size', toFloat64(lines_added + lines_removed))],

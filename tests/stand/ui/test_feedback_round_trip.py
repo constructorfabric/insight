@@ -56,7 +56,7 @@ def _message() -> str:
 
 
 def _portal_context(browser: Browser, base_url: str) -> BrowserContext:
-    """A context the suite's `insight.portal` opt-out never reaches — the rail and the
+    """A context the suite's legacy-shell hatch never reaches — the rail and the
     listing are both portal surfaces."""
     return browser.new_context(base_url=base_url)
 

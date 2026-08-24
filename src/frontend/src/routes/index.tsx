@@ -1,26 +1,23 @@
-import { Navigate, createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { useViewer } from "@/auth";
-import { readPortalEnabled, usePortalEnabled } from "@/lib/portal/portal-store";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 import { FullScreenLoading } from "@/components/full-screen-loading";
 import { DashboardScreen } from "@/screens/dashboard";
 
 export const Route = createFileRoute("/")({
-  // With the portal on, "/" is not a page — it is a redirect into the portal,
-  // so the address bar names a real destination from the first paint and Back
-  // out of the portal leaves the app rather than looping.
+  // "/" is not a page — it is a redirect into the portal, so the address bar
+  // names a real destination from the first paint and Back out of the portal
+  // leaves the app rather than looping. The component below is reached only
+  // under the legacy-shell hatch (see `readLegacyShell`).
   beforeLoad: () => {
-    if (readPortalEnabled()) throw redirect({ to: "/portal" });
+    if (!readLegacyShell()) throw redirect({ to: "/portal" });
   },
   component: IndexRoute,
 });
 
 function IndexRoute() {
   const { personId } = useViewer();
-  const portal = usePortalEnabled();
-  // `beforeLoad` only runs on navigation, so a reader who turns the portal on
-  // while standing here would sit on the dashboard until a reload.
-  if (portal) return <Navigate to="/portal" replace />;
   // An authenticated session always carries the person id (the gateway JWT
   // `sub`); the loading fallback only shows in the brief window before the
   // store resolves.

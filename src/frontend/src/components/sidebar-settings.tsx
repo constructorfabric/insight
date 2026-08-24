@@ -1,4 +1,4 @@
-import { HelpCircle, PanelsTopLeft, Wrench } from "lucide-react";
+import { HelpCircle, Wrench } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -11,9 +11,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useSettings } from "@/hooks/use-settings";
 import type { FocusMode } from "@/lib/peers";
 import {
-  setPortalEnabled,
+  readLegacyShell,
   setPortalShowPlanned,
-  usePortalEnabled,
   usePortalShowPlanned,
 } from "@/lib/portal/portal-store";
 
@@ -26,34 +25,15 @@ const FOCUS_MODES: ReadonlyArray<FocusMode> = [
 
 export function SidebarSettings() {
   const { t } = useTranslation();
-  const portal = usePortalEnabled();
   const showPlanned = usePortalShowPlanned();
   const { focusMode, showExplanations, setFocusMode, setShowExplanations } =
     useSettings();
 
   return (
     <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={() => setPortalEnabled(!portal)}
-          aria-pressed={portal}
-          className="justify-between"
-        >
-          <span className="flex items-center gap-2">
-            <PanelsTopLeft className="size-4" />
-            <span>Portal</span>
-          </span>
-          <Switch
-            checked={portal}
-            onCheckedChange={setPortalEnabled}
-            size="sm"
-            tabIndex={-1}
-          />
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-      {/* Only meaningful inside the portal, so it hides with it. Shows the
-          zones and views we have scaffolded but not built. */}
-      {portal ? (
+      {/* Shows the zones and views we have scaffolded but not built — a
+          portal-only idea, so it stays out of the shell that has no zones. */}
+      {readLegacyShell() ? null : (
         <SidebarMenuItem>
           <SidebarMenuButton
             onClick={() => setPortalShowPlanned(!showPlanned)}
@@ -72,7 +52,7 @@ export function SidebarSettings() {
             />
           </SidebarMenuButton>
         </SidebarMenuItem>
-      ) : null}
+      )}
       <SidebarMenuItem className="flex flex-col items-stretch gap-1.5 p-1">
         <span className="px-1 text-xs font-medium uppercase tracking-wider text-sidebar-foreground/60">
           {t("settings.focus_mode.label")}

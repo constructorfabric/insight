@@ -2,9 +2,10 @@
  * The screen rides along as the redacted `lastPath` the usage rows carry, so a
  * report is placed without the sender having to describe where they were.
  */
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +22,7 @@ export function FeedbackDialog({
 }) {
   const { t } = useTranslation();
   const [message, setMessage] = useState("");
+  const counterId = useId();
   const submit = useSubmitFeedback();
 
   const close = () => {
@@ -59,13 +61,24 @@ export function FeedbackDialog({
       }
       onConfirm={send}
     >
-      <Textarea
-        aria-label={t("feedback.message")}
-        rows={5}
-        value={message}
-        placeholder={t("feedback.placeholder")}
-        onChange={(event) => setMessage(event.target.value)}
-      />
+      <div className="flex flex-col gap-1">
+        <Textarea
+          className="max-h-[40vh] overflow-y-auto"
+          aria-label={t("feedback.message")}
+          aria-describedby={counterId}
+          maxLength={FEEDBACK_MESSAGE_MAX}
+          rows={5}
+          value={message}
+          placeholder={t("feedback.placeholder")}
+          onChange={(event) => setMessage(event.target.value)}
+        />
+        <p id={counterId} className="self-end text-xs text-muted-foreground">
+          {t("feedback.counter", {
+            used: message.length,
+            max: FEEDBACK_MESSAGE_MAX,
+          })}
+        </p>
+      </div>
     </ConfirmDialog>
   );
 }

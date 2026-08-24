@@ -15,7 +15,16 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     dimensions
 FROM {{ ref('git_metric_evidence') }}
-WHERE measure_key NOT IN ('commit_change_size', 'pr_cycle_hours', 'pr_change_size')
+WHERE measure_key NOT IN (
+    'commit_day',
+    'commit_change_size',
+    'pr_cycle_hours',
+    'pr_change_size',
+    'pr_first_review_hours',
+    'pr_review_wait_share',
+    'pr_review_to_merge_hours',
+    'pr_approval_to_merge_hours'
+)
   AND entity_id != ''
 -- One person's several source accounts collapse into one canonical row.
 GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, dimensions
@@ -37,5 +46,14 @@ SELECT
     subject_key,
     dimensions
 FROM {{ ref('git_metric_evidence') }}
-WHERE measure_key IN ('commit_change_size', 'pr_cycle_hours', 'pr_change_size')
+WHERE measure_key IN (
+    'commit_day',
+    'commit_change_size',
+    'pr_cycle_hours',
+    'pr_change_size',
+    'pr_first_review_hours',
+    'pr_review_wait_share',
+    'pr_review_to_merge_hours',
+    'pr_approval_to_merge_hours'
+)
   AND entity_id != ''

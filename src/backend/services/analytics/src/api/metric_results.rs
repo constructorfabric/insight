@@ -18,11 +18,11 @@ use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
-    PlannedQuery, RankingQueryRow, TimeseriesQueryRow, UnbatchedView,
+    PlannedQuery, RankingQueryRow, RollupQueryRow, TimeseriesQueryRow, UnbatchedView,
     ValidatedMetricResultsRequest, build_breakdown_view, build_histogram_view, build_metric_result,
-    build_peer_view, build_period_view, build_ranked_groups, build_timeseries_view,
-    demux_peer_rows, demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings,
-    validate_request,
+    build_peer_view, build_period_view, build_ranked_groups, build_rollup_view,
+    build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_view_row_limit,
+    plan_queries, plan_rankings, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
 
@@ -232,6 +232,11 @@ async fn execute_planned(
                     let comment = format!("metric-results:breakdown:{}", def.key());
                     let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
                     build_breakdown_view(req, &dimensions, rows)?
+                }
+                UnbatchedView::Rollup { dimensions } => {
+                    let comment = format!("metric-results:rollup:{}", def.key());
+                    let rows = fetch_rows::<RollupQueryRow>(state, query, &comment).await?;
+                    build_rollup_view(&dimensions, rows)?
                 }
                 UnbatchedView::Histogram => {
                     let comment = format!("metric-results:histogram:{}", def.key());

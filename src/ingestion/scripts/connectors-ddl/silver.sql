@@ -415,6 +415,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits
     `repo_slug` String,
     `commit_hash` String,
     `branch` String,
+    `is_default_branch` Nullable(UInt8),
     `author_name` String,
     `author_email` String,
     `committer_name` String,

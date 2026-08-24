@@ -461,12 +461,11 @@ jobs:
             "${email_args[@]}" \
             --days 730 \
             "${force_args[@]}" \
+            --manifest-out "$RUNNER_TEMP/stand-manifest.json" \
             > "$RUNNER_TEMP/seed.log" 2>&1 || seed_rc=$?
 
-          # One sentinel line, written by insight_seed/manifest.py:write_manifest.
           manifest_rc=0
-          grep -m1 '^SEED_MANIFEST_JSON: ' "$RUNNER_TEMP/seed.log" \
-            | cut -d' ' -f2- > "$RUNNER_TEMP/stand-manifest.json" || manifest_rc=$?
+          jq -e '.manifest_version' "$RUNNER_TEMP/stand-manifest.json" >/dev/null 2>&1 || manifest_rc=1
 
           if [ "$seed_rc" -eq 0 ] && [ "$manifest_rc" -eq 0 ]; then
             personas="$(jq '.personas | length' "$RUNNER_TEMP/stand-manifest.json")"
@@ -480,7 +479,7 @@ jobs:
           # reach the public log, never the pod log it follows.
           echo "::error::the seed stage failed."
           [ "$seed_rc" -eq 0 ] || echo "::error::seed-stand.sh exited $seed_rc."
-          [ "$manifest_rc" -eq 0 ] || echo "::error::no SEED_MANIFEST_JSON line in the seed log — the seeder did not reach the end of its run."
+          [ "$manifest_rc" -eq 0 ] || echo "::error::no manifest sentinel in the seed log — the seeder did not reach the end of its run."
           grep -E '^(==>|ERROR:)' "$RUNNER_TEMP/seed.log" | python3 "$REDACT" || true
           echo "The full seed log (cluster and pod output) stays on the runner in \$RUNNER_TEMP;"
           echo "it is not published. While the Job survives (an hour, backoffLimit 0), read it"
@@ -549,6 +548,20 @@ jobs:
             --tracing=retain-on-failure \
             --screenshot=only-on-failure \
             2>&1 | python3 "$REDACT"
+
+      # Affirms the durable copy matches what this run emitted, so phase 2 can
+      # let readers depend on it. After the suite and under always(), so a broken
+      # publish turns the run red without blocking the stages of a seeded stand.
+      - name: Verify the published seed manifest
+        if: ${{ always() && steps.seed.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          kubectl -n "$STAND_NAMESPACE" get configmap seed-stand-manifest \
+            -o 'go-template={{index .data "manifest"}}' > "$RUNNER_TEMP/stand-manifest-cm.json"
+          diff -q <(jq -S . "$RUNNER_TEMP/stand-manifest.json") \
+                  <(jq -S . "$RUNNER_TEMP/stand-manifest-cm.json") >/dev/null \
+            || { echo "::error::configmap/seed-stand-manifest does not match the manifest this run emitted."; exit 1; }
+          echo "seed-stand-manifest matches the run's manifest"
 
       # BETWEEN capture and upload, and always — a failed run is exactly when a
       # trace exists. A Playwright trace replays a real signed-in session: it

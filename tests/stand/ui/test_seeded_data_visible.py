@@ -10,8 +10,7 @@ passes every API test in this repository.
 **No metric number is asserted here, deliberately.** Real values are on screen —
 the personal view shows a dozen populated tiles — and asserting one would mean
 hand-authoring an expected metric value, which this phase forbids anywhere under
-`tests/stand/`. It cannot be sourced from the manifest either: `golden_metrics`
-is empty by design. So every seeded fact
+`tests/stand/`. The manifest carries no expected values either. So every seeded fact
 asserted here is an IDENTITY fact read from the manifest at runtime — who the
 person is, and who the roster places under them.
 

@@ -36,8 +36,10 @@ class AiConfigResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    admin_only: bool = Field(..., description='Only admins may ask for an explanation on this deployment.')
     enabled: bool = Field(..., description='Whether this deployment offers AI explanations at all.')
     model: str = Field(..., description='The model explanations are asked of.')
+    stand_key: bool = Field(..., description='The stand pays for explanations with its own key, so nobody stores one.')
 
 
 class AiCredentialResponse(BaseModel):
@@ -267,18 +269,35 @@ class MetricDrilldownEntity1(BaseModel):
 
 
 class Type1(StrEnum):
-    tenant = 'tenant'
+    persons = 'persons'
 
 
 class MetricDrilldownEntity2(BaseModel):
+    """
+    The records behind a figure a surface reports for a GROUP of people —
+    an org rollup card, a team total. Every id is authorized individually,
+    exactly as the single-person shape is.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
+    ids: list[str]
     type: Type1
 
 
-class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2]):
-    root: MetricDrilldownEntity1 | MetricDrilldownEntity2
+class Type2(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricDrilldownEntity3(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type2
+
+
+class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3]):
+    root: MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3
 
 
 class MetricDrilldownExportFormat(StrEnum):
@@ -422,18 +441,22 @@ class View3(StrEnum):
 
 
 class View4(StrEnum):
+    rollup = 'rollup'
+
+
+class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto5(BaseModel):
+class MetricResultViewDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     values: list[HistogramValueDto]
-    view: View4
+    view: View5
 
 
-class Type2(StrEnum):
+class Type3(StrEnum):
     person = 'person'
 
 
@@ -442,10 +465,10 @@ class MetricResultsEntity1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type2
+    type: Type3
 
 
-class Type3(StrEnum):
+class Type4(StrEnum):
     tenant = 'tenant'
 
 
@@ -453,14 +476,14 @@ class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type3
+    type: Type4
 
 
 class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
     root: MetricResultsEntity1 | MetricResultsEntity2
 
 
-class Type4(StrEnum):
+class Type5(StrEnum):
     person = 'person'
 
 
@@ -469,10 +492,10 @@ class MetricResultsEntityDto1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type4
+    type: Type5
 
 
-class Type5(StrEnum):
+class Type6(StrEnum):
     tenant = 'tenant'
 
 
@@ -480,7 +503,7 @@ class MetricResultsEntityDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type5
+    type: Type6
 
 
 class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
@@ -510,7 +533,7 @@ class MetricSchemaErrorCode(StrEnum):
     unknown = 'unknown'
 
 
-class View5(StrEnum):
+class View6(StrEnum):
     period = 'period'
 
 
@@ -518,10 +541,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View5
+    view: View6
 
 
-class View6(StrEnum):
+class View7(StrEnum):
     peer = 'peer'
 
 
@@ -530,10 +553,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View6
+    view: View7
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -544,10 +567,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -556,22 +579,35 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
-    histogram = 'histogram'
+class View10(StrEnum):
+    rollup = 'rollup'
 
 
 class MetricViewRequest5(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View9
+    dimensions: list[str]
+    group_limit: MetricGroupLimitRequest | None = None
+    view: View10
 
 
-class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5]):
-    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5
+class View11(StrEnum):
+    histogram = 'histogram'
+
+
+class MetricViewRequest6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    view: View11
+
+
+class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
+    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6
 
 
 class PeerValueDto(BaseModel):
@@ -624,6 +660,18 @@ class PutSettingsRequest(BaseModel):
         extra='forbid',
     )
     system_prompt: str
+
+
+class RollupValueDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    contributing_entity_count: int = Field(..., ge=0)
+    dimensions: list[MetricDimensionDto]
+    label: str | None = None
+    rank: int | None = Field(None, ge=0)
+    remainder: bool | None = None
+    value: float | None = None
 
 
 class RunResponse(BaseModel):
@@ -1006,6 +1054,15 @@ class MetricResultViewDto4(BaseModel):
     view: View3
 
 
+class MetricResultViewDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str]
+    values: list[RollupValueDto]
+    view: View4
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1022,6 +1079,7 @@ class MetricSnapshot(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    bucket_starts: list[str] | None = Field(None, description='Bucket start dates every series is indexed by, oldest first.')
     delta: str | None = Field(None, description="The tile's own change line, empty when it has none.")
     help: str | None = Field(None, description="The catalog's description of the metric, empty when it has none.")
     label: str = Field(..., description='The label the tile shows.')
@@ -1162,8 +1220,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
 
 
 class MetricResultDto5(BaseModel):

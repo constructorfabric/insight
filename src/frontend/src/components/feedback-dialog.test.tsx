@@ -24,6 +24,7 @@ vi.mock("@/telemetry", () => ({
   currentScreen: () => hooks.screen,
 }));
 
+import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import { FeedbackDialog } from "./feedback-dialog";
 
 function sendButton(): HTMLElement {
@@ -84,6 +85,43 @@ describe("FeedbackDialog", () => {
     expect(hooks.toast.success).toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(message).toHaveValue("");
+  });
+
+  it("stops the box at the longest message the service stores", async () => {
+    render(<FeedbackDialog open onOpenChange={() => {}} />);
+
+    const message = screen.getByLabelText("Your feedback");
+    await userEvent.click(message);
+    await userEvent.paste("x".repeat(FEEDBACK_MESSAGE_MAX + 50));
+
+    expect(message).toHaveValue("x".repeat(FEEDBACK_MESSAGE_MAX));
+  });
+
+  it("keeps the box inside the dialog however much is written", () => {
+    render(<FeedbackDialog open onOpenChange={() => {}} />);
+
+    expect(screen.getByLabelText("Your feedback")).toHaveClass(
+      "max-h-[40vh]",
+      "overflow-y-auto",
+    );
+  });
+
+  it("counts what is written against the budget", async () => {
+    render(<FeedbackDialog open onOpenChange={() => {}} />);
+
+    await userEvent.type(screen.getByLabelText("Your feedback"), "empty");
+
+    expect(
+      screen.getByText(`5 / ${FEEDBACK_MESSAGE_MAX}`),
+    ).toBeInTheDocument();
+  });
+
+  it("announces the budget to whoever cannot see the counter", () => {
+    render(<FeedbackDialog open onOpenChange={() => {}} />);
+
+    expect(screen.getByLabelText("Your feedback")).toHaveAccessibleDescription(
+      `0 / ${FEEDBACK_MESSAGE_MAX}`,
+    );
   });
 
   it("keeps the dialog open on a refusal, and says why", () => {

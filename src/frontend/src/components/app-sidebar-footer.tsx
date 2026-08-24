@@ -16,7 +16,7 @@ import {
 import { getInitials } from "@/lib/insight/get-initials";
 import { resolveZoneItem } from "@/lib/portal/nav-model";
 import { usePortalItem } from "@/lib/portal/portal-nav";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { useIcPerson } from "@/queries/ic-dashboard";
 
@@ -127,7 +127,7 @@ function MenuEntry({
   label: string;
   onNavigate?: () => void;
 }) {
-  const portal = usePortalEnabled();
+  const portal = !readLegacyShell();
   const { activeZone } = useActiveZone();
   const item = resolveZoneItem(activeZone, usePortalItem());
   const pathname = useRouterState({ select: (s) => s.location.pathname });

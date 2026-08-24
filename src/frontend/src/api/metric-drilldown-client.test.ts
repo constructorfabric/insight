@@ -4,6 +4,8 @@ import { AnalyticsApiError } from "@/api/analytics-client";
 import {
   downloadMetricDrilldown,
   evidenceSelection,
+  MAX_EVIDENCE_PERSONS,
+  personsEvidenceSelection,
   queryMetricDrilldown,
   type MetricDrilldownRequest,
 } from "@/api/metric-drilldown-client";
@@ -140,6 +142,40 @@ describe("metric drilldown client", () => {
     ).rejects.toMatchObject({
       status: 429,
     });
+  });
+
+  it("carries a roster as one selection, deduplicated and ordered", () => {
+    const canonical = {
+      metric_key: "git.commits",
+      entity: { type: "person" as const, ids: ["b", "a"] },
+      period: selection.period,
+      filters: [],
+    };
+
+    // One order for one set of people: this object is the query key, so `b, a`
+    // and `a, b` must not be two cache entries for one question.
+    expect(personsEvidenceSelection(canonical, ["b", "a", "b"])).toEqual({
+      metric_key: "git.commits",
+      entity: { type: "persons", ids: ["a", "b"] },
+      period: selection.period,
+      filters: [],
+      display_dimensions: [],
+    });
+
+    expect(personsEvidenceSelection(canonical, [])).toBeNull();
+    // Past the analytics cap the request is a 400, so there is nothing to open.
+    expect(
+      personsEvidenceSelection(
+        canonical,
+        Array.from({ length: MAX_EVIDENCE_PERSONS + 1 }, (_, i) => `p${i}`)
+      )
+    ).toBeNull();
+    expect(
+      personsEvidenceSelection(
+        canonical,
+        Array.from({ length: MAX_EVIDENCE_PERSONS }, (_, i) => `p${i}`)
+      )
+    ).not.toBeNull();
   });
 
   it("builds normalized selections from canonical results", () => {

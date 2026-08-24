@@ -113,11 +113,14 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
         advances: list[tuple[Any, ...]] = []
         stored_default = snapshot["default_head"]
         if not stored_default:
-            yield from self._walk_ref(project_id, default)
+            yield from self._walk_ref(project_id, default, in_default=True)
             advances.append(("default", default_head))
         elif stored_default != default_head:
             yield from self._walk_ref(
-                project_id, f"{stored_default}..{default_head}", skip_404=False
+                project_id,
+                f"{stored_default}..{default_head}",
+                skip_404=False,
+                in_default=True,
             )
             advances.append(("default", default_head))
         stored_branches = snapshot["branches"]
@@ -130,7 +133,9 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
                 continue
             if stored_branches.get(name) == head:
                 continue
-            yield from self._walk_ref(project_id, f"{default_head}..{head}")
+            yield from self._walk_ref(
+                project_id, f"{default_head}..{head}", in_default=False
+            )
             advances.append(("branch", name, head))
         return {
             "current_branches": {b.get("name") for b in branch_records},
@@ -138,12 +143,15 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
         }
 
     def _walk_ref(
-        self, project_id: Any, ref: str, *, skip_404: bool = True
+        self, project_id: Any, ref: str, *, in_default: bool, skip_404: bool = True
     ) -> Iterator[Mapping[str, Any]]:
+        # in_default is keyword-only and required: a ref walked without saying
+        # which side of the default branch it is would emit unlabelled commits.
         base: dict[str, Any] = {
             "project_id": project_id,
             "ref": ref,
             "since": self._start_date,
+            "in_default": in_default,
         }
         if not skip_404:
             base["skip_404"] = False
@@ -225,4 +233,11 @@ class CommitsStream(GitlabSubstream, IncrementalMixin):
             "stats_additions": stats.get("additions"),
             "stats_deletions": stats.get("deletions"),
             "stats_total": stats.get("total"),
+            # The default ref is walked whole, every other branch only as
+            # `default_head..head`, so which walk reached a commit IS its
+            # default-branch membership.
+            # INVARIANT: membership as of this sync. A commit reached by a
+            # branch range and merged later is re-walked when the default head
+            # advances, which corrects it; nothing else does.
+            "is_in_default_branch": (stream_slice or {}).get("in_default"),
         }

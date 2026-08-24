@@ -118,11 +118,6 @@ export const SOURCE_DIMENSION = "source";
 /**
  * Adds `source` to a metric's requested display dimensions, so its
  * evidence rows carry the per-row connector a link needs to be safe.
- *
- * SAFETY: only when the metric DECLARES the dimension — a drilldown that asks
- * for an undeclared one is rejected outright, so asking on spec would trade a
- * missing link for an unopenable dialog. `declared` is null while the catalog
- * is unknown, which is also a no-op.
  */
 export function withSourceDimension(
   selection: MetricEvidenceSelection,
@@ -131,14 +126,44 @@ export function withSourceDimension(
   if (!isGitMetric(selection.metric_key) && !isTaskMetric(selection.metric_key)) {
     return selection;
   }
-  if (!declared?.has(SOURCE_DIMENSION)) return selection;
-  if (selection.display_dimensions.includes(SOURCE_DIMENSION)) return selection;
+  return withDimension(selection, SOURCE_DIMENSION, declared);
+}
+
+/** The dimension key naming what kind of issue a row is — "Bug", "Story". */
+export const TYPE_DIMENSION = "type";
+
+/**
+ * Adds `type` to a task metric's requested display dimensions, so an issue row
+ * says which kind of issue it was.
+ *
+ * A count of closed issues reads differently once the bugs in it are visible,
+ * and the tracker's own type is the only thing on the row that says which is
+ * which. Same gate as `withSourceDimension`: only when the metric declares it.
+ */
+export function withTypeDimension(
+  selection: MetricEvidenceSelection,
+  declared: ReadonlySet<string> | null | undefined
+): MetricEvidenceSelection {
+  if (!isTaskMetric(selection.metric_key)) return selection;
+  return withDimension(selection, TYPE_DIMENSION, declared);
+}
+
+/**
+ * SAFETY: only when the metric DECLARES the dimension — a drilldown that asks
+ * for an undeclared one is rejected outright, so asking on spec would trade a
+ * missing column for an unopenable dialog. `declared` is null while the catalog
+ * is unknown, which is also a no-op.
+ */
+function withDimension(
+  selection: MetricEvidenceSelection,
+  dimension: string,
+  declared: ReadonlySet<string> | null | undefined
+): MetricEvidenceSelection {
+  if (!declared?.has(dimension)) return selection;
+  if (selection.display_dimensions.includes(dimension)) return selection;
   return {
     ...selection,
-    display_dimensions: [
-      ...selection.display_dimensions,
-      SOURCE_DIMENSION,
-    ].sort(),
+    display_dimensions: [...selection.display_dimensions, dimension].sort(),
   };
 }
 

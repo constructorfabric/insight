@@ -14,6 +14,7 @@ export type MetricResultViewKind =
   | "timeseries"
   | "peer"
   | "breakdown"
+  | "rollup"
   | "histogram";
 export type MetricBucket = "day" | "week" | "month";
 export type MetricComputation = "sum" | "ratio" | "median" | "distinct_count";
@@ -69,6 +70,11 @@ export type MetricViewRequest =
       view: "breakdown";
       dimensions: string[];
     }
+  | {
+      view: "rollup";
+      dimensions: string[];
+      group_limit?: MetricGroupLimit;
+    }
   | { view: "histogram" };
 
 export interface MetricDimension {
@@ -120,6 +126,7 @@ export type MetricResultView =
   | TimeseriesView
   | PeerView
   | BreakdownView
+  | RollupView
   | HistogramView;
 
 export interface PeriodView {
@@ -162,6 +169,19 @@ export interface BreakdownView {
     entity_id: string;
     dimensions: MetricDimension[];
     value: number | null;
+  }>;
+}
+
+export interface RollupView {
+  view: "rollup";
+  dimensions: string[];
+  values: Array<{
+    dimensions: MetricDimension[];
+    value: number | null;
+    contributing_entity_count: number;
+    rank?: number;
+    remainder?: boolean;
+    label?: string;
   }>;
 }
 

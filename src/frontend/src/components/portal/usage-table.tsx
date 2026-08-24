@@ -129,7 +129,12 @@ export function TruncatedCell({
       <TooltipTrigger render={<span className="truncate" />}>
         {children}
       </TooltipTrigger>
-      <TooltipContent className={detailClassName ?? "font-mono text-xs"}>
+      <TooltipContent
+        className={cn(
+          "max-h-[var(--available-height)] items-start overflow-y-auto overscroll-contain",
+          detailClassName ?? "font-mono text-xs",
+        )}
+      >
         {detail}
       </TooltipContent>
     </Tooltip>

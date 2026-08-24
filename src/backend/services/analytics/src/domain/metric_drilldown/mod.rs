@@ -21,7 +21,9 @@ pub(crate) use error::{evidence_unavailable, export_internal, export_limit};
 pub(crate) use export::{MAX_EXPORT_BYTES, build_export, export_filename};
 pub(crate) use presentation::{build_response, presentation};
 pub(crate) use query_limits::with_evidence_query_limits;
-pub(crate) use validation::{parse_person_entity, validate_export_request, validate_request};
+pub(crate) use validation::{
+    parse_person_entity, parse_person_ids, validate_export_request, validate_request,
+};
 
 #[cfg(test)]
 mod test_support;

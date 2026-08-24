@@ -9,7 +9,7 @@ import type { PortalSearch } from "@/lib/portal/portal-search";
 
 let currentPath = "/";
 let currentSearch: PortalSearch = {};
-let portalEnabled = true;
+let legacyShell = false;
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -59,7 +59,7 @@ vi.mock("@/components/theme-switcher", () => ({
 }));
 
 vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalEnabled: () => portalEnabled,
+  readLegacyShell: () => legacyShell,
 }));
 
 const mocks = vi.hoisted(() => ({ openFeedback: vi.fn() }));
@@ -125,7 +125,7 @@ function linkOf(label: string): HTMLElement {
 beforeEach(() => {
   currentPath = "/";
   currentSearch = {};
-  portalEnabled = true;
+  legacyShell = false;
   mocks.openFeedback.mockClear();
 });
 
@@ -145,8 +145,8 @@ describe("AppSidebarFooter", () => {
     );
   });
 
-  it("names the standalone screens while the portal is off", () => {
-    portalEnabled = false;
+  it("names the standalone screens under the legacy-shell hatch", () => {
+    legacyShell = true;
     render(<AppSidebarFooter />);
 
     expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
@@ -177,8 +177,8 @@ describe("AppSidebarFooter", () => {
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
-  it("marks the standalone screen it is standing on while the portal is off", () => {
-    portalEnabled = false;
+  it("marks the standalone screen it is standing on under the hatch", () => {
+    legacyShell = true;
     currentPath = "/metrics";
     render(<AppSidebarFooter />);
 

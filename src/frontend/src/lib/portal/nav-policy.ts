@@ -6,6 +6,10 @@ export interface NavPathSet {
   directions: ReadonlySet<string>;
   lenses: ReadonlySet<string>;
   personSections: ReadonlySet<string>;
+  /** Whole metric keys, e.g. `tasks.resolution_time`. */
+  metrics: ReadonlySet<string>;
+  /** Family prefixes from `metric:ai.*`, stored WITH the dot (`ai.`). */
+  metricFamilies: ReadonlySet<string>;
 }
 
 export interface InstanceNavPolicy {
@@ -19,6 +23,8 @@ export const EMPTY_NAV_PATHS: NavPathSet = {
   directions: new Set(),
   lenses: new Set(),
   personSections: new Set(),
+  metrics: new Set(),
+  metricFamilies: new Set(),
 };
 
 export const EMPTY_NAV_POLICY: InstanceNavPolicy = {
@@ -31,11 +37,30 @@ type NavPath =
   | { kind: "item"; zone: string; item: string }
   | { kind: "direction"; direction: string }
   | { kind: "lens"; direction: string; lens: string }
-  | { kind: "section"; section: string };
+  | { kind: "section"; section: string }
+  | { kind: "metric"; metric: string }
+  | { kind: "metricFamily"; family: string };
 
 const SEGMENT = /^(zone|item|dir|lens|section):([a-z0-9][a-z0-9_-]*)$/;
 
+/**
+ * A metric path names a key of the analytics catalog, not a menu node, so it
+ * is a root form rather than a segment under `zone:` — and its value carries
+ * the dotted family (`tasks.resolution_time`). The trailing `.*` form takes a
+ * whole family, because "every AI metric" is a standing product statement and
+ * a list of today's keys would silently stop covering tomorrow's.
+ */
+const METRIC = /^metric:([a-z0-9][a-z0-9_]*)\.([a-z0-9][a-z0-9_]*|\*)$/;
+
 function parsePath(raw: string): NavPath | null {
+  const metric = METRIC.exec(raw);
+  if (metric) {
+    const [, family, leaf] = metric;
+    return leaf === "*"
+      ? { kind: "metricFamily", family: `${family}.` }
+      : { kind: "metric", metric: `${family}.${leaf}` };
+  }
+
   const parts: [kind: string, value: string][] = [];
   for (const segment of raw.split("/")) {
     const match = SEGMENT.exec(segment);
@@ -73,6 +98,8 @@ export function parseNavPaths(raw: unknown, field: string): NavPathSet {
   const directions = new Set<string>();
   const lenses = new Set<string>();
   const personSections = new Set<string>();
+  const metrics = new Set<string>();
+  const metricFamilies = new Set<string>();
   for (const entry of raw) {
     const path = typeof entry === "string" ? parsePath(entry) : null;
     if (!path) {
@@ -95,9 +122,23 @@ export function parseNavPaths(raw: unknown, field: string): NavPathSet {
       case "section":
         personSections.add(path.section);
         break;
+      case "metric":
+        metrics.add(path.metric);
+        break;
+      case "metricFamily":
+        metricFamilies.add(path.family);
+        break;
     }
   }
-  return { zones, items, directions, lenses, personSections };
+  return {
+    zones,
+    items,
+    directions,
+    lenses,
+    personSections,
+    metrics,
+    metricFamilies,
+  };
 }
 
 export function parseNavPolicy(nav: unknown): InstanceNavPolicy {
@@ -204,5 +245,63 @@ export function visiblePersonSections<T extends { id: string }>(
 ): T[] {
   return sections.filter((section) =>
     personSectionVisible(section.id, showPlanned, policy)
+  );
+}
+
+/* ── Metrics ─────────────────────────────────────────────────────────── */
+
+function matches(set: NavPathSet, metricKey: string): boolean {
+  if (set.metrics.has(metricKey)) return true;
+  for (const family of set.metricFamilies) {
+    if (metricKey.startsWith(family)) return true;
+  }
+  return false;
+}
+
+export function metricHidden(
+  metricKey: string,
+  policy = navPolicy()
+): boolean {
+  return matches(policy.hide, metricKey);
+}
+
+export function metricPlanned(
+  metricKey: string,
+  policy = navPolicy()
+): boolean {
+  return matches(policy.planned, metricKey);
+}
+
+/**
+ * Whether a metric may appear on screen at all.
+ *
+ * Applied to the metric KEY rather than to each surface, so a metric this
+ * install does not show cannot reach a tile, an attention row, a heatmap
+ * column or a report column by a route nobody remembered to gate.
+ */
+export function metricVisible(
+  metricKey: string,
+  showPlanned: boolean,
+  policy = navPolicy()
+): boolean {
+  if (metricHidden(metricKey, policy)) return false;
+  return showPlanned || !metricPlanned(metricKey, policy);
+}
+
+export function visibleMetricKeys(
+  keys: readonly string[],
+  showPlanned: boolean,
+  policy = navPolicy()
+): string[] {
+  return keys.filter((key) => metricVisible(key, showPlanned, policy));
+}
+
+/** Whether this install gates any metric at all — lets callers skip the walk. */
+export function gatesAnyMetric(policy = navPolicy()): boolean {
+  return (
+    policy.hide.metrics.size > 0 ||
+    policy.hide.metricFamilies.size > 0 ||
+    policy.planned.metrics.size > 0 ||
+    policy.planned.metricFamilies.size > 0
   );
 }

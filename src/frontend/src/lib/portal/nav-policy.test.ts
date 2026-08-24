@@ -5,15 +5,19 @@ import {
   directionPlanned,
   EMPTY_NAV_PATHS,
   EMPTY_NAV_POLICY,
+  gatesAnyMetric,
   itemHidden,
   itemPlanned,
   lensHidden,
   lensPlanned,
+  metricPlanned,
+  metricVisible,
   parseNavPaths,
   parseNavPolicy,
   personSectionHidden,
   personSectionPlanned,
   personSectionVisible,
+  visibleMetricKeys,
   zoneHidden,
   zonePlanned,
 } from "./nav-policy";
@@ -160,5 +164,87 @@ describe("personSectionVisible", () => {
         true,
       );
     }
+  });
+});
+
+describe("metric paths", () => {
+  const policyWith = (planned: string[], hide: string[] = []) => ({
+    hide: parseNavPaths(hide, "hide"),
+    planned: parseNavPaths(planned, "planned"),
+  });
+
+  it("reads a whole key and a family into their own tiers", () => {
+    const paths = parseNavPaths(
+      ["metric:tasks.resolution_time", "metric:ai.*"],
+      "planned"
+    );
+
+    expect(paths.metrics).toEqual(new Set(["tasks.resolution_time"]));
+    expect(paths.metricFamilies).toEqual(new Set(["ai."]));
+  });
+
+  it("takes every key of a family named with a star", () => {
+    const policy = policyWith(["metric:ai.*"]);
+
+    expect(metricPlanned("ai.cost", policy)).toBe(true);
+    expect(metricPlanned("ai.accepted_lines", policy)).toBe(true);
+    // A family is a prefix up to the dot, so a key that merely starts with
+    // the same letters is a different family.
+    expect(metricPlanned("airflow.runs", policy)).toBe(false);
+  });
+
+  it("keeps a hidden metric off screen whatever the reader toggled", () => {
+    const policy = policyWith([], ["metric:tasks.on_time_delivery"]);
+
+    expect(metricVisible("tasks.on_time_delivery", false, policy)).toBe(false);
+    expect(metricVisible("tasks.on_time_delivery", true, policy)).toBe(false);
+  });
+
+  it("shows a planned metric only to a reader who asked for planned sections", () => {
+    const policy = policyWith(["metric:tasks.pickup_time"]);
+
+    expect(metricVisible("tasks.pickup_time", false, policy)).toBe(false);
+    expect(metricVisible("tasks.pickup_time", true, policy)).toBe(true);
+    expect(metricVisible("tasks.closed", false, policy)).toBe(true);
+  });
+
+  it("filters a key list in place, preserving order", () => {
+    const policy = policyWith(["metric:ai.*"], ["metric:tasks.pickup_time"]);
+    const keys = ["git.commits", "ai.cost", "tasks.pickup_time", "tasks.closed"];
+
+    expect(visibleMetricKeys(keys, false, policy)).toEqual([
+      "git.commits",
+      "tasks.closed",
+    ]);
+    expect(visibleMetricKeys(keys, true, policy)).toEqual([
+      "git.commits",
+      "ai.cost",
+      "tasks.closed",
+    ]);
+  });
+
+  it("reports whether the install gates any metric at all", () => {
+    expect(gatesAnyMetric(EMPTY_NAV_POLICY)).toBe(false);
+    expect(gatesAnyMetric(policyWith(["metric:ai.*"]))).toBe(true);
+    expect(
+      gatesAnyMetric(policyWith([], ["metric:tasks.resolution_time"]))
+    ).toBe(true);
+    // A navigation path is not a metric gate.
+    expect(gatesAnyMetric(policyWith(["zone:scorecard"]))).toBe(false);
+  });
+
+  it.each([
+    ["a metric with no family", "metric:commits"],
+    ["a bare star", "metric:*"],
+    ["a star inside the family", "metric:*.cost"],
+    ["a three-part key", "metric:ai.cost.usd"],
+    ["an uppercase key", "metric:AI.cost"],
+    ["a metric nested under a zone", "zone:overview/metric:ai.cost"],
+  ])("ignores and warns on %s", (_label, entry) => {
+    const warn = silenceWarnings();
+    const paths = parseNavPaths([entry], "planned");
+
+    expect(paths.metrics.size + paths.metricFamilies.size).toBe(0);
+    expect(warn).toHaveBeenCalled();
   });
 });

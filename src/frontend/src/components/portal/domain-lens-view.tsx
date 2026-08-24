@@ -36,7 +36,7 @@ import {
   attentionSummary,
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
-import { GROUPS } from "@/lib/insight/groups";
+import { GROUPS, visibleGroups } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
 import { useVisibilityPolicy } from "@/queries/identity-me";
@@ -58,6 +58,11 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { githubRepoUrl } from "@/lib/metrics/provider-links";
+import {
+  personsEvidenceSelection,
+  type MetricEvidenceSelection,
+} from "@/api/metric-drilldown-client";
+import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
@@ -73,12 +78,13 @@ import {
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
+  overviewCardDirections,
   sectionMetricKeys,
+  visibleSections,
   type ConcentrationFraming,
   type LensConfig,
   type SectionSpec,
 } from "@/lib/portal/lens-configs";
-import { DIRECTIONS } from "@/lib/portal/nav-model";
 import {
   buildActiveContributorData,
   buildTrendData,
@@ -90,6 +96,7 @@ import {
   type TrendDrilldownState,
 } from "@/components/portal/trend-drilldown-dialog";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
@@ -107,7 +114,7 @@ const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
  * (rule 6), and no individual is ever named (rule 10).
  */
 export function DomainLensView({
-  config,
+  config: declared,
   gridKeys: gridKeysProp,
 }: {
   config: LensConfig;
@@ -125,6 +132,16 @@ export function DomainLensView({
   const { period, dateRange } = usePortalPeriod();
 
   const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
+  // What this install shows, not what the registry declares: a gated metric
+  // takes its tile with it, and a section left with none of its own is gone
+  // rather than drawn empty (`visibleSections`).
+  const showPlanned = usePortalShowPlanned();
+  const config = useMemo(
+    () => visibleSections(declared, showPlanned),
+    [declared, showPlanned]
+  );
+
+
   const orgScope = useOrgScope();
   const { isFlat } = useVisibilityPolicy();
   const { pivot, roster } = orgScope;
@@ -625,6 +642,7 @@ function CoverageLevelsSection({
   personIdByEntity: Map<string, string>;
 }) {
   const [openLevel, setOpenLevel] = useState<number | null>(null);
+  const showPlanned = usePortalShowPlanned();
   const { distribution, parts, people, thin, isPending, isError } =
     useScopeCoverage(memberIds);
   if (isPending) return <Pending label="Reading coverage…" />;
@@ -640,7 +658,9 @@ function CoverageLevelsSection({
   const counted = distribution.counted;
   if (counted === 0) return null;
 
-  const partCount = GROUPS.length;
+  // The same sections the coverage hook counted, or the denominator would name
+  // sections this install does not show.
+  const partCount = visibleGroups(showPlanned).length;
   const levels = [...distribution.byLevel.entries()].sort(
     (a, b) => b[0] - a[0]
   );
@@ -786,6 +806,8 @@ function CoverageLevelPeople({
   nameByEntity: Map<string, string>;
   personIdByEntity: Map<string, string>;
 }) {
+  // Every title, not just the visible ones: this only resolves ids that are
+  // already in a person's coverage states, which the hook gated on its way in.
   const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
   const rows = [...people].sort((a, b) =>
     (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
@@ -953,6 +975,15 @@ function HeadlineSection({
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
+  // Every drillable card of the row, so the dialog a reader opens on one of
+  // them lists its neighbours — the same set the members grid offers from a
+  // row of cells.
+  const targets = cards.flatMap((c) => {
+    if (!c.r.drilldown) return [];
+    const selection = personsEvidenceSelection(c.r.selection, memberIds);
+    return selection ? [{ selection, label: c.r.label }] : [];
+  });
+
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -960,33 +991,93 @@ function HeadlineSection({
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
         {cards.map((c) => (
-          <Card key={c.key}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between gap-2">
-                <MetricName
-                  metric={c.r}
-                  text={c.r.short_label ?? c.r.label}
-                  className="text-xs font-medium text-muted-foreground"
-                />
-                <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
-              </div>
-              <div className={cn("mt-1", TEXT_FIGURE)}>
-                {formatMetricValue(
-                  c.isSum ? perCapita(c.r, memberIds) : c.now,
-                  c.r.format,
-                  c.r.unit
-                )}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {c.isSum
-                  ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
-                  : "median / person"}
-              </div>
-            </CardContent>
-          </Card>
+          <HeadlineCard
+            key={c.key}
+            card={c}
+            targets={targets}
+            memberIds={memberIds}
+          />
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * One headline figure, and the records it was taken over.
+ *
+ * The card opens the evidence dialog for the WHOLE roster rather than for a
+ * person: the number on it is the roster's, and a reader asking what it is
+ * made of is asking about all of them. Nothing here names an individual —
+ * the dialog lists records, and who did what stays inside it.
+ *
+ * A metric whose evidence cannot be read renders as a plain card: an
+ * affordance that opens an empty dialog is worse than none.
+ */
+function HeadlineCard({
+  card,
+  targets,
+  memberIds,
+}: {
+  card: {
+    r: NormalizedMetricResult;
+    now: number;
+    prev: number | null;
+    isSum: boolean;
+  };
+  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
+  memberIds: readonly string[];
+}) {
+  const evidence = useMetricEvidenceOptional();
+  const c = card;
+  const selection = c.r.drilldown
+    ? personsEvidenceSelection(c.r.selection, memberIds)
+    : null;
+  const body = (
+    <CardContent className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        {/* The full label, not the short one: `short_label` exists for a grid
+            column head or a heatmap axis, and it drops the very word that says
+            what was counted — "Issues" for issues CLOSED. A card twelve rem
+            wide has room to say it. */}
+        <MetricName
+          metric={c.r}
+          className="text-xs font-medium text-muted-foreground"
+        />
+        <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
+      </div>
+      <div className={cn("mt-1", TEXT_FIGURE)}>
+        {formatMetricValue(
+          c.isSum ? perCapita(c.r, memberIds) : c.now,
+          c.r.format,
+          c.r.unit
+        )}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {c.isSum
+          ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
+          : "median / person"}
+      </div>
+    </CardContent>
+  );
+
+  if (!selection || !evidence) return <Card>{body}</Card>;
+
+  return (
+    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() =>
+          evidence.openEvidenceTargets(targets, {
+            activeMetricKey: selection.metric_key,
+          })
+        }
+      >
+        {body}
+      </button>
+    </Card>
   );
 }
 
@@ -1587,23 +1678,27 @@ function DirectionCardsSection({
   memberIds: readonly string[];
 }) {
   const { openDirection } = usePortalNavActions();
-  const cards = DIRECTIONS.map((d) => {
-    const entry = lensEntry(d.id, "Overview");
-    if (!entry || "comingSoon" in entry) return null;
-    const headline = entry.sections.find(
-      (s): s is Extract<SectionSpec, { kind: "headline" }> =>
-        s.kind === "headline"
-    );
-    if (!headline) return null;
-    const keys =
-      variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
-    const observed = familyObserved(
-      grid.byKey,
-      sectionMetricKeys(entry),
-      memberIds
-    );
-    return { id: d.id, name: d.name, keys, observed };
-  }).filter((c): c is NonNullable<typeof c> => c != null);
+  const showPlanned = usePortalShowPlanned();
+  const cards = overviewCardDirections(showPlanned)
+    .map((d) => {
+      const entry = lensEntry(d.id, "Overview");
+      if (!entry || "comingSoon" in entry) return null;
+      const gated = visibleSections(entry, showPlanned);
+      const headline = gated.sections.find(
+        (s): s is Extract<SectionSpec, { kind: "headline" }> =>
+          s.kind === "headline"
+      );
+      if (!headline) return null;
+      const keys =
+        variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
+      const observed = familyObserved(
+        grid.byKey,
+        sectionMetricKeys(gated),
+        memberIds
+      );
+      return { id: d.id, name: d.name, keys, observed };
+    })
+    .filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
 
   const go = (dir: string) => openDirection(dir, "Overview");

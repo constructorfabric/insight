@@ -12,7 +12,7 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { PortalLayout } from "@/components/portal/portal-layout";
 import { isPortalShellPath } from "@/lib/portal/portal-routes";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { queryClient } from "@/query-client";
 import { FeedbackDialogProvider } from "@/components/feedback-dialog-provider";
@@ -56,7 +56,7 @@ function RootPending() {
 }
 
 function RootLayout() {
-  const portal = usePortalEnabled();
+  const portal = !readLegacyShell();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The portal is a ROUTE now, so it renders through the Outlet like anything
   // else — otherwise its navigation could never live in the URL. It still owns
