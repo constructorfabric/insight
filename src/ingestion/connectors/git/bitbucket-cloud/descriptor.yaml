@@ -1,11 +1,12 @@
 name: bitbucket-cloud
-# Strict semver per ADR-0015. 3.0.0: dbt staging carries the proxy's
-#   is_in_default_branch into the class-contract column is_default_branch.
-#   MAJOR for the same reason as github 4.0.0 — append_new_columns leaves the
-#   column NULL on rows already in staging, and staging never re-reads Bronze,
-#   so only the one-shot scoped `dbt --full-refresh` a major bump dispatches
+# Strict semver per ADR-0015. 4.0.0: dbt staging carries the pull request's
+#   author account id into the class-contract column author_account_id, the
+#   key person attribution resolves through. MAJOR for the same reason as
+#   github 5.0.0 — the id has been in Bronze all along, but staging never
+#   re-reads Bronze, so the column heals to '' on existing rows and only the
+#   one-shot scoped `dbt --full-refresh` a major bump dispatches
 #   re-materializes the history.
-version: "3.0.0"
+version: "4.0.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.
