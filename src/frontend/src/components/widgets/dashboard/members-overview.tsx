@@ -9,7 +9,7 @@ import { TriageList, type TriageRow } from "@/components/widgets/dashboard/triag
 import { HEATMAP_METRIC_KEYS } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import { worstEntry, type PeerStoryEntry } from "@/lib/metrics/peer-story";
 import type { PeerCohortLabel } from "@/lib/peers";
 import { rankableCount, rankCounts, type RankCounts } from "@/lib/scoring";
@@ -71,10 +71,11 @@ export function MembersOverview({
     const counts = new Map<string, RankCounts>();
     for (const member of gridMembers) {
       const entries = metricEntriesByPerson.get(member.entityId) ?? [];
-      const ranks = dropRedundantMetrics(entries).map((entry) => ({
-        row: entry,
-        rank: entry.status,
-      }));
+      const ranks = countableSignals(
+        entries,
+        (entry) => entry.key,
+        (entry) => entry.status,
+      ).map((entry) => ({ row: entry, rank: entry.status }));
       counts.set(member.entityId, rankCounts(ranks));
     }
     return counts;
@@ -87,7 +88,11 @@ export function MembersOverview({
         const entries = metricEntriesByPerson.get(entityId) ?? [];
         // Counts and the rankable denominator they are read against both grade
         // a pattern, so one fact gets one vote in each.
-        const counted = dropRedundantMetrics(entries);
+        const counted = countableSignals(
+          entries,
+          (entry) => entry.key,
+          (entry) => entry.status,
+        );
         return {
           member,
           belowCount: metricBelowByMember.get(entityId) ?? 0,

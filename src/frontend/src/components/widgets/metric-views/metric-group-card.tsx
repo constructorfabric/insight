@@ -129,7 +129,11 @@ export function MetricGroupCard({
   // twice because a second one contains it moves the section's colour without
   // anything about the person changing. Thinning the tally, not the rows: the
   // list below still names every metric the group measures.
-  const counted = countableSignals(rows, (row) => row.metric.metric_key);
+  const counted = countableSignals(
+    rows,
+    (row) => row.metric.metric_key,
+    (row) => row.rank
+  );
   const counts = rankCounts(counted.map((row) => ({ row, rank: row.rank })));
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);

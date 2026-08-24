@@ -1,3 +1,6 @@
+import { isRankable } from "@/lib/scoring";
+import type { PeerStatusWithNeutral } from "@/lib/peers";
+
 /**
  * Metrics that count a superset of what another metric counts.
  *
@@ -77,16 +80,20 @@ const RESTATEMENT_GROUP = new Map<string, number>(
  * Displayed rows do not: "what did we measure" and "how many independent
  * things went wrong" are different questions.
  *
- * INVARIANT: thinning is over what actually read for this entity, never over
- * the collection — a total whose narrower part is silent is the only reading
- * there is, and has to keep its vote.
+ * INVARIANT: thinning is over what actually READ for this entity — never over
+ * the collection, and never over a part that is present but unranked. A total
+ * whose narrower part says nothing is the only reading there is and keeps its
+ * vote, which is why the rank is required rather than optional: an entry with
+ * no comparison must not be able to displace one that has it.
  */
 export function countableSignals<T>(
   entries: readonly T[],
-  keyOf: (entry: T) => string
+  keyOf: (entry: T) => string,
+  rankOf: (entry: T) => PeerStatusWithNeutral | null
 ): T[] {
+  const ranked = entries.filter((entry) => isRankable(rankOf(entry)));
   const kept = dropRedundantMetrics(
-    entries.map((entry) => ({ key: keyOf(entry), entry }))
+    ranked.map((entry) => ({ key: keyOf(entry), entry }))
   );
   return kept.map((item) => item.entry);
 }

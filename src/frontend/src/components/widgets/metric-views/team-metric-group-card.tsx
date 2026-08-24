@@ -85,9 +85,11 @@ export function TeamMetricGroupCard({
   const standings = teamMetricStandings(def, data.byKey, memberIds);
   const scored = standings.filter((s) => s.scored > 0);
   const counts = rankCounts(
-    countableSignals(standings, (standing) => standing.metric.metric_key).map(
-      (standing) => ({ row: standing, rank: standing.verdict })
-    )
+    countableSignals(
+      standings,
+      (standing) => standing.metric.metric_key,
+      (standing) => standing.verdict
+    ).map((standing) => ({ row: standing, rank: standing.verdict }))
   );
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);

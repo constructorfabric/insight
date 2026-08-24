@@ -1,5 +1,5 @@
 import type { MetricGroup } from "@/lib/insight/groups";
-import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import {
   forEntity,
   type NormalizedMetricResult,
@@ -117,9 +117,11 @@ export function metricBelowCounts(
       const standing = memberMetricStanding(metric, memberId);
       return standing == null ? [] : [{ key: metric.metric_key, standing }];
     });
-    const below = dropRedundantMetrics(read).filter(
-      (entry) => entry.standing === "bottom",
-    ).length;
+    const below = countableSignals(
+      read,
+      (entry) => entry.key,
+      (entry) => entry.standing,
+    ).filter((entry) => entry.standing === "bottom").length;
     if (below > 0) out.set(memberId, below);
   }
   return out;

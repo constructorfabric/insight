@@ -233,4 +233,39 @@ describe("MetricGroupCard", () => {
     // Two bottom-quartile readings of one fact: one row behind peers, not two.
     expect(screen.getByText("1 of 1 behind peers")).toBeInTheDocument();
   });
+
+  it("keeps a total's finding when its part has no comparison", () => {
+    // The part reached the response and says nothing — no value for this
+    // person. Letting it displace the total would delete the only real reading
+    // and leave the card claiming there is nothing to compare.
+    const def: MetricGroup = {
+      ...DEF,
+      id: "git_output",
+      title: "Git output",
+      collection: {
+        metrics: [
+          { key: "git.commits", views: [{ view: "period" }, { view: "peer" }] },
+          {
+            key: "git.default_branch_commits",
+            views: [{ view: "period" }, { view: "peer" }],
+          },
+        ],
+      },
+      card: { preview: ["git.commits"] },
+    };
+
+    render(
+      <MetricGroupCard
+        def={def}
+        entityId="me@x.com"
+        data={result([
+          aiMetric("git.commits", 1),
+          aiMetric("git.default_branch_commits", null),
+        ])}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1 of 1 behind peers")).toBeInTheDocument();
+  });
 });

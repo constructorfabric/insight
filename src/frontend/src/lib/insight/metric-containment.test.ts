@@ -98,31 +98,47 @@ describe("dropRedundantMetrics", () => {
 });
 
 describe("countableSignals", () => {
+  const signal = (metric: string, rank: string | null) => ({ metric, rank });
+  const counted = (entries: ReturnType<typeof signal>[]) =>
+    countableSignals(
+      entries,
+      (entry) => entry.metric,
+      (entry) => entry.rank as never
+    ).map((entry) => entry.metric);
+
   it("gives one fact one vote, whatever shape the caller counts in", () => {
     // Every standing surface counts a different shape — rows, ranks, team
-    // standings — so the rule is reached through a key accessor rather than by
+    // standings — so the rule is reached through accessors rather than by
     // each caller reshaping its data to match it.
-    const signals = countableSignals(
-      [
-        { metric: "git.commits", rank: "bottom" },
-        { metric: "git.default_branch_commits", rank: "bottom" },
-        { metric: "git.pr_size", rank: "top" },
-      ],
-      (signal) => signal.metric
-    );
-
-    expect(signals.map((signal) => signal.metric)).toEqual([
-      "git.default_branch_commits",
-      "git.pr_size",
-    ]);
+    expect(
+      counted([
+        signal("git.commits", "bottom"),
+        signal("git.default_branch_commits", "bottom"),
+        signal("git.pr_size", "top"),
+      ])
+    ).toEqual(["git.default_branch_commits", "git.pr_size"]);
   });
 
   it("leaves a total alone when its part is not among the signals", () => {
-    const signals = countableSignals(
-      [{ metric: "git.commits", rank: "bottom" }],
-      (signal) => signal.metric
-    );
+    expect(counted([signal("git.commits", "bottom")])).toEqual(["git.commits"]);
+  });
 
-    expect(signals).toHaveLength(1);
+  it("keeps the total's vote when a present part has no comparison", () => {
+    // The part reached the response and says nothing — unmeasured for this
+    // person, or a pool too thin to disclose. Letting it displace the total
+    // would delete a real bottom reading and leave the section looking calm.
+    for (const silent of [null, "neutral"]) {
+      expect(
+        counted([
+          signal("git.commits", "bottom"),
+          signal("git.default_branch_commits", silent),
+        ]),
+        `part ranked ${silent}`
+      ).toEqual(["git.commits"]);
+    }
+  });
+
+  it("drops an unranked entry rather than counting it as a signal", () => {
+    expect(counted([signal("git.pr_size", "neutral")])).toEqual([]);
   });
 });

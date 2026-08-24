@@ -113,7 +113,13 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       });
       return [{ row: m.key, rank: standing.rank }];
     });
-    const counts = rankCounts(countableSignals(ranks, (rank) => rank.row));
+    const counts = rankCounts(
+      countableSignals(
+        ranks,
+        (entry) => entry.row,
+        (entry) => entry.rank,
+      ),
+    );
 
     return {
       id: def.id,
