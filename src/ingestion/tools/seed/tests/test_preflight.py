@@ -5,13 +5,9 @@ and the messages a refusal carries — the half that has to stay true for an
 operator who reads only the error. No server is reached: the one predicate whose
 meaning lives in SQL runs against an in-memory sqlite table.
 
-Every case belongs to a `TestCase`, deliberately: `unittest discover` (the
-documented local command) collects nothing else, so a bare test function would
-run in CI and silently not run here.
-
 Run against the installed package (see the README's develop section):
 
-    uv run --extra dev python -m unittest discover -s tests -t .
+    uv run --extra dev pytest tests
 """
 
 from __future__ import annotations
