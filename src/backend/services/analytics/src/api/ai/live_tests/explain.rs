@@ -1,5 +1,3 @@
-//! `/v1/ai/explain` — which key pays, and who is allowed to ask.
-
 use super::*;
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]

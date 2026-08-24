@@ -1,5 +1,3 @@
-//! `/v1/ai/credentials` — storing, replacing and refusing a key.
-
 use super::*;
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]

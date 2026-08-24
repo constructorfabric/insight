@@ -87,6 +87,10 @@ fn stand_key_config() -> GearConfig {
 }
 
 fn app(db: DatabaseConnection, tenant: Uuid, config: GearConfig) -> Router {
+    app_as(db, tenant, CALLER, config)
+}
+
+fn app_as(db: DatabaseConnection, tenant: Uuid, person: Uuid, config: GearConfig) -> Router {
     let Ok(identity) = IdentityClient::new("http://127.0.0.1:1") else {
         unreachable!("the static identity url builds a client")
     };
@@ -111,18 +115,18 @@ fn app(db: DatabaseConnection, tenant: Uuid, config: GearConfig) -> Router {
 
     let openapi = OpenApiRegistryImpl::new();
     let api = crate::api::build_operations(Router::new(), &openapi)
-        .layer(from_fn_with_state(tenant, inject_context))
+        .layer(from_fn_with_state((tenant, person), inject_context))
         .layer(axum::Extension(state));
     Router::new().merge(api)
 }
 
 async fn inject_context(
-    axum::extract::State(tenant): axum::extract::State<Uuid>,
+    axum::extract::State((tenant, person)): axum::extract::State<(Uuid, Uuid)>,
     mut req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response {
     let Ok(ctx) = SecurityContext::builder()
-        .subject_id(CALLER)
+        .subject_id(person)
         .subject_type("user")
         .subject_tenant_id(tenant)
         .build()

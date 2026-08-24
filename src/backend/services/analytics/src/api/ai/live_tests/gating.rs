@@ -1,5 +1,3 @@
-//! The stand switch: what a deployment with the feature off answers.
-
 use super::*;
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]

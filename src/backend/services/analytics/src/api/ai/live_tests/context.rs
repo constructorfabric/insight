@@ -1,5 +1,3 @@
-//! `/v1/ai/context` — a person's own entries and the organisation's.
-
 use super::*;
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
@@ -103,14 +101,38 @@ async fn editing_someone_elses_entry_reads_as_absent() -> TestResult {
         return Ok(());
     };
 
-    let resp = app(db, Uuid::now_v7(), enabled_config())
+    let tenant = Uuid::now_v7();
+
+    let created = app(db.clone(), tenant, enabled_config())
+        .oneshot(json_req(
+            "POST",
+            "/v1/ai/context",
+            &json!({ "scope": "person", "title": "Mine", "body": "private" }),
+        )?)
+        .await?;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let id = body_json(created).await?["id"]
+        .as_str()
+        .ok_or("the created entry carries an id")?
+        .to_owned();
+
+    // A real row belonging to somebody else in the same tenant — the property
+    // worth proving. A random id only shows that an unknown id is unknown.
+    let other = Uuid::now_v7();
+    let resp = app_as(db.clone(), tenant, other, enabled_config())
         .oneshot(json_req(
             "PATCH",
-            &format!("/v1/ai/context/{}", Uuid::now_v7()),
+            &format!("/v1/ai/context/{id}"),
             &json!({ "title": "mine now" }),
         )?)
         .await?;
-
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // And it is still the owner's, unchanged.
+    let mine = app(db, tenant, enabled_config())
+        .oneshot(get("/v1/ai/context")?)
+        .await?;
+    let body = body_json(mine).await?;
+    assert_eq!(body["items"][0]["title"], "Mine");
     Ok(())
 }

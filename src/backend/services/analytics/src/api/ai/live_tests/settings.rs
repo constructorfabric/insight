@@ -1,5 +1,3 @@
-//! `/v1/ai/settings` — the tenant's system prompt, and who may write it.
-
 use super::*;
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
