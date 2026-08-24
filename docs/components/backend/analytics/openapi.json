@@ -146,6 +146,39 @@
             "properties": {
               "computation": {
                 "enum": [
+                  "percentile"
+                ],
+                "type": "string"
+              },
+              "q": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "q",
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "stddev"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
                   "distinct_count"
                 ],
                 "type": "string"
@@ -652,6 +685,8 @@
           "sum",
           "ratio",
           "median",
+          "percentile",
+          "stddev",
           "distinct_count"
         ],
         "type": "string"

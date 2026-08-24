@@ -484,7 +484,9 @@ analytics:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
   metricCatalog:
-    tenantMetricsEnabled: false
+    # Tenant-grain metrics (the ci.* family) are part of the product and
+    # visible to every authenticated viewer (#2803); opt out per installation.
+    tenantMetricsEnabled: true
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at
   # boot rather than accepting keys it cannot seal.
