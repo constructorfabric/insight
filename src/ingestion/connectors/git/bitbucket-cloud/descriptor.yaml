@@ -6,7 +6,7 @@ name: bitbucket-cloud
 #   re-reads Bronze, so the column heals to '' on existing rows and only the
 #   one-shot scoped `dbt --full-refresh` a major bump dispatches
 #   re-materializes the history.
-version: "4.0.0"
+version: "4.0.1"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.
