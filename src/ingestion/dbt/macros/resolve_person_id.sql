@@ -125,11 +125,15 @@
   (git pull requests), the account is the source's own primary key for the
   person: it survives an empty or private profile email, a squash-merge that
   unlinks the PR's commits, and an address change. Same claim semantics as the
-  email map: the latest `value_type='id'` row per account decides, and an
-  account bound to the excluded person claims nothing — the exclusion is
-  applied AFTER the latest-binding pick, so an account whose newest binding is
-  the excluded person attributes nothing rather than falling back to a stale
-  human binding.
+  email map: the latest `value_type='id'` row per account decides.
+
+  Excluded bindings STAY in this map, unlike the email map's claims: an
+  operator binding an account to the excluded person is a statement about the
+  account, and it must TERMINATE resolution, not merely decline to help — a
+  bot pull request whose commits carry a human's email would otherwise fall
+  through to the email map and attribute to that human. Consumers read a
+  matched row with person_id = excluded_person_id() as "attribute to nobody,
+  and do not consult any other key".
 
   account_id is normalized lower(trimBoth(...)) on BOTH sides of the join
   (see resolved_person_id_by_account_join): connector identity inputs are not
@@ -152,29 +156,21 @@
     WHERE 0
 {%- else -%}
     SELECT
+        insight_source_type              AS source_type,
+        insight_source_id                AS source_id,
+        lower(trimBoth(value_effective)) AS account_id,
+        person_id
+    FROM identity.identity_persons
+    WHERE value_type = 'id'
+      AND value_effective IS NOT NULL
+      AND trimBoth(value_effective) != ''
+    ORDER BY
         source_type,
         source_id,
         account_id,
-        person_id
-    FROM (
-        SELECT
-            insight_source_type              AS source_type,
-            insight_source_id                AS source_id,
-            lower(trimBoth(value_effective)) AS account_id,
-            person_id
-        FROM identity.identity_persons
-        WHERE value_type = 'id'
-          AND value_effective IS NOT NULL
-          AND trimBoth(value_effective) != ''
-        ORDER BY
-            source_type,
-            source_id,
-            account_id,
-            created_at DESC,
-            id DESC
-        LIMIT 1 BY source_type, source_id, account_id
-    )
-    WHERE person_id != {{ excluded_person_id() }}
+        created_at DESC,
+        id DESC
+    LIMIT 1 BY source_type, source_id, account_id
 {%- endif -%}
 {% endmacro %}
 

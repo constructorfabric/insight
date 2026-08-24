@@ -14,8 +14,10 @@ description: >
   account is gone (ghost) still attributes through the linked commit's email;
   a pull request whose account binding and profile email name DIFFERENT
   persons follows the account; a bot's pull request (account bound to the
-  excluded person, no email anywhere) attributes to nobody.
-  Expected: alice merged 2 (squash + precedence), bob merged 1 (ghost).
+  excluded person) attributes to nobody even though its linked commit carries
+  a human's resolvable email.
+  Expected: alice merged 2 (squash + precedence), bob merged 1 (ghost only —
+  neither the bot's commit email nor the precedence profile email leaks to him).
 
 identity_accounts:
   - {source_type: github, source_id: git-test, account_id: "9001", person: alice@example.com}
@@ -34,7 +36,9 @@ bronze:
     # Ghost author: the account was deleted at the source, so no diff-stats
     # row exists at all — the linked commit's email is the only signal.
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-ghost, id: 12, number: 12, author_login: ghost, closed_at: "2026-10-01T10:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-12}
-    # Bot: account bound to the excluded person, no email anywhere.
+    # Bot: account bound to the excluded person. Its linked commit carries
+    # BOB's email — the excluded binding must terminate resolution, not fall
+    # through to the email map and hand the pull request to bob.
     - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bot, id: 13, number: 13, author_login: ci-bot, closed_at: "2026-10-01T11:00:00Z", merged_at: "2026-10-01T11:00:00Z", merge_commit_sha: merge-13}
     # Precedence: the profile email names BOB while the account binding names
     # ALICE — the account must win or a recycled/shared address misattributes.
@@ -47,9 +51,11 @@ bronze:
 
   bronze_github.pull_request_commits:
     - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-ghost, repo_full_name: constructor/insight, pull_number: 12, sha: hash-ghost, author_email: bob@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: prc-bot, repo_full_name: constructor/insight, pull_number: 13, sha: hash-bot, author_email: bob@example.com, is_merge: false}
 
   bronze_github.commits:
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-ghost, sha: hash-ghost, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 3}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bot, sha: hash-bot, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 1}
 
 cases:
   - name: Account-first attribution decides pull-request measures
@@ -72,8 +78,8 @@ cases:
         find: {entity_id: alice@example.com}
         equal: {value: 2}
       # Ghost author (no account id anywhere): the linked commit's email still
-      # attributes the pull request. The precedence PR's bob-flavored profile
-      # email must NOT leak here.
+      # attributes the pull request. Neither the precedence PR's bob-flavored
+      # profile email NOR the excluded bot's bob-authored commit may leak here.
       - metric: git.prs_merged
         view: period
         find: {entity_id: bob@example.com}

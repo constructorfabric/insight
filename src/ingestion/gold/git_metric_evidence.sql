@@ -18,10 +18,17 @@ SELECT
     -- the matched branch, so entity_id is a plain String fit for the sort key.
     -- Account first: an account binding is the source's own answer to "whose
     -- row is this" and survives an empty profile email; the email map decides
-    -- only when the row carries no resolvable account.
+    -- only when the row carries no bound account. A matched account bound to
+    -- the excluded person terminates resolution — the row attributes to
+    -- nobody even when its emails would resolve, or a bot pull request whose
+    -- commits carry a human's email would attribute to that human.
     multiIf(
         coalesce(account_map.account_id, '') != '',
-        toString(assumeNotNull(account_map.person_id)),
+        if(
+            assumeNotNull(account_map.person_id) = {{ excluded_person_id() }},
+            '',
+            toString(assumeNotNull(account_map.person_id))
+        ),
         coalesce(identity_map.email, '') != '',
         toString(assumeNotNull(identity_map.person_id)),
         ''

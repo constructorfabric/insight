@@ -12,7 +12,7 @@ from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.expect_engine import evaluate_case
-from lib.fixture_loader import TestYaml
+from lib.fixture_loader import IdentityAccount, TestYaml
 from lib.identity_stub import IdentityStub, person_id_for
 from lib.worker import WorkerContext
 
@@ -153,7 +153,7 @@ def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> No
 _EXCLUDED_PERSON_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
 
-def _seed_identity_accounts(cfg: SessionConfig, accounts: list[dict[str, str]], start_id: int) -> None:
+def _seed_identity_accounts(cfg: SessionConfig, accounts: list[IdentityAccount], start_id: int) -> None:
     """Source-account bindings from the yaml's `identity_accounts` — the rows
     the account-first map (resolve_person_id_by_account) resolves pull-request
     authors through. insight_source_id is hashed from the RAW source id with
@@ -164,10 +164,10 @@ def _seed_identity_accounts(cfg: SessionConfig, accounts: list[dict[str, str]], 
         return
 
     rows = ", ".join(
-        f"({start_id + index}, 'id', '{entry['source_type']}', "
-        f"toUUID(UUIDNumToString(sipHash128('{entry['source_id']}'))), generateUUIDv4(), "
-        f"'{entry['account_id']}', '{entry['account_id']}', "
-        f"toUUID('{_EXCLUDED_PERSON_ID if entry['person'] == 'excluded' else person_id_for(entry['person'])}'), "
+        f"({start_id + index}, 'id', '{entry.source_type}', "
+        f"toUUID(UUIDNumToString(sipHash128('{entry.source_id}'))), generateUUIDv4(), "
+        f"'{entry.account_id}', '{entry.account_id}', "
+        f"toUUID('{_EXCLUDED_PERSON_ID if entry.person == 'excluded' else person_id_for(entry.person)}'), "
         f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
         for index, entry in enumerate(accounts)
     )
