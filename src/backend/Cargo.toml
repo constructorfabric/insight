@@ -69,7 +69,7 @@ aes-gcm = "0.10"
 zeroize = "1.8"
 hex = "0.4"
 csv = "1.3"
-rust_xlsxwriter = "0.97"
+rust_xlsxwriter = "0.98"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Logging
