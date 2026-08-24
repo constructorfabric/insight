@@ -474,6 +474,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_deployment_events
     `unique_key` Nullable(String),
     `repo_full_name` String,
     `deployment_id` String,
+    `event_id` Int64,
     `state` String,
     `environment` String,
     `creator_login` String,

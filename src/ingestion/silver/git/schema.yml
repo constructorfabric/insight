@@ -183,6 +183,10 @@ models:
         description: "Repository the deployment belongs to"
       - name: deployment_id
         description: "Deployment this event describes (class_git_deployments join key)"
+      - name: event_id
+        description: >
+          Vendor status id — monotonic per deployment; the fold's created_at
+          tiebreaker, so the chosen outcome is deterministic.
       - name: state
         description: >
           Vendor state: success | failure | error | inactive | in_progress |

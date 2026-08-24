@@ -73,7 +73,7 @@ vi.mock("@/components/ui/chart", () => ({
   ChartTooltipContent: () => <div />,
 }));
 
-import { TenantLensView } from "./tenant-lens-view";
+import { TenantLensView } from "./index";
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 
@@ -217,6 +217,71 @@ describe("TenantLensView", () => {
     render(<TenantLensView config={CONFIG} />);
     expect(screen.getByText(/superseded/)).toBeTruthy();
     expect(screen.queryByText(/inactive/)).toBeNull();
+  });
+
+  it("keeps a single composition row when a real split cuts it", () => {
+    // One environment with both outcomes: one bar, two meaningful segments —
+    // the degenerate-data guard must not hide it.
+    mocks.result.byKey = new Map([
+      [
+        "ci.deployments",
+        metric("ci.deployments", {
+          breakdown: {
+            view: "breakdown",
+            dimensions: ["environment", "outcome"],
+            values: [
+              {
+                entity_id: TENANT,
+                value: 3,
+                dimensions: [
+                  { key: "environment", value: "production" },
+                  { key: "outcome", value: "success" },
+                ],
+              },
+              {
+                entity_id: TENANT,
+                value: 2,
+                dimensions: [
+                  { key: "environment", value: "production" },
+                  { key: "outcome", value: "failure" },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.getByText("Deployments by environment")).toBeTruthy();
+    expect(screen.getByText("production")).toBeTruthy();
+  });
+
+  it("still suppresses a single unsplit composition row", () => {
+    mocks.result.byKey = new Map([
+      [
+        "ci.deployments",
+        metric("ci.deployments", {
+          breakdown: {
+            view: "breakdown",
+            dimensions: ["environment", "outcome"],
+            values: [
+              {
+                entity_id: TENANT,
+                value: 3,
+                dimensions: [
+                  { key: "environment", value: "production" },
+                  { key: "outcome", value: "success" },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.queryByText("Deployments by environment")).toBeNull();
   });
 
   it("suppresses a trend that has fewer than two buckets", () => {

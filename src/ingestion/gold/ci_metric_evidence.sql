@@ -67,7 +67,9 @@ deployment_outcomes AS (
         tenant_id,
         source_id,
         deployment_id,
-        argMax(state, created_at) AS state
+        -- The vendor status id breaks created_at ties: two events in one
+        -- second would otherwise pick a nondeterministic outcome.
+        argMax(state, (created_at, event_id)) AS state
     FROM {{ ref('class_git_deployment_events') }} FINAL
     GROUP BY tenant_id, source_id, deployment_id
 ),

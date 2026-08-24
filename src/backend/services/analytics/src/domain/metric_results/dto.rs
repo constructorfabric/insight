@@ -151,9 +151,15 @@ pub struct MetricDimensionFilterDto {
 #[serde(tag = "computation", rename_all = "snake_case")]
 pub enum ComputationDto {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+    },
     Median,
-    Percentile { q: f64 },
+    Percentile {
+        /// The quantile — a probability, matching the definition validation.
+        #[schema(minimum = 0, maximum = 1)]
+        q: f64,
+    },
     Stddev,
     DistinctCount,
 }

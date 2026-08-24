@@ -151,7 +151,10 @@
                 "type": "string"
               },
               "q": {
+                "description": "The quantile — a probability, matching the definition validation.",
                 "format": "double",
+                "maximum": 1,
+                "minimum": 0,
                 "type": "number"
               }
             },

@@ -107,7 +107,7 @@ class ComputationDto4(BaseModel):
         extra='forbid',
     )
     computation: Computation3
-    q: float
+    q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
 
 
 class Computation4(StrEnum):
@@ -447,7 +447,7 @@ class MetricResultDto4(BaseModel):
         extra='forbid',
     )
     computation: Computation9
-    q: float
+    q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
 
 
 class Computation10(StrEnum):

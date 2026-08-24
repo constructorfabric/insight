@@ -18,6 +18,9 @@ SELECT
     unique_key,
     COALESCE(repo_full_name, '') AS repo_full_name,
     toString(COALESCE(deployment_id, 0)) AS deployment_id,
+    -- Vendor status id — monotonic per deployment, the tiebreaker readers
+    -- fold on when two events share a created_at second.
+    COALESCE(id, 0) AS event_id,
     -- GitHub states: success | failure | error | inactive | in_progress |
     -- queued | pending. error is an infrastructure failure of the deploy
     -- itself — a red outcome, kept distinct from failure of the deployed code.
