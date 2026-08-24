@@ -29,6 +29,7 @@ const PURGE_ESCALATION_AFTER: u32 = 3;
 pub enum RefreshFailure {
     Auth,
     NotFound,
+    OriginUnavailable,
     PromisorRefused,
     AdmissionRejected,
     Throttled,
@@ -42,6 +43,7 @@ impl From<&GitError> for RefreshFailure {
         match error {
             GitError::AuthRejected => Self::Auth,
             GitError::NotFound => Self::NotFound,
+            GitError::OriginUnavailable => Self::OriginUnavailable,
             GitError::PromisorRefused => Self::PromisorRefused,
             GitError::AdmissionRejected | GitError::TransientlyOverCap => Self::AdmissionRejected,
             GitError::Throttled => Self::Throttled,
@@ -61,6 +63,8 @@ pub enum StoreError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin declines to serve the repository")]
+    OriginUnavailable,
     #[error("origin refuses to serve explicitly requested objects")]
     PromisorRefused,
     #[error("repository is being prepared; retry in {}s", retry_after.as_secs())]
@@ -82,6 +86,7 @@ impl From<RefreshFailure> for StoreError {
         match failure {
             RefreshFailure::Auth => Self::AuthRejected,
             RefreshFailure::NotFound => Self::NotFound,
+            RefreshFailure::OriginUnavailable => Self::OriginUnavailable,
             RefreshFailure::PromisorRefused => Self::PromisorRefused,
             // §3.6: nothing could be freed, so the caller is asked to come
             // back rather than being served a half-prepared cache.
