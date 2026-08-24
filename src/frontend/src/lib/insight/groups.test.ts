@@ -57,6 +57,19 @@ describe("groups registry", () => {
       rankBy: "git.commits",
       includeRemainder: true,
     });
+    // The request is built from the block's `metrics`, not from its columns, so
+    // a column whose metric is missing here renders empty. Pinned as a pair per
+    // total: the comparison is per metric, not "all totals, then all splits".
+    expect(timeseries[0]?.metrics).toEqual([
+      "git.commits",
+      "git.default_branch_commits",
+      "git.prs_merged",
+      "git.default_branch_prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+      "git.default_branch_lines_added",
+      "git.default_branch_lines_removed",
+    ]);
     // Every total is immediately followed by its default-branch reading, so a
     // column pair reads "how much, and how much of it landed".
     expect(timeseries[0]?.table?.columns).toEqual([

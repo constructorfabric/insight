@@ -51,6 +51,7 @@ import {
   type MetricTimeseriesGroupLimitConfig,
 } from "@/lib/metrics/collection";
 import {
+  breakdownHeading,
   dimensionDescription,
   dimensionName,
 } from "@/lib/metrics/dimension-labels";
@@ -527,7 +528,7 @@ export function MetricTimeseriesView({
               // wider than the screen, and the grand total below covers groups
               // the reader cannot see.
               <h3 className="px-2 text-sm font-semibold">
-                By {selectedGroupBy}
+                {breakdownHeading([selectedGroupBy])}
                 <span className="ps-1.5 font-normal text-muted-foreground">
                   · {model.columns.length}
                 </span>

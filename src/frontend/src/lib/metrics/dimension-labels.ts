@@ -29,13 +29,18 @@ const BREAKDOWN_HEADINGS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Heading for a summary card's breakdown section. Curated wording wins for a
- * single dimension; anything else falls back to the humanised key, which is
- * what keeps a dimension added later readable without an entry here.
+ * Heading for a breakdown over `dimensions` — a summary card's split section or
+ * a grouped table. Curated wording wins for a single dimension; anything else
+ * falls back to the humanised key, which is what keeps a dimension added later
+ * readable without an entry here.
+ *
+ * SAFETY: `Object.hasOwn`, not `in` — `in` reaches Object.prototype, so a
+ * dimension named `constructor` or `toString` would return a function where a
+ * heading belongs.
  */
 export function breakdownHeading(dimensions: readonly string[]): string {
   const [only] = dimensions;
-  if (dimensions.length === 1 && only && only in BREAKDOWN_HEADINGS) {
+  if (dimensions.length === 1 && only && Object.hasOwn(BREAKDOWN_HEADINGS, only)) {
     return BREAKDOWN_HEADINGS[only];
   }
   return `By ${dimensions.map(dimensionDescription).join(" / ")}`;

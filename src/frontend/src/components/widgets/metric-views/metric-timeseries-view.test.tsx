@@ -400,6 +400,24 @@ describe("MetricTimeseriesView", () => {
     expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
   });
 
+  it("heads a grouped table with the grouping's curated wording, not its key", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricTimeseriesView
+        id="by-scope"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "branch_scope" }}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    const heading = screen.getByRole("heading", {
+      name: /Default branch vs other/,
+    });
+    expect(heading).not.toHaveTextContent("branch_scope");
+  });
+
   it("uses visible group controls and supports selecting multiple filters", async () => {
     const user = userEvent.setup();
     const options = timeseriesByKey();
