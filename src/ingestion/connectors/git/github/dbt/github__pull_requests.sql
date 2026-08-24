@@ -46,8 +46,11 @@ SELECT
     COALESCE(ds.author_email, '') AS author_email,
     -- The immutable numeric account id, stringified — the same key
     -- github__account_emails binds identities on. '' when the author is a
-    -- deleted or suspended account GraphQL returns as null.
-    if(COALESCE(ds.author_id, 0) > 0, toString(ds.author_id), '') AS author_account_id,
+    -- deleted or suspended account GraphQL returns as null. COALESCE inside
+    -- toString as well as in the guard: the class column must be a plain
+    -- String, and a Nullable one reaches the evidence sort key through
+    -- `concat` and fails the build with a nullable sorting key.
+    if(COALESCE(ds.author_id, 0) > 0, toString(COALESCE(ds.author_id, 0)), '') AS author_account_id,
     COALESCE(pr.head_ref, '') AS source_branch,
     COALESCE(pr.base_ref, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(pr.created_at) AS created_on,
