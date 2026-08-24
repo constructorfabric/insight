@@ -64,6 +64,40 @@ const MOCK_TOOLS = [
   { key: "tool", value: "cursor", label: "Cursor" },
 ];
 
+/**
+ * Values a dimension breaks down into, so a mock answers the dimension it was
+ * ASKED for. Returning one fixed set meant a section reading any other
+ * dimension found nothing in its rows and rendered as absent — which reads as
+ * a broken screen rather than as a mock with no fixture.
+ */
+const MOCK_DIMENSION_VALUES: Record<
+  string,
+  { value: string; label: string }[]
+> = {
+  category: [
+    { value: "code", label: "Code" },
+    { value: "test", label: "Tests" },
+    { value: "docs", label: "Documentation" },
+    { value: "config", label: "Configuration" },
+    { value: "vendored", label: "Vendored / Generated" },
+  ],
+  branch_scope: [
+    { value: "default", label: "Default branch" },
+    { value: "non_default", label: "Other branches" },
+  ],
+  source: [
+    { value: "github", label: "GitHub" },
+    { value: "gitlab", label: "GitLab" },
+  ],
+};
+
+function mockDimensionValues(key: string): { value: string; label: string }[] {
+  return (
+    MOCK_DIMENSION_VALUES[key] ??
+    MOCK_TOOLS.map(({ value, label }) => ({ value, label }))
+  );
+}
+
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
@@ -126,18 +160,26 @@ export function buildMetricResultsResponse(
             ),
           };
         }
-        case "breakdown":
+        case "breakdown": {
+          // One row per combination the caller asked for, keyed by the
+          // requested dimension rather than by a fixed one.
+          const axis = view.dimensions[0] ?? "tool";
           return {
             view: "breakdown",
             dimensions: view.dimensions,
             values: ids.flatMap((entityId) =>
-              MOCK_TOOLS.map((dimension) => ({
+              mockDimensionValues(axis).map((dimension) => ({
                 entity_id: entityId,
-                dimensions: [dimension],
+                dimensions: view.dimensions.map((dimensionKey) => ({
+                  key: dimensionKey,
+                  value: dimension.value,
+                  label: dimension.label,
+                })),
                 value: valueFor(entityId, key, dimension.value),
               })),
             ),
           };
+        }
         case "rollup":
           return {
             view: "rollup",
