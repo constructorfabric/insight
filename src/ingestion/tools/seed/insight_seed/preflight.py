@@ -233,7 +233,7 @@ def foreign_silver_problem(rows: int, tables: Sequence[tuple[str, int]], tenant:
 
 def _tenant_columns(client: object) -> dict[tuple[str, str], str]:
     """Which column carries the tenant, per reset target that has one."""
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     schemas = sorted({schema for schema, _ in RESET_TARGETS})
     found = client.query(  # type: ignore[attr-defined]
@@ -259,11 +259,11 @@ def _foreign_silver_rows(
 ) -> tuple[int, list[tuple[str, int]], list[tuple[str, str]]]:
     """Foreign rows in the reset surface, plus the targets that cannot be judged.
 
-    Scans exactly what the generators clear — `generators.base.RESET_TARGETS` —
+    Scans exactly what the generators clear — `generators.insert.RESET_TARGETS` —
     rather than a name pattern: a pattern both misses targets in other databases
     and refuses stands over tables the step never touches.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     tenant_column = _tenant_columns(client)
     unattributable = [t for t in RESET_TARGETS if t not in tenant_column]
@@ -300,7 +300,7 @@ def _existing_targets(client: object) -> set[tuple[str, str]]:
     answers with an empty result for a database that does not exist, the same
     property the tenant scan relies on.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     found = client.query(  # type: ignore[attr-defined]
         "SELECT database, name FROM system.tables WHERE database IN {dbs:Array(String)}",
@@ -316,7 +316,7 @@ def _reset_surface_rows(client: object) -> int:
     these", this answers "how much is there", and the second question still has
     an answer when the first one cannot be told apart on a single-tenant stand.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     try:
         existing = _existing_targets(client)

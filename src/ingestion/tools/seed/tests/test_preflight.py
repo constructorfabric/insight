@@ -21,7 +21,7 @@ import uuid as uuid_mod
 from dataclasses import dataclass
 
 from insight_seed import config, identity, preflight, profiles
-from insight_seed.generators import base
+from insight_seed.generators import base, insert
 
 _TENANT = "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
 
@@ -141,7 +141,7 @@ class _FakeClickHouse:
         if "system.columns" in sql:
             return _FakeResult(list(self._columns))
         if "system.tables" in sql:
-            from insight_seed.generators.base import RESET_TARGETS
+            from insight_seed.generators.insert import RESET_TARGETS
 
             present = list(RESET_TARGETS) if self._tables is None else self._tables
             return _FakeResult([(schema, table) for schema, table in present])
@@ -154,7 +154,7 @@ class SilverResetGuardTests(unittest.TestCase):
     def test_the_scan_covers_exactly_what_the_generators_clear(self) -> None:
         """A name pattern would both miss targets in other databases and refuse
         stands over tables the seed never touches."""
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         columns = [(schema, table, "tenant_id") for schema, table in RESET_TARGETS]
         client = _FakeClickHouse(columns=columns, counts=[])
@@ -169,7 +169,7 @@ class SilverResetGuardTests(unittest.TestCase):
     def test_every_registered_target_is_actually_truncated_by_a_generator(self) -> None:
         """The registry is what preflight scans, so a target that no generator
         clears would refuse a stand over data the seed leaves alone."""
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         called: set[tuple[str, str]] = set()
         for path in sorted(pathlib.Path(base.__file__).parent.glob("*.py")):
@@ -194,7 +194,7 @@ class SilverResetGuardTests(unittest.TestCase):
         self.assertNotIn(("silver", "not_a_target"), found)
 
     def test_targets_without_a_tenant_column_are_reported_as_unjudgeable(self) -> None:
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         client = _FakeClickHouse(
             columns=[("silver", "class_people", "tenant_id")],
@@ -241,7 +241,7 @@ class ResetRegistryTests(unittest.TestCase):
     def test_clearing_an_unregistered_relation_is_refused(self) -> None:
         with self.assertRaises(ValueError) as caught:
             # The client is never reached: registration is checked first.
-            base.truncate(object(), "silver", "class_not_registered")  # type: ignore[arg-type]
+            insert.truncate(object(), "silver", "class_not_registered")  # type: ignore[arg-type]
         self.assertIn("RESET_TARGETS", str(caught.exception))
 
 
@@ -594,6 +594,39 @@ class ForeignPersonsPredicateTests(unittest.TestCase):
             preflight._count_foreign_persons(persons, _TENANT),  # type: ignore[arg-type]
             sum(expected for _, _, expected in _FOREIGN_ROW_CASES),
         )
+
+
+def test_a_person_seeded_in_another_tenant_does_not_exempt_this_one() -> None:
+    """The exemption's person set is read within the tenant under test. Read
+    across tenants, one demo roster would exempt the projection's rows in every
+    other tenant on the cluster — including one holding real people."""
+    persons = _SqlitePersons()
+    stranger = "bbbbbbbb-0000-0000-0000-000000000002"
+    elsewhere = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    persons.insert(
+        _PersonsRow(
+            tenant=elsewhere,
+            source_type=profiles.DEV_SEED_SOURCE_TYPE,
+            source_id=profiles.DEV_SEED_SOURCE_ID,
+            value_id="elsewhere@company.nonpresent",
+            reason=f"{config.SEED_REASON_PREFIX}demo roster",
+            person_id=stranger,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        )
+    )
+    persons.insert(
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            person_id=stranger,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        )
+    )
+
+    assert preflight._count_foreign_persons(persons, _TENANT) == 1  # type: ignore[arg-type]
 
 
 def _constant_in(path: pathlib.Path, name: str) -> str | None:

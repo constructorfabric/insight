@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 from ..profiles import DEV_LEAD_UUID, TEAM_PROFILES, Person
 from .base import (
-    bulk_insert,
     clamp,
     days_window,
     deterministic_int,
@@ -22,9 +21,9 @@ from .base import (
     persona_multiplier,
     poisson,
     seeded_rng,
-    truncate,
     weekday_multiplier,
 )
+from .insert import bulk_insert, truncate
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
