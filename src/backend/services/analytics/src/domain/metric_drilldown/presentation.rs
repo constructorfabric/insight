@@ -206,6 +206,10 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             MetricDrilldownColumnType::String,
         ),
         "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
+        "env_kind" => (
+            "Environment type".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
         _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
     };
     MetricDrilldownColumn {
@@ -286,6 +290,20 @@ pub(super) fn evidence_presentation(
         ("ai_cost", _) => EvidencePresentation {
             detail_keys: &["billing_month", "ceiling_usd"],
             show_value: true,
+        },
+        // A counted run needs no value column — the row IS the run; a duration
+        // or an hour figure is only readable with its number.
+        ("ci", "runs") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: false,
+        },
+        ("ci", "run_duration_min" | "run_hours") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: true,
+        },
+        ("ci", "deployments") => EvidencePresentation {
+            detail_keys: &["repository", "environment", "outcome", "env_kind"],
+            show_value: false,
         },
         _ => EvidencePresentation {
             detail_keys: &[],

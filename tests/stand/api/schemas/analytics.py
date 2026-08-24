@@ -99,7 +99,7 @@ class ComputationDto3(BaseModel):
 
 
 class Computation3(StrEnum):
-    distinct_count = 'distinct_count'
+    percentile = 'percentile'
 
 
 class ComputationDto4(BaseModel):
@@ -107,10 +107,33 @@ class ComputationDto4(BaseModel):
         extra='forbid',
     )
     computation: Computation3
+    q: float
 
 
-class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4]):
-    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4
+class Computation4(StrEnum):
+    stddev = 'stddev'
+
+
+class ComputationDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation4
+
+
+class Computation5(StrEnum):
+    distinct_count = 'distinct_count'
+
+
+class ComputationDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation5
+
+
+class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6]):
+    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6
 
 
 class CreateSavedQueryRequest(BaseModel):
@@ -209,6 +232,8 @@ class MetricComputation(StrEnum):
     sum = 'sum'
     ratio = 'ratio'
     median = 'median'
+    percentile = 'percentile'
+    stddev = 'stddev'
     distinct_count = 'distinct_count'
 
 
@@ -379,7 +404,7 @@ class MetricOrigin(StrEnum):
     custom = 'custom'
 
 
-class Computation4(StrEnum):
+class Computation6(StrEnum):
     sum = 'sum'
 
 
@@ -387,10 +412,10 @@ class MetricResultDto1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation4
+    computation: Computation6
 
 
-class Computation5(StrEnum):
+class Computation7(StrEnum):
     ratio = 'ratio'
 
 
@@ -398,11 +423,11 @@ class MetricResultDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation5
+    computation: Computation7
     scale: float
 
 
-class Computation6(StrEnum):
+class Computation8(StrEnum):
     median = 'median'
 
 
@@ -410,18 +435,41 @@ class MetricResultDto3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation6
+    computation: Computation8
 
 
-class Computation7(StrEnum):
-    distinct_count = 'distinct_count'
+class Computation9(StrEnum):
+    percentile = 'percentile'
 
 
 class MetricResultDto4(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation7
+    computation: Computation9
+    q: float
+
+
+class Computation10(StrEnum):
+    stddev = 'stddev'
+
+
+class MetricResultDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation10
+
+
+class Computation11(StrEnum):
+    distinct_count = 'distinct_count'
+
+
+class MetricResultDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation11
 
 
 class View(StrEnum):
@@ -1224,7 +1272,7 @@ class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
 
 
-class MetricResultDto5(BaseModel):
+class MetricResultDto7(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -1241,32 +1289,44 @@ class MetricResultDto5(BaseModel):
     views: list[MetricResultViewDto]
 
 
-class MetricResultDto6(MetricResultDto1, MetricResultDto5):
+class MetricResultDto8(MetricResultDto1, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto7(MetricResultDto2, MetricResultDto5):
+class MetricResultDto9(MetricResultDto2, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto8(MetricResultDto3, MetricResultDto5):
+class MetricResultDto10(MetricResultDto3, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto9(MetricResultDto4, MetricResultDto5):
+class MetricResultDto11(MetricResultDto4, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto(RootModel[MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9]):
-    root: MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9
+class MetricResultDto12(MetricResultDto5, MetricResultDto7):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
+class MetricResultDto13(MetricResultDto6, MetricResultDto7):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
+class MetricResultDto(RootModel[MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11 | MetricResultDto12 | MetricResultDto13]):
+    root: MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11 | MetricResultDto12 | MetricResultDto13
 
 
 class MetricResultsResponse(BaseModel):
