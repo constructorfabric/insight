@@ -12,8 +12,7 @@ use axum::response::IntoResponse;
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait as _, ColumnTrait, Condition, ConnectionTrait, EntityTrait, Order,
-    PaginatorTrait as _, QueryFilter, QueryOrder, QuerySelect as _, Set, TransactionError,
-    TransactionTrait as _,
+    PaginatorTrait as _, QueryFilter, QueryOrder, Set, TransactionError, TransactionTrait as _,
 };
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
@@ -73,17 +72,30 @@ pub async fn create_context(
         updated_at: Set(now),
     };
 
-    // Counting and inserting in one transaction, with the scope's rows locked:
-    // two requests that each counted 19 free rows would otherwise both insert
-    // and leave the scope over its cap.
+    // Insert first, then count what the scope now holds, and roll back when
+    // that is over the cap.
+    //
+    // INVARIANT: the count must NOT lock. Checking the cap under `FOR UPDATE`
+    // before inserting reads a range that holds no rows for a scope's first
+    // entry, so InnoDB gap-locks to the index supremum; two tenants adding
+    // their first entry at the same moment then deadlock on the insert
+    // intention and one caller gets a 500. Verified against MariaDB's own
+    // deadlock report.
+    //
+    // The cost is that two writes racing on a scope holding exactly the last
+    // free slot can both commit, leaving one entry over. That is a courtesy
+    // limit on how much context a prompt carries, not an invariant anything
+    // depends on — and a scope of 21 is cheaper than a failed first write.
     let stored = state
         .db
         .transaction::<_, entries::Model, CanonicalError>(move |tx| {
             Box::pin(async move {
-                refuse_when_scope_is_full(tx, tenant, req.scope, owner).await?;
-                row.insert(tx)
+                let stored = row
+                    .insert(tx)
                     .await
-                    .map_err(|e| write_error(&e, "context insert"))
+                    .map_err(|e| write_error(&e, "context insert"))?;
+                refuse_when_scope_is_full(tx, tenant, req.scope, owner).await?;
+                Ok(stored)
             })
         })
         .await
@@ -235,12 +247,12 @@ async fn refuse_when_scope_is_full(
 
     let count = entries::Entity::find()
         .filter(condition)
-        .lock_exclusive()
         .count(db)
         .await
         .map_err(|e| read_error(&e, "context count"))?;
 
-    if count >= ai_assist_schema::MAX_ENTRIES_PER_SCOPE {
+    // Counted after the insert, so the caller's own row is included.
+    if count > ai_assist_schema::MAX_ENTRIES_PER_SCOPE {
         return Err(AiError::invalid_argument()
             .with_field_violation(
                 "scope",
