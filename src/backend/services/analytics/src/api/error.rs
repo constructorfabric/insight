@@ -27,6 +27,11 @@ pub struct UsageError;
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]
 pub struct FeedbackError;
 
+/// Resource namespace for `/v1/ai*` (written context, the tenant system
+/// prompt, per-person keys, and the explain call).
+#[resource_error("gts.cf.insight.analytics_api.ai_assist.v1~")]
+pub struct AiError;
+
 /// Resource namespace for `/v1/metrics*` (custom-metric CRUD + export/import).
 #[resource_error("gts.cf.insight.analytics_api.custom_metric.v1~")]
 pub struct CustomMetricError;

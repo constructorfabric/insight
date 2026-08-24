@@ -140,7 +140,10 @@ export function MetricEvidenceTable({
     <div className="relative min-h-0 flex-1">
       <Table
         role="table"
-        aria-rowcount={rows.length}
+        // Counting the header row, which is row 1: `aria-rowindex` below starts
+        // the data at 2, so a total of `rows.length` would make the last row
+        // "n+1 of n".
+        aria-rowcount={rows.length + 1}
         containerRef={setViewport}
         containerClassName="h-full overflow-auto"
         className="grid min-w-full"

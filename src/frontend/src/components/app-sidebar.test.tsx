@@ -36,9 +36,10 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: viewerEmail, personId: viewerPersonId }),
 }));
 
-// This sidebar is the shell the toggle falls back to.
+// This sidebar is the pre-portal shell, which only the legacy-shell hatch
+// reaches now.
 vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalEnabled: () => false,
+  readLegacyShell: () => true,
 }));
 
 vi.mock("@/queries/ic-dashboard", () => ({

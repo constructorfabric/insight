@@ -1,9 +1,12 @@
 import {
   directionHidden,
   directionPlanned,
+  gatesAnyMetric,
   lensHidden,
   lensPlanned,
+  metricVisible,
   navPolicy,
+  visibleMetricKeys,
   type InstanceNavPolicy,
 } from "@/lib/portal/nav-policy";
 import {
@@ -26,7 +29,16 @@ export type ConcentrationFraming = "bus-factor" | "load-balance";
 export type SectionSpec =
   | { kind: "headline"; metrics: readonly string[] }
   | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
-  | { kind: "trend"; metrics: readonly string[] }
+  | {
+      kind: "trend";
+      metrics: readonly string[];
+      /**
+       * Chart the roster's active contributors alongside the totals, derived
+       * from this metric's own per-person rows. A total says how much; this
+       * says how many people it came from.
+       */
+      activeContributorsFor?: string;
+    }
   | {
       kind: "distribution";
       metric: string;
@@ -124,6 +136,15 @@ export function visibleDirections(
   );
 }
 
+export function overviewCardDirections(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): Direction[] {
+  return visibleDirections(showPlanned, policy).filter((d) =>
+    visibleLenses(d, showPlanned, policy).includes("Overview")
+  );
+}
+
 /** Unique metric keys a config needs in its period+peer grid. */
 export function sectionMetricKeys(config: LensConfig): string[] {
   const keys = new Set<string>();
@@ -168,6 +189,58 @@ export function sectionMetricKeys(config: LensConfig): string[] {
     }
   }
   return [...keys];
+}
+
+/**
+ * The lens as this install shows it: sections lose the metrics it gates, and a
+ * section left with none of its own is dropped rather than drawn empty.
+ *
+ * The data layer already refuses to fetch a gated metric, so a tile or a row
+ * would simply not appear — but a section that draws its own frame (a title, a
+ * participation card counting people rather than reading a value) would keep
+ * standing over the hole. Composition is where that is settled.
+ */
+export function visibleSections(
+  config: LensConfig,
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): LensConfig {
+  if (!gatesAnyMetric(policy)) return config;
+
+  const sections: SectionSpec[] = [];
+  for (const s of config.sections) {
+    switch (s.kind) {
+      case "headline":
+      case "stat-tiles":
+      case "trend":
+      case "concentration":
+      case "participation":
+      case "attention": {
+        const metrics = visibleMetricKeys(s.metrics, showPlanned, policy);
+        if (metrics.length) sections.push({ ...s, metrics });
+        break;
+      }
+      case "distribution":
+      case "composition":
+      case "event-histogram":
+        if (metricVisible(s.metric, showPlanned, policy)) sections.push(s);
+        break;
+      case "direction-cards":
+      case "coverage-levels":
+        // Neither names a metric of its own: the cards read each direction's
+        // own Overview lens (gated where that lens is composed) and coverage
+        // counts sections.
+        sections.push(s);
+        break;
+      default: {
+        const _exhaustive: never = s;
+        throw new Error(
+          `Unhandled section kind: ${JSON.stringify(_exhaustive)}`
+        );
+      }
+    }
+  }
+  return { ...config, sections };
 }
 
 /* ── Development ─────────────────────────────────────────────────────── */

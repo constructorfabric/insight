@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { GROUPS } from "@/lib/insight/groups";
 import { DIRECTIONS } from "@/lib/portal/nav-model";
+import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
   DIRECTION_LENSES,
   directionMetricKeys,
   lensEntry,
   sectionMetricKeys,
+  visibleSections,
   type SectionSpec,
 } from "./lens-configs";
 
@@ -107,5 +109,86 @@ describe("sectionMetricKeys — Overview section kinds", () => {
     expect(keys).toContain("git.commits");
     expect(keys).toContain("collab.messages_sent");
     expect(keys).toContain("wiki.pages_created");
+  });
+});
+
+describe("visibleSections", () => {
+  const gate = (planned: string[], hide: string[] = []) => ({
+    hide: parseNavPaths(hide, "hide"),
+    planned: parseNavPaths(planned, "planned"),
+  });
+
+  const config = {
+    title: "Test",
+    sections: [
+      { kind: "headline", metrics: ["tasks.closed", "ai.cost"] },
+      {
+        kind: "stat-tiles",
+        title: "Typical",
+        metrics: ["tasks.resolution_time", "tasks.pickup_time"],
+      },
+      {
+        kind: "participation",
+        metrics: ["ai.active_days"],
+        title: "AI adoption",
+        noun: "People using AI",
+      },
+      {
+        kind: "distribution",
+        metric: "tasks.resolution_time",
+        title: "Resolution",
+        caption: "c",
+        unitLabel: "u",
+      },
+      { kind: "direction-cards", variant: "compact" },
+    ] as const satisfies readonly SectionSpec[],
+  };
+
+  it("returns the declared config untouched when the install gates no metric", () => {
+    expect(visibleSections(config, false, gate(["zone:scorecard"]))).toBe(
+      config
+    );
+  });
+
+  it("drops a gated metric and keeps the rest of its section", () => {
+    const gated = visibleSections(config, false, gate(["metric:ai.*"]));
+    const headline = gated.sections[0];
+
+    expect(headline).toMatchObject({
+      kind: "headline",
+      metrics: ["tasks.closed"],
+    });
+  });
+
+  it("drops a section left with none of its own metrics", () => {
+    const gated = visibleSections(config, false, gate(["metric:ai.*"]));
+
+    expect(gated.sections.map((s) => s.kind)).not.toContain("participation");
+  });
+
+  it("drops a single-metric section whose metric is gated", () => {
+    const gated = visibleSections(
+      config,
+      false,
+      gate(["metric:tasks.resolution_time"])
+    );
+
+    expect(gated.sections.map((s) => s.kind)).not.toContain("distribution");
+  });
+
+  it("keeps the sections that name no metric of their own", () => {
+    const gated = visibleSections(
+      config,
+      false,
+      gate(["metric:ai.*", "metric:tasks.resolution_time"])
+    );
+
+    expect(gated.sections.map((s) => s.kind)).toContain("direction-cards");
+  });
+
+  it("shows every gated section to a reader who asked for planned ones", () => {
+    const gated = visibleSections(config, true, gate(["metric:ai.*"]));
+
+    expect(gated.sections).toEqual(config.sections);
   });
 });

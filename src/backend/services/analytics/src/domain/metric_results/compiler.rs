@@ -11,7 +11,7 @@ use super::validation::{
 };
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
-    CohortSource, ComputationSpec, MetricDefinition, ObservationSource,
+    CohortSource, ComputationSpec, MetricDefinition, ObservationSource, RatioDenominatorAggregation,
 };
 
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
@@ -73,6 +73,18 @@ pub struct PeerQueryRow {
 pub struct BreakdownQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollupQueryRow {
+    pub value: Option<f64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    pub contributing_entity_count: Option<u64>,
+    pub rank: Option<u32>,
+    pub remainder: u8,
+    pub group_label: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -409,6 +421,136 @@ pub(crate) fn compile_breakdown_query(
     CompiledQuery { sql, params }
 }
 
+pub(crate) fn compile_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: Option<&ResolvedGroupLimit>,
+) -> CompiledQuery {
+    match group_limit {
+        Some(group_limit) => {
+            compile_capped_rollup_query(def, req, dimensions, filters, group_limit)
+        }
+        None => compile_uncapped_rollup_query(def, req, dimensions, filters),
+    }
+}
+
+fn compile_uncapped_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_predicate = selected_entity_predicate(req, &mut params);
+    let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
+    let observation_table = observation_table(def.observation_source());
+    let value_expr = grouped_value_expr(def);
+    let limit = query_row_limit();
+    let inner = format!(
+        r"
+        SELECT
+            {dim_select},
+            {value_expr} AS value,
+            uniqExact(entity_id) AS contributing_entity_count,
+            CAST(NULL AS Nullable(UInt32)) AS rank,
+            toUInt8(0) AS remainder,
+            CAST(NULL AS Nullable(String)) AS group_label
+        FROM {observation_table}
+        WHERE {metric_where}
+          {filter_where}
+          AND {entity_predicate}
+        GROUP BY {dim_group}
+        ORDER BY {dim_order}
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+    );
+    let sql = transformed_single(def, inner);
+    CompiledQuery { sql, params }
+}
+
+fn compile_capped_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: &ResolvedGroupLimit,
+) -> CompiledQuery {
+    let mut params = metric_where_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_predicate = selected_entity_predicate(req, &mut params);
+    let raw_dimensions = dimensions.iter().enumerate().fold(
+        String::new(),
+        |mut raw_dimensions, (index, dimension)| {
+            let _ = write!(
+                raw_dimensions,
+                ", {} AS raw_dim_{index}",
+                dimension_value_expr(dimension)
+            );
+            raw_dimensions
+        },
+    );
+    let rank_expr = capped_rank_expr(group_limit, dimensions.len(), &mut params);
+    params.extend(grouped_value_params(def));
+    let dimension_select = capped_dimension_select(group_limit, dimensions, &mut params);
+    let observation_table = observation_table(def.observation_source());
+    let value_expr = grouped_value_expr(def);
+    let value = transformed(def, "value".to_owned());
+    let remainder_filter = if group_limit.include_remainder {
+        ""
+    } else {
+        "WHERE group_rank > 0"
+    };
+    let limit = query_row_limit();
+    let sql = format!(
+        r"
+        WITH scoped AS (
+            SELECT
+                *
+                {raw_dimensions}
+            FROM {observation_table}
+            WHERE {metric_where}
+              {filter_where}
+              AND {entity_predicate}
+        ),
+        ranked AS (
+            SELECT
+                *,
+                {rank_expr} AS group_rank
+            FROM scoped
+        ),
+        filtered AS (
+            SELECT *
+            FROM ranked
+            {remainder_filter}
+        ),
+        aggregated AS (
+            SELECT
+                group_rank,
+                {value_expr} AS value,
+                uniqExact(entity_id) AS contributing_entity_count
+            FROM filtered
+            GROUP BY group_rank
+        )
+        SELECT
+            group_rank{dimension_select},
+            {value} AS value,
+            contributing_entity_count,
+            if(group_rank = 0, CAST(NULL AS Nullable(UInt32)), toNullable(group_rank)) AS rank,
+            toUInt8(group_rank = 0) AS remainder,
+            if(group_rank = 0, toNullable('Other'), CAST(NULL AS Nullable(String))) AS group_label
+        FROM aggregated
+        ORDER BY group_rank = 0, group_rank
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+    );
+    CompiledQuery { sql, params }
+}
+
 // The per-group aggregate for single-metric queries (timeseries/breakdown),
 // scoped by metric_where so no source/measure predicates repeat here. The
 // ratio arm keeps its two SELECT placeholders, which metric_params leads
@@ -416,9 +558,20 @@ pub(crate) fn compile_breakdown_query(
 fn grouped_value_expr(def: &MetricDefinition) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
-        ComputationSpec::Ratio { scale, .. } => format!(
-            "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
-        ),
+        ComputationSpec::Ratio {
+            scale,
+            denominator_aggregation,
+            ..
+        } => {
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "measure_key = ? AND value IS NOT NULL",
+                "measure_key = ? AND subject_key IS NOT NULL",
+            );
+            format!(
+                "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
+            )
+        }
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
@@ -766,20 +919,26 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             numerator,
             denominator,
             scale,
+            denominator_aggregation,
         } => {
             // Ratio inputs share one source (enforced at definition load:
             // "ratio inputs must share one source"), so the numerator's
             // source_key scopes both halves. The numerator is OrNull: a tool
             // that reports the denominator but never the numerator measure
             // must read NULL (unknown split), not a fabricated 0. The
-            // denominator needs no OrNull — no rows sum to 0 and nullIf
-            // already turns that into NULL.
+            // denominator needs no OrNull — both supported aggregations yield
+            // 0 for no rows and nullIf already turns that into NULL.
             params.push(numerator.source_key.clone());
             params.push(numerator.measure_key.clone());
             params.push(numerator.source_key.clone());
             params.push(denominator.measure_key.clone());
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "source_key = ? AND measure_key = ? AND value IS NOT NULL",
+                "source_key = ? AND measure_key = ? AND subject_key IS NOT NULL",
+            );
             format!(
-                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL), 0)"
+                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
             )
         }
         ComputationSpec::Median { value } => {
@@ -821,6 +980,19 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             // OrNull is preserved through the cast (NULL stays NULL).
             "toFloat64(uniqExactIfOrNull(subject_key, source_key = ? AND measure_key = ? AND subject_key IS NOT NULL))"
                 .to_owned()
+        }
+    }
+}
+
+fn ratio_denominator_expr(
+    aggregation: RatioDenominatorAggregation,
+    sum_condition: &str,
+    distinct_condition: &str,
+) -> String {
+    match aggregation {
+        RatioDenominatorAggregation::Sum => format!("sumIf(value, {sum_condition})"),
+        RatioDenominatorAggregation::DistinctCount => {
+            format!("uniqExactIf(subject_key, {distinct_condition})")
         }
     }
 }
@@ -1260,8 +1432,32 @@ mod tests {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
+    }
+
+    #[test]
+    fn ratio_can_count_distinct_denominator_subjects() {
+        let mut metric = ratio_metric();
+        let ComputationSpec::Ratio {
+            denominator_aggregation,
+            ..
+        } = &mut metric.spec
+        else {
+            panic!("fixture must be ratio");
+        };
+        *denominator_aggregation = RatioDenominatorAggregation::DistinctCount;
+
+        let query = compile_timeseries_query(&metric, &request(), Bucket::Week, &[], &[], None);
+
+        assert!(
+            query
+                .sql
+                .contains("uniqExactIf(subject_key, measure_key = ? AND subject_key IS NOT NULL)")
+        );
+        assert_eq!(query.params[0], "accepted_edit_actions");
+        assert_eq!(query.params[1], "tool_use_offered");
     }
 
     const TEST_TENANT: uuid::Uuid = uuid::Uuid::from_u128(0x1967);
@@ -1595,6 +1791,45 @@ mod tests {
         assert_eq!(query.sql.matches("nullIf(sumIf(value").count(), 1);
         assert_eq!(query.sql.matches("aggregated AS").count(), 1);
         assert!(query.sql.contains("WHERE group_rank > 0"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn rollup_aggregates_values_and_entity_counts_without_entity_grain() {
+        for def in [sum_metric(), ratio_metric(), median_metric()] {
+            let query = compile_rollup_query(&def, &request(), &["tool".to_owned()], &[], None);
+
+            assert!(
+                query
+                    .sql
+                    .contains("uniqExact(entity_id) AS contributing_entity_count")
+            );
+            assert!(query.sql.contains("GROUP BY dim_0_value"));
+            assert!(!query.sql.contains("GROUP BY entity_id"));
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+    }
+
+    #[test]
+    fn capped_rollup_recomputes_values_and_entity_counts_for_remainder() {
+        let query = compile_rollup_query(
+            &ratio_metric(),
+            &request(),
+            &["tool".to_owned()],
+            &[],
+            Some(&resolved_limit(true)),
+        );
+
+        assert!(query.sql.contains("AS group_rank"));
+        assert!(query.sql.contains("GROUP BY group_rank"));
+        assert!(
+            query
+                .sql
+                .contains("uniqExact(entity_id) AS contributing_entity_count")
+        );
+        assert!(query.sql.contains("toNullable('Other')"));
+        assert!(query.sql.contains("ORDER BY group_rank = 0, group_rank"));
+        assert_eq!(query.sql.matches("sumIfOrNull(value").count(), 1);
         assert_eq!(query.sql.matches('?').count(), query.params.len());
     }
 

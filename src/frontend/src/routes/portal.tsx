@@ -5,7 +5,7 @@ import {
   PORTAL_SEARCH_KEYS,
   validatePortalSearch,
 } from "@/lib/portal/portal-search";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 
 /**
  * The portal's org zones (Overview / Directions / AI & Cost / Manage).
@@ -27,10 +27,9 @@ export const Route = createFileRoute("/portal")({
 });
 
 function PortalRoute() {
-  // The root shell swaps in PortalLayout for this route while the portal is
-  // on, so this component only mounts with it OFF — a pasted /portal URL, or a
-  // viewer who opted out while standing here. Either way the portal must not
-  // render: send them to the app they do have.
-  if (!usePortalEnabled()) return <Navigate to="/" replace />;
+  // The root shell swaps in PortalLayout for this route, so this component
+  // only mounts under the legacy-shell hatch — a pasted /portal URL from a
+  // document told to render the other shell. Send it the app it does have.
+  if (readLegacyShell()) return <Navigate to="/" replace />;
   return <PortalLayout />;
 }

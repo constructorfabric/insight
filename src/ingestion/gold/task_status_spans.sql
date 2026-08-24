@@ -48,29 +48,37 @@ SELECT
     st.status_category                                                       AS status_category,
     iv.duration_seconds                                                      AS duration_seconds
 FROM (
+    -- INVARIANT: the arrayJoin stays alone in its own SELECT list. Reading its
+    -- elements beside it re-evaluates it per reference and squares the rows.
     SELECT
-        e.insight_source_id                                                  AS insight_source_id,
-        e.issue_id                                                           AS issue_id,
-        arrayJoin(arrayMap(
-            i -> (
-                (e.evs[i]).1,
-                if(i = length(e.evs),
-                   if(s.status_category = 'done',
-                      ifNull(s.final_close_at, (e.evs[i]).1),
-                      now()),
-                   (e.evs[i + 1]).1),
-                (e.evs[i]).2
-            ),
-            range(1, length(e.evs) + 1)
-        ))                                                                   AS row,
-        row.1                                                                AS interval_start,
-        row.2                                                                AS interval_end,
-        row.3                                                                AS status_id,
-        toFloat64(greatest(toInt64(0), dateDiff('second', row.1, row.2)))    AS duration_seconds,
-        s.created_at                                                         AS issue_created_at
-    FROM status_events AS e
-    INNER JOIN {{ ref('task_issue_state') }} AS s
-        ON s.insight_source_id = e.insight_source_id AND s.issue_id = e.issue_id
+        insight_source_id                                                    AS insight_source_id,
+        issue_id                                                             AS issue_id,
+        span.1                                                               AS interval_start,
+        span.2                                                               AS interval_end,
+        span.3                                                               AS status_id,
+        toFloat64(greatest(toInt64(0), dateDiff('second', span.1, span.2)))  AS duration_seconds,
+        issue_created_at                                                     AS issue_created_at
+    FROM (
+        SELECT
+            e.insight_source_id                                              AS insight_source_id,
+            e.issue_id                                                       AS issue_id,
+            s.created_at                                                     AS issue_created_at,
+            arrayJoin(arrayMap(
+                i -> (
+                    (e.evs[i]).1,
+                    if(i = length(e.evs),
+                       if(s.status_category = 'done',
+                          ifNull(s.final_close_at, (e.evs[i]).1),
+                          now()),
+                       (e.evs[i + 1]).1),
+                    (e.evs[i]).2
+                ),
+                range(1, length(e.evs) + 1)
+            ))                                                               AS span
+        FROM status_events AS e
+        INNER JOIN {{ ref('task_issue_state') }} AS s
+            ON s.insight_source_id = e.insight_source_id AND s.issue_id = e.issue_id
+    ) AS spans
 ) AS iv
 LEFT JOIN {{ ref('class_task_statuses') }} AS st FINAL
     ON st.insight_source_id = iv.insight_source_id AND st.status_id = iv.status_id

@@ -10,7 +10,7 @@ use crate::domain::metric_definitions::MetricDefinition;
 use super::compiler::{
     CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query,
     compile_group_ranking_query, compile_histogram_query, compile_peer_batch_query,
-    compile_period_batch_query, compile_timeseries_query,
+    compile_period_batch_query, compile_rollup_query, compile_timeseries_query,
 };
 use super::validation::{
     ValidatedDimensionFilter, ValidatedGroupLimit, ValidatedMetricRequest,
@@ -38,6 +38,9 @@ pub enum UnbatchedView {
         dimensions: Vec<String>,
     },
     Breakdown {
+        dimensions: Vec<String>,
+    },
+    Rollup {
         dimensions: Vec<String>,
     },
     // Histogram bins one entity's own per-event values; it never batches with
@@ -101,11 +104,15 @@ pub fn plan_rankings(req: &ValidatedMetricResultsRequest) -> Vec<PlannedRanking>
     let mut policies = BTreeMap::new();
     for metric in &req.metrics {
         for view in &metric.views {
-            let ValidatedMetricView::Timeseries {
+            let (ValidatedMetricView::Timeseries {
                 dimensions,
                 group_limit: Some(limit),
                 ..
-            } = view
+            }
+            | ValidatedMetricView::Rollup {
+                dimensions,
+                group_limit: Some(limit),
+            }) = view
             else {
                 continue;
             };
@@ -194,6 +201,15 @@ pub fn plan_queries(
                         ),
                     });
                 }
+                ValidatedMetricView::Rollup { .. } => {
+                    singles.push(plan_rollup(
+                        req,
+                        rankings,
+                        metric,
+                        (metric_index, view_index),
+                        view,
+                    )?);
+                }
                 ValidatedMetricView::Histogram => {
                     singles.push(PlannedQuery::Single {
                         metric_index,
@@ -220,6 +236,40 @@ pub fn plan_queries(
     }
     planned.extend(singles);
     Ok(planned)
+}
+
+fn plan_rollup(
+    req: &ValidatedMetricResultsRequest,
+    rankings: &BTreeMap<RankingPolicyKey, Vec<RankedGroup>>,
+    metric: &ValidatedMetricRequest,
+    indexes: (usize, usize),
+    view: &ValidatedMetricView,
+) -> Result<PlannedQuery, CanonicalError> {
+    let ValidatedMetricView::Rollup {
+        dimensions,
+        group_limit,
+    } = view
+    else {
+        unreachable!("plan_rollup requires a rollup view")
+    };
+    let resolved =
+        resolve_group_limit(group_limit.as_ref(), dimensions, &metric.filters, rankings)?;
+
+    Ok(PlannedQuery::Single {
+        metric_index: indexes.0,
+        view_index: indexes.1,
+        def: Box::new(metric.def.clone()),
+        view: UnbatchedView::Rollup {
+            dimensions: dimensions.clone(),
+        },
+        query: compile_rollup_query(
+            &metric.def,
+            req,
+            dimensions,
+            &metric.filters,
+            resolved.as_ref(),
+        ),
+    })
 }
 
 fn plan_timeseries(
@@ -584,6 +634,32 @@ mod tests {
                     .iter()
                     .any(|value| value == "00000000-0000-0000-0000-000000000001")
         }));
+    }
+
+    #[test]
+    fn rollup_and_timeseries_share_identical_ranking_policy() {
+        let rank_by = def("m_rank", Some("org_unit"));
+        let limit = || ValidatedGroupLimit {
+            count: 10,
+            rank_by: Box::new(rank_by.clone()),
+            include_remainder: true,
+        };
+        let req = request(vec![views(
+            vec![
+                ValidatedMetricView::Timeseries {
+                    bucket: Bucket::Week,
+                    dimensions: vec!["tool".to_owned()],
+                    group_limit: Some(limit()),
+                },
+                ValidatedMetricView::Rollup {
+                    dimensions: vec!["tool".to_owned()],
+                    group_limit: Some(limit()),
+                },
+            ],
+            "m_a",
+        )]);
+
+        assert_eq!(plan_rankings(&req).len(), 1);
     }
 
     fn items(count: usize) -> Vec<BatchItem> {

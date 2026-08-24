@@ -10,6 +10,11 @@ cf6ede857587d567  Gitlab             .github/workflows/ghcr-cleanup.yml  # GHCR 
 bd0c5f545b463920  Gitlab             docs/components/deployment/gitops/SPEC.md  # code identifier / constant name
 bd093b6d7b23051a  Gitlab             docs/components/deployment/specs/PRD.md  # code identifier / constant name
 f805794a8092a445  Gitlab             docs/connectors/gitlab.md  # code identifier / constant name
+68ac8b9bf3049a2b  Gitlab             src/ingestion/connectors/git/bitbucket-cloud/dbt/bitbucket_cloud__commits.sql  # bronze column name is_in_default_branch, not a token
+a0cb61bc8b698803  Gitlab             src/ingestion/connectors/git/bitbucket-cloud/descriptor.yaml  # bronze column name is_in_default_branch, not a token
+386dc4480c56ba22  Gitlab             src/ingestion/connectors/git/github/dbt/github__commits.sql  # bronze column name is_in_default_branch, not a token
+900162680ea34d4f  Gitlab             src/ingestion/connectors/git/github/descriptor.yaml  # bronze column name is_in_default_branch, not a token
+65b16a9d3ed875d7  Gitlab             src/ingestion/tests/e2e/metrics/schemas/bronze_github.commits.yaml  # bronze column name is_in_default_branch, not a token
 9a6a2ad8f26d96a0  Gitlab             src/ingestion/connectors/git/gitlab-nocode/descriptor.yaml  # connector name, not a token
 4ccd2051f51a85a9  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__commits.sql  # code identifier / constant name
 c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__file_changes.sql  # code identifier / constant name

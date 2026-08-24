@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.22.11.13-0c7f35c" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.24.08.24-fe87f44" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.22.11.13-0c7f35c" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.24.08.24-fe87f44" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -485,6 +485,24 @@ analytics:
     limits: {cpu: 500m, memory: 512Mi}
   metricCatalog:
     tenantMetricsEnabled: false
+  # Explaining a metric with an LLM. Off everywhere until an operator turns it
+  # on, and turning it on without `tokenEncryptionKey` stops the service at
+  # boot rather than accepting keys it cannot seal.
+  aiAssist:
+    enabled: false
+    # Base64 of 32 random bytes: `openssl rand -base64 32`. Seals the Anthropic
+    # keys people store. Rotating it makes every stored key unreadable, and
+    # each person has to paste theirs again.
+    tokenEncryptionKey: ""
+    # One Anthropic key for the whole stand. Set it and nobody stores their
+    # own: every explanation is paid for by this key, and the SPA offers no
+    # place to paste a personal one.
+    apiKey: ""
+    # Restrict asking for an explanation to admins. On by default, because
+    # the common setup is a stand key and then every call spends the
+    # deployment's own money. Off for a stand where people bring their own.
+    adminOnly: true
+    model: "claude-sonnet-5"
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
@@ -663,6 +681,11 @@ frontend:
     #   - "zone:directions/dir:sales"               (a whole direction)
     #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
     #   - "zone:person/section:git_output"          (a Person-zone section)
+    #   - "metric:tasks.resolution_time"            (one metric, everywhere)
+    #   - "metric:ai.*"                             (a whole metric family)
+    # A metric path is not a menu entry: it gates the key itself, so the metric
+    # reaches no tile, attention row, heatmap column, drilldown block or report
+    # column, and no request asks for it.
     # Unknown paths are ignored (the browser console warns). Presentation
     # only — the API authorizes independently of what the menu shows.
     hide: []

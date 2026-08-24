@@ -121,11 +121,19 @@ fn to_row(
         return Err(violation("message", "message must not be empty"));
     }
 
+    let budget = feedback_schema::max_message();
+    if message.chars().count() > budget {
+        return Err(violation(
+            "message",
+            &format!("message must be at most {budget} characters"),
+        ));
+    }
+
     Ok(feedback::ActiveModel {
         id: Set(Uuid::now_v7()),
         insight_tenant_id: Set(tenant_id),
         person_id: Set(person_id),
-        message: Set(clip(message, feedback_schema::max_message())),
+        message: Set(message.to_owned()),
         path: Set(clip(&req.path, feedback_schema::max_path())),
         created_at: Set(now),
     })

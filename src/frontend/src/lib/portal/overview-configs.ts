@@ -57,7 +57,11 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     title: "Overview · Trend",
     tagline: "org totals over time",
     sections: [
-      { kind: "trend", metrics: ["git.commits", "git.prs_merged", "collab.messages_sent"] },
+      {
+        kind: "trend",
+        metrics: ["git.prs_merged", "git.code_lines"],
+        activeContributorsFor: "git.prs_merged",
+      },
     ],
   },
   attention: {

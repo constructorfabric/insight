@@ -237,6 +237,7 @@ pub enum ComputationSpec {
         numerator: MetricInput,
         denominator: MetricInput,
         scale: f64,
+        denominator_aggregation: RatioDenominatorAggregation,
     },
     /// Exact middle of per-event observation values. Median measures emit
     /// one row per source event (multiple rows per entity/day are the
@@ -264,6 +265,31 @@ pub enum ComputationSpec {
     DistinctCount {
         value: MetricInput,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RatioDenominatorAggregation {
+    #[default]
+    Sum,
+    DistinctCount,
+}
+
+impl RatioDenominatorAggregation {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::DistinctCount => "distinct_count",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sum" => Some(Self::Sum),
+            "distinct_count" => Some(Self::DistinctCount),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

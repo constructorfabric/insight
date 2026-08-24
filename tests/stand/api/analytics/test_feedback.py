@@ -1,6 +1,7 @@
 """The `/v1/feedback` pair on analytics — product feedback in and back out.
 
-    POST /v1/feedback   204 · any signed-in caller · 400 empty message
+    POST /v1/feedback   204 · any signed-in caller · 400 empty or over-long
+                        message
     GET  /v1/feedback   200 for the admin operator · 400 malformed day ·
                         403 for everybody else
 
@@ -37,6 +38,9 @@ FEEDBACK = analytics_path("/v1/feedback")
 #: The screen the sender was on, in the shape the SPA sends: the person the page
 #: is about is already reduced to `:id` before it leaves the browser.
 SENT_FROM = "/ic/:id/personal"
+
+#: The service's own budget for one submission, from the feedback migration.
+MESSAGE_BUDGET = 4000
 
 
 def _message() -> str:
@@ -109,6 +113,23 @@ def test_an_empty_message_is_refused_rather_than_stored(api: ApiClient) -> None:
     response = api.post(FEEDBACK, json_body={"message": "   ", "path": SENT_FROM})
     assert response.status_code == 400, (
         f"a blank message answered {response.status_code}: {response.text[:300]}"
+    )
+    assert response.parse(ProblemDocument).status == 400
+
+
+@pytest.mark.reliability
+def test_a_message_past_the_budget_is_refused_rather_than_stored_in_part(
+    api: ApiClient,
+) -> None:
+    """Answering 204 to a message the service shortened tells the sender it
+    arrived whole, and nothing deletes a submission to send it again.
+    """
+    response = api.post(
+        FEEDBACK,
+        json_body={"message": "x" * (MESSAGE_BUDGET + 1), "path": SENT_FROM},
+    )
+    assert response.status_code == 400, (
+        f"an over-long message answered {response.status_code}: {response.text[:300]}"
     )
     assert response.parse(ProblemDocument).status == 400
 

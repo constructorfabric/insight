@@ -18,6 +18,7 @@ _VIEW_ITEMS = {
     "peer": "values",
     "timeseries": "series",
     "breakdown": "values",
+    "rollup": "values",
     "histogram": "values",
 }
 _REQUIRED_VIEW_FIELDS = {
@@ -25,6 +26,7 @@ _REQUIRED_VIEW_FIELDS = {
     "peer": {"target_value", "p25", "median", "p75", "min", "max", "n"},
     "timeseries": {"points"},
     "breakdown": {"value"},
+    "rollup": {"value", "contributing_entity_count"},
     "histogram": {"bins"},
 }
 

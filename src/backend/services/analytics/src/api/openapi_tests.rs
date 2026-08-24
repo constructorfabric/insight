@@ -27,6 +27,12 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("paths object missing"))?;
     for expected in [
+        "/v1/ai/config",
+        "/v1/ai/context",
+        "/v1/ai/context/{id}",
+        "/v1/ai/credentials",
+        "/v1/ai/explain",
+        "/v1/ai/settings",
         "/v1/feedback",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
@@ -47,7 +53,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        15,
+        21,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );

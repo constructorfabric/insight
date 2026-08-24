@@ -7,6 +7,13 @@ import type {
   MetricTimeseriesTableConfig,
 } from "@/lib/metrics/timeseries-table";
 import type { MetricTimeseriesChartConfig } from "@/lib/metrics/timeseries-chart";
+import {
+  gatesAnyMetric,
+  metricVisible,
+  navPolicy,
+  visiblePersonSections,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
 
 /**
  * Dashboard composition registry: named groups of metrics and the KPI row.
@@ -184,11 +191,23 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
     },
     {
       key: "git.prs_merged",
-      views: [{ view: "period" }, { view: "peer" }],
+      // `branch_scope` splits landed work from work still in flight. Two
+      // groups, so the summary card's ribbon always lights up — and one
+      // breakdown per card, because a second dimension cross-tabs into
+      // "GitHub · Default branch" instead of giving the plain pair.
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
     },
     {
       key: "git.lines_added",
-      views: [{ view: "period" }, { view: "peer" }],
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
     },
     {
       key: "git.pr_cycle_time_h",
@@ -202,8 +221,22 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       key: "git.commit_size",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
-    { key: "git.code_lines", views: [{ view: "period" }, { view: "peer" }] },
-    { key: "git.prs_created", views: [{ view: "period" }, { view: "peer" }] },
+    {
+      key: "git.code_lines",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
+    {
+      key: "git.prs_created",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
     { key: "git.merge_rate", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "git.commits_per_active_day",
@@ -427,6 +460,30 @@ export const GROUPS: readonly MetricGroup[] = [
         },
       },
       {
+        // Landed work against work still in flight. Two groups only, so no
+        // limits: `branch_scope` is a partition, not a long tail. Last of the
+        // timeseries blocks because groups.test.ts indexes them positionally.
+        id: "output-by-branch-scope",
+        view: "timeseries",
+        metrics: [
+          "git.commits",
+          "git.prs_merged",
+          "git.lines_added",
+          "git.lines_removed",
+        ],
+        defaultPresentation: "table",
+        table: {
+          columns: [
+            { metric: "git.commits" },
+            { metric: "git.prs_merged", labelSource: "short" },
+            GIT_LINES_TABLE_COLUMN,
+          ],
+        },
+        groupBy: {
+          default: "branch_scope",
+        },
+      },
+      {
         chart: "histogram",
         view: "histogram",
         metrics: ["git.pr_cycle_time_h"],
@@ -594,4 +651,44 @@ export function groupIdForMetricKey(metricKey: string): GroupId | null {
     if (def.collection.metrics.some((m) => m.key === metricKey)) return def.id;
   }
   return null;
+}
+
+/**
+ * The groups this install shows, with the metrics it gates removed.
+ *
+ * Two gates, both from the per-install nav policy: a group whose Person-zone
+ * section the install hides or marks planned is not part of what this
+ * deployment measures, and neither is a group left with no visible metric of
+ * its own. Both matter beyond the menu — the coverage screen counts sections to
+ * say how much of a person's work the product can see, and counting a section
+ * this install does not show would report our own backlog as a gap in their
+ * data.
+ */
+export function visibleGroups(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): readonly MetricGroup[] {
+  if (!gatesAnyMetric(policy) && policy.hide.personSections.size === 0 &&
+      policy.planned.personSections.size === 0) {
+    return GROUPS;
+  }
+
+  const kept: MetricGroup[] = [];
+  for (const group of visiblePersonSections(GROUPS, showPlanned, policy)) {
+    const metrics = group.collection.metrics.filter((m) =>
+      metricVisible(m.key, showPlanned, policy)
+    );
+    if (!metrics.length) continue;
+    const keep = (key: string) => metricVisible(key, showPlanned, policy);
+    kept.push({
+      ...group,
+      collection: { ...group.collection, metrics },
+      card: { preview: group.card.preview.filter(keep) },
+      drilldown: group.drilldown.flatMap((block) => {
+        const blockMetrics = block.metrics.filter(keep);
+        return blockMetrics.length ? [{ ...block, metrics: blockMetrics }] : [];
+      }),
+    });
+  }
+  return kept;
 }

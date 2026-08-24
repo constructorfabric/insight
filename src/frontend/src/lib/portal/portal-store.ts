@@ -1,13 +1,18 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Portal PREFERENCES (`insight.portal` — ON unless the reader opts out).
+ * Portal PREFERENCES.
  *
- * `enabled` and `showPlanned` persist to localStorage (mirroring the metrics-v2
- * flag pattern in feature-flags.ts). Nothing else lives here: every piece of
- * navigation state — zone, item, scope, slice, period — rides in the URL
+ * `showPlanned` persists to localStorage (mirroring the metrics-v2 flag pattern
+ * in feature-flags.ts). Nothing else lives here: every piece of navigation
+ * state — zone, item, scope, slice, period — rides in the URL
  * (`portal-search.ts`, `portal-nav.ts`), because it describes the view rather
  * than the reader.
+ *
+ * The portal itself is no longer among them. It is the interface, not a choice,
+ * so the key that used to carry the opt-out is DELETED on load rather than read
+ * — a reader who once turned it off lands where everybody else does instead of
+ * being held on screens nothing writes to any more.
  */
 
 /**
@@ -22,18 +27,13 @@ export interface OrgScope {
   attrFilter?: { key: string; value: string };
 }
 
-const ENABLED_KEY = "insight.portal";
+/** Retired: read by nothing, removed wherever it is still stored. */
+const RETIRED_ENABLED_KEY = "insight.portal";
 const SHOW_PLANNED_KEY = "insight.portal.showPlanned";
 
 interface PortalState {
-  enabled: boolean;
   /** Whether navigation shows entries we have not built yet (`unbuilt` in the nav model). */
   showPlanned: boolean;
-}
-
-/** Router-safe read: `beforeLoad` runs outside React, so it cannot use a hook. */
-export function readPortalEnabled(): boolean {
-  return readBoolPref(ENABLED_KEY);
 }
 
 /**
@@ -51,17 +51,49 @@ function readKey(key: string): string | null {
   }
 }
 
-/** Absent key = ON; the portal is opt-OUT, so only "false" turns it off. */
-function readBoolPref(key: string): boolean {
-  return readKey(key) !== "false";
-}
-
 function readOptInPref(key: string): boolean {
   return readKey(key) === "true";
 }
 
+/**
+ * Drops the retired opt-out, once, at load. Writing nothing when it is already
+ * absent keeps this off the storage-quota path for every reader who never had
+ * it.
+ */
+function forgetRetiredPreference(): void {
+  if (typeof window === "undefined") return;
+  if (readKey(RETIRED_ENABLED_KEY) === null) return;
+  try {
+    window.localStorage.removeItem(RETIRED_ENABLED_KEY);
+  } catch {
+    // localStorage unavailable — nothing reads the key either way.
+  }
+}
+
+forgetRetiredPreference();
+
+/**
+ * Test-only door back to the screens the portal replaced.
+ *
+ * NOT a preference: nothing in the product writes it, no surface offers it,
+ * and `insight.portal` — the key that used to — is deleted above. It exists
+ * because the deployed-stand UI journeys are written against the legacy shell
+ * (`tests/stand/ui/conftest.py` sets this before any app code runs); migrating
+ * them is its own piece of work, and this is what keeps them running until
+ * then. It goes when they do.
+ *
+ * Read ONCE, at load: the suite's init script precedes the first read and
+ * nothing changes it afterwards, so there is nothing to subscribe to.
+ */
+const LEGACY_SHELL_KEY = "insight.legacyShell";
+const legacyShell = readKey(LEGACY_SHELL_KEY) === "true";
+
+/** Whether this document was told to render the pre-portal shell. */
+export function readLegacyShell(): boolean {
+  return legacyShell;
+}
+
 let state: PortalState = {
-  enabled: readBoolPref(ENABLED_KEY),
   showPlanned: readOptInPref(SHOW_PLANNED_KEY),
 };
 
@@ -87,27 +119,11 @@ function persist(key: string, value: string): void {
   }
 }
 
-/** Turn the portal on or off for this reader. */
-export function setPortalEnabled(enabled: boolean): void {
-  state = { ...state, enabled };
-  persist(ENABLED_KEY, enabled ? "true" : "false");
-  emit();
-}
-
 /** Show or hide the not-yet-built sections for this reader. */
 export function setPortalShowPlanned(show: boolean): void {
   state = { ...state, showPlanned: show };
   persist(SHOW_PLANNED_KEY, show ? "true" : "false");
   emit();
-}
-
-/** Whether this reader has the portal on. */
-export function usePortalEnabled(): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => state.enabled,
-    readPortalEnabled,
-  );
 }
 
 /** Whether this reader wants planned sections listed. */

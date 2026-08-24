@@ -1,3 +1,5 @@
+import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
+import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
@@ -6,7 +8,11 @@ import { AttentionList } from "@/components/portal/attention-list";
 import { personDisplayName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
-import { SectionTrend } from "@/components/portal/section-trend";
+import {
+  SectionTrend,
+  type SectionTrendPoint,
+  type SectionTrendSeries,
+} from "@/components/portal/section-trend";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Tooltip,
@@ -30,7 +36,7 @@ import {
   attentionSummary,
   computeAttentionFlags,
 } from "@/lib/insight/attention-flags";
-import { GROUPS } from "@/lib/insight/groups";
+import { GROUPS, visibleGroups } from "@/lib/insight/groups";
 import type { PersonCoverage } from "@/lib/insight/coverage";
 import { useScopeCoverage } from "@/lib/portal/use-scope-coverage";
 import { useVisibilityPolicy } from "@/queries/identity-me";
@@ -52,29 +58,51 @@ import type {
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { githubRepoUrl } from "@/lib/metrics/provider-links";
+import {
+  personsEvidenceSelection,
+  type MetricEvidenceSelection,
+} from "@/api/metric-drilldown-client";
+import {
+  useMetricEvidenceOptional,
+  type EvidencePeopleView,
+} from "@/components/metric-evidence-context";
+import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
+  bandAtClick,
   distribution,
+  entityValues,
   familyObserved,
   fmtCompact,
   medianAcross,
   perCapita,
   representative,
-  topDecileShare,
+  topDecile,
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
+  overviewCardDirections,
   sectionMetricKeys,
+  visibleSections,
   type ConcentrationFraming,
   type LensConfig,
   type SectionSpec,
 } from "@/lib/portal/lens-configs";
-import { DIRECTIONS } from "@/lib/portal/nav-model";
-import { buildTrendData, pickTrendBucket } from "@/lib/portal/trend-data";
+import {
+  buildActiveContributorData,
+  buildTrendData,
+  pickTrendBucket,
+} from "@/lib/portal/trend-data";
+import { bucketBreakdown } from "@/lib/portal/trend-drilldown";
+import {
+  TrendDrilldownDialog,
+  type TrendDrilldownState,
+} from "@/components/portal/trend-drilldown-dialog";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { useMetricCollection } from "@/queries/metric-results";
@@ -92,7 +120,7 @@ const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
  * (rule 6), and no individual is ever named (rule 10).
  */
 export function DomainLensView({
-  config,
+  config: declared,
   gridKeys: gridKeysProp,
 }: {
   config: LensConfig;
@@ -108,6 +136,17 @@ export function DomainLensView({
   gridKeys?: readonly string[];
 }) {
   const { period, dateRange } = usePortalPeriod();
+
+  const [drilldown, setDrilldown] = useState<TrendDrilldownState | null>(null);
+  // What this install shows, not what the registry declares: a gated metric
+  // takes its tile with it, and a section left with none of its own is gone
+  // rather than drawn empty (`visibleSections`).
+  const showPlanned = usePortalShowPlanned();
+  const config = useMemo(
+    () => visibleSections(declared, showPlanned),
+    [declared, showPlanned]
+  );
+
 
   const orgScope = useOrgScope();
   const { isFlat } = useVisibilityPolicy();
@@ -126,6 +165,16 @@ export function DomainLensView({
   );
   const memberIds = useMemo(
     () => members.map((m) => normalizePersonId(m.person_id)),
+    [members]
+  );
+  // Metric rows are keyed by the normalized id; the display name rides along
+  // so a drilldown row can say whose work it was.
+  const scopedMembers = useMemo(
+    () =>
+      members.map((m) => ({
+        person_id: normalizePersonId(m.person_id),
+        name: m.name,
+      })),
     [members]
   );
 
@@ -329,14 +378,52 @@ export function DomainLensView({
     );
   }
 
+  // The affordance sits with the page title, not on the chart: it explains the
+  // view, and a chart that grows a second card would carry two of them.
+  const trendSpec = config.sections.find(
+    (section): section is Extract<SectionSpec, { kind: "trend" }> =>
+      section.kind === "trend"
+  );
+  const charts =
+    trendSpec && trendBucket ? trendCharts(trendSpec, grid, trend, memberIds) : [];
+  const drawable = charts.filter((c) => c.data.length > 1);
+  // The roster the chart sums IS the drilldown's scope, so the two can never
+  // disagree: under a flat policy that roster is the whole organisation, and
+  // under an org chart it is the viewer's own subtree — the permission
+  // boundary identity already enforces.
+  const openTrendDrilldown = (chart: TrendChart) => {
+    setDrilldown({
+      metricKey: chart.derived ? null : chart.drilldownKey,
+      label: chart.title,
+      bucketLabel: trendBucket ?? "period",
+      period: { from: dateRange.from, to: dateRange.to },
+      members: scopedMembers,
+      breakdown: bucketBreakdown(chart.drilldownKey, trend.byKey, scopedMembers),
+    });
+  };
+
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
-        <p className="text-sm text-muted-foreground">
-          {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
-          {config.tagline ?? "trend & balance"}
-        </p>
+      <div className="relative flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
+          <p className="text-sm text-muted-foreground">
+            {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
+            {config.tagline ?? "trend & balance"}
+          </p>
+        </div>
+        {drawable.length > 0 && trendBucket ? (
+          <ExplainWithAi
+            className="static"
+            snapshot={trendSnapshot(drawable, {
+              title: config.title,
+              bucket: trendBucket,
+              since: dateRange.from,
+              until: dateRange.to,
+              people: memberIds.length,
+            })}
+          />
+        ) : null}
       </div>
 
       {config.sections.map((s, i) => (
@@ -356,6 +443,7 @@ export function DomainLensView({
           cohortLabel={cohortLabel}
           nameByEntity={nameByEntity}
           personIdByEntity={personIdByEntity}
+          onOpenChart={openTrendDrilldown}
         />
       ))}
 
@@ -369,6 +457,11 @@ export function DomainLensView({
           sliceLabel={sliceLabel ?? slice}
         />
       ) : null}
+
+      <TrendDrilldownDialog
+        state={drilldown}
+        onClose={() => setDrilldown(null)}
+      />
     </div>
   );
 }
@@ -401,6 +494,7 @@ function Section({
   cohortLabel,
   nameByEntity,
   personIdByEntity,
+  onOpenChart,
 }: {
   spec: SectionSpec;
   grid: GridData;
@@ -416,6 +510,7 @@ function Section({
   personIdByEntity: Map<string, string>;
   cohortOf: (id: string) => string | null;
   cohortLabel: string;
+  onOpenChart: (chart: TrendChart) => void;
 }) {
   switch (spec.kind) {
     case "headline":
@@ -438,11 +533,12 @@ function Section({
     case "trend":
       return trendBucket ? (
         <TrendSection
-          metrics={spec.metrics}
+          spec={spec}
           grid={grid}
           trend={trend}
           bucket={trendBucket}
           memberIds={memberIds}
+          onOpenChart={onOpenChart}
         />
       ) : (
         // Say which of the two dials to turn — a bare "no data" would read as
@@ -451,11 +547,23 @@ function Section({
       );
     case "distribution":
       return (
-        <DistributionSection spec={spec} grid={grid} memberIds={memberIds} />
+        <DistributionSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
       );
     case "concentration":
       return (
-        <ConcentrationSection spec={spec} grid={grid} memberIds={memberIds} />
+        <ConcentrationSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
       );
     case "composition":
       return (
@@ -552,6 +660,7 @@ function CoverageLevelsSection({
   personIdByEntity: Map<string, string>;
 }) {
   const [openLevel, setOpenLevel] = useState<number | null>(null);
+  const showPlanned = usePortalShowPlanned();
   const { distribution, parts, people, thin, isPending, isError } =
     useScopeCoverage(memberIds);
   if (isPending) return <Pending label="Reading coverage…" />;
@@ -567,7 +676,9 @@ function CoverageLevelsSection({
   const counted = distribution.counted;
   if (counted === 0) return null;
 
-  const partCount = GROUPS.length;
+  // The same sections the coverage hook counted, or the denominator would name
+  // sections this install does not show.
+  const partCount = visibleGroups(showPlanned).length;
   const levels = [...distribution.byLevel.entries()].sort(
     (a, b) => b[0] - a[0]
   );
@@ -713,6 +824,8 @@ function CoverageLevelPeople({
   nameByEntity: Map<string, string>;
   personIdByEntity: Map<string, string>;
 }) {
+  // Every title, not just the visible ones: this only resolves ids that are
+  // already in a person's coverage states, which the hook gated on its way in.
   const titleById = new Map(GROUPS.map((g) => [g.id, g.title]));
   const rows = [...people].sort((a, b) =>
     (nameByEntity.get(a.entityId) ?? a.entityId).localeCompare(
@@ -880,6 +993,15 @@ function HeadlineSection({
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
+  // Every drillable card of the row, so the dialog a reader opens on one of
+  // them lists its neighbours — the same set the members grid offers from a
+  // row of cells.
+  const targets = cards.flatMap((c) => {
+    if (!c.r.drilldown) return [];
+    const selection = personsEvidenceSelection(c.r.selection, memberIds);
+    return selection ? [{ selection, label: c.r.label }] : [];
+  });
+
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -887,33 +1009,93 @@ function HeadlineSection({
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
         {cards.map((c) => (
-          <Card key={c.key}>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between gap-2">
-                <MetricName
-                  metric={c.r}
-                  text={c.r.short_label ?? c.r.label}
-                  className="text-xs font-medium text-muted-foreground"
-                />
-                <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
-              </div>
-              <div className={cn("mt-1", TEXT_FIGURE)}>
-                {formatMetricValue(
-                  c.isSum ? perCapita(c.r, memberIds) : c.now,
-                  c.r.format,
-                  c.r.unit
-                )}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {c.isSum
-                  ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
-                  : "median / person"}
-              </div>
-            </CardContent>
-          </Card>
+          <HeadlineCard
+            key={c.key}
+            card={c}
+            targets={targets}
+            memberIds={memberIds}
+          />
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * One headline figure, and the records it was taken over.
+ *
+ * The card opens the evidence dialog for the WHOLE roster rather than for a
+ * person: the number on it is the roster's, and a reader asking what it is
+ * made of is asking about all of them. Nothing here names an individual —
+ * the dialog lists records, and who did what stays inside it.
+ *
+ * A metric whose evidence cannot be read renders as a plain card: an
+ * affordance that opens an empty dialog is worse than none.
+ */
+function HeadlineCard({
+  card,
+  targets,
+  memberIds,
+}: {
+  card: {
+    r: NormalizedMetricResult;
+    now: number;
+    prev: number | null;
+    isSum: boolean;
+  };
+  targets: readonly { selection: MetricEvidenceSelection; label: string }[];
+  memberIds: readonly string[];
+}) {
+  const evidence = useMetricEvidenceOptional();
+  const c = card;
+  const selection = c.r.drilldown
+    ? personsEvidenceSelection(c.r.selection, memberIds)
+    : null;
+  const body = (
+    <CardContent className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        {/* The full label, not the short one: `short_label` exists for a grid
+            column head or a heatmap axis, and it drops the very word that says
+            what was counted — "Issues" for issues CLOSED. A card twelve rem
+            wide has room to say it. */}
+        <MetricName
+          metric={c.r}
+          className="text-xs font-medium text-muted-foreground"
+        />
+        <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
+      </div>
+      <div className={cn("mt-1", TEXT_FIGURE)}>
+        {formatMetricValue(
+          c.isSum ? perCapita(c.r, memberIds) : c.now,
+          c.r.format,
+          c.r.unit
+        )}
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {c.isSum
+          ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
+          : "median / person"}
+      </div>
+    </CardContent>
+  );
+
+  if (!selection || !evidence) return <Card>{body}</Card>;
+
+  return (
+    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() =>
+          evidence.openEvidenceTargets(targets, {
+            activeMetricKey: selection.metric_key,
+          })
+        }
+      >
+        {body}
+      </button>
+    </Card>
   );
 }
 
@@ -975,59 +1157,121 @@ function StatTilesSection({
 
 /* ── trend (rule 8) ──────────────────────────────────────────────────── */
 
+/**
+ * The lines the trend chart draws and their points. Shared with the zone
+ * header, whose explain affordance describes the very same chart.
+ */
+export interface TrendChart {
+  id: string;
+  title: string;
+  description: string;
+  /** The catalog metric this chart drills into. */
+  drilldownKey: string;
+  /** Counted from another metric's rows, so it has no records of its own. */
+  derived?: boolean;
+  series: SectionTrendSeries[];
+  data: SectionTrendPoint[];
+}
+
+/**
+ * One chart per measure, plus the derived contributor count when the spec
+ * asks for it. Shared with the zone header, whose explain affordance describes
+ * every chart on the page.
+ */
+function trendCharts(
+  spec: Extract<SectionSpec, { kind: "trend" }>,
+  grid: GridData,
+  trend: TrendData,
+  memberIds: readonly string[]
+): TrendChart[] {
+  const charts = spec.metrics
+    .map((key): TrendChart | null => {
+      const r = grid.byKey.get(key);
+      if (!r || r.computation !== "sum") return null;
+      const label = r.short_label ?? r.label;
+      return {
+        id: key,
+        title: label,
+        description: "Team total",
+        drilldownKey: key,
+        series: [{ key, label, type: "line" as const }],
+        data: buildTrendData([key], trend.byKey, memberIds),
+      };
+    })
+    .filter((c): c is TrendChart => c != null);
+
+  const activeKey = spec.activeContributorsFor;
+  if (activeKey && grid.byKey.has(activeKey)) {
+    const of = grid.byKey.get(activeKey);
+    charts.push({
+      id: `${activeKey}:active`,
+      title: `Active contributors · ${of?.short_label ?? of?.label ?? activeKey}`,
+      description: "People with at least one",
+      drilldownKey: activeKey,
+      derived: true,
+      series: [{ key: "active", label: "People", type: "line" as const }],
+      data: buildActiveContributorData(activeKey, trend.byKey, memberIds),
+    });
+  }
+
+  return charts;
+}
+
 function TrendSection({
-  metrics,
+  spec,
   grid,
   trend,
   bucket,
   memberIds,
+  onOpenChart,
 }: {
-  metrics: readonly string[];
+  spec: Extract<SectionSpec, { kind: "trend" }>;
   grid: GridData;
   trend: TrendData;
   bucket: MetricBucket;
   memberIds: readonly string[];
+  onOpenChart: (chart: TrendChart) => void;
 }) {
-  const series = metrics
-    .map((key) => {
-      const r = grid.byKey.get(key);
-      if (!r || r.computation !== "sum") return null;
-      return { key, label: r.short_label ?? r.label };
-    })
-    .filter((x): x is NonNullable<typeof x> => x != null)
-    .map((s, i) => ({
-      key: s.key,
-      label: s.label,
-      type: "line" as const,
-      yAxisId: (i === 0 ? "left" : "right") as "left" | "right",
-    }));
-  const data = buildTrendData(
-    series.map((s) => s.key),
-    trend.byKey,
-    memberIds
-  );
+  const charts = trendCharts(spec, grid, trend, memberIds);
 
-  if (series.length === 0) return null;
+  if (charts.length === 0) return null;
   if (trend.isError)
     return (
       <SectionTrend
         title="Activity over time"
-        series={series}
+        series={charts[0]?.series ?? []}
         data={[]}
         isError
         onRetry={trend.refetch}
       />
     );
-  if (data.length < 2) return null;
+
+  const drawable = charts.filter((c) => c.data.length > 1);
+  if (drawable.length === 0) return null;
+
+  // One chart per measure rather than three lines over two axes: a shared
+  // axis makes a count of people and a count of lines look comparable when
+  // they are not, and there is nowhere to click from a legend.
   return (
-    <SectionTrend
-      title="Activity over time"
-      description={`Team totals · per ${bucket}`}
-      series={series}
-      data={data}
-      rightAxis={series.some((s) => s.yAxisId === "right")}
-      isPending={trend.isPending}
-    />
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(34rem,100%),1fr))] gap-4">
+      {drawable.map((chart) => (
+        <button
+          key={chart.id}
+          type="button"
+          className="rounded-xl text-left transition-opacity hover:opacity-90 focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none"
+          onClick={() => onOpenChart(chart)}
+          aria-label={`Open ${chart.title} details`}
+        >
+          <SectionTrend
+            title={chart.title}
+            description={`${chart.description} · per ${bucket}`}
+            series={chart.series}
+            data={chart.data}
+            isPending={trend.isPending}
+          />
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -1039,36 +1283,74 @@ function DistributionSection({
   spec,
   grid,
   memberIds,
+  nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "distribution" }>;
   grid: GridData;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
+  const evidence = useMetricEvidenceOptional();
   const r = grid.byKey.get(spec.metric);
-  const values = r
-    ? memberIds
-        .map((id) => forEntity(r, id).value)
-        .filter((v): v is number => v != null && Number.isFinite(v) && v >= 0)
-    : [];
+  const entries = entityValues(r, memberIds).filter((e) => e.value >= 0);
   const fmt =
     r?.format === "percent"
       ? (n: number) => formatMetricValue(n, "percent", null)
       : fmtCompact;
-  const rows = distribution(values, fmt);
-  if (!rows.length) return null;
+  const rows = distribution(entries, fmt);
+  if (!rows.length || !r) return null;
+
+  // Per band, because a band IS a set of people: the reader pointing at a bar
+  // is asking who those people are, and the values are already here — the
+  // records behind any one of them are a step further in, inside the dialog.
+  const bandsByRange = new Map(
+    evidence
+      ? rows.flatMap((row) =>
+          row.count
+            ? ([
+                [
+                  row.range,
+                  peopleEvidenceView(
+                    r,
+                    row.ids,
+                    `${r.label} · ${row.range} ${spec.unitLabel}`,
+                    { nameByEntity, personIdByEntity }
+                  ),
+                ],
+              ] as const)
+            : []
+        )
+      : []
+  );
+  const openBand = (range: string) => {
+    const view = bandsByRange.get(range);
+    if (view) evidence?.openEvidencePeople(view);
+  };
 
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title} · {values.length} people
+        {spec.title} · {entries.length} people
       </p>
       <Card>
         <CardContent className="p-4">
           <p className="mb-3 text-xs text-muted-foreground">{spec.caption}</p>
-          <ChartContainer config={DIST_CONFIG} className="h-56 w-full">
+          <ChartContainer
+            config={DIST_CONFIG}
+            className={cn("h-56 w-full", bandsByRange.size && "cursor-pointer")}
+          >
             <BarChart
               data={rows}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+              // The whole column, not the drawn bar: a band holding two people
+              // is a rectangle a pixel tall, and those are the bands a reader
+              // most wants to open.
+              onClick={(next) => {
+                const row = bandAtClick(rows, next);
+                if (row) openBand(row.range);
+              }}
             >
               <CartesianGrid
                 vertical={false}
@@ -1111,6 +1393,35 @@ function DistributionSection({
           <p className="mt-1 text-center text-xs text-muted-foreground">
             {spec.unitLabel}
           </p>
+          {/* The bands again, as buttons. Not decoration: the tail bars of a
+              skewed distribution are a pixel tall, and those are the ones a
+              reader wants to open — and a bar is not reachable by keyboard. */}
+          {bandsByRange.size > 0 && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              <p className="text-xs text-muted-foreground">
+                See who is in a band
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {rows
+                  .filter((row) => bandsByRange.has(row.range))
+                  .map((row) => (
+                    <button
+                      key={row.range}
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`${row.range} ${spec.unitLabel} · ${row.count} ${row.count === 1 ? "person" : "people"}`}
+                      onClick={() => openBand(row.range)}
+                      className="cursor-pointer rounded-sm border px-2 py-0.5 text-xs hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    >
+                      <span className="tabular-nums">{row.range}</span>
+                      <span className="ml-1.5 text-muted-foreground tabular-nums">
+                        {row.count}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </section>
@@ -1240,25 +1551,36 @@ function ConcentrationSection({
   spec,
   grid,
   memberIds,
+  nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "concentration" }>;
   grid: GridData;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
   const cards = spec.metrics
     .map((key) => {
       const r = grid.byKey.get(key);
       if (!r) return null;
-      const vals = memberIds
-        .map((id) => forEntity(r, id).value)
-        .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
-      const share = topDecileShare(vals);
-      if (share == null) return null;
+      const contributors = entityValues(r, memberIds).filter(
+        (e) => e.value > 0
+      );
+      const top = topDecile(contributors);
+      if (!top) return null;
+      const subset = `busiest ${top.ids.length} of ${contributors.length}`;
       return {
         key,
         label: r.short_label ?? r.label,
-        share,
-        contributors: vals.length,
+        share: top.share,
+        subset,
+        // The busiest tenth, not the roster: this card's figure is a statement
+        // about those people only.
+        people: peopleEvidenceView(r, top.ids, `${r.label} · ${subset}`, {
+          nameByEntity,
+          personIdByEntity,
+        }),
       };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
@@ -1272,24 +1594,59 @@ function ConcentrationSection({
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3">
         {cards.map((c) => (
-          <Card key={c.key}>
-            <CardContent className="p-4">
-              <div className="text-xs font-medium text-muted-foreground">
-                {c.label}
-              </div>
-              <div className={cn("mt-1", TEXT_FIGURE)}>
-                {Math.round(c.share * 100)}%
-              </div>
-              <div className="text-xs text-muted-foreground">
-                carried by the busiest{" "}
-                {Math.max(1, Math.ceil(c.contributors * 0.1))} of{" "}
-                {c.contributors} · {copy.note}
-              </div>
-            </CardContent>
-          </Card>
+          <ConcentrationCard key={c.key} card={c} note={copy.note} />
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * One concentration figure, and who the busiest tenth actually is.
+ *
+ * The card opens that subset rather than the roster: a list of everyone would
+ * answer a different question from the one the card raises. Names stay inside
+ * the dialog — the card itself still says nothing about any individual.
+ */
+function ConcentrationCard({
+  card,
+  note,
+}: {
+  card: {
+    label: string;
+    share: number;
+    subset: string;
+    people: EvidencePeopleView;
+  };
+  note: string;
+}) {
+  const evidence = useMetricEvidenceOptional();
+  const c = card;
+  const body = (
+    <CardContent className="p-4">
+      <div className="text-xs font-medium text-muted-foreground">{c.label}</div>
+      <div className={cn("mt-1", TEXT_FIGURE)}>
+        {Math.round(c.share * 100)}%
+      </div>
+      <div className="text-xs text-muted-foreground">
+        carried by the {c.subset} · {note}
+      </div>
+    </CardContent>
+  );
+
+  if (!evidence || !c.people.rows.length) return <Card>{body}</Card>;
+
+  return (
+    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() => evidence.openEvidencePeople(c.people)}
+      >
+        {body}
+      </button>
+    </Card>
   );
 }
 
@@ -1452,23 +1809,27 @@ function DirectionCardsSection({
   memberIds: readonly string[];
 }) {
   const { openDirection } = usePortalNavActions();
-  const cards = DIRECTIONS.map((d) => {
-    const entry = lensEntry(d.id, "Overview");
-    if (!entry || "comingSoon" in entry) return null;
-    const headline = entry.sections.find(
-      (s): s is Extract<SectionSpec, { kind: "headline" }> =>
-        s.kind === "headline"
-    );
-    if (!headline) return null;
-    const keys =
-      variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
-    const observed = familyObserved(
-      grid.byKey,
-      sectionMetricKeys(entry),
-      memberIds
-    );
-    return { id: d.id, name: d.name, keys, observed };
-  }).filter((c): c is NonNullable<typeof c> => c != null);
+  const showPlanned = usePortalShowPlanned();
+  const cards = overviewCardDirections(showPlanned)
+    .map((d) => {
+      const entry = lensEntry(d.id, "Overview");
+      if (!entry || "comingSoon" in entry) return null;
+      const gated = visibleSections(entry, showPlanned);
+      const headline = gated.sections.find(
+        (s): s is Extract<SectionSpec, { kind: "headline" }> =>
+          s.kind === "headline"
+      );
+      if (!headline) return null;
+      const keys =
+        variant === "compact" ? headline.metrics.slice(0, 2) : headline.metrics;
+      const observed = familyObserved(
+        grid.byKey,
+        sectionMetricKeys(gated),
+        memberIds
+      );
+      return { id: d.id, name: d.name, keys, observed };
+    })
+    .filter((c): c is NonNullable<typeof c> => c != null);
   if (!cards.length) return null;
 
   const go = (dir: string) => openDirection(dir, "Overview");

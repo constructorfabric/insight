@@ -585,6 +585,7 @@
     "title": "Submit feedback / bug report",
     "message": "Your feedback",
     "placeholder": "Describe the issue",
+    "counter": "{{used}} / {{max}}",
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."

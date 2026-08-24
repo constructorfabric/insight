@@ -597,3 +597,6 @@ coverage.md
 # playwright-cli session output: snapshots, console logs and screenshots from
 # driving the UI against a stand.
 .playwright-cli/
+
+# pnpm's local content-addressable store, when configured beside the repo
+.pnpm-store/

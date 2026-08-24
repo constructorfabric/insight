@@ -25,11 +25,37 @@ service serialises timestamps with no offset. See `common.UnzonedDatetime`.
 from __future__ import annotations
 
 from .common import UnzonedDatetime
-from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 from datetime import date as date_aliased
+
+
+class AiConfigResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    admin_only: bool = Field(..., description='Only admins may ask for an explanation on this deployment.')
+    enabled: bool = Field(..., description='Whether this deployment offers AI explanations at all.')
+    model: str = Field(..., description='The model explanations are asked of.')
+    stand_key: bool = Field(..., description='The stand pays for explanations with its own key, so nobody stores one.')
+
+
+class AiCredentialResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool
+    hint: str = Field(..., description='Last four characters of the stored key; empty when none is stored.')
+
+
+class AiSettingsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    is_default: bool = Field(..., description='True while the tenant has written none of its own.')
+    system_prompt: str
 
 
 class Bucket(StrEnum):
@@ -108,6 +134,16 @@ class EvidenceGranularity(StrEnum):
     event = 'event'
     source_summary = 'source_summary'
     derived_population = 'derived_population'
+
+
+class ExplainResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    model: str = Field(..., description='The model that produced it.')
+    person_context_entries: int = Field(..., description="How many of the caller's own entries fed the prompt.", ge=0)
+    tenant_context_entries: int = Field(..., description='How many organisation entries fed the prompt.', ge=0)
+    text: str = Field(..., description='The answer, as plain prose.')
 
 
 class FeedbackEntry(BaseModel):
@@ -233,18 +269,35 @@ class MetricDrilldownEntity1(BaseModel):
 
 
 class Type1(StrEnum):
-    tenant = 'tenant'
+    persons = 'persons'
 
 
 class MetricDrilldownEntity2(BaseModel):
+    """
+    The records behind a figure a surface reports for a GROUP of people —
+    an org rollup card, a team total. Every id is authorized individually,
+    exactly as the single-person shape is.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
+    ids: list[str]
     type: Type1
 
 
-class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2]):
-    root: MetricDrilldownEntity1 | MetricDrilldownEntity2
+class Type2(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricDrilldownEntity3(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type2
+
+
+class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3]):
+    root: MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3
 
 
 class MetricDrilldownExportFormat(StrEnum):
@@ -388,18 +441,22 @@ class View3(StrEnum):
 
 
 class View4(StrEnum):
+    rollup = 'rollup'
+
+
+class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto5(BaseModel):
+class MetricResultViewDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     values: list[HistogramValueDto]
-    view: View4
+    view: View5
 
 
-class Type2(StrEnum):
+class Type3(StrEnum):
     person = 'person'
 
 
@@ -408,10 +465,10 @@ class MetricResultsEntity1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type2
+    type: Type3
 
 
-class Type3(StrEnum):
+class Type4(StrEnum):
     tenant = 'tenant'
 
 
@@ -419,14 +476,14 @@ class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type3
+    type: Type4
 
 
 class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
     root: MetricResultsEntity1 | MetricResultsEntity2
 
 
-class Type4(StrEnum):
+class Type5(StrEnum):
     person = 'person'
 
 
@@ -435,10 +492,10 @@ class MetricResultsEntityDto1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type4
+    type: Type5
 
 
-class Type5(StrEnum):
+class Type6(StrEnum):
     tenant = 'tenant'
 
 
@@ -446,7 +503,7 @@ class MetricResultsEntityDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type5
+    type: Type6
 
 
 class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
@@ -476,7 +533,7 @@ class MetricSchemaErrorCode(StrEnum):
     unknown = 'unknown'
 
 
-class View5(StrEnum):
+class View6(StrEnum):
     period = 'period'
 
 
@@ -484,10 +541,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View5
+    view: View6
 
 
-class View6(StrEnum):
+class View7(StrEnum):
     peer = 'peer'
 
 
@@ -496,10 +553,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View6
+    view: View7
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -510,10 +567,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -522,22 +579,35 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
-    histogram = 'histogram'
+class View10(StrEnum):
+    rollup = 'rollup'
 
 
 class MetricViewRequest5(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View9
+    dimensions: list[str]
+    group_limit: MetricGroupLimitRequest | None = None
+    view: View10
 
 
-class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5]):
-    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5
+class View11(StrEnum):
+    histogram = 'histogram'
+
+
+class MetricViewRequest6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    view: View11
+
+
+class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
+    root: MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6
 
 
 class PeerValueDto(BaseModel):
@@ -576,6 +646,32 @@ class Problem(BaseModel):
     title: str
     trace_id: str | None = None
     type: str
+
+
+class PutCredentialRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    token: str
+
+
+class PutSettingsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    system_prompt: str
+
+
+class RollupValueDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    contributing_entity_count: int = Field(..., ge=0)
+    dimensions: list[MetricDimensionDto]
+    label: str | None = None
+    rank: int | None = Field(None, ge=0)
+    remainder: bool | None = None
+    value: float | None = None
 
 
 class RunResponse(BaseModel):
@@ -640,6 +736,33 @@ class SchemaStatus(StrEnum):
     unchecked = 'unchecked'
 
 
+class Scope(StrEnum):
+    """
+    Who a context entry belongs to.
+    """
+    tenant = 'tenant'
+    person = 'person'
+
+
+class SnapshotScope(StrEnum):
+    """
+    Whose reading this is.
+    """
+    person = 'person'
+    organisation = 'organisation'
+
+
+class SnapshotSeries(BaseModel):
+    """
+    One line of a chart, as it is drawn.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    label: str
+    points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
+
+
 class TelemetryRecord(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -659,6 +782,14 @@ class TimeseriesPointDto(BaseModel):
     )
     bucket_start: str
     value: float | None = None
+
+
+class UpdateContextRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str | None = None
+    title: str | None = None
 
 
 class UpdateSavedQueryRequest(BaseModel):
@@ -766,6 +897,33 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class ContextEntryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str
+    id: str
+    scope: Scope
+    title: str
+    updated_at: str
+
+
+class ContextListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[ContextEntryResponse]
+
+
+class CreateContextRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    body: str
+    scope: Scope
+    title: str
 
 
 class CustomMetricInput(BaseModel):
@@ -896,6 +1054,15 @@ class MetricResultViewDto4(BaseModel):
     view: View3
 
 
+class MetricResultViewDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str]
+    values: list[RollupValueDto]
+    view: View4
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -903,6 +1070,28 @@ class MetricResultsRequest(BaseModel):
     entity: MetricResultsEntity
     metrics: list[MetricRequest]
     period: MetricResultsPeriod
+
+
+class MetricSnapshot(BaseModel):
+    """
+    The reading as the viewer sees it, handed to the model as the thing to explain.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bucket_starts: list[str] | None = Field(None, description='Bucket start dates every series is indexed by, oldest first.')
+    delta: str | None = Field(None, description="The tile's own change line, empty when it has none.")
+    help: str | None = Field(None, description="The catalog's description of the metric, empty when it has none.")
+    label: str = Field(..., description='The label the tile shows.')
+    metric_key: str = Field(..., description='Catalog key, e.g. `tasks.closed`.')
+    peer: str | None = Field(None, description="The tile's peer-comparison line, empty when it has none.")
+    period: str = Field(..., description='What the period is called on screen, e.g. `month`.')
+    scope: SnapshotScope | None = Field(None, description="Whose reading this is. Absent means one person's.")
+    series: list[SnapshotSeries] | None = Field(None, description="The chart's lines, when the reading is a chart rather than a tile.")
+    since: str = Field(..., description='Inclusive start of the window, `YYYY-MM-DD`.')
+    trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
+    until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
+    value: str = Field(..., description='The formatted value the tile shows.')
 
 
 class SavedQueryListResponse(BaseModel):
@@ -984,6 +1173,12 @@ class CustomMetricListResponse(BaseModel):
     items: list[CustomMetricSummary]
 
 
+class ExplainRequest(MetricSnapshot):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
 class ExportCustomMetricsResponse(BaseModel):
     """
     `GET /v1/metrics/export` envelope — the tenant's custom metric graphs.
@@ -1025,8 +1220,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
 
 
 class MetricResultDto5(BaseModel):
