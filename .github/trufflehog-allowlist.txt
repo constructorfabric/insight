@@ -63,8 +63,10 @@ bffaf1f194da1698  JiraToken          src/ingestion/tests/e2e/metrics/task_delive
 c2e94f25650ae905  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_tasks_completed_jira.test.yaml  # synthetic e2e metric fixture value
 0ac48ebd50b191e0  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_worklog_logging_accuracy_jira.test.yaml  # synthetic e2e metric fixture value
 3a27312545601d0c  JiraToken          src/ingestion/tests/e2e/metrics/task_delivery_worklog_logging_accuracy_jira.test.yaml  # synthetic e2e metric fixture value
+1cd3ea7ec0de6d8c  JiraToken          src/ingestion/tests/e2e/metrics/tasks_closed_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 bfcc297fe5aeedcd  JiraToken          src/ingestion/tests/e2e/metrics/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
 5c0fe1ee8bbed86a  JiraToken          src/ingestion/tests/e2e/metrics/tasks_worklog_accuracy.test.yaml  # synthetic e2e metric fixture value
+f2d7160a66e36291  JiraToken          src/ingestion/tests/e2e/metrics/tasks_worklog_deleted_excluded.test.yaml  # synthetic e2e metric fixture value
 f74e89258c6ae15e  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet_task_delivery_tasks_completed.test.yaml  # synthetic e2e metric fixture value
 c6f108c3d2b0717f  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet_task_delivery_tasks_completed.test.yaml  # synthetic e2e metric fixture value
 3fdd46f911f50d69  JiraToken          src/ingestion/tests/e2e/metrics/templates/confluence_wiki_pages.yaml  # synthetic e2e metric fixture value
