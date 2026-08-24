@@ -494,9 +494,10 @@ describe("MetricTimeseriesView", () => {
     mocks.evidenceColumn = "total";
     const openEvidence = vi.fn();
     const openEvidenceTargets = vi.fn();
+    const openEvidencePeople = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets }}
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
       >
         <MetricTimeseriesView
           id="evidence"
@@ -547,7 +548,11 @@ describe("MetricTimeseriesView", () => {
     const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
+        value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
       >
         <MetricTimeseriesView
           id="point-evidence"

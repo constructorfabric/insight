@@ -56,19 +56,25 @@ import {
   personsEvidenceSelection,
   type MetricEvidenceSelection,
 } from "@/api/metric-drilldown-client";
-import { useMetricEvidenceOptional } from "@/components/metric-evidence-context";
+import {
+  useMetricEvidenceOptional,
+  type EvidencePeopleView,
+} from "@/components/metric-evidence-context";
+import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
+  bandAtClick,
   distribution,
+  entityValues,
   familyObserved,
   fmtCompact,
   medianAcross,
   perCapita,
   representative,
-  topDecileShare,
+  topDecile,
 } from "@/lib/portal/metric-stats";
 import {
   lensEntry,
@@ -467,11 +473,23 @@ function Section({
       );
     case "distribution":
       return (
-        <DistributionSection spec={spec} grid={grid} memberIds={memberIds} />
+        <DistributionSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
       );
     case "concentration":
       return (
-        <ConcentrationSection spec={spec} grid={grid} memberIds={memberIds} />
+        <ConcentrationSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+          personIdByEntity={personIdByEntity}
+        />
       );
     case "composition":
       return (
@@ -1129,36 +1147,74 @@ function DistributionSection({
   spec,
   grid,
   memberIds,
+  nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "distribution" }>;
   grid: GridData;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
+  const evidence = useMetricEvidenceOptional();
   const r = grid.byKey.get(spec.metric);
-  const values = r
-    ? memberIds
-        .map((id) => forEntity(r, id).value)
-        .filter((v): v is number => v != null && Number.isFinite(v) && v >= 0)
-    : [];
+  const entries = entityValues(r, memberIds).filter((e) => e.value >= 0);
   const fmt =
     r?.format === "percent"
       ? (n: number) => formatMetricValue(n, "percent", null)
       : fmtCompact;
-  const rows = distribution(values, fmt);
-  if (!rows.length) return null;
+  const rows = distribution(entries, fmt);
+  if (!rows.length || !r) return null;
+
+  // Per band, because a band IS a set of people: the reader pointing at a bar
+  // is asking who those people are, and the values are already here — the
+  // records behind any one of them are a step further in, inside the dialog.
+  const bandsByRange = new Map(
+    evidence
+      ? rows.flatMap((row) =>
+          row.count
+            ? ([
+                [
+                  row.range,
+                  peopleEvidenceView(
+                    r,
+                    row.ids,
+                    `${r.label} · ${row.range} ${spec.unitLabel}`,
+                    { nameByEntity, personIdByEntity }
+                  ),
+                ],
+              ] as const)
+            : []
+        )
+      : []
+  );
+  const openBand = (range: string) => {
+    const view = bandsByRange.get(range);
+    if (view) evidence?.openEvidencePeople(view);
+  };
 
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title} · {values.length} people
+        {spec.title} · {entries.length} people
       </p>
       <Card>
         <CardContent className="p-4">
           <p className="mb-3 text-xs text-muted-foreground">{spec.caption}</p>
-          <ChartContainer config={DIST_CONFIG} className="h-56 w-full">
+          <ChartContainer
+            config={DIST_CONFIG}
+            className={cn("h-56 w-full", bandsByRange.size && "cursor-pointer")}
+          >
             <BarChart
               data={rows}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+              // The whole column, not the drawn bar: a band holding two people
+              // is a rectangle a pixel tall, and those are the bands a reader
+              // most wants to open.
+              onClick={(next) => {
+                const row = bandAtClick(rows, next);
+                if (row) openBand(row.range);
+              }}
             >
               <CartesianGrid
                 vertical={false}
@@ -1201,6 +1257,35 @@ function DistributionSection({
           <p className="mt-1 text-center text-xs text-muted-foreground">
             {spec.unitLabel}
           </p>
+          {/* The bands again, as buttons. Not decoration: the tail bars of a
+              skewed distribution are a pixel tall, and those are the ones a
+              reader wants to open — and a bar is not reachable by keyboard. */}
+          {bandsByRange.size > 0 && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              <p className="text-xs text-muted-foreground">
+                See who is in a band
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {rows
+                  .filter((row) => bandsByRange.has(row.range))
+                  .map((row) => (
+                    <button
+                      key={row.range}
+                      type="button"
+                      aria-haspopup="dialog"
+                      aria-label={`${row.range} ${spec.unitLabel} · ${row.count} ${row.count === 1 ? "person" : "people"}`}
+                      onClick={() => openBand(row.range)}
+                      className="cursor-pointer rounded-sm border px-2 py-0.5 text-xs hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    >
+                      <span className="tabular-nums">{row.range}</span>
+                      <span className="ml-1.5 text-muted-foreground tabular-nums">
+                        {row.count}
+                      </span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </section>
@@ -1330,25 +1415,36 @@ function ConcentrationSection({
   spec,
   grid,
   memberIds,
+  nameByEntity,
+  personIdByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "concentration" }>;
   grid: GridData;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+  personIdByEntity: Map<string, string>;
 }) {
   const cards = spec.metrics
     .map((key) => {
       const r = grid.byKey.get(key);
       if (!r) return null;
-      const vals = memberIds
-        .map((id) => forEntity(r, id).value)
-        .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
-      const share = topDecileShare(vals);
-      if (share == null) return null;
+      const contributors = entityValues(r, memberIds).filter(
+        (e) => e.value > 0
+      );
+      const top = topDecile(contributors);
+      if (!top) return null;
+      const subset = `busiest ${top.ids.length} of ${contributors.length}`;
       return {
         key,
         label: r.short_label ?? r.label,
-        share,
-        contributors: vals.length,
+        share: top.share,
+        subset,
+        // The busiest tenth, not the roster: this card's figure is a statement
+        // about those people only.
+        people: peopleEvidenceView(r, top.ids, `${r.label} · ${subset}`, {
+          nameByEntity,
+          personIdByEntity,
+        }),
       };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
@@ -1362,24 +1458,59 @@ function ConcentrationSection({
       </p>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-3">
         {cards.map((c) => (
-          <Card key={c.key}>
-            <CardContent className="p-4">
-              <div className="text-xs font-medium text-muted-foreground">
-                {c.label}
-              </div>
-              <div className={cn("mt-1", TEXT_FIGURE)}>
-                {Math.round(c.share * 100)}%
-              </div>
-              <div className="text-xs text-muted-foreground">
-                carried by the busiest{" "}
-                {Math.max(1, Math.ceil(c.contributors * 0.1))} of{" "}
-                {c.contributors} · {copy.note}
-              </div>
-            </CardContent>
-          </Card>
+          <ConcentrationCard key={c.key} card={c} note={copy.note} />
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * One concentration figure, and who the busiest tenth actually is.
+ *
+ * The card opens that subset rather than the roster: a list of everyone would
+ * answer a different question from the one the card raises. Names stay inside
+ * the dialog — the card itself still says nothing about any individual.
+ */
+function ConcentrationCard({
+  card,
+  note,
+}: {
+  card: {
+    label: string;
+    share: number;
+    subset: string;
+    people: EvidencePeopleView;
+  };
+  note: string;
+}) {
+  const evidence = useMetricEvidenceOptional();
+  const c = card;
+  const body = (
+    <CardContent className="p-4">
+      <div className="text-xs font-medium text-muted-foreground">{c.label}</div>
+      <div className={cn("mt-1", TEXT_FIGURE)}>
+        {Math.round(c.share * 100)}%
+      </div>
+      <div className="text-xs text-muted-foreground">
+        carried by the {c.subset} · {note}
+      </div>
+    </CardContent>
+  );
+
+  if (!evidence || !c.people.rows.length) return <Card>{body}</Card>;
+
+  return (
+    <Card className="transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring">
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        className="w-full cursor-pointer text-left focus-visible:outline-none"
+        onClick={() => evidence.openEvidencePeople(c.people)}
+      >
+        {body}
+      </button>
+    </Card>
   );
 }
 

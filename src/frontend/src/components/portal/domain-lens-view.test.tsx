@@ -227,11 +227,12 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
 describe("headline cards open the records behind them", () => {
   const openEvidenceTargets = vi.fn();
   const openEvidence = vi.fn();
+  const openEvidencePeople = vi.fn();
 
   function drawWithEvidence(config: LensConfig = HEADLINE_CONFIG) {
     return render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets }}
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
       >
         <DomainLensView config={config} />
       </EvidenceDialogContext.Provider>
@@ -340,6 +341,132 @@ describe("stat-tiles (medians, never sums)", () => {
     // median of 10,20,30,40 = 25
     expect(screen.getByText("25")).toBeInTheDocument();
     expect(screen.getByText(/median \/ person/)).toBeInTheDocument();
+  });
+});
+
+describe("aggregate sections open the people behind them", () => {
+  const openEvidenceTargets = vi.fn();
+  const openEvidence = vi.fn();
+  const openEvidencePeople = vi.fn();
+
+  /** A metric with a real spread: 1, 2, 3 and 9 commits over the four members. */
+  function seedSpread({ drillable }: { drillable: boolean }) {
+    const evidence = drillable
+      ? {
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        }
+      : {};
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          [
+            [pid("a"), 1],
+            [pid("b"), 2],
+            [pid("c"), 3],
+            [pid("d"), 9],
+          ],
+          {
+            label: "Commits",
+            short_label: "Commits",
+            unit: "commits",
+            ...evidence,
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+  }
+
+  function drawWithEvidence(config: LensConfig) {
+    return render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
+      >
+        <DomainLensView config={config} />
+      </EvidenceDialogContext.Provider>
+    );
+  }
+
+  const SPREAD_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      {
+        kind: "distribution",
+        metric: "t.commits",
+        title: "Spread",
+        caption: "spread",
+        unitLabel: "commits per person",
+      },
+    ],
+  };
+
+  const CONCENTRATION_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "concentration", metrics: ["t.commits"], framing: "bus-factor" },
+    ],
+  };
+
+  it("opens a band's own people, with the values the bars were drawn from", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(SPREAD_CONFIG);
+
+    // Step 1 over a maximum of 9 → unit-wide bands, and the top value is
+    // clamped into the last one, so the lone 9 is the whole "8–9" band.
+    await user.click(screen.getByRole("button", { name: /^8–9 commits/ }));
+
+    expect(openEvidencePeople).toHaveBeenCalledTimes(1);
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.title).toContain("8–9 commits per person");
+    expect(view.rows.map((row: { entityId: string }) => row.entityId)).toEqual([
+      pid("d"),
+    ]);
+    expect(view.rows[0].value).toBe(9);
+    // The roster's name and its route id, each from its own lookup: this is
+    // what makes the list about people rather than about ids.
+    expect(view.rows[0].name).toBe("d");
+    expect(view.rows[0].personId).toBe(pid("d"));
+    // Every row's records at once stays available, scoped to the same band.
+    expect(view.allRecords.selection.entity).toEqual({
+      type: "persons",
+      ids: [pid("d")],
+    });
+  });
+
+  it("lists the people of a metric whose records cannot be read", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: false });
+    drawWithEvidence(SPREAD_CONFIG);
+
+    await user.click(screen.getByRole("button", { name: /^8–9 commits/ }));
+
+    // The values are the surface's own, so who is in the band is answerable
+    // even where no source backs a record table.
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.rows[0].target).toBeNull();
+    expect(view.allRecords).toBeNull();
+  });
+
+  it("opens the busiest tenth from the concentration card, ranked", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(CONCENTRATION_CONFIG);
+
+    await user.click(screen.getByRole("button", { name: /carried by/ }));
+
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.title).toContain("busiest 1 of 4");
+    // Busiest tenth of 4 contributors = 1 person, and it is the busiest one.
+    expect(view.rows.map((row: { value: number }) => row.value)).toEqual([9]);
   });
 });
 
