@@ -64,6 +64,14 @@ export function rollUp(
 
 const STEP_DAYS: Partial<Record<ReportGranularity, number>> = { day: 1, week: 7 };
 
+// INVARIANT: must agree with the server's `toStartOfWeek(date, 1)` — cells are
+// keyed by the `bucket_start` it returns.
+function mondayOf(date: Date): Date {
+  const monday = new Date(date);
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday;
+}
+
 /** Every bucket the period covers, so a gap renders as an empty cell in place. */
 export function bucketsInRange(
   from: string,
@@ -73,8 +81,9 @@ export function bucketsInRange(
   const labels: string[] = [];
   const step = STEP_DAYS[granularity];
   if (step) {
+    const start = new Date(`${from}T00:00:00Z`);
     for (
-      let d = new Date(`${from}T00:00:00Z`);
+      let d = granularity === "week" ? mondayOf(start) : start;
       d <= new Date(`${to}T00:00:00Z`);
       d.setUTCDate(d.getUTCDate() + step)
     ) {

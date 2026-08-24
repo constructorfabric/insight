@@ -232,6 +232,35 @@ describe("buildReportTable", () => {
     ]);
   });
 
+  it("reads a weekly value into the week the server bucketed it by", () => {
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map([
+        [
+          "git.commits",
+          seriesResult("git.commits", "p1", [
+            ["2026-07-20", 3],
+            ["2026-07-27", 2],
+            ["2026-08-03", 1],
+            ["2026-08-10", 4],
+            ["2026-08-17", 2],
+          ]),
+        ],
+      ]),
+      range: { from: "2026-07-24", to: "2026-08-23" },
+      granularity: "week",
+    });
+
+    expect(table.rows.map((row) => row.slice(-4))).toEqual([
+      ["2026-07-20", "2026-07-24", "2026-07-26", 3],
+      ["2026-07-27", "2026-07-27", "2026-08-02", 2],
+      ["2026-08-03", "2026-08-03", "2026-08-09", 1],
+      ["2026-08-10", "2026-08-10", "2026-08-16", 4],
+      ["2026-08-17", "2026-08-17", "2026-08-23", 2],
+    ]);
+  });
+
   it("omits person columns absent from the selected roster", () => {
     const table = buildReportTable({
       people: [
@@ -409,6 +438,12 @@ describe("bucketSpan", () => {
       to: "2026-06-01",
     });
   });
+
+  it("clips a week that opened before the period", () => {
+    expect(
+      bucketSpan("2026-07-20", "week", { from: "2026-07-24", to: "2026-08-23" }),
+    ).toEqual({ from: "2026-07-24", to: "2026-07-26" });
+  });
 });
 
 describe("unavailableReason", () => {
@@ -530,6 +565,26 @@ describe("bucketsInRange", () => {
       "2026-05-11",
       "2026-05-18",
       "2026-05-25",
+    ]);
+  });
+
+  it("starts every week on the Monday the server bucketed it by", () => {
+    expect(bucketsInRange("2026-07-24", "2026-08-23", "week")).toEqual([
+      "2026-07-20",
+      "2026-07-27",
+      "2026-08-03",
+      "2026-08-10",
+      "2026-08-17",
+    ]);
+  });
+
+  it("takes the week containing the last day, and no week beyond it", () => {
+    expect(bucketsInRange("2026-08-16", "2026-08-16", "week")).toEqual([
+      "2026-08-10",
+    ]);
+    expect(bucketsInRange("2026-08-16", "2026-08-17", "week")).toEqual([
+      "2026-08-10",
+      "2026-08-17",
     ]);
   });
 
