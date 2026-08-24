@@ -26,6 +26,7 @@ SELECT
     data_source,
     issue_id,
     id_readable,
+    title,
     event_id,
     event_at,
     CAST(event_kind, 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')

@@ -79,6 +79,7 @@ SELECT
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(t.jira_id, '')                                     AS issue_id,
     COALESCE(t.id_readable, '')                                 AS id_readable,
+    CAST(NULL AS Nullable(String))                              AS title,
     concat('worklog:', COALESCE(t.worklog_id, ''), ':', t.action, ':',
            toString(toUnixTimestamp64Milli(t.event_at)))         AS event_id,
     t.event_at                                                  AS event_at,

@@ -30,6 +30,7 @@ SELECT
     CAST('jira' AS String)                                      AS data_source,
     COALESCE(h.entity_id, '')                                   AS issue_id,
     COALESCE(st.id_readable, '')                                AS id_readable,
+    CAST(NULL AS Nullable(String))                              AS title,
     event_id                                                    AS event_id,
     toDateTime64(h.updated_at, 3)                               AS event_at,
     CAST('availability', 'Enum8(\'changelog\' = 1, \'synthetic_initial\' = 2, \'availability\' = 3, \'lifecycle\' = 4)')
