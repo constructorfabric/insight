@@ -14,6 +14,10 @@
 export const METRIC_CONTAINS: Readonly<Record<string, readonly string[]>> = {
   // "All lines added, by file category" ⊃ "lines added to code files".
   "git.lines_added": ["git.code_lines"],
+  // Branch scope partitions each total, so the default-branch reading is a
+  // part of it by construction — not a correlated second measurement.
+  "git.commits": ["git.default_branch_commits"],
+  "git.prs_merged": ["git.default_branch_prs_merged"],
   // "Files shared with any recipient" ⊃ inside / outside the organization.
   "collab.files_shared": [
     "collab.files_shared_internal",

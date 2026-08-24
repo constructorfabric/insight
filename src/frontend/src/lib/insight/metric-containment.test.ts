@@ -15,6 +15,19 @@ describe("dropRedundantMetrics", () => {
     expect(kept.map((item) => item.key)).toEqual(["git.code_lines"]);
   });
 
+  it("drops a git total when its default-branch part is on screen", () => {
+    // Branch scope partitions the total, so "Commits 12" over "Commits on the
+    // default branch 9" is one fact ranked twice.
+    for (const [total, split] of [
+      ["git.commits", "git.default_branch_commits"],
+      ["git.prs_merged", "git.default_branch_prs_merged"],
+    ]) {
+      const kept = dropRedundantMetrics([item(total), item(split)]);
+      const keys = kept.map((entry) => entry.key);
+      expect(keys, total).toEqual([split]);
+    }
+  });
+
   it("keeps the wider metric when it is the only one there", () => {
     // Nothing is duplicated, and the wider metric is still a real finding.
     const kept = dropRedundantMetrics([item("git.lines_added")]);

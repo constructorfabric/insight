@@ -197,4 +197,40 @@ describe("MetricGroupCard", () => {
     screen.getByRole("button").click();
     expect(refetch).toHaveBeenCalled();
   });
+
+  it("counts a contained metric once, so a pair cannot move the stripe", () => {
+    // The stripe turns red on a pattern — two bottoms and more than a quarter
+    // of the rankable set. A total and its default-branch part move together,
+    // so counting both would manufacture that pattern out of one weak fact.
+    const def: MetricGroup = {
+      ...DEF,
+      id: "git_output",
+      title: "Git output",
+      collection: {
+        metrics: [
+          { key: "git.commits", views: [{ view: "period" }, { view: "peer" }] },
+          {
+            key: "git.default_branch_commits",
+            views: [{ view: "period" }, { view: "peer" }],
+          },
+        ],
+      },
+      card: { preview: ["git.commits", "git.default_branch_commits"] },
+    };
+
+    render(
+      <MetricGroupCard
+        def={def}
+        entityId="me@x.com"
+        data={result([
+          aiMetric("git.commits", 1),
+          aiMetric("git.default_branch_commits", 1),
+        ])}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    // Two bottom-quartile readings of one fact: one row behind peers, not two.
+    expect(screen.getByText("1 of 1 behind peers")).toBeInTheDocument();
+  });
 });
