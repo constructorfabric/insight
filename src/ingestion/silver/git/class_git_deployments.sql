@@ -1,6 +1,7 @@
 -- depends_on: {{ ref('github__deployments') }}
 {{ config(
     materialized='incremental',
+    full_refresh=false,
     unique_key='unique_key',
     incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',

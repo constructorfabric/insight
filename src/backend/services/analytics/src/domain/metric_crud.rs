@@ -1215,6 +1215,45 @@ mod tests {
     }
 
     #[test]
+    fn percentile_requires_a_probability_quantile_in_scale() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = None;
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(1.5);
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        graph.inputs.push(CustomMetricInput {
+            role: MetricInputRole::Numerator,
+            measure_key: "events".to_owned(),
+        });
+        assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn stddev_rejects_a_scale_like_every_single_value_computation() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        graph.scale = Some(0.9);
+        assert_eq!(rejected_field(&graph), "scale");
+    }
+
+    #[test]
     fn input_measure_must_be_declared() {
         let mut graph = sum_graph();
         graph.inputs = vec![CustomMetricInput {

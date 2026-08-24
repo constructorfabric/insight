@@ -449,7 +449,8 @@ const DEV: Record<string, LensEntry> = {
     title: "Development · CI",
     tagline: "pipelines, org-wide",
     entity: "tenant",
-    notIngested: "No CI runs collected yet — connect a GitHub source.",
+    notIngested:
+      "No CI metrics here yet — tenant metrics are opt-in per installation (metricCatalog.tenantMetricsEnabled), and a GitHub source must be collecting runs.",
     sections: [
       {
         kind: "headline",

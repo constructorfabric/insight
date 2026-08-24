@@ -124,8 +124,92 @@ models:
       person and no identity join (issue #2803). One row per decided run per
       measure it feeds; run_duration_min keeps event grain for query-time
       percentiles. Deployment rows fold the latest status event in; no event
-      yet reads as the visible 'pending' outcome.
-    columns: *metric_evidence_columns
+      yet reads as the visible 'pending' outcome. Deliberately NOT the shared
+      person-grain column anchor: this family's source_key and entity_type
+      would fail its accepted-values pins.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source family — always ci here"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci']
+      - name: entity_type
+        description: "Measured entity type — always the tenant for CI"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['tenant']
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — the shape the results compiler expects
+          for tenant-entity reads (entity_id = tenant_id). No identity
+          resolution happens for this family.
+        tests:
+          - not_null
+      - name: source_entity_id
+        description: >
+          Same tenant id — kept so the evidence contract keeps one column
+          set across families; there is no source-native identity to record.
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Run start date; deployment creation date"
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Run start instant; NULL on deployment rows"
+      - name: measure_key
+        description: "Source measure key"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - runs
+                  - gate_runs
+                  - gate_passed
+                  - gate_first_try_passed
+                  - gate_retried
+                  - run_duration_min
+                  - run_hours
+                  - deployments
+      - name: record_id
+        description: "Deterministic total-order key within the measure scope"
+        tests:
+          - not_null
+      - name: record_kind
+        description: "ci_run for run measures, deployment for deployments"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci_run', 'deployment']
+      - name: granularity
+        description: "Always event: one row per run / deployment"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['event']
+      - name: record_label
+        description: "Pipeline name + run number, or environment + outcome"
+      - name: contribution
+        description: "Nullable numeric contribution to the source measure"
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL"
+      - name: dimensions
+        description: >
+          Run rows carry repository / pipeline / trigger / outcome;
+          deployment rows carry repository / environment / outcome / env_kind.
+      - name: details
+        description: "Drilldown display fields keyed by stable field name"
 
   - name: ai_cost_metric_evidence
     description: >

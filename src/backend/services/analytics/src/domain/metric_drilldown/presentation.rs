@@ -407,6 +407,41 @@ mod tests {
     }
 
     #[test]
+    fn ci_measures_declare_run_columns_and_the_env_kind_label_reads_as_prose() {
+        let runs = evidence_presentation("ci", "runs", EvidenceGranularity::Event);
+        assert_eq!(
+            runs.detail_keys,
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure in ["run_duration_min", "run_hours"] {
+            let p = evidence_presentation("ci", measure, EvidenceGranularity::Event);
+            assert!(p.show_value, "{measure} is unreadable without its number");
+        }
+
+        let deployments = evidence_presentation("ci", "deployments", EvidenceGranularity::Event);
+        assert_eq!(
+            deployments.detail_keys,
+            ["repository", "environment", "outcome", "env_kind"]
+        );
+
+        let value = input(MetricInputRole::Value, "deployments");
+        let deployments_plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: deployments,
+            }],
+        );
+        let column = presentation_column("env_kind", &deployments_plan);
+        assert_eq!(column.label, "Environment type");
+    }
+
+    #[test]
     fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
         // Absolute, because the split test below is relative: without this the
         // whole arm could be trimmed and both would still pass.

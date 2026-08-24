@@ -1159,6 +1159,52 @@ mod tests {
     }
 
     #[test]
+    fn percentile_and_stddev_specs_build_from_the_scale_slot() {
+        let value = MetricInput {
+            role: MetricInputRole::Value,
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ci_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
+            source_key: "ci".to_owned(),
+            measure_key: "run_duration_min".to_owned(),
+        };
+
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        row.scale = Some(0.9);
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a percentile row with q builds"));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
+        match built.spec {
+            ComputationSpec::Percentile { q, .. } => {
+                assert!((q - 0.9).abs() < f64::EPSILON);
+            }
+            other => panic!("expected a percentile spec, got {other:?}"),
+        }
+
+        // The quantile is mandatory and must be a probability.
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+        row.scale = Some(1.5);
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+
+        let mut row = definition_row("ci.run_duration_min_stddev", None, true, "ok");
+        row.computation_type = "stddev".to_owned();
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a stddev row builds"));
+        assert!(matches!(built.spec, ComputationSpec::Stddev { .. }));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
+    }
+
+    #[test]
     fn build_base_maps_short_label_and_full_fields() {
         let mut row = definition_row("git.commits", None, true, "ok");
         row.short_label = Some("Commits".to_owned());

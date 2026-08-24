@@ -1,6 +1,7 @@
 -- depends_on: {{ ref('github__ci_runs') }}
 {{ config(
     materialized='incremental',
+    full_refresh=false,
     unique_key='unique_key',
     incremental_strategy='delete+insert',
     engine='ReplacingMergeTree(_version)',
