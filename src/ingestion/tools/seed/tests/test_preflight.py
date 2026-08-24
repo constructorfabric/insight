@@ -24,10 +24,13 @@ import unittest
 import uuid as uuid_mod
 from dataclasses import dataclass
 
-from insight_seed import config, identity, preflight
+from insight_seed import config, identity, preflight, profiles
 from insight_seed.generators import base
 
 _TENANT = "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+
+_SEEDED_PERSON = "aaaaaaaa-0000-0000-0000-000000000010"
+_UNSEEDED_PERSON = "bbbbbbbb-0000-0000-0000-000000000001"
 
 
 class _CapturingCursor:
@@ -382,7 +385,8 @@ class SeedReasonNamespaceTests(unittest.TestCase):
 @dataclass(frozen=True)
 class _PersonsRow:
     """One journal row. The defaults are the stand suite's own: its resolution
-    round trip binds a scratch account under its fixed connector instance."""
+    round trip binds a scratch account under its fixed connector instance, in the
+    operator persona's name and about a person outside the demo roster."""
 
     tenant: str = _TENANT
     source_type: str = config.STAND_SCRATCH_SOURCE_TYPE
@@ -391,6 +395,8 @@ class _PersonsRow:
     value_full_text: str | None = None
     value: str | None = None
     reason: str = "operator-bind"
+    person_id: str = _UNSEEDED_PERSON
+    author_person_id: str = profiles.ADMIN_OPERATOR_UUID
 
 
 class _SqlitePersons:
@@ -404,6 +410,9 @@ class _SqlitePersons:
 
     Set semantics only: sqlite compares TEXT case-sensitively where MariaDB's
     `utf8mb4_unicode_ci` does not, so no case here turns on letter case.
+
+    Every instance starts as a stand this seeder HAS seeded — one roster row about
+    `_SEEDED_PERSON`, without which the projection's exemption cannot be read.
     """
 
     def __init__(self) -> None:
@@ -418,16 +427,28 @@ class _SqlitePersons:
             " value TEXT,"
             " value_effective TEXT GENERATED ALWAYS AS"
             "  (COALESCE(value_id, value_full_text, value)) STORED,"
+            " person_id BLOB NOT NULL,"
+            " author_person_id BLOB NOT NULL,"
             " reason TEXT NOT NULL DEFAULT ''"
             ")"
         )
         self._answer: tuple[object, ...] | None = None
+        self.insert(
+            _PersonsRow(
+                source_type=profiles.DEV_SEED_SOURCE_TYPE,
+                source_id=profiles.DEV_SEED_SOURCE_ID,
+                value_id="seeded@company.nonpresent",
+                reason=f"{config.SEED_REASON_PREFIX}demo roster",
+                person_id=_SEEDED_PERSON,
+                author_person_id=config.SYSTEM_AUTHOR_ID,
+            )
+        )
 
     def insert(self, row: _PersonsRow) -> None:
         self._db.execute(
             "INSERT INTO persons (insight_tenant_id, insight_source_type, insight_source_id,"
-            " value_id, value_full_text, value, reason)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " value_id, value_full_text, value, person_id, author_person_id, reason)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 uuid_mod.UUID(row.tenant).bytes,
                 row.source_type,
@@ -435,6 +456,8 @@ class _SqlitePersons:
                 row.value_id,
                 row.value_full_text,
                 row.value,
+                uuid_mod.UUID(row.person_id).bytes,
+                uuid_mod.UUID(row.author_person_id).bytes,
                 row.reason,
             ),
         )
@@ -483,13 +506,65 @@ _FOREIGN_ROW_CASES: tuple[tuple[str, _PersonsRow, int], ...] = (
     ),
     (
         "this seeder's own roster row",
-        _PersonsRow(value_id="someone@example.com", reason=f"{config.SEED_REASON_PREFIX}roster"),
+        _PersonsRow(
+            value_id="someone@example.com",
+            reason=f"{config.SEED_REASON_PREFIX}roster",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
         0,
     ),
     (
         "another tenant's operator correction",
         _PersonsRow(tenant="ffffffff-ffff-4fff-8fff-ffffffffffff", value_id="a@example.com"),
         0,
+    ),
+    (
+        "the projection re-emitting an attribute of a person this seeder created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        0,
+    ),
+    (
+        "the same re-emission about somebody this seeder never created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        1,
+    ),
+    (
+        "the projection minting a person from a roster account with no address",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id="42",
+            reason="roster-mint",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        0,
+    ),
+    (
+        "an operator's own correction about a person this seeder created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id="someone@example.com",
+            person_id=_SEEDED_PERSON,
+        ),
+        1,
     ),
 )
 
@@ -566,6 +641,26 @@ class WriterNamespaceParityTests(unittest.TestCase):
         ):
             with self.subTest(constant=theirs):
                 self.assertEqual(_constant_in(scratch, theirs), mine, f"{theirs} drifted")
+
+    def test_the_projection_still_stamps_the_author_this_guard_reads(self) -> None:
+        runner = _find_upwards(
+            "src", "backend", "services", "identity-resolution", "src", "seed_runner.rs"
+        )
+        if runner is None:
+            self.skipTest("the identity-resolution tree is not in this tree")
+
+        source = runner.read_text()
+        self.assertRegex(source, r"SYSTEM_AUTHOR:\s*Uuid\s*=\s*Uuid::nil\(\)")
+        self.assertEqual(uuid_mod.UUID(config.SYSTEM_AUTHOR_ID), uuid_mod.UUID(int=0))
+
+        seeded = re.search(r"seed_from_rows\((?P<args>[^;]*?)\)\s*\.await", source, re.S)
+        self.assertIsNotNone(seeded, "the projection no longer runs through seed_from_rows")
+        self.assertIn(
+            "SYSTEM_AUTHOR",
+            seeded.group("args"),  # type: ignore[union-attr]
+            "the projection must PASS the author this guard reads, not merely declare it: "
+            "a run that stamps a real person leaves every re-seed refused",
+        )
 
 
 if __name__ == "__main__":
