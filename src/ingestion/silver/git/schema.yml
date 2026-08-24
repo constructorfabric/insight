@@ -110,6 +110,13 @@ models:
         tests:
           - not_null
           - unique
+      - name: author_account_id
+        description: >
+          The author's source account id in the form the connector's identity
+          inputs bind on (GitHub: numeric id as text; Bitbucket: account_id
+          lowercased). '' when the source exposes none — a deleted or suspended
+          author, or a connector without identity inputs — in which case person
+          attribution falls back to author_email.
 
   - name: class_git_pull_requests_reviewers
     description: "Unified git pull request reviewers from all sources (GitHub, Bitbucket, GitLab)"
