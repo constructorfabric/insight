@@ -291,11 +291,21 @@ const DEV: Record<string, LensEntry> = {
     title: "Development · Git output",
     sections: [
       {
+        // Each split key sits beside the total it refines, so a reader meets
+        // the two together rather than as unrelated tiles. Only the
+        // default-branch side is drawn: the other half is the total minus it,
+        // and naming both would spend four tiles on two facts.
+        //
+        // The two big figures are per ACTIVE person, each over its own active
+        // count, so they are not a share of one another — the team totals
+        // under them are what divide.
         kind: "headline",
         metrics: [
           "git.commits",
+          "git.default_branch_commits",
           "git.prs_created",
           "git.prs_merged",
+          "git.default_branch_prs_merged",
           "git.code_lines",
         ],
       },
