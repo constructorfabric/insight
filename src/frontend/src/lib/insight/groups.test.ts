@@ -57,9 +57,13 @@ describe("groups registry", () => {
       rankBy: "git.commits",
       includeRemainder: true,
     });
+    // Every total is immediately followed by its default-branch reading, so a
+    // column pair reads "how much, and how much of it landed".
     expect(timeseries[0]?.table?.columns).toEqual([
       { metric: "git.commits" },
+      { metric: "git.default_branch_commits", labelSource: "short" },
       { metric: "git.prs_merged", labelSource: "short" },
+      { metric: "git.default_branch_prs_merged", labelSource: "short" },
       {
         label: "Lines",
         template: [
@@ -67,6 +71,22 @@ describe("groups registry", () => {
           { text: " / " },
           {
             metric: "git.lines_removed",
+            prefix: "−",
+            tone: "destructive",
+          },
+        ],
+      },
+      {
+        label: "Lines (default)",
+        template: [
+          {
+            metric: "git.default_branch_lines_added",
+            prefix: "+",
+            tone: "success",
+          },
+          { text: " / " },
+          {
+            metric: "git.default_branch_lines_removed",
             prefix: "−",
             tone: "destructive",
           },
