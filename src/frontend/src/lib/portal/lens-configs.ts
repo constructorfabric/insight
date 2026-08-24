@@ -91,8 +91,70 @@ export interface LensRoadmap {
   comingSoon: string;
 }
 
+/**
+ * A lens over ORG-grain (tenant-entity) metrics — CI is the first. Rendered by
+ * TenantLensView: no roster, no peer view, no per-person anything; the entity
+ * is the organization and every value is one number per period/bucket/row.
+ */
+export interface TenantLensConfig {
+  title: string;
+  tagline?: string;
+  entity: "tenant";
+  sections: readonly TenantSectionSpec[];
+  /** Whole-tab message when no metric of the lens is observed (rule 6). */
+  notIngested: string;
+}
+
+export type TenantSectionSpec =
+  | { kind: "headline"; metrics: readonly string[] }
+  | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
+  // One chart per section: volume and rate never share an axis, so a lens
+  // draws them as two sections rather than one chart with two scales.
+  | {
+      kind: "trend";
+      title: string;
+      description?: string;
+      metrics: readonly string[];
+      plot?: "line" | "area";
+    }
+  | {
+      kind: "composition";
+      metric: string;
+      dimension: string;
+      title: string;
+      splitBy?: string;
+      /** Reader-facing names for split values the vendor words misleadingly. */
+      segmentLabels?: Readonly<Record<string, string>>;
+    }
+  | { kind: "histogram"; metric: string; title: string; caption: string };
+
+/** Metric keys a tenant lens fetches — deliberately NOT part of the person
+ *  grid union: a tenant-entity key inside a person-entity request would fail
+ *  the whole batch. */
+export function tenantSectionMetricKeys(config: TenantLensConfig): string[] {
+  const keys = new Set<string>();
+  for (const s of config.sections) {
+    switch (s.kind) {
+      case "headline":
+      case "stat-tiles":
+      case "trend":
+        for (const k of s.metrics) keys.add(k);
+        break;
+      case "composition":
+      case "histogram":
+        keys.add(s.metric);
+        break;
+      default: {
+        const _exhaustive: never = s;
+        throw new Error(`Unhandled tenant section: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+  return [...keys];
+}
+
 /** Either a lens we render or one we only name — the pane treats the two differently. */
-export type LensEntry = LensConfig | LensRoadmap;
+export type LensEntry = LensConfig | LensRoadmap | TenantLensConfig;
 
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
@@ -381,12 +443,74 @@ const DEV: Record<string, LensEntry> = {
   },
   Activity: PRODUCT_GAP("Per-person activity-day metrics"),
   Quality: PRODUCT_GAP("Review / reopen quality metrics"),
-  // The ci.* tenant metrics are served (issue #2803); this lens needs a
-  // tenant-entity view — DomainLensView is person-roster-shaped and cannot
-  // render org-grain metrics without fabricating a per-person split.
+  // Org-grain (issue #2803): a pipeline run belongs to the organization, so
+  // this lens renders tenant-entity metrics — no roster, no peer, no person.
   CI: {
-    comingSoon:
-      "CI pipeline metrics — the org-level ci.* metrics are live on the API; this view is still in development.",
+    title: "Development · CI",
+    tagline: "pipelines, org-wide",
+    entity: "tenant",
+    notIngested: "No CI runs collected yet — connect a GitHub source.",
+    sections: [
+      {
+        kind: "headline",
+        metrics: ["ci.gate_pass_rate", "ci.runs", "ci.gate_first_try_pass_rate"],
+      },
+      {
+        kind: "stat-tiles",
+        title: "Gate run durations & retries",
+        metrics: [
+          "ci.run_duration_min",
+          "ci.run_duration_min_p90",
+          "ci.run_duration_min_stddev",
+          "ci.gate_retry_share",
+        ],
+      },
+      {
+        kind: "trend",
+        title: "Runs per week",
+        description: "Decided runs, all triggers.",
+        metrics: ["ci.runs"],
+        plot: "area",
+      },
+      {
+        kind: "trend",
+        title: "Gate pass rate per week",
+        description:
+          "Success share of commit-triggered runs; first-try shows what green cost in retries.",
+        metrics: ["ci.gate_pass_rate", "ci.gate_first_try_pass_rate"],
+      },
+      {
+        kind: "composition",
+        metric: "ci.runs",
+        dimension: "repository",
+        splitBy: "outcome",
+        title: "Runs by repository",
+      },
+      {
+        kind: "composition",
+        metric: "ci.run_hours",
+        dimension: "repository",
+        splitBy: "outcome",
+        title: "CI hours by repository",
+      },
+      {
+        kind: "histogram",
+        metric: "ci.run_duration_min",
+        title: "How long a gate run takes",
+        caption:
+          "Each bar is a duration range, and how many runs fall in it. The tail is what people wait for.",
+      },
+      {
+        kind: "composition",
+        metric: "ci.deployments",
+        dimension: "environment",
+        splitBy: "outcome",
+        title: "Deployments by environment",
+        // GitHub marks a deployment superseded by a newer one "inactive" —
+        // reading that as broken would make every busy environment look red.
+        segmentLabels: { inactive: "superseded" },
+      },
+    ],
   },
   Continuity: PRODUCT_GAP("Longitudinal continuity metrics"),
   Repositories: SCREEN_GAP("Repository-level rollups"),
@@ -664,7 +788,9 @@ export const DIRECTION_LENSES: Record<string, Record<string, LensEntry>> = {
 export function directionMetricKeys(dir: string): string[] {
   const keys = new Set<string>();
   for (const entry of Object.values(DIRECTION_LENSES[dir] ?? {})) {
-    if ("comingSoon" in entry) continue;
+    // ComingSoon entries contribute nothing; tenant lenses fetch their own
+    // tenant-entity collection and must stay out of the person grid.
+    if ("comingSoon" in entry || "entity" in entry) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
   return [...keys];

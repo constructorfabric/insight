@@ -1813,7 +1813,9 @@ function DirectionCardsSection({
   const cards = overviewCardDirections(showPlanned)
     .map((d) => {
       const entry = lensEntry(d.id, "Overview");
-      if (!entry || "comingSoon" in entry) return null;
+      // Overview lenses are person-grain by construction; a tenant entry here
+      // would have no roster to preview, so it contributes no card.
+      if (!entry || "comingSoon" in entry || "entity" in entry) return null;
       const gated = visibleSections(entry, showPlanned);
       const headline = gated.sections.find(
         (s): s is Extract<SectionSpec, { kind: "headline" }> =>
@@ -1973,7 +1975,7 @@ interface BarSegment {
   value: number;
 }
 
-interface BarRow {
+export interface BarRow {
   label: string;
   value: number;
   pct: number;
@@ -1990,7 +1992,7 @@ interface BarRow {
  * the same string once, which is why a dimension whose ids share a prefix drew a
  * column of bars all reading alike.
  */
-interface BarEntry {
+export interface BarEntry {
   label: string;
   value: number;
   href?: string;
@@ -1998,7 +2000,7 @@ interface BarEntry {
   split?: Map<string, BarSegment>;
 }
 
-function toBarRows(bucket: Map<string, BarEntry>): BarRow[] {
+export function toBarRows(bucket: Map<string, BarEntry>): BarRow[] {
   const total =
     [...bucket.values()].reduce((sum, entry) => sum + entry.value, 0) || 1;
   return [...bucket.values()]
@@ -2035,12 +2037,12 @@ const LINKABLE_DIMENSION = "repository";
 const SOURCE_DIMENSION = "source";
 
 /** Segment a split row falls in when the response named no split value. */
-const UNSPLIT_SEGMENT = "unsplit";
+export const UNSPLIT_SEGMENT = "unsplit";
 
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
-function BarList({
+export function BarList({
   title,
   rows,
   format,
@@ -2197,7 +2199,7 @@ function SliceNote({ text }: { text: string }) {
   );
 }
 
-function Delta({
+export function Delta({
   now,
   prev,
   direction,

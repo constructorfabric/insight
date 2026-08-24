@@ -36,6 +36,8 @@ const COMPUTATIONS: MetricComputation[] = [
   "sum",
   "ratio",
   "median",
+  "percentile",
+  "stddev",
   "distinct_count",
 ];
 
@@ -97,6 +99,7 @@ export function MetricEditorDialog({
 
   const canSubmit = draftIsSubmittable(draft) && !isPending;
   const isRatio = draft.computation === "ratio";
+  const isPercentile = draft.computation === "percentile";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -238,17 +241,21 @@ export function MetricEditorDialog({
                 autoComplete="off"
               />
             </Field>
-            {isRatio ? (
+            {isRatio || isPercentile ? (
               <Field
                 id="metric-scale"
-                label={t("metrics_console.editor.scale_label")}
+                label={
+                  isPercentile
+                    ? t("metrics_console.editor.quantile_label")
+                    : t("metrics_console.editor.scale_label")
+                }
               >
                 <Input
                   id="metric-scale"
                   value={draft.scale}
                   onChange={(e) => set("scale", e.target.value)}
                   inputMode="decimal"
-                  placeholder="100"
+                  placeholder={isPercentile ? "0.9" : "100"}
                   autoComplete="off"
                 />
               </Field>
