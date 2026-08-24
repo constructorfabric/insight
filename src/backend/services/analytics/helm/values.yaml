@@ -34,6 +34,21 @@ metricCatalog:
 # sets `existingSecret` to its name.
 existingSecret: ""
 
+# A SECOND Secret of `APP__gears__analytics__config__*` overrides, layered over
+# `existingSecret`. For values an operator must not commit: on a GitOps stand
+# the umbrella's chart values live in git, so the Anthropic key and the token
+# sealing key have to arrive by another route — a SealedSecret applied out of
+# band, named here.
+#
+# Keys are whole env vars, same as `existingSecret`:
+#   APP__gears__analytics__config__ai_assist__api_key
+#   APP__gears__analytics__config__ai_assist__token_encryption_key
+#
+# Listed after `existingSecret` in `envFrom`, so where both carry a key this
+# one wins.
+aiAssist:
+  existingSecret: ""
+
 visibilityPolicy: "org_chart"
 
 # Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These

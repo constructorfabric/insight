@@ -75,6 +75,13 @@ spec:
             # APP__gears__analytics__config__* leaf overrides.
             - secretRef:
                 name: {{ required "existingSecret is required (umbrella provides `insight-analytics-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+            {{- with .Values.aiAssist.existingSecret }}
+            # Second and last, so it wins: the credentials a GitOps stand
+            # cannot keep in chart values. Absent on stands that pass the key
+            # as a plain value (compose, laptops).
+            - secretRef:
+                name: {{ . | quote }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

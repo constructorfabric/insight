@@ -502,6 +502,14 @@ analytics:
     # the common setup is a stand key and then every call spends the
     # deployment's own money. Off for a stand where people bring their own.
     adminOnly: true
+    # Name of a Secret carrying `apiKey` and `tokenEncryptionKey` as whole env
+    # vars, applied out of band (a SealedSecret on a GitOps stand). Set it and
+    # neither value is read from — or rendered into — chart values, so a key
+    # cannot reach the repository by being written here.
+    #
+    #   APP__gears__analytics__config__ai_assist__api_key
+    #   APP__gears__analytics__config__ai_assist__token_encryption_key
+    existingSecret: ""
     model: "claude-sonnet-5"
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the
