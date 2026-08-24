@@ -109,10 +109,9 @@ function StandKeyCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>This deployment supplies the key</CardTitle>
+        <CardTitle>Anthropic key</CardTitle>
         <CardDescription>
-          Explanations are paid for by a key an operator configured for the
-          whole stand, so there is nothing to set here.
+          One key for the whole stand, set by an administrator.
         </CardDescription>
       </CardHeader>
     </Card>

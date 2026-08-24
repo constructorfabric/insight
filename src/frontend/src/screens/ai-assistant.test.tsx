@@ -213,7 +213,7 @@ describe("AiAssistantBody", () => {
 
     // Said, not left blank: someone who came to paste a key needs the reason.
     expect(
-      screen.getByText("This deployment supplies the key")
+      screen.getByText("One key for the whole stand, set by an administrator.")
     ).toBeInTheDocument();
     expect(screen.queryByLabelText(/Anthropic key/i)).toBeNull();
   });
