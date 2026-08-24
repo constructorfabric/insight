@@ -68,6 +68,29 @@ const RESTATEMENT_GROUP = new Map<string, number>(
  * items in the order the reader will meet them — most severe first, or in
  * candidate order for a row that is chosen rather than ranked.
  */
+/**
+ * The entries a standing may count as independent signals.
+ *
+ * A section's status and a person's problem count grade a PATTERN — how many
+ * separate things went wrong — so a metric another one already contains must
+ * not vote twice. Every surface that grades or tallies goes through here.
+ * Displayed rows do not: "what did we measure" and "how many independent
+ * things went wrong" are different questions.
+ *
+ * INVARIANT: thinning is over what actually read for this entity, never over
+ * the collection — a total whose narrower part is silent is the only reading
+ * there is, and has to keep its vote.
+ */
+export function countableSignals<T>(
+  entries: readonly T[],
+  keyOf: (entry: T) => string
+): T[] {
+  const kept = dropRedundantMetrics(
+    entries.map((entry) => ({ key: keyOf(entry), entry }))
+  );
+  return kept.map((item) => item.entry);
+}
+
 export function dropRedundantMetrics<T extends { key: string }>(
   items: readonly T[],
   alreadyShown: ReadonlySet<string> = new Set()

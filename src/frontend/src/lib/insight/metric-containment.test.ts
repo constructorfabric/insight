@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dropRedundantMetrics } from "./metric-containment";
+import { countableSignals, dropRedundantMetrics } from "./metric-containment";
 
 const item = (key: string) => ({ key });
 
@@ -94,5 +94,35 @@ describe("dropRedundantMetrics", () => {
       new Set(["git.code_lines"])
     );
     expect(kept).toEqual([]);
+  });
+});
+
+describe("countableSignals", () => {
+  it("gives one fact one vote, whatever shape the caller counts in", () => {
+    // Every standing surface counts a different shape — rows, ranks, team
+    // standings — so the rule is reached through a key accessor rather than by
+    // each caller reshaping its data to match it.
+    const signals = countableSignals(
+      [
+        { metric: "git.commits", rank: "bottom" },
+        { metric: "git.default_branch_commits", rank: "bottom" },
+        { metric: "git.pr_size", rank: "top" },
+      ],
+      (signal) => signal.metric
+    );
+
+    expect(signals.map((signal) => signal.metric)).toEqual([
+      "git.default_branch_commits",
+      "git.pr_size",
+    ]);
+  });
+
+  it("leaves a total alone when its part is not among the signals", () => {
+    const signals = countableSignals(
+      [{ metric: "git.commits", rank: "bottom" }],
+      (signal) => signal.metric
+    );
+
+    expect(signals).toHaveLength(1);
   });
 });

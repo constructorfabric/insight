@@ -13,7 +13,7 @@ import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
 import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
 import type { MetricGroup } from "@/lib/insight/groups";
-import { dropRedundantMetrics } from "@/lib/insight/metric-containment";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import { peerStatusToStatus } from "@/lib/insight/peer-status";
 import {
   forEntity,
@@ -129,11 +129,8 @@ export function MetricGroupCard({
   // twice because a second one contains it moves the section's colour without
   // anything about the person changing. Thinning the tally, not the rows: the
   // list below still names every metric the group measures.
-  const tallied = dropRedundantMetrics(
-    rows.map((row) => ({ key: row.metric.metric_key, row }))
-  );
-  const ranked = tallied.map(({ row }) => ({ row, rank: row.rank }));
-  const counts = rankCounts(ranked);
+  const counted = countableSignals(rows, (row) => row.metric.metric_key);
+  const counts = rankCounts(counted.map((row) => ({ row, rank: row.rank })));
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);
 
