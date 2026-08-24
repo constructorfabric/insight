@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS insight.ci_metric_evidence
     `record_id` String,
     `record_kind` String,
     `granularity` String,
-    `record_label` Nullable(String),
+    `record_label` String,
     `contribution` Nullable(Float64),
     `subject_key` Nullable(String),
     `dimensions` Array(Tuple(
