@@ -226,8 +226,8 @@ definitions:
         http_codes: [404, 413]
         action: IGNORE
         error_message: >-
-          Skipping this repository: gone at origin (404), or larger than
-          cache.maxRepoBytes (413). Other repositories continue.
+          Skipping this repository: gone or refused at origin (404), or
+          larger than cache.maxRepoBytes (413). Other repositories continue.
       # The pinned snapshot was superseded mid-walk. RETRY would replay the
       # same dead page token and 409 again; rerunning the sync resumes each
       # partition from its own stored cursor against a fresh snapshot.

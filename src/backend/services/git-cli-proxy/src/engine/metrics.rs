@@ -85,6 +85,7 @@ impl RejectReason {
 struct Instruments {
     evictions: Counter<u64>,
     rejections: Counter<u64>,
+    origin_unavailable: Counter<u64>,
     purge_escalations: Counter<u64>,
     cold_clones: Counter<u64>,
     fetches: Counter<u64>,
@@ -107,6 +108,15 @@ fn instruments() -> &'static Instruments {
                     "Requests answered 429, by reason. A sustained rise in admission_exhausted \
                      or prefetch_headroom means the budget is too small for the working set; \
                      preparation_wait is ordinary while a clone runs.",
+                )
+                .build(),
+            origin_unavailable: meter
+                .u64_counter("git_proxy.origin_unavailable")
+                .with_description(
+                    "Requests refused because the origin declines to serve the repository \
+                     (suspended, disabled, or over the vendor's own limit). Permanent per \
+                     repository: the connector skips it, so a non-zero value means \
+                     repositories are absent from bronze until the origin state changes.",
                 )
                 .build(),
             purge_escalations: meter
@@ -149,6 +159,10 @@ pub fn record_rejection(reason: RejectReason) {
     instruments()
         .rejections
         .add(1, &[KeyValue::new("reason", reason.as_str())]);
+}
+
+pub fn record_origin_unavailable() {
+    instruments().origin_unavailable.add(1, &[]);
 }
 
 pub fn record_purge_escalation() {
