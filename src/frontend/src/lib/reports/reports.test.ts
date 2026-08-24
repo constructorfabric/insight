@@ -7,6 +7,11 @@ import {
   planRequests,
 } from "@/lib/reports/batching";
 import { unavailableReason } from "@/lib/reports/availability";
+import {
+  clampGranularity,
+  granularityFitsPeriod,
+  periodTooShortReason,
+} from "@/lib/reports/granularity-for-period";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable } from "@/lib/reports/report-table";
 import {
@@ -595,5 +600,57 @@ describe("bucketsInRange", () => {
       "2026-02",
       "2026-03",
     ]);
+  });
+});
+
+describe("granularityFitsPeriod", () => {
+  const week = { from: "2026-08-17", to: "2026-08-23" };
+  const month = { from: "2026-07-24", to: "2026-08-23" };
+  const quarter = { from: "2026-05-24", to: "2026-08-23" };
+  const year = { from: "2025-08-24", to: "2026-08-23" };
+
+  it("offers a week the grains a week can be split into", () => {
+    expect(granularityFitsPeriod("day", week)).toBe(true);
+    expect(granularityFitsPeriod("week", week)).toBe(true);
+    expect(granularityFitsPeriod("month", week)).toBe(false);
+    expect(granularityFitsPeriod("quarter", week)).toBe(false);
+    expect(granularityFitsPeriod("year", week)).toBe(false);
+  });
+
+  it("admits a grain once the period is at least that long", () => {
+    expect(granularityFitsPeriod("month", month)).toBe(true);
+    expect(granularityFitsPeriod("quarter", month)).toBe(false);
+
+    expect(granularityFitsPeriod("quarter", quarter)).toBe(true);
+    expect(granularityFitsPeriod("year", quarter)).toBe(false);
+
+    expect(granularityFitsPeriod("year", year)).toBe(true);
+  });
+
+  it("measures the shortest calendar span a grain can occupy", () => {
+    expect(granularityFitsPeriod("month", { from: "2026-02-24", to: "2026-03-23" })).toBe(true);
+    expect(granularityFitsPeriod("quarter", { from: "2026-12-24", to: "2027-03-23" })).toBe(true);
+    expect(granularityFitsPeriod("quarter", { from: "2026-06-24", to: "2026-09-19" })).toBe(false);
+  });
+
+  it("states why a grain is refused, and names the grain to pick instead", () => {
+    expect(periodTooShortReason("day", month)).toBeNull();
+    expect(periodTooShortReason("quarter", month)).toBe(
+      "A quarterly split needs a period of at least a quarter — pick monthly or finer",
+    );
+    expect(periodTooShortReason("year", week)).toBe(
+      "A yearly split needs a period of at least a year — pick weekly or finer",
+    );
+  });
+});
+
+describe("clampGranularity", () => {
+  it("leaves a grain the period can carry alone", () => {
+    expect(clampGranularity("week", { from: "2026-07-24", to: "2026-08-23" })).toBe("week");
+  });
+
+  it("falls back to the coarsest grain the period can carry", () => {
+    expect(clampGranularity("year", { from: "2026-07-24", to: "2026-08-23" })).toBe("month");
+    expect(clampGranularity("quarter", { from: "2026-08-17", to: "2026-08-23" })).toBe("week");
   });
 });

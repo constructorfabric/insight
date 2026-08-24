@@ -159,9 +159,27 @@ describe("ReportBuilderView", () => {
     render(<ReportBuilderView />);
     expect(isDisabled("Merge rate")).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Yearly" }));
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
     expect(isDisabled("Merge rate")).toBe(true);
     expect(isDisabled("Commits")).toBe(false);
+  });
+
+  it("refuses a grain longer than the period, and says which to pick", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    const yearly = screen.getByRole("button", { name: "Yearly" });
+    expect(yearly).toBeDisabled();
+    expect(yearly).toHaveAttribute(
+      "title",
+      expect.stringMatching(/at least a year — pick quarterly or finer/),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
+    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("says why it cannot build yet, rather than greying out in silence", async () => {
