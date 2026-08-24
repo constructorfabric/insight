@@ -7,6 +7,7 @@ CLI:
     --connection-name NAME
     --schedule "CRON"
     --tenant SLUG
+    --cron-name NAME             # object name, computed by lib/argo.sh:argo_cron_workflow_name
     --insight-source-id SLUG     # secret annotation insight.cyberfabric.com/source-id
     --dbt-select SEL             # descriptor.dbt_select (may be empty)
     --enrich-image REF           # descriptor.images.enrich.image (may be empty)
@@ -37,6 +38,7 @@ def main() -> int:
     p.add_argument("--connection-name", required=True)
     p.add_argument("--schedule", required=True)
     p.add_argument("--tenant", required=True)
+    p.add_argument("--cron-name", required=True)
     p.add_argument("--insight-source-id", required=True)
     p.add_argument("--dbt-select", default="")
     p.add_argument("--enrich-image", default="")
@@ -64,6 +66,7 @@ def main() -> int:
         "CONNECTION_NAME": args.connection_name,
         "SCHEDULE": args.schedule,
         "TENANT": args.tenant,
+        "CRON_NAME": args.cron_name,
         "INSIGHT_SOURCE_ID": args.insight_source_id,
         "DATA_SOURCE": data_source,
         "DBT_SELECT": args.dbt_select,

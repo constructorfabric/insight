@@ -276,7 +276,7 @@ for x in json.load(sys.stdin): print(x)')
     if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
                                 "${source_id_label}" "${dbt_select}" \
                                 "${enrich_image}" >/dev/null 2>&1; then
-      log_line INFO "${name}: created Argo CronWorkflow ${name}-${tenant}-sync"
+      log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}")"
     else
       # ADOPT_DRY_RUN guarded above (would_call branch).
       log_line ERROR "${name}: failed to create/update Argo CronWorkflow"

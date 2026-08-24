@@ -3,6 +3,7 @@
 # Sourceable; NO top-level CLI.
 #
 # Public surface:
+#   argo_cron_workflow_name  CONNECTOR TENANT
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
 #                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
@@ -23,15 +24,36 @@ ARGO_SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 ARGO_PY_DIR="$( cd "${ARGO_SCRIPT_DIR}/../python" && pwd )"
 ARGO_TPL_DIR="$( cd "${ARGO_SCRIPT_DIR}/../templates" && pwd )"
 
+# WORKAROUND: Argo rejects a CronWorkflow whose name exceeds 52 characters — it
+# appends `-<10-digit unix timestamp>` per scheduled Workflow, which must fit a
+# 63-character DNS label. The controller rejects it only after a successful
+# apply, so the object exists, carries a SpecError condition and never
+# schedules. A 36-character UUID tenant would leave 10 for the connector slug.
+ARGO_CRON_TENANT_CHARS=8
+
+# INVARIANT: a DNS-1123 name segment ends alphanumeric; truncation can leave a
+# separator at the tail.
+argo_cron_workflow_name() {
+  local connector="$1" tenant="$2"
+  local tenant_prefix="${tenant:0:${ARGO_CRON_TENANT_CHARS}}"
+  while [[ "$tenant_prefix" == *[-.] ]]; do
+    tenant_prefix="${tenant_prefix%?}"
+  done
+  printf '%s-%s-sync' "$connector" "$tenant_prefix"
+}
+
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
+  local cron_name
+  cron_name="$(argo_cron_workflow_name "$connector" "$tenant")"
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
     --tenant "$tenant" \
+    --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
     --enrich-image "$enrich_image" \
@@ -56,7 +78,8 @@ argo_apply_cronworkflow() {
 
 argo_delete_cronworkflow() {
   local connector="$1" tenant="$2"
-  local name="${connector}-${tenant}-sync"
+  local name
+  name="$(argo_cron_workflow_name "$connector" "$tenant")"
   local del_out
   # Pin the namespace explicitly. The rendered CronWorkflow lives in
   # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
