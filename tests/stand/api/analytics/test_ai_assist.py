@@ -45,6 +45,10 @@ from insight_stand.api import JsonValue
 from ..schemas import ProblemDocument
 from ..schemas.analytics import AiConfigResponse
 
+#: Refusals and credential hygiene: what the switch withholds, and that a
+#: refused write leaves no key behind.
+pytestmark = pytest.mark.security
+
 CONFIG = analytics_path("/v1/ai/config")
 CREDENTIALS = analytics_path("/v1/ai/credentials")
 SETTINGS = analytics_path("/v1/ai/settings")
