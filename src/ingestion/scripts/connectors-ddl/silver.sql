@@ -501,6 +501,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
     `state` String,
     `author_name` String,
     `author_email` String,
+    `author_account_id` String,
     `source_branch` String,
     `destination_branch` String,
     `created_on` Nullable(DateTime),

@@ -241,6 +241,27 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
 done
 
+echo "=== Healing git pull-request author account column ==="
+# Same positional invariant: every projection feeding class_git_pull_requests
+# gained author_account_id after author_email (account-first person
+# attribution, #2819). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Existing rows heal to '' and carry the account id from the first sync that
+# re-collects them — the rollout's full refresh backfills the rest. Idempotent.
+heal_git_pr_author_account() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS author_account_id String AFTER author_email;
+ALTER TABLE staging.${table} MODIFY COLUMN author_account_id String AFTER author_email;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_pr_author_account "${_git_source}__pull_requests"
+done
+
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)
 # from raw bronze Decimal(38,9) to toString(...), but pre-existing
