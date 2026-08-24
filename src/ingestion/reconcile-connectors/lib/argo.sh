@@ -31,6 +31,7 @@ ARGO_TPL_DIR="$( cd "${ARGO_SCRIPT_DIR}/../templates" && pwd )"
 # apply, so the object exists, carries a SpecError condition and never
 # schedules. A 36-character UUID tenant would leave 10 for the connector slug.
 ARGO_CRON_TENANT_CHARS=8
+ARGO_CRON_NAME_MAX_CHARS=52
 
 # INVARIANT: a DNS-1123 name segment ends alphanumeric; truncation can leave a
 # separator at the tail.
@@ -40,7 +41,14 @@ argo_cron_workflow_name() {
   while [[ "$tenant_prefix" == *[-.] ]]; do
     tenant_prefix="${tenant_prefix%?}"
   done
-  printf '%s-%s-sync' "$connector" "$tenant_prefix"
+
+  local name="${connector}-${tenant_prefix}-sync"
+  if (( ${#name} > ARGO_CRON_NAME_MAX_CHARS )); then
+    printf 'CronWorkflow name %s is %s characters; Argo accepts at most %s. Shorten the connector slug.\n' \
+      "$name" "${#name}" "${ARGO_CRON_NAME_MAX_CHARS}" >&2
+    return 1
+  fi
+  printf '%s' "$name"
 }
 
 # An installation may still hold a CronWorkflow named with the whole tenant id.
@@ -73,7 +81,7 @@ argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
   local cron_name
-  cron_name="$(argo_cron_workflow_name "$connector" "$tenant")"
+  cron_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return 1
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
@@ -104,7 +112,7 @@ argo_apply_cronworkflow() {
   # The sweep is idempotent, so a failure here is picked up by the next
   # reconcile pass; it must not turn a successful apply into a failed one.
   local bounded_name full_tenant_name
-  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")"
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return 1
   full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
   if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
     _argo_delete_cronworkflow_named "${full_tenant_name}" >/dev/null || true
@@ -113,13 +121,17 @@ argo_apply_cronworkflow() {
 
 argo_delete_cronworkflow() {
   local connector="$1" tenant="$2"
-  local bounded_name full_tenant_name
-  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")"
+  local bounded_name full_tenant_name rc=0
   full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
-  _argo_delete_cronworkflow_named "${bounded_name}" || return 1
-  if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
-    _argo_delete_cronworkflow_named "${full_tenant_name}" || return 1
+  _argo_delete_cronworkflow_named "${full_tenant_name}" || rc=1
+
+  # A name over the cap was never applied, so there is nothing to remove under
+  # it — removal still has to clear the full-tenant object above.
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return "$rc"
+  if [[ "${bounded_name}" != "${full_tenant_name}" ]]; then
+    _argo_delete_cronworkflow_named "${bounded_name}" || rc=1
   fi
+  return "$rc"
 }
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1
