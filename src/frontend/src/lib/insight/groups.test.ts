@@ -131,6 +131,22 @@ describe("groups registry", () => {
       "git.prs_created",
     ]);
   });
+
+  it("gives each default-branch split a value and a peer comparison", () => {
+    const git = groupById("git_output");
+    const byKey = new Map(git.collection.metrics.map((m) => [m.key, m]));
+
+    for (const key of [
+      "git.default_branch_commits",
+      "git.default_branch_prs_merged",
+    ]) {
+      // The number alone says nothing: "commits that landed" is only readable
+      // against the pool's middle, which is what the peer view carries. The
+      // sibling test above pins that neither takes a `branch_scope` breakdown.
+      const views = byKey.get(key)?.views.map((view) => view.view);
+      expect(views, key).toEqual(expect.arrayContaining(["period", "peer"]));
+    }
+  });
 });
 
 describe("visibleGroups", () => {
