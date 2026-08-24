@@ -90,7 +90,6 @@ describe("useAiAvailable", () => {
     const { result } = renderHook(() => useAiAvailable(), { wrapper: Wrapper });
 
     await waitFor(() => expect(result.current.hasKey).toBe(true));
-    // Nobody's own key is read where the stand supplies one.
     expect(mocks.getAiCredentialStatus).not.toHaveBeenCalled();
   });
 

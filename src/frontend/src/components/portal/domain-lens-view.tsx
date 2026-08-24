@@ -1235,7 +1235,7 @@ function TrendSection({
   // axis makes a count of people and a count of lines look comparable when
   // they are not, and there is nowhere to click from a legend.
   return (
-    <div className="grid grid-cols-[repeat(auto-fit,minmax(34rem,1fr))] gap-4">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(34rem,100%),1fr))] gap-4">
       {drawable.map((chart) => (
         <button
           key={chart.id}

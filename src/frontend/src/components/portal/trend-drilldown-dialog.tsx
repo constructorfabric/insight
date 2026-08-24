@@ -110,8 +110,6 @@ function Records({
   metricKey: string;
   state: TrendDrilldownState;
 }) {
-  // Newest first: a reader opening the evidence behind a trend is looking for
-  // what happened lately, not for the oldest record in the window.
   const [sort, setSort] = useState<EvidenceSort | null>({
     key: "date",
     direction: "desc",

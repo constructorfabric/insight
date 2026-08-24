@@ -498,6 +498,10 @@ analytics:
     # own: every explanation is paid for by this key, and the SPA offers no
     # place to paste a personal one.
     apiKey: ""
+    # Restrict asking for an explanation to admins. On by default, because
+    # the common setup is a stand key and then every call spends the
+    # deployment's own money. Off for a stand where people bring their own.
+    adminOnly: true
     model: "claude-sonnet-5"
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the

@@ -105,10 +105,6 @@ export function AiAssistantBody() {
   );
 }
 
-/**
- * Said rather than left blank: a reader who came here to paste a key needs to
- * know why there is nowhere to paste it.
- */
 function StandKeyCard() {
   return (
     <Card>

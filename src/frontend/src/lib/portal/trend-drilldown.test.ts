@@ -178,6 +178,26 @@ describe("bucketBreakdown", () => {
     ]);
   });
 
+  it("counts two people who share a display name as two contributors", () => {
+    const byKey = new Map([
+      [
+        "git.prs_merged",
+        result({
+          a: [["2026-08-01", 1]],
+          b: [["2026-08-01", 1]],
+        }),
+      ],
+    ]);
+    const namesakes = [
+      { person_id: "a", name: "Alex Kim" },
+      { person_id: "b", name: "Alex Kim" },
+    ];
+
+    expect(bucketBreakdown("git.prs_merged", byKey, namesakes)).toEqual([
+      { date: "2026-08-01", total: 2, contributors: ["Alex Kim", "Alex Kim"] },
+    ]);
+  });
+
   it("answers with nothing for a metric the response does not carry", () =>
     expect(bucketBreakdown("git.absent", new Map(), MEMBERS)).toEqual([]));
 });

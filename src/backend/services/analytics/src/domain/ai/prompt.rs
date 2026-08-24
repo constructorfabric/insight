@@ -170,7 +170,43 @@ pub fn snapshot_message(snapshot: &MetricSnapshot) -> String {
     format!("Explain this metric reading:\n\n{body}")
 }
 
+/// Dates the model can trust, or none at all.
+///
+/// The axis is only meaningful when every line has one reading per date. A
+/// mismatched pair would have the model name the wrong bucket with total
+/// confidence, so the dates are dropped rather than sent misaligned — the
+/// prompt already copes with a snapshot that carries none.
+fn aligned_axis(dates: Vec<String>, series: &[SnapshotSeries]) -> Vec<String> {
+    if dates.is_empty() {
+        return dates;
+    }
+    if series.iter().any(|s| s.points.len() != dates.len()) {
+        return Vec::new();
+    }
+    dates
+}
+
 fn clip_snapshot(snapshot: &MetricSnapshot) -> MetricSnapshot {
+    let series: Vec<SnapshotSeries> = snapshot
+        .series
+        .iter()
+        .take(MAX_SERIES)
+        .map(|s| SnapshotSeries {
+            label: clip(&s.label),
+            points: s.points.iter().take(MAX_TREND_POINTS).copied().collect(),
+        })
+        .collect();
+
+    let bucket_starts = aligned_axis(
+        snapshot
+            .bucket_starts
+            .iter()
+            .take(MAX_TREND_POINTS)
+            .map(|d| clip(d))
+            .collect(),
+        &series,
+    );
+
     MetricSnapshot {
         metric_key: clip(&snapshot.metric_key),
         label: clip(&snapshot.label),
@@ -188,21 +224,8 @@ fn clip_snapshot(snapshot: &MetricSnapshot) -> MetricSnapshot {
             .copied()
             .collect(),
         scope: snapshot.scope,
-        bucket_starts: snapshot
-            .bucket_starts
-            .iter()
-            .take(MAX_TREND_POINTS)
-            .map(|d| clip(d))
-            .collect(),
-        series: snapshot
-            .series
-            .iter()
-            .take(MAX_SERIES)
-            .map(|s| SnapshotSeries {
-                label: clip(&s.label),
-                points: s.points.iter().take(MAX_TREND_POINTS).copied().collect(),
-            })
-            .collect(),
+        bucket_starts,
+        series,
     }
 }
 
@@ -339,6 +362,50 @@ mod tests {
 
         assert_eq!(parsed["bucket_starts"].as_array().map(Vec::len), Some(64));
         assert_eq!(parsed["bucket_starts"][0], "2026-08-00");
+        Ok(())
+    }
+
+    #[test]
+    fn dates_that_do_not_index_the_lines_are_dropped() -> Result<(), serde_json::Error> {
+        let mut chart = snapshot();
+        chart.bucket_starts = vec!["2026-08-01".to_owned(), "2026-08-02".to_owned()];
+        chart.series = vec![SnapshotSeries {
+            label: "PRs merged".to_owned(),
+            points: vec![Some(1.0)],
+        }];
+
+        let message = snapshot_message(&chart);
+        let json = message
+            .split_once("\n\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(json)?;
+
+        assert_eq!(
+            parsed["bucket_starts"].as_array().map(Vec::len),
+            Some(0),
+            "a two-date axis cannot describe a one-point line"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dates_that_index_every_line_are_kept() -> Result<(), serde_json::Error> {
+        let mut chart = snapshot();
+        chart.bucket_starts = vec!["2026-08-01".to_owned(), "2026-08-02".to_owned()];
+        chart.series = vec![SnapshotSeries {
+            label: "PRs merged".to_owned(),
+            points: vec![Some(1.0), None],
+        }];
+
+        let message = snapshot_message(&chart);
+        let json = message
+            .split_once("\n\n")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(json)?;
+
+        assert_eq!(parsed["bucket_starts"].as_array().map(Vec::len), Some(2));
         Ok(())
     }
 

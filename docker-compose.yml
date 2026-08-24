@@ -225,6 +225,7 @@ services:
       APP__gears__analytics__config__ai_assist__enabled: "${AI_ASSIST_ENABLED:-false}"
       APP__gears__analytics__config__ai_assist__token_encryption_key: "${AI_ASSIST_TOKEN_ENCRYPTION_KEY:-}"
       APP__gears__analytics__config__ai_assist__api_key: "${AI_ASSIST_API_KEY:-}"
+      APP__gears__analytics__config__ai_assist__admin_only: "${AI_ASSIST_ADMIN_ONLY:-true}"
       APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
       # cf-gears-oidc-authn-plugin. Its config is nested/list-shaped (not

@@ -78,9 +78,13 @@ export function bucketBreakdown(
   const result = byKey.get(key);
   if (!result) return [];
 
+  // Identity is the person id, never the display name: two colleagues called
+  // the same thing are two contributors, and deduplicating on the name would
+  // report one where the chart's line counts two.
+  //
   // A person counted once per bucket however many readings they have in it:
-  // one contributor with two positive points is one active contributor, and
-  // the count here has to agree with the line the chart draws.
+  // one contributor with two positive points is one active contributor.
+  const nameOf = new Map(members.map((m) => [m.person_id, m.name]));
   const buckets = new Map<string, { total: number; contributors: Set<string> }>();
   for (const member of members) {
     for (const s of forEntity(result, member.person_id).series) {
@@ -91,7 +95,7 @@ export function bucketBreakdown(
         };
         const value = p.value ?? 0;
         bucket.total += value;
-        if (value > 0) bucket.contributors.add(member.name);
+        if (value > 0) bucket.contributors.add(member.person_id);
         buckets.set(p.bucket_start, bucket);
       }
     }
@@ -101,7 +105,9 @@ export function bucketBreakdown(
     .map(([date, bucket]) => ({
       date,
       total: bucket.total,
-      contributors: [...bucket.contributors].sort((a, b) => a.localeCompare(b)),
+      contributors: [...bucket.contributors]
+        .map((id) => nameOf.get(id) ?? id)
+        .sort((a, b) => a.localeCompare(b)),
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
