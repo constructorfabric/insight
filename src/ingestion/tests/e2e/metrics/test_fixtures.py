@@ -148,6 +148,38 @@ def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> No
     )
 
 
+# The reserved not-a-human person (bots, CI): an account bound to it claims
+# nothing in either resolution map. Mirrors excluded_person_id() in dbt.
+_EXCLUDED_PERSON_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+
+def _seed_identity_accounts(cfg: SessionConfig, accounts: list[dict[str, str]], start_id: int) -> None:
+    """Source-account bindings from the yaml's `identity_accounts` — the rows
+    the account-first map (resolve_person_id_by_account) resolves pull-request
+    authors through. insight_source_id is hashed from the RAW source id with
+    the same expression the connectors' identity_inputs models use, so the
+    seam under test is the real one.
+    """
+    if not accounts:
+        return
+
+    rows = ", ".join(
+        f"({start_id + index}, 'id', '{entry['source_type']}', "
+        f"toUUID(UUIDNumToString(sipHash128('{entry['source_id']}'))), generateUUIDv4(), "
+        f"'{entry['account_id']}', '{entry['account_id']}', "
+        f"toUUID('{_EXCLUDED_PERSON_ID if entry['person'] == 'excluded' else person_id_for(entry['person'])}'), "
+        f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
+        for index, entry in enumerate(accounts)
+    )
+    clickhouse.execute(
+        cfg,
+        "INSERT INTO identity.identity_persons "  # noqa: S608 — values derive from fixture yaml
+        "(id, value_type, insight_source_type, insight_source_id, insight_tenant_id,"
+        " value_id, value_effective, person_id, author_person_id, created_at, _synced_at) "
+        "VALUES " + rows,
+    )
+
+
 # One synthetic connector instance for every rig persona: the account triple is
 # what joins evidence to bindings, so both inserts must name the same source.
 _RIG_SOURCE_ID = "e2e0e2e0-0000-4000-8000-000000000001"
@@ -257,6 +289,7 @@ def test_metric_smoke(
     # a new persona could fall outside of (that reads as an authz bug).
     identity_stub.allow_visible(persona_emails)
     _seed_identity_persons(ch_seeder.cfg, all_person_ids)
+    _seed_identity_accounts(ch_seeder.cfg, test_yaml.identity_accounts, start_id=len(all_person_ids) + 1)
 
     if staging or silver_set or ran_enrich_steps:
         dbt_runner.run("tag:gold", worker_ctx=worker_ctx)
