@@ -293,8 +293,12 @@ pub(super) fn evidence_presentation(
         },
         // A counted run needs no value column — the row IS the run; a duration
         // or an hour figure is only readable with its number.
-        ("ci", "runs") => EvidencePresentation {
+        ("ci", "runs" | "runs_matched_commit") => EvidencePresentation {
             detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: false,
+        },
+        ("ci", "commits_observed") => EvidencePresentation {
+            detail_keys: &["repository"],
             show_value: false,
         },
         ("ci", "run_duration_min" | "run_hours") => EvidencePresentation {

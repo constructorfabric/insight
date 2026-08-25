@@ -494,6 +494,22 @@ const DEV: Record<string, LensEntry> = {
         splitBy: "outcome",
         title: "CI hours by repository",
       },
+      // Data-trust panel: how far CI joins to git history. PR runs build
+      // synthetic merge refs the commit stream never sees, so the matched
+      // line sitting far below runs is the known join defect (#2803) made
+      // visible — the reader learns how much any commit-joined CI reading
+      // can be trusted, per bucket.
+      {
+        kind: "trend",
+        title: "CI ↔ commit join coverage",
+        description:
+          "Runs, collected commits, and runs whose head commit was collected — the gap is data the two streams cannot join.",
+        metrics: [
+          "ci.runs",
+          "ci.commits_observed",
+          "ci.runs_matched_commit",
+        ],
+      },
       {
         kind: "histogram",
         metric: "ci.run_duration_min",

@@ -271,6 +271,10 @@ sources:
         evidence_granularity: event
       - key: deployments
         evidence_granularity: event
+      - key: runs_matched_commit
+        evidence_granularity: event
+      - key: commits_observed
+        evidence_granularity: event
     dimensions:
       - repository
       - pipeline
@@ -459,6 +463,42 @@ metrics:
       - repository
       - pipeline
       - outcome
+  - metric_key: ci.runs_matched_commit
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Runs matching a collected commit
+    short_label: Runs matched
+    description: Decided runs whose head commit was collected
+    explanation: Decided runs whose head commit exists among the collected git commits. PR runs build synthetic merge refs and fork commits the commit stream never sees, so the gap between this and total runs is the honest ceiling for ANY analysis that joins CI to git history — chart it next to runs and collected commits to see how far the two streams can be trusted to join.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: runs_matched_commit
+    dimensions: []
+  - metric_key: ci.commits_observed
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Commits collected
+    short_label: Commits
+    description: Git commits collected, by commit date
+    explanation: Commits the git connector collected, dated at their commit time — the other side of the run-to-commit join. Where runs far outnumber matched runs while commits stay high, CI is running on refs the commit stream does not see (PR merge refs, forks), not on missing history.
+    format: integer
+    direction: neutral
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: commits_observed
+    dimensions: []
   - metric_key: ci.deployments
     source_key: ci
     subject: deployments

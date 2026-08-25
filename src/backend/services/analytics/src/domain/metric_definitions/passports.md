@@ -68,6 +68,22 @@ this file and the registry disagree.
 - Shape: decimal, lower_is_better, unit h
 - Notes: Wall-clock hours all decided runs spent executing, whatever the trigger. Not billable compute minutes — parallel jobs inside one run count as the run's elapsed time, not their sum. Filter by outcome to see hours burned on red runs.
 
+## ci.runs_matched_commit — Runs matching a collected commit
+
+- Source: ci (ci_metric_observations)
+- Reads: runs_matched_commit
+- Formula: sum(runs_matched_commit)
+- Shape: integer, higher_is_better
+- Notes: Decided runs whose head commit exists among the collected git commits. PR runs build synthetic merge refs and fork commits the commit stream never sees, so the gap between this and total runs is the honest ceiling for ANY analysis that joins CI to git history — chart it next to runs and collected commits to see how far the two streams can be trusted to join.
+
+## ci.commits_observed — Commits collected
+
+- Source: ci (ci_metric_observations)
+- Reads: commits_observed
+- Formula: sum(commits_observed)
+- Shape: integer, neutral
+- Notes: Commits the git connector collected, dated at their commit time — the other side of the run-to-commit join. Where runs far outnumber matched runs while commits stay high, CI is running on refs the commit stream does not see (PR merge refs, forks), not on missing history.
+
 ## ci.deployments — Deployments
 
 - Source: ci (ci_metric_observations)

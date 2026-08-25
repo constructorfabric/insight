@@ -9,7 +9,15 @@
 -- latest attempt of a retried run, so the latest attempt is the run's state
 -- and `attempt > 1` is the retry marker. Undecided (in-flight) runs are
 -- excluded — they re-arrive decided on a later sync.
-WITH runs AS (
+WITH known_commits AS (
+    SELECT DISTINCT
+        tenant_id,
+        commit_hash
+    FROM {{ ref('class_git_commits') }} FINAL
+    WHERE commit_hash != ''
+),
+
+runs AS (
     SELECT
         tenant_id,
         source_id,
@@ -26,7 +34,14 @@ WITH runs AS (
         branch,
         started_at,
         duration_s,
-        toDate(started_at) AS metric_date
+        toDate(started_at) AS metric_date,
+        -- Whether the run's head commit was ever collected by the commits
+        -- stream. PR runs build synthetic merge refs and fork commits the
+        -- stream never sees, so this is the honest joinability ceiling for
+        -- any run-to-commit analysis — served as its own measure below.
+        (tenant_id, commit_sha) IN (
+            SELECT tenant_id, commit_hash FROM known_commits
+        ) AS commit_known
     FROM {{ ref('class_git_ci_runs') }} FINAL
     WHERE outcome != ''
       AND started_at IS NOT NULL
@@ -51,6 +66,7 @@ run_rows AS (
         branch,
         started_at,
         duration_s,
+        commit_known,
         CAST(
             [
                 tuple('repository', repo_full_name, CAST(NULL AS Nullable(String))),
@@ -147,7 +163,8 @@ ARRAY JOIN
             tuple('gate_first_try_passed', if(is_gate = 1 AND outcome = 'success' AND attempt = 1, toNullable(toFloat64(1)), NULL)),
             tuple('gate_retried', if(is_gate = 1 AND is_retry = 1, toNullable(toFloat64(1)), NULL)),
             tuple('run_duration_min', if(is_gate = 1 AND coalesce(duration_s, 0) > 0, toNullable(toFloat64(duration_s) / 60), NULL)),
-            tuple('run_hours', if(coalesce(duration_s, 0) > 0, toNullable(toFloat64(duration_s) / 3600), NULL))
+            tuple('run_hours', if(coalesce(duration_s, 0) > 0, toNullable(toFloat64(duration_s) / 3600), NULL)),
+            tuple('runs_matched_commit', if(commit_known, toNullable(toFloat64(1)), NULL))
         ]
     ) AS measure
 WHERE tenant_id IS NOT NULL
@@ -178,3 +195,33 @@ SELECT
     ) AS details
 FROM deployment_rows
 WHERE tenant_id IS NOT NULL
+
+UNION ALL
+
+-- Collected commits, dated at their commit time — the denominator of the
+-- run-to-commit join-coverage panel: charted next to runs and
+-- runs_matched_commit it shows how far the two streams overlap, i.e. how much
+-- any commit-joined CI reading can be trusted.
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'ci' AS source_key,
+    'tenant' AS entity_type,
+    assumeNotNull(tenant_id) AS entity_id,
+    assumeNotNull(tenant_id) AS source_entity_id,
+    assumeNotNull(toDate(date)) AS metric_date,
+    toNullable(toDateTime64(date, 3)) AS observed_at,
+    'commits_observed' AS measure_key,
+    concat(project_key, '/', repo_slug, ':', commit_hash, ':commits_observed') AS record_id,
+    'commit' AS record_kind,
+    'event' AS granularity,
+    concat(project_key, '/', repo_slug, ' ', substring(commit_hash, 1, 10)) AS record_label,
+    toNullable(toFloat64(1)) AS contribution,
+    CAST(NULL AS Nullable(String)) AS subject_key,
+    CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions,
+    map(
+        'repository', concat(project_key, '/', repo_slug)
+    ) AS details
+FROM {{ ref('class_git_commits') }} FINAL
+WHERE tenant_id IS NOT NULL
+  AND commit_hash != ''
+  AND date IS NOT NULL

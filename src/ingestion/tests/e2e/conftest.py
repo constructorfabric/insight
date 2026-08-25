@@ -201,6 +201,13 @@ _SESSION_START_TRUNCATE = [
     ("silver", "class_git_ci_runs"),
     ("silver", "class_git_deployments"),
     ("silver", "class_git_deployment_events"),
+    # The CI join-coverage specs seed bronze_github.commits with FIXED
+    # _airbyte_extracted_at values; a prior session's staging max blocks every
+    # re-seeded row behind the strict `>` watermark, so the class serves the
+    # previous session's commits. Same reset as the runs chain above.
+    ("bronze_github", "commits"),
+    ("staging", "github__commits"),
+    ("silver", "class_git_commits"),
 ]
 
 

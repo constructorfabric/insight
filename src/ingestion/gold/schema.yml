@@ -180,17 +180,19 @@ models:
                   - run_duration_min
                   - run_hours
                   - deployments
+                  - runs_matched_commit
+                  - commits_observed
       - name: record_id
         description: "Deterministic total-order key within the measure scope"
         tests:
           - not_null
       - name: record_kind
-        description: "ci_run for run measures, deployment for deployments"
+        description: "ci_run for run measures, deployment for deployments, commit for commits_observed"
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ['ci_run', 'deployment']
+                values: ['ci_run', 'deployment', 'commit']
       - name: granularity
         description: "Always event: one row per run / deployment"
         tests:
@@ -765,6 +767,8 @@ models:
                   - run_duration_min
                   - run_hours
                   - deployments
+                  - runs_matched_commit
+                  - commits_observed
       - name: value
         description: >
           Measure value. Rows are emitted only when the run feeds the measure,

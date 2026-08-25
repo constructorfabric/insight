@@ -1,0 +1,61 @@
+description: >
+  Metric: ci.runs_matched_commit — decided runs whose head commit was
+  collected (tenant-grain, issue #2803). The data-trust side of the
+  run-to-commit join: charted against ci.runs and ci.commits_observed it
+  shows how far CI can be joined to git history at all.
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow runs carry head_sha; commits arrive as their own stream
+    • silver: both accumulate as classes
+    • gold:   a run counts when its head commit exists among the collected
+      commits — PR merge refs and fork commits the stream never sees stay
+      unmatched by design
+
+  Seeded: two decided runs; one's head_sha matches a seeded commit, the
+  other's is a synthetic PR merge ref no commit stream would carry → 1 of 2.
+  Cases: period 1, daily point 1.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-mc1
+      id: 1
+      run_number: 1
+      head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-mc2
+      id: 2
+      run_number: 2
+      event: pull_request
+      head_sha: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee2"
+  bronze_github.commits:
+    - $ref: templates/git_activity.yaml#/templates/commit
+      unique_key: gh-commit-mc1
+      tenant_id: "11111111-1111-1111-1111-111111111111"
+      source_id: github-test
+      sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+      author_email: dev1@example.com
+      author_name: Dev One
+      committer_name: Dev One
+      committer_email: dev1@example.com
+      committed_date: "2026-03-01T09:00:00Z"
+cases:
+  - name: only the run whose head commit was collected counts
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.runs_matched_commit
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.runs_matched_commit
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 1.0"
+      - metric: ci.runs_matched_commit
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-01' && double(p.value) == 1.0))"
