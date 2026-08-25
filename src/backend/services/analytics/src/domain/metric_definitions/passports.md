@@ -396,6 +396,14 @@ this file and the registry disagree.
 - Shape: decimal, lower_is_better, unit h
 - Notes: Median hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
 
+## git.first_review_time_p75_h — Time to first review (p75)
+
+- Source: git (git_metric_observations)
+- Reads: pr_first_review_hours
+- Formula: p75(pr_first_review_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: 75th percentile of hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+
 ## git.review_wait_share — Review wait share
 
 - Source: git (git_metric_observations)

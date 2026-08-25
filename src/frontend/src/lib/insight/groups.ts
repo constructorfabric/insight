@@ -254,6 +254,10 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
     {
+      key: "git.first_review_time_p75_h",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "git.review_wait_share",
       views: [{ view: "period" }, { view: "peer" }],
     },

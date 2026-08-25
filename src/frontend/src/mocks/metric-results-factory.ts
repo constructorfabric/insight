@@ -127,15 +127,41 @@ export function buildMetricResultsResponse(
           };
         }
         case "breakdown":
+          // Rows answer under the REQUESTED dimension keys (a composition
+          // section looks its own dimension up by key and would find nothing
+          // under a hardcoded one). The first key cycles the mock values;
+          // further keys (splitBy, source) alternate so segments show up.
           return {
             view: "breakdown",
             dimensions: view.dimensions,
             values: ids.flatMap((entityId) =>
-              MOCK_TOOLS.map((dimension) => ({
-                entity_id: entityId,
-                dimensions: [dimension],
-                value: valueFor(entityId, key, dimension.value),
-              })),
+              MOCK_TOOLS.flatMap((dimension, index) =>
+                view.dimensions.length
+                  ? [
+                      {
+                        entity_id: entityId,
+                        dimensions: view.dimensions.map((dimKey, keyIndex) => {
+                          const pick =
+                            keyIndex === 0
+                              ? dimension
+                              : MOCK_TOOLS[(index + keyIndex) % MOCK_TOOLS.length]!;
+                          return {
+                            key: dimKey,
+                            value: pick.value,
+                            label: pick.label,
+                          };
+                        }),
+                        value: valueFor(entityId, key, dimension.value),
+                      },
+                    ]
+                  : [
+                      {
+                        entity_id: entityId,
+                        dimensions: [dimension],
+                        value: valueFor(entityId, key, dimension.value),
+                      },
+                    ],
+              ),
             ),
           };
         case "rollup":

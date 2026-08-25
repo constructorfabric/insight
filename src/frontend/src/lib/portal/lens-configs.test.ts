@@ -109,6 +109,7 @@ describe("sectionMetricKeys — Overview section kinds", () => {
           kind: "dimension-table",
           title: "t",
           dimension: "repository",
+          noun: "repositories",
           metrics: ["git.prs_merged", "git.lines_added"],
         },
         {
@@ -208,6 +209,7 @@ describe("visibleSections", () => {
           kind: "dimension-table",
           title: "t",
           dimension: "repository",
+          noun: "repositories",
           metrics: ["git.prs_merged", "ai.cost"],
         },
         {
@@ -224,6 +226,7 @@ describe("visibleSections", () => {
         kind: "dimension-table",
         title: "t",
         dimension: "repository",
+        noun: "repositories",
         metrics: ["git.prs_merged"],
       },
     ]);

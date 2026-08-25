@@ -728,6 +728,7 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
         kind: "dimension-table",
         title: "Repositories ranked",
         dimension: "repository",
+        noun: "repositories",
         limit: 2,
         metrics: ["t.commits", "t.cycle"],
       },
@@ -779,7 +780,7 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
     mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
     render(<DomainLensView config={TABLE_CONFIG} />);
 
-    expect(screen.getByText("Repositories ranked")).toBeInTheDocument();
+    expect(screen.getByText("Repositories ranked · 3 repositories")).toBeInTheDocument();
     const rows = screen.getAllByRole("row").slice(1); // skip the header
     // Ranked by t.commits: org/two (60) before org/one (40); r3 folds away.
     expect(rows[0]).toHaveTextContent("org/two");
@@ -798,7 +799,7 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
     table.byKey.set("t.commits", rollup("t.commits", [["r1", "org/one", 40, 3]]));
     mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
     render(<DomainLensView config={TABLE_CONFIG} />);
-    expect(screen.queryByText("Repositories ranked")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Repositories ranked/)).not.toBeInTheDocument();
   });
 
   it("shows a retryable error card when the rollup request fails", () => {

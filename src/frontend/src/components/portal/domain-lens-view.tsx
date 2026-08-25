@@ -95,6 +95,7 @@ import {
 } from "@/lib/portal/lens-configs";
 import {
   buildActiveContributorData,
+  buildMedianTrendData,
   buildTrendData,
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
@@ -1244,8 +1245,23 @@ function trendCharts(
   const charts = spec.metrics
     .map((key): TrendChart | null => {
       const r = grid.byKey.get(key);
-      if (!r || r.computation !== "sum") return null;
+      if (!r) return null;
       const label = r.short_label ?? r.label;
+      if (r.computation !== "sum") {
+        // Non-additive metrics chart the roster median per bucket — summing
+        // per-person ratios or medians would fabricate a number. `derived`
+        // because the plotted value is computed here, not a server figure a
+        // record list can back.
+        return {
+          id: key,
+          title: label,
+          description: "Median per person",
+          drilldownKey: key,
+          derived: true,
+          series: [{ key, label, type: "line" as const }],
+          data: buildMedianTrendData(key, trend.byKey, memberIds),
+        };
+      }
       return {
         id: key,
         title: label,
@@ -1791,7 +1807,7 @@ function DimensionTableSection({
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title}
+        {spec.title} · {ranked.length} {spec.noun}
       </p>
       <Card>
         <CardContent className="p-0">

@@ -137,3 +137,42 @@ export function buildTrendData(
     String(a.date).localeCompare(String(b.date)),
   );
 }
+
+/**
+ * Median across the roster of one metric's per-bucket values, sorted by date.
+ * For non-additive metrics (ratios, medians): summing per-person ratios is
+ * meaningless, and the true org ratio needs numerator and denominator the
+ * response does not carry — the roster median matches how every stat tile
+ * already reads ("median / person"). Buckets where nobody has a value are
+ * dropped rather than drawn as zero.
+ */
+export function buildMedianTrendData(
+  key: string,
+  byKey: Map<string, NormalizedMetricResult>,
+  memberIds: readonly string[],
+): SectionTrendPoint[] {
+  const r = byKey.get(key);
+  if (!r) return [];
+  const valuesByDate = new Map<string, number[]>();
+  for (const id of memberIds) {
+    for (const s of forEntity(r, id).series) {
+      for (const p of s.points) {
+        if (p.value == null) continue;
+        const values = valuesByDate.get(p.bucket_start) ?? [];
+        values.push(p.value);
+        valuesByDate.set(p.bucket_start, values);
+      }
+    }
+  }
+  return [...valuesByDate.entries()]
+    .map(([date, values]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      const median =
+        sorted.length % 2 === 1
+          ? sorted[mid]!
+          : (sorted[mid - 1]! + sorted[mid]!) / 2;
+      return { date, [key]: median } satisfies SectionTrendPoint;
+    })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}

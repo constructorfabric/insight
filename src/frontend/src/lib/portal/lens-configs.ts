@@ -72,6 +72,8 @@ export type SectionSpec =
       title: string;
       dimension: string;
       metrics: readonly string[];
+      /** What one row is, for the section label's count ("repositories"). */
+      noun: string;
       /** Rows shown before the rest folds into a remainder line. */
       limit?: number;
     }
@@ -372,6 +374,11 @@ const DEV: Record<string, LensEntry> = {
         metric: "git.pr_cycle_time_h",
         title: "How long pull requests stayed open",
       },
+      {
+        kind: "event-histogram",
+        metric: "git.pr_size",
+        title: "How large pull requests were",
+      },
     ],
   },
   Delivery: {
@@ -429,11 +436,13 @@ const DEV: Record<string, LensEntry> = {
         title: "Review timing (median across people)",
         metrics: [
           "git.first_review_time_h",
+          "git.first_review_time_p75_h",
           "git.review_to_merge_time_h",
           "git.approval_to_merge_time_h",
           "git.review_wait_share",
         ],
       },
+      { kind: "trend", metrics: ["git.review_coverage"] },
       {
         kind: "event-histogram",
         metric: "git.first_review_time_h",
@@ -494,6 +503,7 @@ const DEV: Record<string, LensEntry> = {
         kind: "dimension-table",
         title: "Repositories · ranked by PRs merged",
         dimension: "repository",
+        noun: "repositories",
         metrics: [
           "git.prs_merged",
           "git.default_branch_prs_merged",

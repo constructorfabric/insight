@@ -1380,6 +1380,32 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.first_review_time_p75_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Time to first review (p75)
+    short_label: First review p75
+    description: Slow-end hours from pull request creation to first review
+    explanation: 75th percentile of hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: !percentile
+      p: 75
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_first_review_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
   - metric_key: git.review_wait_share
     source_key: git
     subject: pull_requests
