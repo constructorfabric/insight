@@ -112,6 +112,12 @@ const CONFIG: TenantLensConfig = {
       title: "Deployments by environment",
       segmentLabels: { inactive: "superseded" },
     },
+    {
+      kind: "histogram",
+      metric: "ci.run_duration_min",
+      title: "How long a gate run takes",
+      caption: "Each bar is a duration range.",
+    },
   ],
 };
 
@@ -142,6 +148,7 @@ describe("TenantLensView", () => {
     expect(byKey.get("ci.deployments")).toEqual([
       { view: "breakdown", dimensions: ["environment", "outcome"] },
     ]);
+    expect(byKey.get("ci.run_duration_min")).toEqual([{ view: "histogram" }]);
   });
 
   it("collapses to the not-ingested state when no metric is observed", () => {
@@ -282,6 +289,57 @@ describe("TenantLensView", () => {
 
     render(<TenantLensView config={CONFIG} />);
     expect(screen.queryByText("Deployments by environment")).toBeNull();
+  });
+
+  it("charts the served histogram bins and counts the runs in the title", () => {
+    mocks.result.byKey = new Map([
+      [
+        "ci.run_duration_min",
+        metric("ci.run_duration_min", {
+          label: "Gate run duration",
+          unit: "min",
+          computation: "median",
+          format: "decimal",
+          histogram: {
+            view: "histogram",
+            values: [
+              {
+                entity_id: TENANT,
+                bins: [
+                  { lo: 0, hi: 2, count: 5 },
+                  { lo: 2, hi: 4, count: 3 },
+                ],
+              },
+            ],
+          },
+        }),
+      ],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.getByText(/How long a gate run takes · 8 runs/)).toBeTruthy();
+    const plot = screen.getByTestId("plot");
+    const rows = JSON.parse(plot.getAttribute("data-rows") ?? "[]") as Array<{
+      count: number;
+    }>;
+    expect(rows.map((r) => r.count)).toEqual([5, 3]);
+  });
+
+  it("suppresses an empty histogram rather than drawing an empty plot", () => {
+    mocks.result.byKey = new Map([
+      [
+        "ci.run_duration_min",
+        metric("ci.run_duration_min", {
+          histogram: {
+            view: "histogram",
+            values: [{ entity_id: TENANT, bins: [] }],
+          },
+        }),
+      ],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.queryByText(/How long a gate run takes/)).toBeNull();
   });
 
   it("suppresses a trend that has fewer than two buckets", () => {
