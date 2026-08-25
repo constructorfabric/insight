@@ -538,8 +538,8 @@
       "loading_more": "Loading…"
     },
     "gate": {
-      "title": "Identities is an admin surface",
-      "description": "Managing identity resolution needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
+      "title": "{{surface}} is an admin surface",
+      "description": "Reading {{surface}} needs the administrator role. Ask an existing administrator to grant it if this is part of your job.",
       "unverified": "Could not verify the administrator role"
     },
     "modes": {

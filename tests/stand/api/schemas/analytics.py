@@ -813,8 +813,8 @@ class SyncView(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    duration_ms: int = Field(..., ge=0)
-    records_moved: int = Field(..., ge=0)
+    duration_ms: int | None = Field(None, description="Null until the mover's history has been swept — only it knows how long a\nsync took and how much it moved.", ge=0)
+    records_moved: int | None = Field(None, ge=0)
     rows_landed: int | None = Field(None, description='Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.', ge=0)
     started_at: UnzonedDatetime
     status: str
@@ -1212,9 +1212,10 @@ class ConnectorHealthResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    as_of: UnzonedDatetime
+    as_of: UnzonedDatetime = Field(..., description="When this response was assembled. Says nothing about the facts' age.")
     connectors: list[ConnectorRow]
     history_available: bool = Field(..., description='False when nothing has recorded a run yet — a fresh install before the\nfirst controller cadence, or a stand where nothing records. The page says\nso rather than implying health.')
+    swept_at: UnzonedDatetime | None = Field(None, description='When a controller tick last finished, or null when none ever has.\n\nThis is the page\'s only freshness statement, and it has to come from the\nrecorded marker: serving the reader\'s own clock would read as "just now"\nhowever long ago the controller last ran.')
 
 
 class CustomMetric(BaseModel):

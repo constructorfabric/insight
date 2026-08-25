@@ -180,7 +180,11 @@ describe("Manage · connector health", () => {
     expect(
       screen.queryByTestId("connector-health-view"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("alert")).toBeInTheDocument();
+    // The refusal must name the surface the reader tried to reach: the gate
+    // fronts several, and naming another sends them to ask for the wrong grant.
+    const refusal = screen.getByRole("alert");
+    expect(refusal).toHaveTextContent(/Connector health is an admin surface/);
+    expect(refusal).not.toHaveTextContent(/Identities/);
   });
 });
 

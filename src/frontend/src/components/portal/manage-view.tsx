@@ -45,19 +45,19 @@ export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
   if (item === "data-health")
     return (
-      <AdminGate>
+      <AdminGate surface="Connector health">
         <ConnectorHealthView />
       </AdminGate>
     );
   if (item === "identities")
     return (
-      <AdminGate>
+      <AdminGate surface="Identities">
         <IdentitiesView />
       </AdminGate>
     );
   if (item === "platform-usage")
     return (
-      <AdminGate>
+      <AdminGate surface="Platform usage">
         <PlatformUsage />
       </AdminGate>
     );
@@ -80,7 +80,15 @@ export function ManageView({ item }: { item: string | null }) {
  * for a role they already hold would send them chasing a grant that fixes
  * nothing.
  */
-function AdminGate({ children }: { children: ReactNode }) {
+function AdminGate({
+  surface,
+  children,
+}: {
+  /** The pane the reader tried to reach. The gate fronts several, so naming the
+      wrong one sends them to ask for access to something else. */
+  surface: string;
+  children: ReactNode;
+}) {
   const { t } = useTranslation();
   const { isAdmin, isPending, isError, retry } = useIsAdmin();
   if (isPending) return <CenteredSpinner />;
@@ -100,9 +108,11 @@ function AdminGate({ children }: { children: ReactNode }) {
     return (
       <div className="mx-auto w-full max-w-md p-8" role="alert">
         <div className="rounded-lg border p-6 text-center">
-          <p className="text-sm font-semibold">{t("identities.gate.title")}</p>
+          <p className="text-sm font-semibold">
+            {t("identities.gate.title", { surface })}
+          </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            {t("identities.gate.description")}
+            {t("identities.gate.description", { surface })}
           </p>
         </div>
       </div>
