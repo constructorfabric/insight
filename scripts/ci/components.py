@@ -196,7 +196,7 @@ COMPONENTS = [
         "name": "reconcile-connectors",
         "lang": "python",
         "root": "src/ingestion/reconcile-connectors",
-        "cov_package": "sweep_plan",
+        "cov_package": "sweep",
         "paths": ["src/ingestion/reconcile-connectors"],
     },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),

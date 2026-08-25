@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
-from sweep_plan import (
+from sweep.sweep_plan import (
     CLAIMED,
     CONNECTOR_CONFIGURED,
     OUT_OF_BAND,
@@ -28,7 +28,7 @@ from sweep_plan import (
     plan_sweep,
 )
 
-PLANNER = Path(__file__).resolve().parents[1] / "python" / "sweep_plan.py"
+PLANNER = Path(__file__).resolve().parents[1] / "python" / "sweep" / "sweep_plan.py"
 
 CONNECTOR = "example-tool"
 CONNECTION = "conn-1"
@@ -130,6 +130,27 @@ class TestCorroboration:
 
         (row,) = syncs(plan)
         assert row.claim == OUT_OF_BAND
+
+    def test_a_job_older_than_any_retained_record_is_not_called_manual(self):
+        """Found by running the sweep against a real instance: backfilled jobs
+        predate every surviving workflow record, so the records' silence about
+        them is not evidence — it is just deletion."""
+        plan = plan_sweep(request(jobs=[job(startTimeEpoch=500)], horizon_epoch=1000))
+
+        (row,) = syncs(plan)
+        assert row.claim == UNCLAIMED
+
+    def test_a_job_inside_the_horizon_no_record_names_is_out_of_band(self):
+        plan = plan_sweep(request(jobs=[job(startTimeEpoch=2000)], horizon_epoch=1000))
+
+        (row,) = syncs(plan)
+        assert row.claim == OUT_OF_BAND
+
+    def test_a_claim_by_identity_beats_the_horizon(self):
+        plan = plan_sweep(request(jobs=[job(startTimeEpoch=500)], horizon_epoch=1000, workflow_claims={"77": "wf-3"}))
+
+        (row,) = syncs(plan)
+        assert row.claim == CLAIMED, "an explicit claim needs no horizon"
 
     def test_unreadable_records_leave_the_question_open_rather_than_answered(self):
         plan = plan_sweep(request(jobs=[job()], records_readable=False))

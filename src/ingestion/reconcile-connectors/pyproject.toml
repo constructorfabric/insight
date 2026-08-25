@@ -20,7 +20,7 @@ dev = [
 testpaths = ["tests"]
 
 [tool.setuptools]
-py-modules = ["sweep_plan"]
+packages = ["sweep"]
 
 [tool.setuptools.package-dir]
 "" = "python"

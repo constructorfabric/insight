@@ -36,6 +36,8 @@ source "${SCRIPT_DIR}/lib/discover.sh"
 source "${SCRIPT_DIR}/lib/validate.sh"
 # shellcheck source=lib/reconcile.sh
 source "${SCRIPT_DIR}/lib/reconcile.sh"
+# shellcheck source=lib/sweep.sh
+source "${SCRIPT_DIR}/lib/sweep.sh"
 # shellcheck source=lib/adopt.sh
 source "${SCRIPT_DIR}/lib/adopt.sh"
 

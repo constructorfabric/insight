@@ -104,19 +104,25 @@ def duration_ms(duration: Any) -> int:
     return int(seconds * 1000)
 
 
-def claim_for(job_id: str, workflow_claims: dict[str, str], records_readable: bool) -> tuple[str, str]:
+def claim_for(
+    job_id: str, workflow_claims: dict[str, str], records_readable: bool, started_at_epoch: int, horizon_epoch: int
+) -> tuple[str, str]:
     """The claim this tick can justify, and the run that claims it.
 
-    Only job identity claims. Concurrent timing is never evidence, so a job the
-    records do not name is out-of-band only when the records were readable —
-    otherwise the question stays open for a later tick.
+    Only job identity claims. Concurrent timing is never evidence, so absence of
+    a claim means out-of-band under exactly one condition: the records that
+    could have claimed it were readable AND still reach back that far. Past the
+    horizon the records are gone, so their silence proves nothing and the job
+    stays unclaimed rather than being called manual.
     """
     run_id = workflow_claims.get(job_id, "")
     if run_id:
         return CLAIMED, run_id
-    if records_readable:
-        return OUT_OF_BAND, ""
-    return UNCLAIMED, ""
+    if not records_readable:
+        return UNCLAIMED, ""
+    if horizon_epoch and started_at_epoch and started_at_epoch < horizon_epoch:
+        return UNCLAIMED, ""
+    return OUT_OF_BAND, ""
 
 
 def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> None:
@@ -124,6 +130,7 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
     connections = request.get("connections") or {}
     workflow_claims = request.get("workflow_claims") or {}
     records_readable = bool(request.get("records_readable"))
+    horizon = int(request.get("horizon_epoch") or 0)
 
     for job in request.get("jobs") or []:
         job_id = str(job.get("jobId", ""))
@@ -135,7 +142,8 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
             plan.unmappable_jobs.append(job_id)
             continue
 
-        claim, run_id = claim_for(job_id, workflow_claims, records_readable)
+        started_at = int(job.get("startTimeEpoch") or 0)
+        claim, run_id = claim_for(job_id, workflow_claims, records_readable, started_at, horizon)
         plan.rows.append(
             Row(
                 event=SYNC_COMPLETED,
@@ -144,7 +152,7 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
                 job_id=job_id,
                 status=ledger_status(job.get("status", "")),
                 claim=claim,
-                started_at_epoch=int(job.get("startTimeEpoch") or 0),
+                started_at_epoch=started_at,
                 duration_ms=duration_ms(job.get("duration")),
                 records_moved=int(job.get("rowsSynced") or 0),
                 bytes_moved=int(job.get("bytesSynced") or 0),
@@ -174,7 +182,8 @@ def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
             continue
 
         job_id = str(row.get("job_id", ""))
-        claim, run_id = claim_for(job_id, workflow_claims, records_readable)
+        started_at = int(row.get("started_at_epoch") or 0)
+        claim, run_id = claim_for(job_id, workflow_claims, records_readable, started_at, horizon)
         if claim == UNCLAIMED:
             continue
 
@@ -186,7 +195,7 @@ def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
                 job_id=job_id,
                 status=row.get("status", ""),
                 claim=claim,
-                started_at_epoch=int(row.get("started_at_epoch") or 0),
+                started_at_epoch=started_at,
                 duration_ms=int(row.get("duration_ms") or 0),
                 records_moved=int(row.get("records_moved") or 0),
                 bytes_moved=int(row.get("bytes_moved") or 0),

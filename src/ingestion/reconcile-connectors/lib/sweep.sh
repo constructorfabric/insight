@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# sweep.sh — the run-ledger sweep (connector-health spec §3.2, Job Sweep).
+# Sourceable; NO top-level CLI.
+#
+# One tick's I/O shell around python/sweep_plan.py: gather what the mover, the
+# ledger, the workflow records and the descriptor set say, let the planner decide
+# which rows to write, insert them, then record what bronze holds.
+#
+# Every decision lives in the planner, which is pure and tested. This file only
+# fetches, inserts, and logs.
+#
+# Public surface:
+#   sweep_run            # one tick; returns 0 even when it could not run
+#
+# INVARIANT: recording is subordinate to the recorded (spec NFR-2). Nothing here
+# may abort the reconcile tick around it, so every path returns 0 and reports
+# what it could not do.
+
+# NOTE: this file is sourced; no top-level `set -euo pipefail`.
+
+_SWEEP_PY="$(cd "$(dirname "${BASH_SOURCE[0]}")/../python" && pwd)"
+
+LEDGER_TABLE="ingestion_runs.pipeline_events"
+BRONZE_PREFIX="bronze_"
+STAMP_COLUMN="_airbyte_extracted_at"
+
+# How far back a tick re-reads the mover, so a job that appeared between ticks
+# is never missed. Coverage is deduplicated by job id, making overlap free.
+SWEEP_OVERLAP_SECONDS="${SWEEP_OVERLAP_SECONDS:-1800}"
+
+# How far back the workflow layer's records can be trusted to be COMPLETE, and
+# so how far back the absence of a claim is evidence of an out-of-band sync.
+#
+# A duration rather than something observed: measured on a real instance,
+# retention is uneven — a few ancient runs survive while whole recent days are
+# collected — so the oldest surviving record is not a floor under anything.
+# Beyond this window a job stays `unclaimed`, which is the honest answer: the
+# run that could have claimed it may simply have been deleted. The pipeline's
+# own claim is the primary mechanism; this is the fallback for a lost write, and
+# a lost write is recent.
+SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"
+
+_sweep_ch_url() {
+  local protocol="${RECONCILE_DEST_CLICKHOUSE_PROTOCOL:-http}"
+  printf '%s://%s:%s/' "${protocol}" \
+    "${RECONCILE_DEST_CLICKHOUSE_HOST}" "${RECONCILE_DEST_CLICKHOUSE_PORT}"
+}
+
+# _sweep_ch <sql> — run one statement, print the response body.
+_sweep_ch() {
+  printf '%s' "$1" | curl --fail-with-body --silent --show-error \
+    -H "X-ClickHouse-User: ${RECONCILE_DEST_CLICKHOUSE_USERNAME}" \
+    -H "X-ClickHouse-Key: ${RECONCILE_DEST_CLICKHOUSE_PASSWORD}" \
+    --data-binary @- "$(_sweep_ch_url)"
+}
+
+_sweep_warehouse_ready_p() {
+  [[ -n "${RECONCILE_DEST_CLICKHOUSE_HOST:-}" ]] \
+    && [[ -n "${RECONCILE_DEST_CLICKHOUSE_PORT:-}" ]] \
+    && [[ -n "${RECONCILE_DEST_CLICKHOUSE_USERNAME:-}" ]] \
+    && _sweep_ch "SELECT 1 FROM ${LEDGER_TABLE} WHERE 0" >/dev/null 2>&1
+}
+
+# _sweep_watermark — ISO-8601 lower bound for the mover listing, or empty.
+#
+# Empty means the ledger holds no sync yet, and the sweep should ingest the
+# mover's whole retained history — the backfill that gives a new install run
+# history from day one (spec FR-6).
+_sweep_watermark() {
+  local newest
+  newest="$(_sweep_ch "
+    SELECT if(
+             count() = 0,
+             '',
+             toString(max(started_at) - INTERVAL ${SWEEP_OVERLAP_SECONDS} SECOND)
+           )
+    FROM ${LEDGER_TABLE}
+    WHERE event = 'sync.completed' AND started_at > toDateTime64(0, 3)
+    FORMAT TSVRaw" 2>/dev/null)" || return 0
+  [[ -n "${newest}" ]] || return 0
+  printf '%sZ' "${newest/ /T}"
+}
+
+# _sweep_ledger_state — per-job resolved state, as the planner's `ledger` input.
+#
+# Resolution mirrors the read surface: claim precedence, then recency. A job's
+# counters come from the mover's history, so a sweep-origin row is what marks a
+# job as already collected; the pipeline's own row carries the delivery
+# measurement and the claim, not the counters.
+_sweep_ledger_state() {
+  _sweep_ch "
+    SELECT toJSONString(groupArray(row)) FROM (
+      SELECT map(
+               'job_id', job_id,
+               'connector', argMax(connector, (prec, ts)),
+               'claim', argMax(claim, (prec, ts)),
+               'status', argMax(status, (prec, ts)),
+               'has_counters', toString(max(origin = 'sweep')),
+               'started_at_epoch', toString(toUnixTimestamp(argMax(started_at, (prec, ts)))),
+               'duration_ms', toString(argMax(duration_ms, (prec, ts))),
+               'records_moved', toString(argMax(records_moved, (prec, ts))),
+               'bytes_moved', toString(argMax(bytes_moved, (prec, ts)))
+             ) AS row
+      FROM (
+        SELECT job_id, connector, claim, status, origin, ts, started_at,
+               duration_ms, records_moved, bytes_moved,
+               multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1) AS prec
+        FROM ${LEDGER_TABLE}
+        WHERE event = 'sync.completed' AND job_id != ''
+      )
+      GROUP BY job_id
+    ) FORMAT TSVRaw" 2>/dev/null || printf '[]'
+}
+
+# _sweep_workflow_claims — {job_id: run_id} from the workflow layer's records.
+#
+# The sync step exposes the mover job it triggered as its own result, so a
+# record naming a job id claims it by exact identity. Timing overlap is never
+# read as evidence: a manual sync may run while a pipeline run is mid-transform.
+_sweep_workflow_claims() {
+  local unreadable='{"claims":{},"readable":false,"horizon_epoch":0}'
+  local listing claims
+  # The whole listing, because the job a run triggered lives in its node tree
+  # and no server-side selector reaches it. Large, and paid once per tick by a
+  # loop that already does heavier work.
+  listing="$(kubectl -n "${INSIGHT_NAMESPACE}" get workflows -o json 2>/dev/null)" || {
+    printf '%s' "${unreadable}"
+    return 0
+  }
+  claims="$(printf '%s' "${listing}" | python3 "${_SWEEP_PY}/sweep/sweep_claims.py")" || {
+    printf '%s' "${unreadable}"
+    return 0
+  }
+  printf '%s' "${claims}"
+}
+
+# _sweep_connection_map — {connectionId: connector} for the managed connectors.
+#
+# Built from the descriptor set rather than by parsing connection names: a
+# connector name may contain hyphens, so splitting the name is ambiguous while
+# reconcile_compute_connection_name is the same function that created it.
+_sweep_connection_map() {
+  local connections_json="$1"
+  local descriptors_tsv="$2"
+  local name connector_dir version type cdk_image enrich_image dbt_select
+  local pairs=""
+  while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image dbt_select; do
+    [[ -n "${name}" ]] || continue
+    disc_match_descriptor_to_secret "${name}" >/dev/null 2>&1 || continue
+    local conn_name
+    conn_name="$(reconcile_compute_connection_name "${name}")"
+    pairs+="${name}"$'\t'"${conn_name}"$'\n'
+  done < <(printf '%s\n' "${descriptors_tsv}" | tr '\t' '\037')
+  : "${connector_dir:=}" "${version:=}" "${type:=}" "${cdk_image:=}" "${enrich_image:=}" "${dbt_select:=}"
+
+  printf '%s' "${connections_json}" \
+    | python3 "${_SWEEP_PY}/sweep/sweep_connections.py" "${pairs}"
+}
+
+# _sweep_insert_rows <rows_json> — one insert for the planned rows.
+_sweep_insert_rows() {
+  local statement
+  statement="$(printf '%s' "$1" | python3 "${_SWEEP_PY}/sweep/sweep_insert.py" "${LEDGER_TABLE}")" || return 1
+  [[ -n "${statement}" ]] || return 0
+  _sweep_ch "${statement}" >/dev/null
+}
+
+# _sweep_observe_storage <tick_run_id> — what bronze holds, per connector and
+# per stream (spec FR-7, FR-8).
+#
+# Insert-from-select: the numbers never leave the warehouse. This reads
+# `system.parts` metadata only — no bronze row is touched.
+#
+# INVARIANT: a bronze schema name maps back to its connector by turning
+# underscores into hyphens, which is reversible only because no connector name
+# contains an underscore.
+_sweep_observe_storage() {
+  local tick_run_id="$1"
+  local stream_facts="
+    SELECT c.database AS ns,
+           c.table AS st,
+           coalesce(p.rows, 0) AS rows_total,
+           coalesce(p.bytes, 0) AS bytes_on_disk
+    FROM system.columns AS c
+    INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table
+    LEFT JOIN (
+      SELECT database, table, sum(rows) AS rows, sum(bytes_on_disk) AS bytes
+      FROM system.parts
+      WHERE active AND startsWith(database, '${BRONZE_PREFIX}')
+      GROUP BY database, table
+    ) AS p ON p.database = c.database AND p.table = c.table
+    WHERE c.name = '${STAMP_COLUMN}'
+      AND startsWith(c.database, '${BRONZE_PREFIX}')
+      AND t.engine LIKE '%MergeTree'
+      AND c.table NOT LIKE '.inner%'"
+
+  _sweep_ch "
+    INSERT INTO ${LEDGER_TABLE}
+      (run_id, connector, event, status, origin, streams, streams_with_data,
+       rows_total, bytes_on_disk)
+    SELECT '${tick_run_id}',
+           replaceAll(substring(ns, length('${BRONZE_PREFIX}') + 1), '_', '-'),
+           'storage.observed', 'ok', 'sweep',
+           toUInt16(count()),
+           toUInt16(countIf(rows_total > 0)),
+           sum(rows_total),
+           sum(bytes_on_disk)
+    FROM (${stream_facts})
+    GROUP BY ns" >/dev/null || return 1
+
+  _sweep_ch "
+    INSERT INTO ${LEDGER_TABLE}
+      (run_id, connector, event, status, origin, stream, rows_total, bytes_on_disk)
+    SELECT '${tick_run_id}',
+           replaceAll(substring(ns, length('${BRONZE_PREFIX}') + 1), '_', '-'),
+           'storage.observed', 'ok', 'sweep',
+           st, rows_total, bytes_on_disk
+    FROM (${stream_facts})" >/dev/null || return 1
+}
+
+# ---------------------------------------------------------------------------
+# sweep_run — one tick of the run-ledger sweep.
+#
+# Returns 0 always: the ledger observes the reconcile loop, it never gates it.
+# ---------------------------------------------------------------------------
+sweep_run() {
+  local tick_run_id="${RECONCILE_RUN_ID:-}"
+
+  if ! _sweep_warehouse_ready_p; then
+    log_event "sweep.skipped" "run ledger unavailable; skipping sweep" \
+      '{"reason":"warehouse_or_table_unreachable"}'
+    return 0
+  fi
+
+  local workspace_id connections_json descriptors_tsv mapping
+  if ! workspace_id="$(ab_workspace_id)"; then
+    log_event "sweep.skipped" "Airbyte unreachable; skipping sweep" \
+      '{"reason":"workspace_lookup_failed"}'
+    return 0
+  fi
+  connections_json="$(ab_list_connections "${workspace_id}")" || connections_json='[]'
+  descriptors_tsv="$(disc_load_descriptors)"
+  mapping="$(_sweep_connection_map "${connections_json}" "${descriptors_tsv}")"
+
+  local watermark jobs_json
+  watermark="$(_sweep_watermark)"
+  if ! jobs_json="$(ab_list_jobs "${watermark}")"; then
+    log_line WARN "sweep: could not list mover jobs; covering nothing this tick"
+    jobs_json='[]'
+  fi
+
+  local ledger_json claims_json plan_json
+  ledger_json="$(_sweep_ledger_state)"
+  claims_json="$(_sweep_workflow_claims)"
+
+  local horizon_epoch
+  horizon_epoch=$(( $(date -u +%s) - SWEEP_CLAIM_HORIZON_SECONDS ))
+
+  plan_json="$(python3 "${_SWEEP_PY}/sweep/sweep_request.py" \
+      "${jobs_json}" "${mapping}" "${ledger_json}" "${claims_json}" "${tick_run_id}" \
+      "${horizon_epoch}" \
+    | python3 "${_SWEEP_PY}/sweep/sweep_plan.py")" || {
+    log_line ERROR "sweep: planning failed; nothing recorded this tick"
+    return 0
+  }
+
+  local rows unmappable
+  rows="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["rows"]))')"
+  unmappable="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["unmappable_jobs"]))')"
+
+  if ! _sweep_insert_rows "${rows}"; then
+    log_line ERROR "sweep: could not record planned rows"
+    return 0
+  fi
+  if ! _sweep_observe_storage "${tick_run_id}"; then
+    log_line WARN "sweep: could not record storage observations"
+  fi
+
+  local recorded
+  recorded="$(printf '%s' "${rows}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
+  log_event "sweep.completed" "run ledger swept" \
+    "$(printf '{"rows":%s,"unmappable_jobs":%s,"backfill":%s}' \
+        "${recorded}" "${unmappable}" "$([[ -z "${watermark}" ]] && echo true || echo false)")"
+  return 0
+}

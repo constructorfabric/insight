@@ -606,6 +606,27 @@ ab_list_connections() {
 }
 
 # ---------------------------------------------------------------------------
+# ab_list_jobs [created_at_start_iso]
+# GET /api/public/v1/jobs — sync jobs newest first, as a JSON array. Used by
+# the run-ledger sweep to cover jobs no pipeline recorded (connector-health
+# spec §3.2). Optional ISO-8601 lower bound; omitted means the mover's whole
+# retained history, which is what a first sweep wants.
+#
+# The PUBLIC api deliberately: the private per-attempt detail carries richer
+# per-stream numbers but is not contract-stable across Airbyte upgrades, and
+# the ledger must not depend on it.
+# ---------------------------------------------------------------------------
+ab_list_jobs() {
+  local created_at_start="${1:-}"
+  local path="/api/public/v1/jobs?limit=100&orderBy=createdAt%7CDESC&jobType=sync"
+  if [[ -n "${created_at_start}" ]]; then
+    path="${path}&createdAtStart=${created_at_start}"
+  fi
+  ab__curl GET "${path}" \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get("data",[])))'
+}
+
+# ---------------------------------------------------------------------------
 # ab_discover_schema <source_id> [disable_cache]
 # POST /api/v1/sources/discover_schema — returns the discovered catalog as
 # JSON. Used by reconcile to bootstrap a connection's syncCatalog when one

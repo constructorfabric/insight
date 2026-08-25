@@ -1511,6 +1511,10 @@ reconcile_run() {
   # Layer 4 — GC (skipped when --no-gc).
   reconcile_gc_orphans
 
+  # Layer 5 — the run ledger (connector-health spec §3.2). Last, and unable to
+  # fail the tick: it observes the loop, it never gates it.
+  sweep_run
+
   log_run_summary "${_RECONCILE_CHANGED}" "${_RECONCILE_FAILED}"
   log_close
   return $(( _RECONCILE_FAILED > 0 ? 2 : 0 ))
