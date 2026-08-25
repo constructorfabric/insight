@@ -522,33 +522,41 @@ yet rather than implying anything.
 - All non-manual sync paths submit the shared pipeline; a sync can bypass the pipeline only
   via the mover's own surfaces, which the sweep covers.
 - The mover retains job history long enough for a useful backfill window; retention shorter
-  than ledger retention limits backfill, not steady-state operation.
+  than ledger retention limits backfill, not steady-state operation. Its listing is paged, so
+  the window is the mover's retention rather than one page of it.
 - The workflow layer can execute a step on run termination regardless of which step failed.
-  This is believed but not yet proven in this repository's configuration; it is the first
-  thing implementation must verify (see §13). The fallback does not rely on mover jobs,
-  because a run that dies before its sync starts leaves none.
+  **Confirmed on a stand during implementation**, including a failure in the first task, so
+  FR-1 needs no fallback.
 
 ## 12. Open Decisions
 
-- Ledger retention length (order of months; exact TTL set in DESIGN).
-- Whether per-stream moved-record counters from the mover's job detail enrich sweep rows in
-  the first release or later (they are dispensable; per-stream *storage* facts are already
-  in scope).
-- Naming of the replacement pane (working title: Connector health).
-- Length of the grace window the sweep waits, giving the pipeline time to record its claim,
-  before corroborating a sync — expiry alone never classifies it out-of-band.
+- ~~Ledger retention length~~ — settled at six months.
+- ~~Per-stream moved-record counters from the mover's job detail~~ — deferred: the sweep
+  consumes the public listing only, so nothing depends on an API that is not
+  contract-stable across mover upgrades.
+- ~~Naming of the replacement pane~~ — settled as Connector health.
+- How far back the workflow layer's records can be trusted COMPLETE, which is the only
+  window in which a missing claim means out-of-band. Implementation takes a configurable
+  duration defaulting to a day; the records' actual retention is set by workflow garbage
+  collection, which this change does not configure, so the two are not yet pinned to each
+  other. Past the window a sync stays unclaimed, which is the safe answer — the exposure is
+  a sync inside the window whose records were collected early being called out-of-band.
 
 ## 13. Risks
 
-- **Run-termination recording may not work as assumed** in the workflow layer's
-  template-reference mode. Mitigation: verify first during implementation; fallback is the
-  sweep reading the workflow layer's own execution records (the reconcile loop already runs
-  in-cluster with workflow access), which covers failures before the sync exists — mover-job
-  inference would not.
+- ~~**Run-termination recording may not work as assumed**~~ — measured and working; see
+  §11. What the same measurements found instead: a recorder placed after the work it records
+  becomes the only thing its DAG's phase is read from, so a successful recording ERASED a
+  failed sync and the run reported green. Mitigated by naming the real work as a phase target
+  and by a rendered-chart test that fails if any DAG is ever assessed over recorders alone.
 - **The sweep reads the mover's API across versions.** Mitigation: consume only its stable
   public listing for outcomes; treat any richer detail as optional enrichment that may
   degrade without degrading the page (FR-14 keeps the read path independent).
 - **Self-report bias**: the ledger is written by the pipeline about itself. Mitigation:
-  FR-3's storage cross-check pairs every self-report with an independent measurement.
+  FR-3's storage cross-check pairs every self-report with an independent measurement. The
+  pairing completes only once the sweep has supplied the mover's counters, so a mismatch is
+  detectable within one controller cadence rather than immediately; until then each half
+  reports itself as unknown rather than as zero.
 - **Two writers can race** (sweep and pipeline recording the same sync). Mitigation: NFR-3
-  makes duplicates harmless by construction; reads resolve per run.
+  makes duplicates harmless by construction; reads resolve per job identity, then by claim
+  precedence.

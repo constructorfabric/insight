@@ -58,8 +58,9 @@ flowchart TB
     end
 ```
 
-The read path issues one query against one table — no external call, and no access to bronze
-in any form. Nothing on the write path is allowed to fail the run it records.
+The read path touches one relation and nothing else — no external call, and no access to
+bronze in any form. Nothing on the write path is allowed to fail the run it records, and
+nothing on it may decide whether the run failed.
 
 ### 1.2 Architecture Drivers
 
@@ -80,7 +81,7 @@ in any form. Nothing on the write path is allowed to fail the run it records.
 
 | NFR | Allocated to |
 |---|---|
-| NFR-1 interactive read | one small-table query; the request path reads neither bronze nor storage metadata |
+| NFR-1 interactive read | a handful of small-table reads; the request path reads neither bronze nor storage metadata |
 | NFR-2 recording never breaks ingestion | best-effort writers: ledger insert failures are logged and swallowed (§2.1) |
 | NFR-3 idempotent sweep | append-only rows deduplicated at read by job identity (§3.1, §3.7) |
 | NFR-4 bounded storage | table TTL; service database excluded from exports (§3.7) |
@@ -180,7 +181,7 @@ A **ledger event** is one immutable observation about one run or sync:
 | `event` | what is being reported: `run.started`, `sync.completed`, `transform.completed`, `run.finished`, `storage.observed`, `connector.configured`, `sweep.completed` |
 | `status` | outcome of the reported thing: `ok`, `failed`, `cancelled`, `running` |
 | `origin` | which writer recorded it: `pipeline` or `sweep`. Origin is provenance only — it never classifies how a sync was started |
-| `step` | for `run.finished`: the last step reached (`resolve`, `sync`, `transform`, `done`) |
+| `step` | for `run.finished`: the workflow task whose failure caused the run, by its own name; empty on success |
 | identity | `run_id` (workflow name) for pipeline rows; `job_id` (mover job) for sync rows — both when known |
 
 A **run** is the set of events sharing a `run_id`; its terminal state is the `run.finished`
@@ -236,8 +237,7 @@ anything — only the workflow layer itself can know that.
 ##### Responsibility scope
 
 Emits `run.started` at entry; a complete `sync.completed` from the sync-polling step —
-mover `job_id`, polled outcome, duration, the moved counters the poll already tracks, and
-`rows_landed`, measured right then by one window count over the connector's own streams
+mover `job_id`, the polled outcome, and `rows_landed` — measured right then by one window count over the connector's own streams
 (`count()` bounded by the job's window on the extraction-stamp column: one narrow column of
 one schema, once per sync, on parts merges have not yet mixed — seconds inside a run that
 just spent minutes syncing, and exact, because the window's rows are the newest versions and
@@ -331,8 +331,8 @@ in a handler.
 
 ##### Responsibility scope
 
-One warehouse query per request, over the ledger alone: latest-run resolution (arg-max per
-connector; duplicate rows for one `job_id` resolve by claim precedence then recency, counters
+A handful of reads per request, all over the ledger alone: latest-run resolution (arg-max per
+connector; duplicate rows for one `job_id` resolve by claim precedence then recency, the counters
 from the row that carries them, run linkage from whichever row carries `run_id`), newest
 `storage.observed` rows per connector and per stream, and the newest sealed configured-set
 snapshot. Pure functions merge them into connector summaries, read
@@ -390,20 +390,20 @@ GET /v1/connector-health
 ```json
 {
   "as_of": "2026-01-15T09:00:00Z",
+  "swept_at": "2026-01-15T08:55:00Z",
   "history_available": true,
   "connectors": [
     {
       "connector": "example-tool",
-      "last_run": {
-        "origin": "pipeline",
-        "status": "failed",
-        "step": "resolve",
-        "started_at": "2026-01-15T04:00:00Z",
-        "duration_ms": 42000
-      },
       "configured": true,
+      "last_run": {
+        "status": "failed",
+        "step": "resolve-connection-by-name",
+        "started_at": "2026-01-15T04:00:00Z",
+        "duration_ms": 42000,
+        "transform_status": null
+      },
       "last_sync": {
-        "origin": "sweep",
         "trigger": "out_of_band",
         "status": "ok",
         "started_at": "2026-01-14T04:00:00Z",
@@ -490,11 +490,11 @@ sequenceDiagram
     PL->>MV: trigger + poll sync
     MV-->>PL: succeeded, counters
     PL->>PL: count window rows in own schema
-    PL->>LG: sync.completed (counters, rows_landed, claims job_id)
+    PL->>LG: sync.completed (rows_landed, claims job_id)
     PL->>PL: transform (dbt)
     PL->>LG: transform.completed ok
-    PL->>LG: run.finished ok, step=done
-    Note over LG: the sweep has nothing to add here —<br/>it covers only jobs no run recorded
+    PL->>LG: run.finished ok, no failed step
+    Note over LG: the next sweep adds the mover's counters —<br/>the claim and the measurement are already here
 ```
 
 #### Failure before the sync starts
@@ -549,12 +549,12 @@ sequenceDiagram
     participant AN as analytics
     participant WH as warehouse
     PO->>AN: GET /v1/connector-health (admin)
-    AN->>WH: one query over ingestion_runs.pipeline_events
+    AN->>WH: reads over ingestion_runs.pipeline_events
     WH-->>AN: runs, storage observations, configured snapshot
     AN-->>PO: summaries, ordered by attention
 ```
 
-One query over one small table; no external call and no bronze access (FR-14, NFR-1).
+Several reads over one small table; no external call and no bronze access (FR-14, NFR-1).
 
 ### 3.7 Database schemas & tables
 
@@ -578,7 +578,7 @@ swept by exports and customer extracts, which must never carry service rows.
 | `status` | `LowCardinality(String)` | `ok` \| `failed` \| `cancelled` \| `running` |
 | `origin` | `LowCardinality(String)` | `pipeline` \| `sweep` |
 | `claim` | `LowCardinality(String)` | `claimed` \| `out_of_band` \| `unclaimed`; empty on non-sync rows. The stored corroboration finding — the read path cannot re-derive it (§3.1) |
-| `step` | `LowCardinality(String)` | last step reached; empty unless `run.finished` |
+| `step` | `LowCardinality(String)` | the workflow task whose failure caused the run, by its own name, retry-attempt index stripped; empty on success. Chosen by earliest finish: the payload's order is a Go map's, and one failure yields several nodes |
 | `started_at` | `DateTime64(3, 'UTC')` | when the reported thing started |
 | `duration_ms` | `UInt64` | |
 | `records_moved` | `UInt64` | mover-reported |
@@ -631,8 +631,11 @@ Numbered migration, alongside the table DDL:
 
 | Grantee | Grant | Why |
 |---|---|---|
-| pipeline / sweep warehouse user | `INSERT ON ingestion_runs.pipeline_events` | the two writers (already the ingestion user; no new principal). Its bronze window counts and `system.parts` observations need no new grant — it owns bronze end to end |
-| read-only query-path role | `SELECT ON ingestion_runs.*` | the read model's only query |
+| read-only query-path role | `SELECT ON ingestion_runs.*` | everything the read surface needs |
+
+The writers take no grant here at all. They authenticate as the ingestion user, which owns
+these databases along with bronze, and the read-only query-path role must not be given
+INSERT: it is read-only by construction and has an adversarial test saying so.
 
 That is the whole grant surface. No bronze grant is issued to the reader, in data or in
 metadata — measured on ClickHouse 25.7, neither `SHOW` on a `bronze_*` pattern nor a
@@ -642,13 +645,18 @@ the only workable one.
 
 ### 3.8 Deployment Topology
 
-No new services, images, or schedules.
+No new services, images, or schedules. One new WorkflowTemplate, one new Python package
+with its own coverage component, and one nav item that becomes admin-only.
 
 | Change | Where |
 |---|---|
-| exit handler + `run.started` / `run.finished` / `transform.completed` writes | `charts/insight/templates/ingestion/ingestion-pipeline.yaml`, `dbt-run.yaml` |
-| sweep step + watermark + storage observations | `src/ingestion/reconcile-connectors/` (new lib + python helper, existing tick) |
-| table + grants migration | `src/ingestion/scripts/migrations/` |
+| the ledger writer, reached only through its failure-tolerant entry point | `charts/insight/templates/ingestion/ledger-write.yaml` |
+| run boundaries, the transform outcome, `dag.target` | `charts/insight/templates/ingestion/ingestion-pipeline.yaml` |
+| the claiming sync row, `dag.target`, steps→DAG | `charts/insight/templates/ingestion/airbyte-sync.yaml` |
+| ledger identity passed by every submitter | `src/ingestion/reconcile-connectors/templates/*.tpl`, `src/ingestion/workflows/onetime/sync.yaml.tpl` |
+| sweep: coverage, corroboration, storage observations, snapshot | `src/ingestion/reconcile-connectors/` (new `lib/sweep.sh`, new `python/sweep/` package, existing tick) |
+| the DAG-phase contract, so a recorder can never erase a failure | `charts/insight/tests/`, `.github/workflows/ingestion-ledger-helm.yml` |
+| table + grant migration | `src/ingestion/scripts/migrations/` |
 | endpoint | analytics service (domain module + api module + OpenAPI) |
 | pane replacement | portal Manage zone |
 | contract test | deployed-stand suite |
@@ -661,12 +669,18 @@ from day one (FR-13), so partial rollout degrades to today's behaviour, never to
 
 ### 4.1 Verification order
 
-The one unproven mechanism is the workflow layer's exit handling under template references
-(PRD §11, §13). Implementation starts with a spike proving `run.finished` lands on a run
-killed at each step — including before the sync exists. If it cannot be made to fire, the
-workflow-record sweep fallback in §3.5 replaces FR-1's pipeline writer without changing the
-table or the read surface; mover-job inference is not an acceptable fallback because a
-pre-sync failure leaves no job.
+**Settled during implementation.** The exit handler fires through `workflowTemplateRef`,
+including on a failure in the first task, and the failures payload names the step — measured
+on a stand, so FR-1 needs no fallback and the §3.5 workflow-record path stays what it is: the
+routine corroboration input, not a substitute writer.
+
+What the same measurements did overturn is the phase contract. A DAG's phase comes from its
+targets, and a recorder that runs after the work it records is the only target — so a
+succeeded recorder erased a failed sync, turning it into a green run that went on to rebuild
+from stale bronze. `dag.target` names the real work alongside the recorder, and a rendered
+chart test now fails if any DAG is ever assessed over recorders alone. The inverse is pinned
+the same way: every write goes through a `steps` wrapper carrying `continueOn`, which a
+`depends` DAG rejects, so a recorder that cannot run leaves the run alone.
 
 ### 4.2 What was deliberately not built
 
