@@ -491,6 +491,142 @@ export const handlers = [
   http.get("/api/analytics/v1/metric-definitions", () =>
     HttpResponse.json({ metrics: buildMetricDefinitions() }),
   ),
+  // Connector health, covering the states that read differently: a delivery
+  // mismatch, a stalled transform, an out-of-band sync, and a schema nobody
+  // configured. `rows_landed: null` is deliberate on the swept row — absence
+  // must not render as zero delivery.
+  http.get("/api/analytics/v1/connector-health", () =>
+    HttpResponse.json({
+      as_of: new Date().toISOString(),
+      history_available: true,
+      connectors: [
+        {
+          connector: "example-crm",
+          configured: true,
+          last_run: {
+            status: "ok",
+            step: null,
+            started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+            duration_ms: 130_000,
+            transform_status: "ok",
+          },
+          last_sync: {
+            trigger: "claimed",
+            status: "ok",
+            started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+            duration_ms: 120_000,
+            records_moved: 12_400,
+            rows_landed: 0,
+          },
+          storage: {
+            observed_at: new Date(Date.now() - 60_000).toISOString(),
+            streams: 19,
+            streams_with_data: 19,
+            physical_rows: 980_000,
+            bytes_on_disk: 104_857_600,
+          },
+          streams: [
+            { stream: "contacts", physical_rows: 700_000, bytes_on_disk: 73_400_320 },
+            { stream: "companies", physical_rows: 280_000, bytes_on_disk: 31_457_280 },
+          ],
+        },
+        {
+          connector: "example-wiki",
+          configured: true,
+          last_run: {
+            status: "ok",
+            step: null,
+            started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+            duration_ms: 240_000,
+            transform_status: "failed",
+          },
+          last_sync: {
+            trigger: "claimed",
+            status: "ok",
+            started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+            duration_ms: 230_000,
+            records_moved: 1_240,
+            rows_landed: 1_240,
+          },
+          storage: {
+            observed_at: new Date(Date.now() - 60_000).toISOString(),
+            streams: 5,
+            streams_with_data: 5,
+            physical_rows: 64_000,
+            bytes_on_disk: 10_485_760,
+          },
+          streams: [{ stream: "documents", physical_rows: 64_000, bytes_on_disk: 10_485_760 }],
+        },
+        {
+          connector: "example-chat",
+          configured: true,
+          last_run: null,
+          last_sync: {
+            trigger: "out_of_band",
+            status: "ok",
+            started_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+            duration_ms: 60_000,
+            records_moved: 5_000,
+            rows_landed: null,
+          },
+          storage: {
+            observed_at: new Date(Date.now() - 60_000).toISOString(),
+            streams: 4,
+            streams_with_data: 3,
+            physical_rows: 158_000,
+            bytes_on_disk: 7_340_032,
+          },
+          streams: [
+            { stream: "messages", physical_rows: 158_000, bytes_on_disk: 7_340_032 },
+            { stream: "reactions", physical_rows: 0, bytes_on_disk: 0 },
+          ],
+        },
+        {
+          connector: "example-tasks",
+          configured: false,
+          last_run: null,
+          last_sync: null,
+          storage: {
+            observed_at: new Date(Date.now() - 60_000).toISOString(),
+            streams: 14,
+            streams_with_data: 0,
+            physical_rows: 0,
+            bytes_on_disk: 0,
+          },
+          streams: [],
+        },
+      ],
+    }),
+  ),
+  http.get("/api/analytics/v1/connector-health/:connector/runs", ({ params }) =>
+    HttpResponse.json({
+      connector: String(params.connector),
+      runs: [
+        {
+          event: "run.finished",
+          status: "ok",
+          step: "done",
+          origin: "pipeline",
+          trigger: null,
+          started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+          duration_ms: 130_000,
+          records_moved: 0,
+          rows_landed: null,
+        },
+        {
+          event: "sync.completed",
+          status: "ok",
+          step: null,
+          origin: "sweep",
+          trigger: "claimed",
+          started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+          duration_ms: 120_000,
+          records_moved: 12_400,
+          rows_landed: null,
+        },
+      ],
+    }),
+  ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
   // binding and no history — the real endpoint has no 404: an account nobody
