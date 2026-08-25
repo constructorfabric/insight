@@ -557,9 +557,14 @@ gitCliProxy:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
     tag: ""
     pullPolicy: IfNotPresent
+  # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
+  # dominate its memory: peak scales with cache.maxRepoBytes, times
+  # cache.heavyOpsConcurrency when heavy operations overlap. Size the limit
+  # to at least one repository cap with headroom, or a full-history walk of
+  # a workspace holding one large repository OOM-kills the pod in a loop.
   resources:
-    requests: {cpu: 200m, memory: 256Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: {cpu: 200m, memory: 1Gi}
+    limits: {cpu: "2", memory: 8Gi}
   persistence:
     size: 50Gi
     storageClass: ""
