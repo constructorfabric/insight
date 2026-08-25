@@ -43,6 +43,7 @@ def _matrix_entry(comp: dict, *, lint: bool = False, cover: bool = True, test: b
         entry["test"] = test
         entry["clippy"] = comp.get("clippy", True)  # False ⇒ fmt-only (see #1512)
         entry["live_db"] = comp.get("live_db", False)  # DB-backed live_tests (see #1564)
+        entry["live_ch"] = comp.get("live_ch", False)  # ClickHouse-backed live_tests (see #1564)
         # MariaDB database the CI provisions for live_db entries (defaults to
         # the component name — analytics owns `analytics`, identity-resolution
         # owns `identity`).
@@ -134,9 +135,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Emit the CI component matrix as JSON.")
     ap.add_argument("--all", action="store_true", help="emit ALL components, ignoring the diff (manual full run)")
     ap.add_argument(
-        "--compare-ref",
-        default=COMPARE_BRANCH,
-        help="compare HEAD with the merge-base of REF (default: origin/main)",
+        "--compare-ref", default=COMPARE_BRANCH, help="compare HEAD with the merge-base of REF (default: origin/main)"
     )
     args = ap.parse_args()
     matrix = all_components(COMPONENTS) if args.all else changed_components(args.compare_ref, COMPONENTS)

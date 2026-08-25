@@ -1,4 +1,7 @@
 -- depends_on: {{ ref('jira__task_field_history') }}
+-- depends_on: {{ ref('jira__availability_events') }}
+-- depends_on: {{ ref('jira__comment_lifecycle_events') }}
+-- depends_on: {{ ref('jira__worklog_lifecycle_events') }}
 -- depends_on: {{ ref('github__task_field_history') }}
 {{ config(
     materialized='incremental',
@@ -20,9 +23,9 @@
 -- the staging view (`jira__task_field_history.sql`), and that single column is the
 -- ORDER BY here.
 
--- Source of truth is the Rust `jira-enrich` binary, which writes
--- `staging.jira__task_field_history` — see `jira__task_field_history.sql` for
--- the thin view that exposes it here.
+-- Producers union in via the `silver:class_task_field_history` tag: the Rust
+-- `jira-enrich` output (changelog + synthetic_initial), the jira availability
+-- and comment/worklog lifecycle event models, and the GitHub Issues arm.
 
 SELECT * FROM (
     {{ union_by_tag('silver:class_task_field_history') }}

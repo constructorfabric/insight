@@ -273,6 +273,19 @@ const GIT_LINES_TABLE_COLUMN = {
   ],
 } satisfies MetricTimeseriesTableColumnConfig;
 
+const GIT_LINES_DEFAULT_TABLE_COLUMN = {
+  label: "Lines (default)",
+  template: [
+    { metric: "git.default_branch_lines_added", prefix: "+", tone: "success" },
+    { text: " / " },
+    {
+      metric: "git.default_branch_lines_removed",
+      prefix: "−",
+      tone: "destructive",
+    },
+  ],
+} satisfies MetricTimeseriesTableColumnConfig;
+
 const COLLABORATION_COLLECTION: MetricCollectionConfig = {
   metrics: [
     {
@@ -438,18 +451,28 @@ export const GROUPS: readonly MetricGroup[] = [
       {
         id: "output-by-repository",
         view: "timeseries",
+        // Each total is followed by its default-branch reading, so a row says
+        // how much work a repository saw and how much of it landed without
+        // making the reader open a second block to find out.
         metrics: [
           "git.commits",
+          "git.default_branch_commits",
           "git.prs_merged",
+          "git.default_branch_prs_merged",
           "git.lines_added",
           "git.lines_removed",
+          "git.default_branch_lines_added",
+          "git.default_branch_lines_removed",
         ],
         defaultPresentation: "table",
         table: {
           columns: [
             { metric: "git.commits" },
+            { metric: "git.default_branch_commits", labelSource: "short" },
             { metric: "git.prs_merged", labelSource: "short" },
+            { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
+            GIT_LINES_DEFAULT_TABLE_COLUMN,
           ],
         },
         groupBy: {

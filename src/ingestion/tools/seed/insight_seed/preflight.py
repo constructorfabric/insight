@@ -22,6 +22,15 @@ Two signals, because neither sees everything:
   anything that writes one, and an operator's corrections on that same connector
   still refuse, which is the point: they carry real account values and are the
   strongest "somebody curates this stand" signal there is.
+
+  The identity projection's re-emissions are exempt on the same footing. It
+  re-reads what this seeder wrote and appends one observation per attribute,
+  carrying no reason at all once the binding it made is already known — so on a
+  stand this seeder seeded, the projection's SECOND run would otherwise refuse
+  every later seed. The exemption is scoped twice: to the system author no human
+  write carries, and to persons this seeder created. An operator's row about the
+  same person still refuses, and on a tenant whose people came from anywhere
+  else nothing is exempted at all.
 * Rows in the reset surface belonging to a different tenant. Silver rows are
   NOT additive: the generators TRUNCATE each table before writing, across every
   tenant, because a partially rewritten silver table produces metrics that are
@@ -51,6 +60,7 @@ from .config import (
     STAND_SCRATCH_PREFIX,
     STAND_SCRATCH_SOURCE_ID,
     STAND_SCRATCH_SOURCE_TYPE,
+    SYSTEM_AUTHOR_ID,
     ClickHouse,
     EnvContractError,
     MariaDb,
@@ -87,9 +97,10 @@ def foreign_rows_problem(count: int, tenant: str, database: str) -> str:
     return (
         f"tenant {tenant} already holds {count} `{database}.persons` row(s) this seeder "
         f"did not write (their `reason` does not start with {SEED_REASON_PREFIX!r} and is "
-        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}, and they are not the stand "
+        f"not the persons-seed's {PERSONS_SEED_LINK_REASON!r}, they are not the stand "
         f"suite's {STAND_SCRATCH_PREFIX!r} rows under "
-        f"{STAND_SCRATCH_SOURCE_TYPE}/{STAND_SCRATCH_SOURCE_ID}), so this stand carries "
+        f"{STAND_SCRATCH_SOURCE_TYPE}/{STAND_SCRATCH_SOURCE_ID}, and they are not the "
+        "identity projection's own rows about people this seeder created), so this stand carries "
         "identity data from somewhere else. Seed a tenant of your own, "
         f"or set {config.FORCE_ENV}=1 to add demo people to this one anyway."
     )
@@ -114,12 +125,17 @@ def _count_foreign_persons(cur: pymysql.cursors.Cursor, tenant: str) -> int:
     # reads, and LIKE against a NULL yields NULL, so the row would fall out of
     # the conjunction rather than count: COALESCE keeps it in. The three source
     # and tenant columns are NOT NULL in the schema.
+    #
+    # The projection's exemption is one conjunction for the same reason: the
+    # system author alone exempts every automated write on a real tenant.
     cur.execute(
         "SELECT COUNT(*) FROM persons "
         "WHERE insight_tenant_id = %s "
         "AND (reason IS NULL OR (reason NOT LIKE %s AND reason != %s)) "
         "AND NOT (insight_source_type = %s AND insight_source_id = %s "
-        "AND COALESCE(value_id, value_effective, '') LIKE %s)",
+        "AND COALESCE(value_id, value_effective, '') LIKE %s) "
+        "AND NOT (author_person_id = %s AND person_id IN ("
+        "SELECT person_id FROM persons WHERE insight_tenant_id = %s AND reason LIKE %s))",
         (
             uuid_mod.UUID(tenant).bytes,
             f"{SEED_REASON_PREFIX}%",
@@ -127,6 +143,9 @@ def _count_foreign_persons(cur: pymysql.cursors.Cursor, tenant: str) -> int:
             STAND_SCRATCH_SOURCE_TYPE,
             uuid_mod.UUID(STAND_SCRATCH_SOURCE_ID).bytes,
             f"{STAND_SCRATCH_PREFIX}%",
+            uuid_mod.UUID(SYSTEM_AUTHOR_ID).bytes,
+            uuid_mod.UUID(tenant).bytes,
+            f"{SEED_REASON_PREFIX}%",
         ),
     )
     row = cur.fetchone()
@@ -214,7 +233,7 @@ def foreign_silver_problem(rows: int, tables: Sequence[tuple[str, int]], tenant:
 
 def _tenant_columns(client: object) -> dict[tuple[str, str], str]:
     """Which column carries the tenant, per reset target that has one."""
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     schemas = sorted({schema for schema, _ in RESET_TARGETS})
     found = client.query(  # type: ignore[attr-defined]
@@ -240,11 +259,11 @@ def _foreign_silver_rows(
 ) -> tuple[int, list[tuple[str, int]], list[tuple[str, str]]]:
     """Foreign rows in the reset surface, plus the targets that cannot be judged.
 
-    Scans exactly what the generators clear — `generators.base.RESET_TARGETS` —
+    Scans exactly what the generators clear — `generators.insert.RESET_TARGETS` —
     rather than a name pattern: a pattern both misses targets in other databases
     and refuses stands over tables the step never touches.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     tenant_column = _tenant_columns(client)
     unattributable = [t for t in RESET_TARGETS if t not in tenant_column]
@@ -281,7 +300,7 @@ def _existing_targets(client: object) -> set[tuple[str, str]]:
     answers with an empty result for a database that does not exist, the same
     property the tenant scan relies on.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     found = client.query(  # type: ignore[attr-defined]
         "SELECT database, name FROM system.tables WHERE database IN {dbs:Array(String)}",
@@ -297,7 +316,7 @@ def _reset_surface_rows(client: object) -> int:
     these", this answers "how much is there", and the second question still has
     an answer when the first one cannot be told apart on a single-tenant stand.
     """
-    from .generators.base import RESET_TARGETS
+    from .generators.insert import RESET_TARGETS
 
     try:
         existing = _existing_targets(client)

@@ -42,9 +42,11 @@ COMPONENTS = [
         "package": "analytics",
         # DB-backed integration tests: the CI rust job provisions a MariaDB
         # service, runs `analytics migrate` once up front, then runs the
-        # `#[ignore]`d live_tests (INTEGRATION_TESTS_MARIADB_URL). ClickHouse
-        # tests skip (no INTEGRATION_TESTS_CLICKHOUSE_URL — see cf/insight#1564).
+        # `#[ignore]`d live_tests (INTEGRATION_TESTS_MARIADB_URL). live_ch
+        # additionally provisions a ClickHouse for the CH-gated live tests
+        # (INTEGRATION_TESTS_CLICKHOUSE_URL — see cf/insight#1564).
         "live_db": True,
+        "live_ch": True,
         # llvm-cov reports every instrumented file, including path-dependency
         # crates (insight-clickhouse) compiled into this binary. Those crates are
         # their OWN components with their own coverage jobs — counting them here

@@ -1,19 +1,34 @@
 {{ metric_evidence_table(join_use_nulls=1) }}
 
 -- Resolution happens HERE, once per gold build: evidence carries BOTH keys —
--- `entity_id` is the canonical person id (or '' when identity does not know
--- the email: those rows stay for coverage but reach no serving relation), and
--- `source_entity_id` keeps the source-native email for provenance. Everything
--- downstream (observations, cohorts, coverage, drilldown) reads THIS snapshot,
--- so one identity mapping answers for the whole build.
+-- `entity_id` is the canonical person id (or '' when identity cannot place
+-- the row: those rows stay for coverage but reach no serving relation), and
+-- `source_entity_id` keeps the source-native email for provenance. Rows that
+-- carry the author's source account id (pull requests) resolve through the
+-- account binding first and fall back to the email map; everything else is
+-- email-only. Everything downstream (observations, cohorts, coverage,
+-- drilldown) reads THIS snapshot, so one identity mapping answers for the
+-- whole build.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
     -- Null-proof under EITHER join_use_nulls setting (models differ): the
-    -- condition is non-Nullable via coalesce, and person_id is read only on
+    -- conditions are non-Nullable via coalesce, and person_id is read only on
     -- the matched branch, so entity_id is a plain String fit for the sort key.
-    if(
+    -- Account first: an account binding is the source's own answer to "whose
+    -- row is this" and survives an empty profile email; the email map decides
+    -- only when the row carries no bound account. A matched account bound to
+    -- the excluded person terminates resolution — the row attributes to
+    -- nobody even when its emails would resolve, or a bot pull request whose
+    -- commits carry a human's email would attribute to that human.
+    multiIf(
+        coalesce(account_map.account_id, '') != '',
+        if(
+            assumeNotNull(account_map.person_id) = {{ excluded_person_id() }},
+            '',
+            toString(assumeNotNull(account_map.person_id))
+        ),
         coalesce(identity_map.email, '') != '',
         toString(assumeNotNull(identity_map.person_id)),
         ''
@@ -26,8 +41,9 @@ SELECT
     -- hash) are identical across one person's accounts once entity_id is
     -- canonical, and both the evidence uniqueness grain and the drilldown
     -- cursor need one row per record key. Hashed, not the raw email — the id
-    -- reaches the client and stays opaque.
-    concat(src.record_id, ':', hex(sipHash64(src.entity_id))) AS record_id,
+    -- reaches the client and stays opaque. The account id joins the salt so
+    -- two email-less accounts cannot collide on one record key.
+    concat(src.record_id, ':', hex(sipHash64(concat(src.entity_id, ':', src.account_id)))) AS record_id,
     src.record_kind,
     src.granularity,
     src.record_label,
@@ -369,6 +385,17 @@ pull_requests_source AS (
             pr_commit_emails.email IS NOT NULL AND pr_commit_emails.email != '', pr_commit_emails.email,
             CAST(NULL AS Nullable(String))
         ) AS entity_id,
+        -- identity's source_type vocabulary, not data_source's: the binding
+        -- rows say 'bitbucket', the class rows say 'insight_bitbucket_cloud'.
+        -- '' (gitlab — no identity inputs exist) keeps the account join
+        -- unmatched and resolution on the email path.
+        multiIf(
+            prs.data_source = 'insight_github', 'github',
+            prs.data_source = 'insight_bitbucket_cloud', 'bitbucket',
+            ''
+        ) AS account_source_type,
+        prs.source_id AS account_source_id,
+        prs.author_account_id AS account_id,
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
@@ -463,7 +490,13 @@ pull_request_measures AS (
         pr_number,
         title,
         author_name,
-        assumeNotNull(entity_id) AS entity_id,
+        -- coalesce, not assumeNotNull: an account-only pull request (author
+        -- with no resolvable email anywhere) legitimately carries NULL here
+        -- and resolves through the account join instead.
+        coalesce(entity_id, '') AS entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
         toDate(pr_measure.3) AS metric_date,
         pr_measure.3 AS observed_at,
         pr_measure.1 AS measure_key,
@@ -573,8 +606,12 @@ pull_request_measures AS (
             []
         )
     ) AS Array(Tuple(measure_key String, contribution Float64, observed_at DateTime64(3)))) AS pr_measure
-    WHERE pull_request.entity_id IS NOT NULL
-      AND pull_request.entity_id != ''
+    -- A row survives on EITHER key: the email (today's path) or the account
+    -- id, which the outer join resolves account-first. Only a pull request
+    -- with neither — no profile email, no attributable commit email, no
+    -- account id — drops here, exactly as before.
+    WHERE (pull_request.entity_id IS NOT NULL AND pull_request.entity_id != '')
+       OR pull_request.account_id != ''
 ),
 file_change_measures AS (
     SELECT
@@ -660,6 +697,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -689,6 +729,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     'commit_day' AS measure_key,
@@ -717,6 +760,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     commit_measure.1 AS measure_key,
@@ -759,6 +805,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     measure_key,
@@ -781,3 +830,4 @@ WHERE tenant_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
 {{ resolved_person_id_join('src') }}
+{{ resolved_person_id_by_account_join('src') }}

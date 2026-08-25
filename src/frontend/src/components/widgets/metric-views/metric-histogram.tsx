@@ -12,13 +12,17 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+} from "@/components/ui/card";
 import { ChartEmpty } from "@/components/widgets/metric-views/chart-empty";
 import { MetricCardActions } from "@/components/widgets/metric-views/metric-card-actions";
 import { formatMetricNumber } from "@/lib/format";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
 import { STATUS_COLOR_VAR, statusVsMedian, type Status } from "@/lib/status";
-import { cn } from "@/lib/utils";
 
 export interface MetricHistogramProps {
   metric: NormalizedMetricResult;
@@ -110,12 +114,11 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const evidence = metric.drilldown
     ? evidenceSelection(metric.selection, entityId)
     : null;
-  const actions = <MetricCardActions evidence={evidence} label={metric.label} />;
 
   // Shared header so an empty tile reads as the same chart, laid out to match
   // its populated neighbours in the grid rather than collapsing to a corner.
   const header = (
-    <CardHeader className={cn("pb-2", evidence && "pr-10")}>
+    <CardHeader className="pb-2">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-sm font-semibold">{metric.label}</span>
@@ -131,7 +134,8 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           </span>
         </div>
         {ownMedian != null ? (
-          <span className="shrink-0 text-xs text-muted-foreground">
+          // 24px matches the ⋯ box beside it, so both sit on one centre line.
+          <span className="shrink-0 text-xs leading-6 text-muted-foreground">
             Median{" "}
             <span className="font-semibold text-foreground tabular-nums">
               {formatMetricNumber(ownMedian, metric.format)}
@@ -140,13 +144,23 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
           </span>
         ) : null}
       </div>
+      {evidence ? (
+        // Pulls the ⋯ out to the card's 16px corner inset, so laying it out in
+        // flow costs the title column nothing.
+        <CardAction className="-mr-2">
+          <MetricCardActions
+            evidence={evidence}
+            label={metric.label}
+            placement="inline"
+          />
+        </CardAction>
+      ) : null}
     </CardHeader>
   );
 
   if (bins.length === 0) {
     return (
-      <Card className="relative shrink-0">
-        {actions}
+      <Card className="shrink-0">
         {header}
         <CardContent>
           <ChartEmpty message="No values in this period" />
@@ -158,8 +172,7 @@ export function MetricHistogram({ metric, entityId }: MetricHistogramProps) {
   const { rows, pivotLabel } = buildRows(bins, peerMedian, metric);
 
   return (
-    <Card className="relative shrink-0">
-      {actions}
+    <Card className="shrink-0">
       {header}
       <CardContent>
         <ChartContainer config={CONFIG} className="h-48 min-h-48 w-full">

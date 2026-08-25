@@ -564,6 +564,44 @@ describe("composition (rule 7: only real server dimensions)", () => {
     expect(screen.getByText(/75%/)).toBeInTheDocument();
   });
 
+  it("explains a derived dimension under the bars, not above them", () => {
+    // A category label says nothing about how the bucket was decided, and the
+    // explanation belongs after the reading rather than in front of it.
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          { entity_id: id, dimensions: [{ key: "category", value: "docs" }], value: 30 },
+          { entity_id: id, dimensions: [{ key: "category", value: "code" }], value: 10 },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    render(
+      <DomainLensView
+        config={{
+          title: "T",
+          sections: [
+            { kind: "headline", metrics: ["t.commits"] },
+            {
+              kind: "composition",
+              metric: "t.commits",
+              dimension: "category",
+              title: "Lines by category",
+              notes: ["First rule that matches wins.", "Code — everything else."],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("First rule that matches wins."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Code — everything else.")).toBeInTheDocument();
+  });
+
   it("shows a retryable error card when the breakdown request fails", () => {
     const comp = emptyCollection();
     comp.isError = true;

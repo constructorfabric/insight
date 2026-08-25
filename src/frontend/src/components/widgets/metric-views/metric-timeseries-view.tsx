@@ -50,6 +50,11 @@ import {
   type MetricCollectionConfig,
   type MetricTimeseriesGroupLimitConfig,
 } from "@/lib/metrics/collection";
+import {
+  breakdownHeading,
+  dimensionDescription,
+  dimensionName,
+} from "@/lib/metrics/dimension-labels";
 import type { MetricTimeseriesTableConfig } from "@/lib/metrics/timeseries-table";
 import type { MetricTimeseriesChartConfig } from "@/lib/metrics/timeseries-chart";
 import { cn } from "@/lib/utils";
@@ -94,15 +99,6 @@ export interface MetricTimeseriesViewProps {
 }
 
 type Presentation = TimeseriesPresentation;
-
-function dimensionName(dimension: string): string {
-  const label = dimension.replaceAll("_", " ");
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-function dimensionDescription(dimension: string): string {
-  return dimension.replaceAll("_", " ");
-}
 
 function DimensionControls({
   dimensions,
@@ -532,7 +528,7 @@ export function MetricTimeseriesView({
               // wider than the screen, and the grand total below covers groups
               // the reader cannot see.
               <h3 className="px-2 text-sm font-semibold">
-                By {selectedGroupBy}
+                {breakdownHeading([selectedGroupBy])}
                 <span className="ps-1.5 font-normal text-muted-foreground">
                   · {model.columns.length}
                 </span>

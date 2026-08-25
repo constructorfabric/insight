@@ -42,10 +42,43 @@
 -- extracted tuple is kept per issue (~0.6 GiB peak, single scan). The ARRAY JOIN
 -- unpivot keeps it to one scan instead of one per field.
 
-WITH issue AS (
+-- Story-points resolution (specs/DATA-COMPLETENESS.md): the field id is
+-- instance-specific, so it is resolved from bronze_jira.jira_fields metadata —
+-- the canonical greenhopper story-points schema marker first, then the exact
+-- field names — and the snapshot emits the RESOLVED Jira-native field_id
+-- (matching the changelog's fieldId, same rule as duedate below). Company- and
+-- team-managed projects store the value in different fields, so extraction
+-- coalesces over all candidates per issue.
+WITH sp_fields AS (
+    -- arraySort over the aggregated tuples, not ORDER BY before groupArray:
+    -- parallel aggregation does not preserve input order, and a
+    -- non-deterministic candidate order could resolve a different field id
+    -- per run for issues valued in more than one candidate.
     SELECT
         COALESCE(source_id, '')                                       AS insight_source_id,
-        COALESCE(toString(jira_id), '')                               AS issue_id,
+        arrayMap(t -> t.2, arraySort(groupArray((priority, candidate_field_id))))
+                                                                      AS sp_field_ids
+    FROM (
+        SELECT
+            source_id,
+            assumeNotNull(field_id)                                   AS candidate_field_id,
+            multiIf(
+                schema_custom = 'com.pyxis.greenhopper.jira:jsw-story-points', 1,
+                lowerUTF8(COALESCE(name, '')) = 'story points',            2,
+                                                                           3
+            )                                                         AS priority
+        FROM {{ source('bronze_jira', 'jira_fields') }} FINAL
+        WHERE field_id IS NOT NULL
+          AND (schema_custom = 'com.pyxis.greenhopper.jira:jsw-story-points'
+               OR lowerUTF8(COALESCE(name, '')) IN ('story points', 'story point estimate'))
+    )
+    GROUP BY source_id
+),
+
+issue AS (
+    SELECT
+        COALESCE(b.source_id, '')                                     AS insight_source_id,
+        COALESCE(toString(b.jira_id), '')                             AS issue_id,
         -- Latest bronze row per issue, projected down to the small extracted tuple.
         -- Tuple indexes: 1 id_readable, 2 created_at, 3/4 status id/name,
         -- 5/6 priority, 7/8 issuetype, 9/10 resolution, 11/12 assignee,
@@ -73,11 +106,25 @@ WITH issue AS (
                 -- returns '', so take the raw JSON and parse it as Array(String)
                 -- in the unpivot below.
                 JSONExtractRaw(custom_fields_json, 'labels'),
-                due_date
+                due_date,
+                -- 19/20: resolved story-points (field_id, raw numeric value) —
+                -- first candidate field that holds a value on this issue.
+                arrayFirst(
+                    x -> x.2 NOT IN ('', 'null'),
+                    arrayMap(fid -> (fid, JSONExtractRaw(custom_fields_json, fid)),
+                             sp.sp_field_ids)
+                ).1,
+                arrayFirst(
+                    x -> x.2 NOT IN ('', 'null'),
+                    arrayMap(fid -> (fid, JSONExtractRaw(custom_fields_json, fid)),
+                             sp.sp_field_ids)
+                ).2
             ),
             _airbyte_extracted_at
         ) AS t
-    FROM {{ source('bronze_jira', 'jira_issue') }}
+    FROM {{ source('bronze_jira', 'jira_issue') }} AS b
+    LEFT JOIN sp_fields AS sp
+        ON sp.insight_source_id = COALESCE(b.source_id, '')
     GROUP BY insight_source_id, issue_id
 )
 
@@ -139,5 +186,14 @@ ARRAY JOIN [
         due_date_compliance. -#}
     ('duedate',
      if(t.18 IS NULL OR t.18 = '', [], [toString(t.18)]),
-     if(t.18 IS NULL OR t.18 = '', [], [toString(t.18)]))
+     if(t.18 IS NULL OR t.18 = '', [], [toString(t.18)])),
+
+    {#- story points: field_id is the RESOLVED instance-specific customfield id
+        (t.19), so snapshot rows merge with changelog rows for the same field.
+        Issues with no story points resolve to field_id '' and are dropped by
+        the WHERE below. -#}
+    (t.19,
+     if(t.20 = '', [], [t.20]),
+     if(t.20 = '', [], [t.20]))
 ] AS f
+WHERE f.1 != ''
