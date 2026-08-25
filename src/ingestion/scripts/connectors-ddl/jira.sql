@@ -1,5 +1,36 @@
 CREATE DATABASE IF NOT EXISTS `bronze_jira`;
 
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_board_configuration
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(Decimal(38, 9)),
+    `name` Nullable(String),
+    `type` Nullable(String),
+    `self` Nullable(String),
+    `filter` Nullable(String),
+    `columnConfig` Nullable(String),
+    `estimation` Nullable(String),
+    `ranking` Nullable(String),
+    `location` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `board_id` Nullable(Decimal(38, 9)),
+    `board_type` Nullable(String),
+    `estimation_field_id` Nullable(String),
+    `estimation_field_name` Nullable(String),
+    `column_config` Nullable(String),
+    `board_location` Nullable(String),
+    `collected_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_boards
 (
     `_airbyte_raw_id` String,
@@ -116,6 +147,25 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_census
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `id` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `jira_id` Nullable(String),
+    `project_key` Nullable(String),
+    `collected_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_issue_history
 (
     `_airbyte_raw_id` String,
@@ -212,6 +262,38 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_project_visibility
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `expand` Nullable(String),
+    `self` Nullable(String),
+    `id` Nullable(String),
+    `key` Nullable(String),
+    `name` Nullable(String),
+    `avatarUrls` Nullable(String),
+    `projectCategory` Nullable(String),
+    `projectTypeKey` Nullable(String),
+    `simplified` Nullable(Bool),
+    `style` Nullable(String),
+    `isPrivate` Nullable(Bool),
+    `properties` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_id` Nullable(Decimal(38, 9)),
+    `project_key` Nullable(String),
+    `project_status` Nullable(String),
+    `is_private` Nullable(Bool),
+    `collected_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects
 (
     `_airbyte_raw_id` String,
@@ -237,6 +319,8 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_projects
     `project_key` Nullable(String),
     `project_type` Nullable(String),
     `archived` Nullable(Bool),
+    `lead` Nullable(String),
+    `lead_account_id` Nullable(String),
     `collected_at` Nullable(String),
     `entityId` Nullable(String),
     `uuid` Nullable(String)
@@ -350,6 +434,27 @@ CREATE TABLE IF NOT EXISTS bronze_jira.jira_user
     `collected_at` Nullable(String),
     `locale` Nullable(String),
     `timeZone` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_jira.jira_worklog_deleted
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `worklogId` Nullable(Decimal(38, 9)),
+    `updatedTime` Nullable(Decimal(38, 9)),
+    `properties` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `worklog_id` Nullable(Decimal(38, 9)),
+    `deleted_at_ms` Nullable(Decimal(38, 9)),
+    `collected_at` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

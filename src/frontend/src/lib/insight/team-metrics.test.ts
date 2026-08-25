@@ -26,10 +26,11 @@ function metricWithPeers(
     suppressed?: boolean;
     unmeasured?: boolean;
   }>,
+  key = "ai.active_days",
 ): MetricResult {
   return {
-    metric_key: "ai.active_days",
-    label: "Active AI days",
+    metric_key: key,
+    label: key,
     unit: "days",
     format: "integer",
     direction: "higher_is_better",
@@ -55,6 +56,21 @@ function metricWithPeers(
         })),
       },
     ],
+  };
+}
+
+function gitDef(keys: readonly string[]): MetricGroup {
+  return {
+    id: "git_output",
+    title: "Git output",
+    collection: {
+      metrics: keys.map((key) => ({
+        key,
+        views: [{ view: "period" }, { view: "peer" }] as const,
+      })),
+    },
+    card: { preview: [keys[0]!] },
+    drilldown: [],
   };
 }
 
@@ -128,6 +144,47 @@ describe("teamMetricStandings / metricBelowCounts", () => {
     const counts = metricBelowCounts(def, byKey, members);
     expect(counts.get("a@x.com")).toBe(1);
     expect(counts.get("c@x.com")).toBeUndefined();
+  });
+
+  it("counts a total and its default-branch part as one problem", () => {
+    // Both readings put the same person at the bottom, because one is part of
+    // the other. Two would overstate how much is wrong with them.
+    const trailing = [
+      { id: "a@x.com", value: 2 },
+      { id: "b@x.com", value: 3 },
+      { id: "c@x.com", value: 20 },
+    ];
+    const pairKeys = ["git.commits", "git.default_branch_commits"];
+    const paired = normalizeMetricResults(
+      pairKeys.map((key) => metricWithPeers(trailing, key)),
+    );
+
+    expect(
+      metricBelowCounts(gitDef(pairKeys), paired, members).get("a@x.com"),
+    ).toBe(1);
+  });
+
+  it("keeps the total's vote when its part reads nothing", () => {
+    // Thinning is over what actually read: with no default-branch reading the
+    // total is the only finding there is.
+    const totalOnly = normalizeMetricResults([
+      metricWithPeers(
+        [
+          { id: "a@x.com", value: 2 },
+          { id: "b@x.com", value: 3 },
+          { id: "c@x.com", value: 20 },
+        ],
+        "git.commits",
+      ),
+    ]);
+
+    expect(
+      metricBelowCounts(
+        gitDef(["git.commits", "git.default_branch_commits"]),
+        totalOnly,
+        members,
+      ).get("a@x.com"),
+    ).toBe(1);
   });
 });
 

@@ -163,6 +163,39 @@ definitions:
         action: RETRY
         error_message: Transient Bitbucket error
 
+  # Per-repository pull-request listings, standalone stream and the fan-out
+  # parents inside every PR child stream alike. Unlike workspace discovery,
+  # a 403/404 here is about ONE repository (suspended, deleted, or denied to
+  # the token) and permanent for it, so the repository is skipped and the
+  # walk continues. Failing instead aborts partition generation and silently
+  # truncates every repository later in the updated_on-ordered walk.
+  prs_listing_error_handler: &prs_listing_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: *vendor_backoff
+    response_filters:
+      - type: HttpResponseFilter
+        http_codes: [429]
+        action: RATE_LIMITED
+        error_message: Bitbucket hourly rate budget exhausted
+      - type: HttpResponseFilter
+        http_codes: [403, 404]
+        action: IGNORE
+        error_message: >-
+          Repository not accessible with this token or gone; other repositories continue.
+      - type: HttpResponseFilter
+        http_codes: [401]
+        action: FAIL
+        failure_type: config_error
+        error_message: >-
+          Bitbucket rejected the credentials. Personal API tokens need
+          bitbucket_username set (Basic auth); workspace access tokens must
+          NOT set it (Bearer). Mixing the two is the most common cause.
+      - type: HttpResponseFilter
+        http_codes: [500, 502, 503, 504]
+        action: RETRY
+        error_message: Transient Bitbucket error
+
   proxy_requester: &proxy_requester
     type: HttpRequester
     url_base: "{{ config['git_proxy_url'] }}"
@@ -481,6 +514,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -671,6 +705,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.updated_on,values.links.clone
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -842,6 +877,7 @@ streams:
                     <<: *repos_since_start
                     fields: >-
                       next,values.uuid,values.slug,values.links.clone
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -967,32 +1003,7 @@ streams:
             updated_on >= "{{ stream_interval.start_time }}"
           fields: >-
             next,values.id,values.title,values.state,values.draft,values.author.uuid,values.author.display_name,values.author.account_id,values.author.nickname,values.created_on,values.updated_on,values.description,values.reason,values.close_source_branch,values.merge_commit.hash,values.closed_by.uuid,values.closed_by.account_id,values.closed_by.display_name,values.source.branch.name,values.source.commit.hash,values.source.repository.full_name,values.destination.branch.name,values.destination.commit.hash,values.destination.repository.full_name,values.participants.role,values.participants.state,values.participants.approved,values.participants.participated_on,values.participants.user.uuid,values.participants.user.display_name,values.comment_count,values.task_count
-        error_handler:
-          type: DefaultErrorHandler
-          max_retries: 5
-          backoff_strategies: *vendor_backoff
-          response_filters:
-            - type: HttpResponseFilter
-              http_codes: [429]
-              action: RATE_LIMITED
-              error_message: Bitbucket hourly rate budget exhausted
-            - type: HttpResponseFilter
-              http_codes: [403, 404]
-              action: IGNORE
-              error_message: >-
-                Repository not accessible with this token or gone; other repositories continue.
-            - type: HttpResponseFilter
-              http_codes: [401]
-              action: FAIL
-              failure_type: config_error
-              error_message: >-
-                Bitbucket rejected the credentials. Personal API tokens need
-                bitbucket_username set (Basic auth); workspace access tokens must
-                NOT set it (Bearer). Mixing the two is the most common cause.
-            - type: HttpResponseFilter
-              http_codes: [500, 502, 503, 504]
-              action: RETRY
-              error_message: Transient Bitbucket error
+        error_handler: *prs_listing_error_handler
       record_selector:
         type: RecordSelector
         extractor:
@@ -1047,6 +1058,7 @@ streams:
                   request_parameters:
                     <<: *repos_since_start
                     fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -1338,6 +1350,7 @@ streams:
                     # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
+                  error_handler: *prs_listing_error_handler
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1392,6 +1405,7 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                            error_handler: *discovery_error_handler
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -1659,6 +1673,7 @@ streams:
                     # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
+                  error_handler: *prs_listing_error_handler
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -1713,6 +1728,7 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                            error_handler: *discovery_error_handler
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2018,6 +2034,7 @@ streams:
                     # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
+                  error_handler: *prs_listing_error_handler
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -2072,6 +2089,7 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                            error_handler: *discovery_error_handler
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2324,6 +2342,7 @@ streams:
                     # re-read window.
                     <<: *prs_since_start
                     fields: next,values.id,values.updated_on
+                  error_handler: *prs_listing_error_handler
                 record_selector:
                   type: RecordSelector
                   extractor:
@@ -2378,6 +2397,7 @@ streams:
                             request_parameters:
                               <<: *repos_since_start
                               fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                            error_handler: *discovery_error_handler
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator
@@ -2794,6 +2814,7 @@ streams:
                   request_parameters:
                     <<: *repos_since_start
                     fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -3031,6 +3052,7 @@ streams:
                   request_parameters:
                     <<: *repos_since_start
                     fields: next,values.uuid,values.slug,values.full_name,values.updated_on
+                  error_handler: *discovery_error_handler
                 record_selector: *repos_selector
                 paginator:
                   type: DefaultPaginator
@@ -3297,6 +3319,7 @@ streams:
                               <<: *repos_since_start
                               fields: >-
                                 next,values.uuid,values.slug,values.full_name,values.updated_on,values.links.clone
+                            error_handler: *discovery_error_handler
                           record_selector: *repos_selector
                           paginator:
                             type: DefaultPaginator

@@ -80,6 +80,8 @@ e2e/
 │   ├── clickhouse.py           # CH HTTP client wrapper
 │   ├── mariadb.py              # MariaDB connection helper
 │   ├── migration_applier.py    # applies src/ingestion/scripts/migrations/*.sql
+│   ├── session_reset.py        # empties bronze/staging/silver at session start
+│   ├── tracked_models.py       # dbt builds, with their relations registered for truncation
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
 │   ├── metric_coverage.py      # builtin metric coverage gate
@@ -134,6 +136,8 @@ These ports avoid conflict with a local gitops dev cluster (which forwards 8123 
 ## Notes for fixture authors
 
 - Auth in `analytics` requires no Bearer token, but its tenant middleware rejects requests without a non-nil tenant. The harness sends `X-Insight-Tenant-Id` with `lib.config.TEST_TENANT_ID` on every request and re-homes seeded metric definitions onto that tenant (`metric_seed.py`). The ClickHouse query path does not filter by tenant yet, so seeded bronze rows may use any tenant value.
+- A fixture's assertions only ever see its own seed, held by two layers: `lib.session_reset` empties every bronze, staging and silver relation once at session start, and `lib.ch_seeder`'s ledger truncates the previous test's relations before the next one seeds. Both are needed — the staging and silver models are incremental behind a watermark over their own target and a fixture pins the value it seeds, so a run against a ClickHouse that still holds an earlier session's rows would admit nothing and assert against that older data. Re-running one fixture with `-k` against a live stack is therefore safe, and no fixture may rely on another's rows.
+- Build dbt models through the `tracked_models` fixture rather than `dbt_runner` directly: it registers each relation the build writes into that ledger, so the derived staging and silver rows are cleaned up alongside the bronze seed. A build that bypasses it leaves its output in place for the next test to read.
 - Metric definitions are auto-seeded by the analytics binary's SeaORM migrations. Look up the metric UUID with `GET /v1/metrics` once the session is up, or add overrides in `seed/metrics.yaml`.
 
 ## `cases` / `expect` (declarative YAML rig)

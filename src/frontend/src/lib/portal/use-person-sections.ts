@@ -2,6 +2,7 @@ import { visibleGroups, type GroupId } from "@/lib/insight/groups";
 import { groupHasData } from "@/lib/insight/group-data";
 import { partState, reachableMetricKeys } from "@/lib/insight/coverage";
 import { injectCohortPeer } from "@/lib/insight/within-team-peer";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import {
   gradeSectionStanding,
   rankCounts,
@@ -112,7 +113,13 @@ export function usePersonSectionStandings(personId: string): SectionStanding[] {
       });
       return [{ row: m.key, rank: standing.rank }];
     });
-    const counts = rankCounts(ranks);
+    const counts = rankCounts(
+      countableSignals(
+        ranks,
+        (entry) => entry.row,
+        (entry) => entry.rank,
+      ),
+    );
 
     return {
       id: def.id,

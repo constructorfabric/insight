@@ -75,6 +75,19 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_default_branch_commits
+    description: >
+      Commits that reached a repository's default branch through a merged pull
+      request: one row per tenant/source/project/repo/commit. Materialized so
+      the pull-request membership joins run once per build in their own query
+      budget; the git evidence build reads it as a semi-join set alongside the
+      sync-time is_default_branch flag.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the repository"
+        tests:
+          - not_null
+
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.

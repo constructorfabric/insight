@@ -312,3 +312,68 @@ templates:
     id: "10099"
     name: Incident
     untranslatedName: Incident
+
+  # ── Deletion / visibility censuses (specs/DELETION-AND-VISIBILITY.md) ────
+  # jira_census: one row per issue observed alive by the id-only sweep. An
+  # issue present in bronze_jira.jira_issue but ABSENT from the census
+  # classifies as deleted (project visible) or access_lost (project gone from
+  # the roster). unique_key must equal `{tenant}-{source}-{jira_id}` so the
+  # census row and the bronze-issue row merge into one availability entity.
+  jira_census:
+    id: null
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: jira-test
+    unique_key: null
+    jira_id: null
+    project_key: TST
+    collected_at: "2026-12-26T00:00:00.000Z"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-12-26T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  # jira_visibility: the project roster per lifecycle status. A project absent
+  # from the roster entirely means the account lost sight of it (access_lost).
+  jira_visibility:
+    expand: ""
+    self: ""
+    id: null
+    key: null
+    name: null
+    avatarUrls: "{}"
+    projectCategory: "{}"
+    projectTypeKey: software
+    simplified: false
+    style: classic
+    isPrivate: false
+    properties: "{}"
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: jira-test
+    unique_key: null
+    project_id: null
+    project_key: null
+    project_status: live
+    is_private: false
+    collected_at: "2026-12-26T00:00:00.000Z"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-12-26T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+
+  # jira_worklog_tombstone: an authoritative deletion record from
+  # GET /rest/api/3/worklog/deleted — flips is_deleted on the matching
+  # class_task_worklogs row (join by tenant/source/worklog_id).
+  jira_worklog_tombstone:
+    worklogId: null
+    updatedTime: 1766700000000
+    properties: "[]"
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: jira-test
+    unique_key: null
+    worklog_id: null
+    deleted_at_ms: 1766700000000
+    collected_at: "2026-12-26T00:00:00.000Z"
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-12-26T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0

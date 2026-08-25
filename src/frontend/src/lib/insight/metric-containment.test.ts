@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dropRedundantMetrics } from "./metric-containment";
+import { countableSignals, dropRedundantMetrics } from "./metric-containment";
 
 const item = (key: string) => ({ key });
 
@@ -13,6 +13,19 @@ describe("dropRedundantMetrics", () => {
       item("git.code_lines"),
     ]);
     expect(kept.map((item) => item.key)).toEqual(["git.code_lines"]);
+  });
+
+  it("drops a git total when its default-branch part is on screen", () => {
+    // Branch scope partitions the total, so "Commits 12" over "Commits on the
+    // default branch 9" is one fact ranked twice.
+    for (const [total, split] of [
+      ["git.commits", "git.default_branch_commits"],
+      ["git.prs_merged", "git.default_branch_prs_merged"],
+    ]) {
+      const kept = dropRedundantMetrics([item(total), item(split)]);
+      const keys = kept.map((entry) => entry.key);
+      expect(keys, total).toEqual([split]);
+    }
   });
 
   it("keeps the wider metric when it is the only one there", () => {
@@ -81,5 +94,51 @@ describe("dropRedundantMetrics", () => {
       new Set(["git.code_lines"])
     );
     expect(kept).toEqual([]);
+  });
+});
+
+describe("countableSignals", () => {
+  const signal = (metric: string, rank: string | null) => ({ metric, rank });
+  const counted = (entries: ReturnType<typeof signal>[]) =>
+    countableSignals(
+      entries,
+      (entry) => entry.metric,
+      (entry) => entry.rank as never
+    ).map((entry) => entry.metric);
+
+  it("gives one fact one vote, whatever shape the caller counts in", () => {
+    // Every standing surface counts a different shape — rows, ranks, team
+    // standings — so the rule is reached through accessors rather than by
+    // each caller reshaping its data to match it.
+    expect(
+      counted([
+        signal("git.commits", "bottom"),
+        signal("git.default_branch_commits", "bottom"),
+        signal("git.pr_size", "top"),
+      ])
+    ).toEqual(["git.default_branch_commits", "git.pr_size"]);
+  });
+
+  it("leaves a total alone when its part is not among the signals", () => {
+    expect(counted([signal("git.commits", "bottom")])).toEqual(["git.commits"]);
+  });
+
+  it("keeps the total's vote when a present part has no comparison", () => {
+    // The part reached the response and says nothing — unmeasured for this
+    // person, or a pool too thin to disclose. Letting it displace the total
+    // would delete a real bottom reading and leave the section looking calm.
+    for (const silent of [null, "neutral"]) {
+      expect(
+        counted([
+          signal("git.commits", "bottom"),
+          signal("git.default_branch_commits", silent),
+        ]),
+        `part ranked ${silent}`
+      ).toEqual(["git.commits"]);
+    }
+  });
+
+  it("drops an unranked entry rather than counting it as a signal", () => {
+    expect(counted([signal("git.pr_size", "neutral")])).toEqual([]);
   });
 });

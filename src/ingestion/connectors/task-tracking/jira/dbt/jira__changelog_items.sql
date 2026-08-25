@@ -6,7 +6,8 @@
     engine='ReplacingMergeTree(_version)',
     order_by=['unique_key'],
     settings={'allow_nullable_key': 1},
-    tags=['staging', 'jira']
+    tags=['staging', 'jira'],
+    pre_hook="{{ reset_task_field_history_on_full_refresh() }}"
 ) }}
 
 -- Materialized as `table` (not `incremental`) so every dbt run rewrites staging from scratch.

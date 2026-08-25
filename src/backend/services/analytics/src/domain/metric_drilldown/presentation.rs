@@ -221,7 +221,13 @@ pub(super) fn evidence_presentation(
     granularity: EvidenceGranularity,
 ) -> EvidencePresentation {
     match (source_key, measure_key) {
-        ("git", "commit_count" | "commit_change_size") => EvidencePresentation {
+        (
+            "git",
+            "commit_count"
+            | "commit_change_size"
+            | "default_commit_count"
+            | "non_default_commit_count",
+        ) => EvidencePresentation {
             detail_keys: &[
                 "ref",
                 "title",
@@ -232,7 +238,16 @@ pub(super) fn evidence_presentation(
             ],
             show_value: false,
         },
-        ("git", "pr_created" | "pr_created_merged" | "pr_merged") => EvidencePresentation {
+        (
+            "git",
+            "pr_created"
+            | "pr_created_merged"
+            | "pr_merged"
+            | "default_pr_created"
+            | "non_default_pr_created"
+            | "default_pr_merged"
+            | "non_default_pr_merged",
+        ) => EvidencePresentation {
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: false,
         },
@@ -326,9 +341,99 @@ mod tests {
     use super::*;
 
     use crate::domain::metric_definitions::RatioDenominatorAggregation;
+    use crate::domain::metric_definitions::builtin::{
+        SeedComputation, builtin_metrics, builtin_sources,
+    };
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{input, plan, row, validated};
+
+    #[test]
+    fn every_event_measure_a_metric_reads_directly_declares_its_columns() {
+        // The dialog's columns come from this match rather than from the row, so
+        // a measure no arm names projects nothing and the reader gets a page of
+        // identical dates. Registering a measure is not enough — it has to be
+        // named here too, and nothing else enforces that.
+        //
+        // Read directly, because a ratio shows its numerator and denominator and
+        // `presentation` clears detail keys for it outright: a measure only
+        // ratios read needs no columns of its own, and demanding them would send
+        // the next such measure looking for an arm that changes nothing.
+        let read_directly: BTreeSet<&str> = builtin_metrics()
+            .iter()
+            .filter(|metric| !matches!(metric.computation, SeedComputation::Ratio { .. }))
+            .flat_map(|metric| &metric.inputs)
+            .map(|input| input.measure_key.as_str())
+            .collect();
+
+        let mut unnamed = Vec::new();
+        for builtin_source in builtin_sources() {
+            let source_key = builtin_source.source.key.as_str();
+            for measure in &builtin_source.measures {
+                if measure.evidence_granularity != EvidenceGranularity::Event
+                    || !read_directly.contains(measure.key.as_str())
+                {
+                    continue;
+                }
+                let presentation =
+                    evidence_presentation(source_key, &measure.key, EvidenceGranularity::Event);
+                if presentation.detail_keys.is_empty() {
+                    unnamed.push(format!("{source_key}/{}", measure.key));
+                }
+            }
+        }
+        assert!(
+            unnamed.is_empty(),
+            "event measures with no detail columns — their drilldown shows only a date: {unnamed:?}"
+        );
+    }
+
+    #[test]
+    fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
+        // Absolute, because the split test below is relative: without this the
+        // whole arm could be trimmed and both would still pass.
+        for measure in [
+            "pr_created",
+            "pr_merged",
+            "default_pr_created",
+            "default_pr_merged",
+        ] {
+            let presentation = evidence_presentation("git", measure, EvidenceGranularity::Event);
+            assert_eq!(
+                presentation.detail_keys,
+                ["ref", "title", "repository", "author"],
+                "{measure} should read the request it counted"
+            );
+            // The row IS the request it counted, so a value column would be 1s.
+            assert!(!presentation.show_value, "{measure} should show no value");
+        }
+    }
+
+    #[test]
+    fn a_branch_scope_split_reads_the_same_columns_as_its_total() {
+        // The split measures count the same commits and requests the totals do,
+        // so a reader who drills into "landed" sees what they saw before, minus
+        // the rows that did not land.
+        for (total, split) in [
+            ("commit_count", "default_commit_count"),
+            ("commit_count", "non_default_commit_count"),
+            ("pr_created", "default_pr_created"),
+            ("pr_created", "non_default_pr_created"),
+            ("pr_merged", "default_pr_merged"),
+            ("pr_merged", "non_default_pr_merged"),
+        ] {
+            let expected = evidence_presentation("git", total, EvidenceGranularity::Event);
+            let actual = evidence_presentation("git", split, EvidenceGranularity::Event);
+            assert_eq!(
+                actual.detail_keys, expected.detail_keys,
+                "{split} should read the same columns as {total}"
+            );
+            assert_eq!(
+                actual.show_value, expected.show_value,
+                "{split} should show a value exactly when {total} does"
+            );
+        }
+    }
 
     #[test]
     fn event_presentation_projects_human_fields_and_dimensions() {

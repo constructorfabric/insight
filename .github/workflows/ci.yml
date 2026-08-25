@@ -223,8 +223,8 @@ jobs:
 
       # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
-      # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
-      # tests skip themselves (see cf/insight#1564).
+      # ~15s startup. live_ch entries additionally get a ClickHouse for the
+      # CH-gated live tests (see cf/insight#1564).
       - name: Start MariaDB (${{ matrix.entry.name }})
         # live_db is a static per-component flag — only pay the container
         # startup when this run actually executes tests (with or without
@@ -246,6 +246,20 @@ jobs:
             sleep 2
           done
 
+      - name: Start ClickHouse (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.live_ch && (matrix.entry.cover || matrix.entry.test) }}
+        env:
+          CLICKHOUSE_USER: insight
+          CLICKHOUSE_PASSWORD: insight
+          CLICKHOUSE_DATABASE: insight
+        run: |
+          set -euo pipefail
+          # pins.env is plain KEY=VALUE (same load as connectors-ddl), so the
+          # server image stays pinned in exactly one committed place.
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh insight-clickhouse
+
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         if: ${{ matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
@@ -255,6 +269,9 @@ jobs:
         # isolated and never reset the DB, so parallel runs don't collide.
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
@@ -290,6 +307,9 @@ jobs:
         working-directory: ${{ matrix.entry.root }}
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: |
           set -euo pipefail
           feats=""

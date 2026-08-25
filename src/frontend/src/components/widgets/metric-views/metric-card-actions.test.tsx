@@ -23,7 +23,11 @@ function renderActions(scope: EvidenceDialogTarget[]) {
   const openEvidenceTargets = vi.fn();
   render(
     <EvidenceDialogContext.Provider
-      value={{ openEvidence: vi.fn(), openEvidenceTargets }}
+      value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
     >
       <EvidenceScopeContext.Provider value={scope}>
         <MetricCardActions
@@ -84,7 +88,11 @@ describe("MetricCardActions", () => {
   it("renders nothing without a drilldown to open", () => {
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: vi.fn(), openEvidenceTargets: vi.fn() }}
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets: vi.fn(),
+          openEvidencePeople: vi.fn(),
+        }}
       >
         <MetricCardActions evidence={null} label="Pull requests" />
       </EvidenceDialogContext.Provider>

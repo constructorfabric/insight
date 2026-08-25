@@ -4,7 +4,7 @@ pub mod error;
 pub mod request;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::{MatchedPath, Request};
 use axum::http::{StatusCode, header};
@@ -46,6 +46,9 @@ pub fn register_routes(
     let bearer = auth::ProxyAuth::new(state.config.proxy_token.clone());
 
     let v1 = build_operations(Router::new(), openapi)
+        // Innermost, so only handler work is on the clock — auth and logging
+        // stay outside the budget.
+        .layer(axum::middleware::from_fn(bound_handler))
         .layer(axum::middleware::from_fn_with_state(
             bearer,
             auth::require_bearer,
@@ -56,6 +59,37 @@ pub fn register_routes(
         .layer(axum::middleware::from_fn(observe));
 
     host_router.merge(v1)
+}
+
+/// Every wait a handler can make is individually bounded (git budgets, the
+/// inline preparation wait, the read-lock wait), but a hold that is never
+/// released — a leaked guard, a wedged permit holder — turns the NEXT
+/// request's wait into forever: the connector has no client timeout, so one
+/// such request froze a multi-day sync invisibly. This ceiling converts that
+/// class into a bounded, retryable answer. It must stay above every legal
+/// inline duration; the longest is a page-serve blob prefetch (10 minutes).
+const HANDLER_BUDGET: Duration = Duration::from_mins(15);
+
+/// Answer 503 when a handler outlives [`HANDLER_BUDGET`].
+///
+/// 503, not 408: the connectors' declarative handlers already RETRY 503 (and
+/// would FAIL on an unlisted status). The dropped future releases whatever
+/// the request itself held via RAII; whatever it was WAITING on stays wedged
+/// and is the defect to find in the log this leaves behind.
+async fn bound_handler(request: Request, next: Next) -> Response {
+    answer_within(HANDLER_BUDGET, request, next).await
+}
+
+async fn answer_within(budget: Duration, request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    if let Ok(response) = tokio::time::timeout(budget, next.run(request)).await {
+        return response;
+    }
+    metrics::record_handler_timeout();
+    tracing::error!(%method, %path, budget_s = budget.as_secs(),
+        "handler exceeded its budget; answering 503");
+    error::handler_timed_out()
 }
 
 /// Record §4.3's per-endpoint histograms for every request that reached a
@@ -562,5 +596,32 @@ mod tests {
             status_of("/healthz", None, false).await,
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    /// The pending handler never resolves, so only the budget can produce an
+    /// answer — and it must be the 503 the connectors RETRY. A tiny budget
+    /// stands in for the real one; `bound_handler` differs only by constant.
+    #[tokio::test]
+    async fn a_handler_that_never_answers_is_cut_off_with_503() {
+        let app = axum::Router::new()
+            .route(
+                "/wedged",
+                axum::routing::get(std::future::pending::<axum::response::Response>),
+            )
+            .layer(axum::middleware::from_fn(
+                |request: axum::extract::Request, next: Next| {
+                    answer_within(Duration::from_millis(20), request, next)
+                },
+            ));
+
+        let request = match Request::builder().uri("/wedged").body(Body::empty()) {
+            Ok(r) => r,
+            Err(e) => panic!("build request: {e}"),
+        };
+        let response = match app.oneshot(request).await {
+            Ok(r) => r,
+            Err(e) => panic!("drive router: {e}"),
+        };
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

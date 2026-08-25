@@ -85,6 +85,7 @@ impl RejectReason {
 struct Instruments {
     evictions: Counter<u64>,
     rejections: Counter<u64>,
+    handler_timeouts: Counter<u64>,
     origin_unavailable: Counter<u64>,
     purge_escalations: Counter<u64>,
     cold_clones: Counter<u64>,
@@ -108,6 +109,14 @@ fn instruments() -> &'static Instruments {
                     "Requests answered 429, by reason. A sustained rise in admission_exhausted \
                      or prefetch_headroom means the budget is too small for the working set; \
                      preparation_wait is ordinary while a clone runs.",
+                )
+                .build(),
+            handler_timeouts: meter
+                .u64_counter("git_proxy.handler_timeouts")
+                .with_description(
+                    "Requests cut off at the handler budget and answered 503. Zero in \
+                     health; any rise means a hold inside the store is never released \
+                     and the cut-off is containing it — find the wedge in the error log.",
                 )
                 .build(),
             origin_unavailable: meter
@@ -159,6 +168,10 @@ pub fn record_rejection(reason: RejectReason) {
     instruments()
         .rejections
         .add(1, &[KeyValue::new("reason", reason.as_str())]);
+}
+
+pub fn record_handler_timeout() {
+    instruments().handler_timeouts.add(1, &[]);
 }
 
 pub fn record_origin_unavailable() {

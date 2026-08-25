@@ -20,7 +20,7 @@ name: gitlab
 #   counting as a commit. MINOR per ADR-0015: additive, nothing re-materializes.
 #   Branch history arrives as the stream reaches each branch; commits on a
 #   branch whose head has not moved since the last sync are not re-walked.
-version: "1.19.0"
+version: "1.20.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -29,7 +29,7 @@ images:
     name: source-gitlab-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.08.23.11.07-a2fb025"
+    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.08.24.13.34-6edc5d3"
 dbt_select: "tag:gitlab+"
 connection:
   namespace: "bronze_gitlab"

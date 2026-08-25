@@ -1218,11 +1218,16 @@ fn selected_entity_predicate(
     }
 }
 
+// INVARIANT: the bucket key must be non-nullable — a custom source may
+// declare `metric_date` as `Nullable(Date)`, and GROUPING SETS fills the
+// totals row's absent key with NULL instead of the default date, which the
+// row parser rejects. The date-range predicate has already dropped NULL
+// dates, so `assumeNotNull` never sees one.
 fn bucket_expr(bucket: Bucket) -> &'static str {
     match bucket {
-        Bucket::Day => "metric_date",
-        Bucket::Week => "toStartOfWeek(metric_date, 1)",
-        Bucket::Month => "toStartOfMonth(metric_date)",
+        Bucket::Day => "assumeNotNull(metric_date)",
+        Bucket::Week => "toStartOfWeek(assumeNotNull(metric_date), 1)",
+        Bucket::Month => "toStartOfMonth(assumeNotNull(metric_date))",
     }
 }
 
@@ -1658,11 +1663,11 @@ mod tests {
     }
 
     #[test]
-    fn timeseries_query_uses_bucket_expression() {
+    fn timeseries_query_buckets_on_a_non_nullable_date() {
         for (bucket, expr) in [
-            (Bucket::Day, "metric_date"),
-            (Bucket::Week, "toStartOfWeek(metric_date, 1)"),
-            (Bucket::Month, "toStartOfMonth(metric_date)"),
+            (Bucket::Day, "assumeNotNull(metric_date)"),
+            (Bucket::Week, "toStartOfWeek(assumeNotNull(metric_date), 1)"),
+            (Bucket::Month, "toStartOfMonth(assumeNotNull(metric_date))"),
         ] {
             let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[], &[], None);
             assert!(

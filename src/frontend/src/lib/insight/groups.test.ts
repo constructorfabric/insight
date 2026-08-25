@@ -57,9 +57,26 @@ describe("groups registry", () => {
       rankBy: "git.commits",
       includeRemainder: true,
     });
+    // The request is built from the block's `metrics`, not from its columns, so
+    // a column whose metric is missing here renders empty. Pinned as a pair per
+    // total: the comparison is per metric, not "all totals, then all splits".
+    expect(timeseries[0]?.metrics).toEqual([
+      "git.commits",
+      "git.default_branch_commits",
+      "git.prs_merged",
+      "git.default_branch_prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+      "git.default_branch_lines_added",
+      "git.default_branch_lines_removed",
+    ]);
+    // Every total is immediately followed by its default-branch reading, so a
+    // column pair reads "how much, and how much of it landed".
     expect(timeseries[0]?.table?.columns).toEqual([
       { metric: "git.commits" },
+      { metric: "git.default_branch_commits", labelSource: "short" },
       { metric: "git.prs_merged", labelSource: "short" },
+      { metric: "git.default_branch_prs_merged", labelSource: "short" },
       {
         label: "Lines",
         template: [
@@ -67,6 +84,22 @@ describe("groups registry", () => {
           { text: " / " },
           {
             metric: "git.lines_removed",
+            prefix: "−",
+            tone: "destructive",
+          },
+        ],
+      },
+      {
+        label: "Lines (default)",
+        template: [
+          {
+            metric: "git.default_branch_lines_added",
+            prefix: "+",
+            tone: "success",
+          },
+          { text: " / " },
+          {
+            metric: "git.default_branch_lines_removed",
             prefix: "−",
             tone: "destructive",
           },
@@ -130,6 +163,22 @@ describe("groups registry", () => {
       "git.code_lines",
       "git.prs_created",
     ]);
+  });
+
+  it("gives each default-branch split a value and a peer comparison", () => {
+    const git = groupById("git_output");
+    const byKey = new Map(git.collection.metrics.map((m) => [m.key, m]));
+
+    for (const key of [
+      "git.default_branch_commits",
+      "git.default_branch_prs_merged",
+    ]) {
+      // The number alone says nothing: "commits that landed" is only readable
+      // against the pool's middle, which is what the peer view carries. The
+      // sibling test above pins that neither takes a `branch_scope` breakdown.
+      const views = byKey.get(key)?.views.map((view) => view.view);
+      expect(views, key).toEqual(expect.arrayContaining(["period", "peer"]));
+    }
   });
 });
 

@@ -190,6 +190,17 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
+      // INVARIANT: no `branch_scope` breakdown on a metric already scoped to
+      // one branch. Not merely because the dimension would be constant —
+      // `/v1/metric-results` refuses a dimension a metric does not declare,
+      // and the call is all-or-nothing, so it would blank the whole section.
+      //
+      // The split keys stay in this collection even with no block of their
+      // own: `lens-configs.ts` may only name keys a group declares.
+      key: "git.default_branch_commits",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "git.prs_merged",
       // `branch_scope` splits landed work from work still in flight. Two
       // groups, so the summary card's ribbon always lights up — and one
@@ -200,6 +211,10 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
         { view: "peer" },
         { view: "breakdown", dimensions: ["branch_scope"] },
       ],
+    },
+    {
+      key: "git.default_branch_prs_merged",
+      views: [{ view: "period" }, { view: "peer" }],
     },
     {
       key: "git.lines_added",
@@ -252,6 +267,19 @@ const GIT_LINES_TABLE_COLUMN = {
     { text: " / " },
     {
       metric: "git.lines_removed",
+      prefix: "−",
+      tone: "destructive",
+    },
+  ],
+} satisfies MetricTimeseriesTableColumnConfig;
+
+const GIT_LINES_DEFAULT_TABLE_COLUMN = {
+  label: "Lines (default)",
+  template: [
+    { metric: "git.default_branch_lines_added", prefix: "+", tone: "success" },
+    { text: " / " },
+    {
+      metric: "git.default_branch_lines_removed",
       prefix: "−",
       tone: "destructive",
     },
@@ -423,18 +451,28 @@ export const GROUPS: readonly MetricGroup[] = [
       {
         id: "output-by-repository",
         view: "timeseries",
+        // Each total is followed by its default-branch reading, so a row says
+        // how much work a repository saw and how much of it landed without
+        // making the reader open a second block to find out.
         metrics: [
           "git.commits",
+          "git.default_branch_commits",
           "git.prs_merged",
+          "git.default_branch_prs_merged",
           "git.lines_added",
           "git.lines_removed",
+          "git.default_branch_lines_added",
+          "git.default_branch_lines_removed",
         ],
         defaultPresentation: "table",
         table: {
           columns: [
             { metric: "git.commits" },
+            { metric: "git.default_branch_commits", labelSource: "short" },
             { metric: "git.prs_merged", labelSource: "short" },
+            { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
+            GIT_LINES_DEFAULT_TABLE_COLUMN,
           ],
         },
         groupBy: {
