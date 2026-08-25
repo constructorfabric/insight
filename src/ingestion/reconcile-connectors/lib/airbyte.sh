@@ -406,6 +406,10 @@ ab_builder_update_active_manifest() {
   # activeDeclarativeManifestVersion, and create_manifest answers 409 on a
   # duplicate version — permanently, because the active pointer never
   # advances on its own.
+  # Callers wrap this function in `if ! ...`, which disables errexit for the
+  # whole call, so a failed lookup must be caught here: an empty max_version
+  # arithmetic-expands to 0 and would ask for version 1, turning any lookup
+  # failure into a misleading 409 on an existing definition.
   local max_version
   max_version="$(ab__curl POST /api/v1/declarative_source_definitions/list_manifests \
         "$(printf '{"workspaceId":"%s","sourceDefinitionId":"%s"}' \
@@ -417,7 +421,7 @@ versions = [
     for v in json.load(sys.stdin).get("manifestVersions", [])
 ]
 print(max(versions) if versions else 0)
-')"
+')" || return 1
   local next_version=$((max_version + 1))
 
   local body
