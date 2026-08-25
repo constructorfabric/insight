@@ -498,6 +498,7 @@ export const handlers = [
   http.get("/api/analytics/v1/connector-health", () =>
     HttpResponse.json({
       as_of: new Date().toISOString(),
+      swept_at: new Date(Date.now() - 6 * 60_000).toISOString(),
       history_available: true,
       connectors: [
         {
@@ -562,11 +563,11 @@ export const handlers = [
           configured: true,
           last_run: null,
           last_sync: {
-            trigger: "out_of_band",
+            trigger: "unclaimed",
             status: "ok",
             started_at: new Date(Date.now() - 40 * 60_000).toISOString(),
-            duration_ms: 60_000,
-            records_moved: 5_000,
+            duration_ms: null,
+            records_moved: null,
             rows_landed: null,
           },
           storage: {
@@ -598,14 +599,16 @@ export const handlers = [
       ],
     }),
   ),
-  http.get("/api/analytics/v1/connector-health/:connector/runs", ({ params }) =>
-    HttpResponse.json({
-      connector: String(params.connector),
-      runs: [
+  // Only the connectors the health fixture gives a run to have a history; the
+  // rest answer empty, as the real surface does for a connector nobody ran.
+  http.get("/api/analytics/v1/connector-health/:connector/runs", ({ params }) => {
+    const connector = String(params.connector);
+    const recorded: Record<string, unknown[]> = {
+      "example-crm": [
         {
           event: "run.finished",
           status: "ok",
-          step: "done",
+          step: null,
           origin: "pipeline",
           trigger: null,
           started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
@@ -622,11 +625,25 @@ export const handlers = [
           started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
           duration_ms: 120_000,
           records_moved: 12_400,
+          rows_landed: 0,
+        },
+      ],
+      "example-wiki": [
+        {
+          event: "transform.completed",
+          status: "failed",
+          step: null,
+          origin: "pipeline",
+          trigger: null,
+          started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+          duration_ms: 4_000,
+          records_moved: 0,
           rows_landed: null,
         },
       ],
-    }),
-  ),
+    };
+    return HttpResponse.json({ connector, runs: recorded[connector] ?? [] });
+  }),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
   // binding and no history — the real endpoint has no 404: an account nobody

@@ -188,14 +188,20 @@ class TestConfiguredSnapshot:
         previous snapshot authoritative and the connector reading configured."""
         plan = plan_sweep(request(configured=[]))
 
-        markers = [row for row in plan.rows if row.event == SWEEP_COMPLETED]
-        assert len(markers) == 1
+        assert plan.seal is not None
+        assert plan.seal.event == SWEEP_COMPLETED
         assert [row for row in plan.rows if row.event == CONNECTOR_CONFIGURED] == []
 
-    def test_the_marker_is_written_last_so_a_partial_snapshot_is_never_sealed(self):
+    def test_the_seal_is_handed_back_separately_so_the_caller_writes_it_last(self):
+        """The bug this shape prevents: the shell also writes storage
+        observations under this tick's id, and a snapshot read keys on the newest
+        SEALED tick. A marker inside `rows` lands before those observations
+        exist, so every reader in that window sees blank storage everywhere."""
         plan = plan_sweep(request(configured=["alpha"]))
 
-        assert plan.rows[-1].event == SWEEP_COMPLETED
+        assert SWEEP_COMPLETED not in [row.event for row in plan.rows]
+        assert plan.seal is not None
+        assert plan.seal.run_id == "tick-1"
 
 
 class TestVocabularyAtTheBoundary:
@@ -239,5 +245,6 @@ class TestCli:
 
         out = json.loads(result.stdout)
         events = [row["event"] for row in out["rows"]]
-        assert events == [SYNC_COMPLETED, CONNECTOR_CONFIGURED, SWEEP_COMPLETED]
+        assert events == [SYNC_COMPLETED, CONNECTOR_CONFIGURED]
+        assert out["seal"]["event"] == SWEEP_COMPLETED, "the seal travels beside the rows, not in them"
         assert out["unmappable_jobs"] == []

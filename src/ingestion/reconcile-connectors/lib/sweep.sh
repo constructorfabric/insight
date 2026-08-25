@@ -224,7 +224,13 @@ _sweep_observe_storage() {
 # Returns 0 always: the ledger observes the reconcile loop, it never gates it.
 # ---------------------------------------------------------------------------
 sweep_run() {
+  # Every snapshot read groups by this id, so two ticks sharing one would merge
+  # into a single configured set and a removed connector would never disappear.
+  # The chart injects the pod name; a bare shell run gets a unique stand-in.
   local tick_run_id="${RECONCILE_RUN_ID:-}"
+  if [[ -z "${tick_run_id}" ]]; then
+    tick_run_id="sweep-$(date -u +%s)-$$"
+  fi
 
   if ! _sweep_warehouse_ready_p; then
     log_event "sweep.skipped" "run ledger unavailable; skipping sweep" \
@@ -273,7 +279,20 @@ sweep_run() {
     return 0
   fi
   if ! _sweep_observe_storage "${tick_run_id}"; then
-    log_line WARN "sweep: could not record storage observations"
+    # Unsealed on purpose: the previous tick's snapshot stays authoritative, so
+    # readers keep a complete if older picture. Sealing here would name a tick
+    # whose observations are missing and blank storage for every connector.
+    log_line ERROR "sweep: storage observation failed; tick left unsealed"
+    return 0
+  fi
+
+  # INVARIANT: the seal lands last. Everything a snapshot read keys on must
+  # already be in place when the marker names this tick.
+  local seal
+  seal="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;s=json.load(sys.stdin)["seal"];print(json.dumps([s] if s else []))')"
+  if ! _sweep_insert_rows "${seal}"; then
+    log_line ERROR "sweep: could not seal the tick"
+    return 0
   fi
 
   local recorded

@@ -38,10 +38,10 @@ const RUNS_SQL: &str = "\
     GROUP BY connector";
 
 const TRANSFORMS_SQL: &str = "\
-    SELECT connector, argMax(status, ts) AS status, argMax(run_id, ts) AS run_id
+    SELECT connector, run_id, argMax(status, ts) AS status
     FROM {LEDGER}
-    WHERE event = 'transform.completed' AND connector != ''
-    GROUP BY connector";
+    WHERE event = 'transform.completed' AND connector != '' AND run_id != ''
+    GROUP BY connector, run_id";
 
 /// One row per connector: the newest sync, resolved by claim precedence.
 ///
@@ -53,8 +53,9 @@ const SYNCS_SQL: &str = "\
            argMax(claim, (rank, ts))               AS claim,
            argMax(status, (rank, ts))              AS status,
            argMax(started_at, (from_sweep, ts))    AS started_at,
-           max(duration_ms)                        AS duration_ms,
-           max(records_moved)                      AS records_moved,
+           argMax(duration_ms, (from_sweep, ts))   AS duration_ms,
+           argMax(records_moved, (from_sweep, ts)) AS records_moved,
+           max(from_sweep)                         AS has_counters,
            max(landed_or_zero)                     AS rows_landed,
            max(measured)                           AS has_measurement
     FROM (
@@ -66,11 +67,11 @@ const SYNCS_SQL: &str = "\
              ts,
              {CLAIM_RANK} AS rank
       FROM {LEDGER}
-      WHERE event = 'sync.completed' AND connector != ''
+      WHERE event = 'sync.completed' AND connector != '' AND job_id != ''
         AND (connector, job_id) IN (
           SELECT connector, argMax(job_id, started_at)
           FROM {LEDGER}
-          WHERE event = 'sync.completed' AND connector != ''
+          WHERE event = 'sync.completed' AND connector != '' AND job_id != ''
           GROUP BY connector
         )
     )
@@ -82,16 +83,25 @@ const SYNCS_SQL: &str = "\
 /// apart would otherwise resolve arbitrarily, and a half-written observation set
 /// could win. The marker is written last, so it names a complete tick.
 const STORAGE_SQL: &str = "\
-    SELECT connector, ts AS observed_at, streams, streams_with_data, rows_total, bytes_on_disk
+    SELECT connector,
+           ts AS observed_at,
+           streams,
+           streams_with_data,
+           ifNull(rows_total, 0) AS rows_total,
+           bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream = '' AND connector != ''
-      AND run_id = ({SEALED_TICK})";
+      AND run_id = ({SEALED_TICK})
+    ORDER BY ts DESC
+    LIMIT 1 BY connector";
 
 const STREAMS_SQL: &str = "\
-    SELECT connector, stream, rows_total, bytes_on_disk
+    SELECT connector, stream, ifNull(rows_total, 0) AS rows_total, bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream != '' AND connector != ''
-      AND run_id = ({SEALED_TICK})";
+      AND run_id = ({SEALED_TICK})
+    ORDER BY ts DESC
+    LIMIT 1 BY (connector, stream)";
 
 /// The configured set is the membership of the newest SEALED snapshot.
 ///
@@ -102,6 +112,13 @@ const CONFIGURED_SQL: &str = "\
     SELECT connector
     FROM {LEDGER}
     WHERE event = 'connector.configured' AND run_id = ({SEALED_TICK})";
+
+/// When the last tick finished. This is what the page means by "swept as of" —
+/// serving the response's own clock there would state a freshness the recorded
+/// facts do not support, and would read as "just now" however long ago the
+/// controller last ran.
+const SWEPT_AT_SQL: &str = "\
+    SELECT max(ts) AS swept_at FROM {LEDGER} WHERE event = 'sweep.completed'";
 
 /// One connector's recent runs and syncs, newest first.
 ///
@@ -141,8 +158,8 @@ struct RunRow {
 #[derive(Debug, Row, Deserialize)]
 struct TransformRow {
     connector: String,
-    status: String,
     run_id: String,
+    status: String,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -154,6 +171,7 @@ struct SyncRow {
     started_at: DateTime<Utc>,
     duration_ms: u64,
     records_moved: u64,
+    has_counters: bool,
     rows_landed: u64,
     has_measurement: bool,
 }
@@ -180,6 +198,12 @@ struct StreamRow {
 #[derive(Debug, Row, Deserialize)]
 struct ConfiguredRow {
     connector: String,
+}
+
+#[derive(Debug, Row, Deserialize)]
+struct SweptAtRow {
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    swept_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -223,6 +247,19 @@ where
         }
         ReadError::Clickhouse(error)
     })
+}
+
+/// When a tick last finished, or None when none ever has.
+pub(crate) async fn read_swept_at(
+    ch: &insight_clickhouse::Client,
+) -> Result<Option<DateTime<Utc>>, ReadError> {
+    let rows = fetch::<SweptAtRow>(ch, &sql(SWEPT_AT_SQL)).await?;
+    // An empty ledger answers with the epoch rather than no row, so the epoch is
+    // a sentinel here and never a sweep that happened in 1970.
+    Ok(rows
+        .into_iter()
+        .map(|row| row.swept_at)
+        .find(|stamp| *stamp != DateTime::<Utc>::UNIX_EPOCH))
 }
 
 /// Every connector's recorded health, ordered by what needs attention.
@@ -299,8 +336,8 @@ fn sync_facts(syncs: Vec<SyncRow>) -> Vec<(String, SyncFacts)> {
                     claim: Claim::parse(&row.claim),
                     status: row.status,
                     started_at: row.started_at,
-                    duration_ms: row.duration_ms,
-                    records_moved: row.records_moved,
+                    duration_ms: row.has_counters.then_some(row.duration_ms),
+                    records_moved: row.has_counters.then_some(row.records_moved),
                     rows_landed: row.has_measurement.then_some(row.rows_landed),
                 },
             )
@@ -391,6 +428,50 @@ mod tests {
     }
 
     #[test]
+    fn the_reported_runs_transform_survives_a_newer_unfinished_run() {
+        // The bug this shape prevents: keeping only the newest transform per
+        // connector dropped the reported run's outcome whenever a later run had
+        // recorded its transform but not yet finished — which is every run,
+        // while it runs. "Fresh bronze, stalled downstream" then disappeared.
+        let facts = run_facts(
+            vec![run_row("alpha", "wf-1")],
+            &[
+                transform_row("alpha", "wf-1", "failed"),
+                transform_row("alpha", "wf-2", "ok"),
+            ],
+        );
+
+        assert_eq!(facts[0].1.transform_status.as_deref(), Some("failed"));
+    }
+
+    #[test]
+    fn an_uncounted_sync_reports_no_counters_rather_than_zeros() {
+        let row = SyncRow {
+            connector: "alpha".to_owned(),
+            claim: "claimed".to_owned(),
+            status: "ok".to_owned(),
+            started_at: Utc.timestamp_opt(0, 0).unwrap(),
+            duration_ms: 0,
+            records_moved: 0,
+            has_counters: false,
+            rows_landed: 4_200,
+            has_measurement: true,
+        };
+
+        let facts = sync_facts(vec![row]);
+        assert_eq!(
+            facts[0].1.records_moved, None,
+            "only the mover's history knows this"
+        );
+        assert_eq!(facts[0].1.duration_ms, None);
+        assert_eq!(
+            facts[0].1.rows_landed,
+            Some(4_200),
+            "the measurement is the pipeline's own"
+        );
+    }
+
+    #[test]
     fn a_missing_measurement_stays_absent_rather_than_becoming_zero() {
         let row = SyncRow {
             connector: "alpha".to_owned(),
@@ -399,6 +480,7 @@ mod tests {
             started_at: Utc.timestamp_opt(0, 0).unwrap(),
             duration_ms: 1,
             records_moved: 400,
+            has_counters: true,
             rows_landed: 0,
             has_measurement: false,
         };
@@ -415,6 +497,7 @@ mod tests {
             started_at: Utc.timestamp_opt(0, 0).unwrap(),
             duration_ms: 1,
             records_moved: 400,
+            has_counters: true,
             rows_landed: 0,
             has_measurement: true,
         };
@@ -479,6 +562,7 @@ mod tests {
             STORAGE_SQL,
             STREAMS_SQL,
             CONFIGURED_SQL,
+            SWEPT_AT_SQL,
             HISTORY_SQL,
         ] {
             let rendered = sql(template);
@@ -499,6 +583,16 @@ mod tests {
             sql(CONFIGURED_SQL).contains("sweep.completed"),
             "without the marker a half-written snapshot would read as the whole set"
         );
+    }
+
+    #[test]
+    fn the_swept_stamp_comes_from_the_marker_not_from_the_reader() {
+        // The page's only freshness statement. Reading the response's own clock
+        // would say "just now" however long ago the controller last ran.
+        let rendered = sql(SWEPT_AT_SQL);
+
+        assert!(rendered.contains("sweep.completed"));
+        assert!(rendered.contains("max(ts)"));
     }
 
     #[test]

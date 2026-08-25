@@ -70,6 +70,14 @@ class Row:
 @dataclass
 class Plan:
     rows: list[Row] = field(default_factory=list)
+    #: The marker that seals this tick, kept OUT of `rows` on purpose.
+    #:
+    #: Every snapshot read keys on the newest sealed tick, so the seal must land
+    #: last — after the rows above AND after the storage observations the shell
+    #: writes separately. Sealing first names a tick whose observations do not
+    #: exist yet, and every reader in that window sees blank storage for every
+    #: connector.
+    seal: Row | None = None
     # Jobs whose connection no longer exists: nothing the page could attribute,
     # so they are reported rather than recorded under an empty connector.
     unmappable_jobs: list[str] = field(default_factory=list)
@@ -204,15 +212,17 @@ def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
 
 
 def snapshot_rows(request: dict[str, Any], plan: Plan) -> None:
-    """The configured set, sealed by a marker written even when the set is empty.
+    """The configured set, plus the marker that seals it.
 
     The marker is what makes an empty snapshot representable: without it,
     removing the last connector would leave the previous snapshot authoritative.
+    It is returned separately from `rows` so the caller writes it last — see
+    `Plan.seal`.
     """
     tick_run_id = str(request.get("tick_run_id", ""))
     for connector in request.get("configured") or []:
         plan.rows.append(Row(event=CONNECTOR_CONFIGURED, connector=connector, run_id=tick_run_id, status="ok"))
-    plan.rows.append(Row(event=SWEEP_COMPLETED, run_id=tick_run_id, status="ok"))
+    plan.seal = Row(event=SWEEP_COMPLETED, run_id=tick_run_id, status="ok")
 
 
 def plan_sweep(request: dict[str, Any]) -> Plan:
@@ -228,7 +238,14 @@ def plan_sweep(request: dict[str, Any]) -> Plan:
 def main() -> int:
     request = json.load(sys.stdin)
     plan = plan_sweep(request)
-    json.dump({"rows": [asdict(row) for row in plan.rows], "unmappable_jobs": plan.unmappable_jobs}, sys.stdout)
+    json.dump(
+        {
+            "rows": [asdict(row) for row in plan.rows],
+            "seal": asdict(plan.seal) if plan.seal else None,
+            "unmappable_jobs": plan.unmappable_jobs,
+        },
+        sys.stdout,
+    )
     return 0
 
 

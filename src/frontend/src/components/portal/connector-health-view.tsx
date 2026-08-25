@@ -17,46 +17,33 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  activatesRow,
+  activatesRowByKey,
+} from "@/lib/identities/row-activation";
+import {
   connectorStateLabel,
   formatAge,
   formatBytes,
   formatDelivery,
   formatDuration,
   stateCounts,
+  stateTileLabel,
   triggerLabel,
-  type ConnectorState,
+  STATE_ORDER,
   type ConnectorStateLabel,
 } from "@/lib/portal/connector-health";
 import { useConnectorHealth, useConnectorRuns } from "@/queries/connector-health";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
+/** How many recorded events the expansion lists before saying there are more. */
+const HISTORY_SHOWN = 12;
+
 const TONE_STYLE: Record<ConnectorStateLabel["tone"], string> = {
   critical: "bg-destructive/15 text-destructive",
   warning: "bg-warning/15 text-warning",
   ok: "bg-success/15 text-success",
   idle: "bg-muted text-muted-foreground",
-};
-
-/** Tiles lead with what needs acting on; a state nobody is in shows no tile. */
-const TILE_ORDER: ConnectorState[] = [
-  "misdelivered",
-  "run_failed",
-  "transform_failed",
-  "sync_without_transform",
-  "delivering",
-  "never_ran",
-  "not_configured",
-];
-
-const TILE_LABELS: Record<ConnectorState, string> = {
-  misdelivered: "nothing landed",
-  run_failed: "run failed",
-  transform_failed: "transform failed",
-  sync_without_transform: "sync without transform",
-  delivering: "delivering",
-  never_ran: "never ran",
-  not_configured: "not configured",
 };
 
 export function ConnectorHealthView() {
@@ -83,9 +70,11 @@ export function ConnectorHealthView() {
         </h1>
         <p className="text-sm text-muted-foreground">
           {rows.length} connectors ·{" "}
-          {data?.history_available
-            ? `swept ${formatAge(data.as_of)}`
-            : "no run history recorded yet"}
+          {/* The recorded marker, never the reader's own clock — that would say
+              "just now" however long ago the controller last ran. */}
+          {data?.swept_at
+            ? `last swept ${formatAge(data.swept_at)}`
+            : "never swept"}
         </p>
       </header>
 
@@ -98,11 +87,11 @@ export function ConnectorHealthView() {
       )}
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-3">
-        {TILE_ORDER.filter((state) => counts.get(state)).map((state) => (
+        {STATE_ORDER.filter((state) => counts.get(state)).map((state) => (
           <div key={state} className="rounded-lg border bg-card p-4">
             <div className={TEXT_FIGURE}>{counts.get(state)}</div>
             <div className="mt-1 text-xs font-medium text-muted-foreground">
-              {TILE_LABELS[state]}
+              {stateTileLabel(state)}
             </div>
           </div>
         ))}
@@ -117,6 +106,7 @@ export function ConnectorHealthView() {
               <TableHead>State</TableHead>
               <TableHead>Last run</TableHead>
               <TableHead>Recorded / landed</TableHead>
+              <TableHead>Managed</TableHead>
               <TableHead>Streams</TableHead>
               <TableHead className="text-right">Rows stored</TableHead>
               <TableHead className="text-right">Size</TableHead>
@@ -136,7 +126,7 @@ export function ConnectorHealthView() {
                 />
                 {expanded === row.connector && (
                   <TableRow>
-                    <TableCell colSpan={8} className="bg-muted/40 p-0">
+                    <TableCell colSpan={9} className="bg-muted/40 p-0">
                       <ConnectorDetail row={row} />
                     </TableCell>
                   </TableRow>
@@ -166,8 +156,17 @@ function ConnectorSummaryRow({
   return (
     <TableRow
       className="cursor-pointer"
-      onClick={onToggle}
+      role="button"
+      tabIndex={0}
       aria-expanded={isExpanded}
+      onClick={(event) => {
+        if (activatesRow(event)) onToggle();
+      }}
+      onKeyDown={(event) => {
+        if (!activatesRowByKey(event)) return;
+        event.preventDefault();
+        onToggle();
+      }}
     >
       <TableCell>
         <Chevron className="size-4 text-muted-foreground" aria-hidden />
@@ -192,7 +191,7 @@ function ConnectorSummaryRow({
             )}
           </>
         ) : (
-          "—"
+          "no run recorded"
         )}
       </TableCell>
       <TableCell className="text-muted-foreground">
@@ -209,15 +208,20 @@ function ConnectorSummaryRow({
         )}
       </TableCell>
       <TableCell className="text-muted-foreground">
+        {row.configured ? "yes" : "no"}
+      </TableCell>
+      <TableCell className="text-muted-foreground">
         {row.storage
           ? `${row.storage.streams_with_data} of ${row.storage.streams}`
-          : "—"}
+          : "unknown"}
       </TableCell>
       <TableCell className="text-right text-muted-foreground tabular-nums">
-        {row.storage ? row.storage.physical_rows.toLocaleString("en-US") : "—"}
+        {row.storage
+          ? row.storage.physical_rows.toLocaleString("en-US")
+          : "unknown"}
       </TableCell>
       <TableCell className="text-right text-muted-foreground tabular-nums">
-        {row.storage ? formatBytes(row.storage.bytes_on_disk) : "—"}
+        {formatBytes(row.storage ? row.storage.bytes_on_disk : null)}
       </TableCell>
     </TableRow>
   );
@@ -284,27 +288,56 @@ function RunHistory({ connector }: { connector: string }) {
         </p>
       )}
       {data && data.runs.length > 0 && (
-        <ul className="grid gap-1 text-sm">
-          {data.runs.slice(0, 12).map((event, index) => (
-            <li
-              key={`${event.event}-${event.started_at}-${index}`}
-              className="flex justify-between gap-4 border-b py-1 last:border-b-0"
-            >
-              <span className="font-mono text-xs">{event.event}</span>
-              <span className="text-muted-foreground">
-                {describeEvent(event)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="grid gap-1 text-sm">
+            {data.runs.slice(0, HISTORY_SHOWN).map((event, index) => (
+              <li
+                key={`${event.event}-${event.started_at}-${index}`}
+                className="grid gap-0.5 border-b py-1 last:border-b-0"
+              >
+                <span className="flex justify-between gap-4">
+                  <span className="font-mono text-xs">{event.event}</span>
+                  <span className="text-muted-foreground">
+                    {describeOutcome(event)}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {describeProvenance(event)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {/* Silence here would read as "that is all there was". */}
+          {data.runs.length > HISTORY_SHOWN && (
+            <p className="text-xs text-muted-foreground">
+              Showing {HISTORY_SHOWN} of {data.runs.length} recorded events.
+            </p>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function describeEvent(event: RunEvent): string {
-  const when = formatAge(event.started_at);
-  const took = event.duration_ms > 0 ? ` · ${formatDuration(event.duration_ms)}` : "";
+function describeOutcome(event: RunEvent): string {
   const step = event.step ? ` at ${event.step}` : "";
-  return `${event.status}${step} · ${when}${took}`;
+  const took =
+    event.duration_ms > 0 ? ` · ${formatDuration(event.duration_ms)}` : "";
+  return `${event.status}${step} · ${formatAge(event.started_at)}${took}`;
+}
+
+/**
+ * Who recorded the row, how the sync was started, and what it moved.
+ *
+ * `origin` is the writer and `trigger` is the cause; the two are never merged,
+ * because a swept row says nothing about whether a person started the sync.
+ */
+function describeProvenance(event: RunEvent): string {
+  const parts = [`recorded by ${event.origin}`];
+  const trigger = triggerLabel(event.trigger);
+  if (trigger) parts.push(trigger);
+  if (event.event === "sync.completed") {
+    parts.push(formatDelivery(event.records_moved, event.rows_landed));
+  }
+  return parts.join(" · ");
 }

@@ -161,6 +161,7 @@
       "ConnectorHealthResponse": {
         "properties": {
           "as_of": {
+            "description": "When this response was assembled. Says nothing about the facts' age.",
             "format": "date-time",
             "type": "string"
           },
@@ -173,6 +174,14 @@
           "history_available": {
             "description": "False when nothing has recorded a run yet — a fresh install before the\nfirst controller cadence, or a stand where nothing records. The page says\nso rather than implying health.",
             "type": "boolean"
+          },
+          "swept_at": {
+            "description": "When a controller tick last finished, or null when none ever has.\n\nThis is the page's only freshness statement, and it has to come from the\nrecorded marker: serving the reader's own clock would read as \"just now\"\nhowever long ago the controller last ran.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2438,14 +2447,21 @@
       "SyncView": {
         "properties": {
           "duration_ms": {
+            "description": "Null until the mover's history has been swept — only it knows how long a\nsync took and how much it moved.",
             "format": "int64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "records_moved": {
             "format": "int64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "rows_landed": {
             "description": "Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.",
@@ -2471,9 +2487,7 @@
         "required": [
           "trigger",
           "status",
-          "started_at",
-          "duration_ms",
-          "records_moved"
+          "started_at"
         ],
         "type": "object"
       },

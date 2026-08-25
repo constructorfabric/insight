@@ -64,8 +64,11 @@ pub(crate) struct SyncFacts {
     pub(crate) claim: Claim,
     pub(crate) status: String,
     pub(crate) started_at: DateTime<Utc>,
-    pub(crate) duration_ms: u64,
-    pub(crate) records_moved: u64,
+    /// Absent until the mover's history has been swept: only that history knows
+    /// how long a sync took and how much it moved, so reporting the pipeline
+    /// row's zeros would state a measurement nobody made.
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) records_moved: Option<u64>,
     /// Rows the pipeline measured as delivered by this sync. Absent on a swept
     /// row: the measurement window had passed, and it is not reconstructed.
     pub(crate) rows_landed: Option<u64>,
@@ -109,6 +112,8 @@ enum Attention {
     Mismatched,
     /// The last run failed.
     RunFailed,
+    /// The mover's own sync failed.
+    SyncFailed,
     /// The sync succeeded and the transform did not.
     TransformFailed,
     /// Delivering, or at least not visibly broken.
@@ -128,20 +133,29 @@ fn attention(health: &ConnectorHealth) -> Attention {
         return Attention::NotConfigured;
     }
 
+    // Both halves must be known for a mismatch: an unrecorded counter or an
+    // unmeasured delivery is a gap, and a gap is not a finding.
     if let Some(sync) = &health.last_sync
-        && sync.records_moved > 0
+        && sync.records_moved.is_some_and(|moved| moved > 0)
         && sync.rows_landed == Some(0)
     {
         return Attention::Mismatched;
     }
 
-    if let Some(run) = &health.last_run {
-        if failed(&run.status) {
-            return Attention::RunFailed;
-        }
-        if run.transform_status.as_deref().is_some_and(failed) {
-            return Attention::TransformFailed;
-        }
+    if let Some(run) = &health.last_run
+        && failed(&run.status)
+    {
+        return Attention::RunFailed;
+    }
+    if let Some(sync) = &health.last_sync
+        && failed(&sync.status)
+    {
+        return Attention::SyncFailed;
+    }
+    if let Some(run) = &health.last_run
+        && run.transform_status.as_deref().is_some_and(failed)
+    {
+        return Attention::TransformFailed;
     }
 
     if health.last_run.is_none() && health.last_sync.is_none() {
@@ -250,8 +264,8 @@ mod tests {
             claim: Claim::Claimed,
             status: "ok".to_owned(),
             started_at: at(1),
-            duration_ms: 1000,
-            records_moved,
+            duration_ms: Some(1000),
+            records_moved: Some(records_moved),
             rows_landed,
         }
     }
@@ -321,6 +335,42 @@ mod tests {
 
         assert_eq!(names(&summaries), vec!["broken", "fine"]);
         assert_eq!(attention(&summaries[0]), Attention::Mismatched);
+    }
+
+    #[test]
+    fn a_failed_sync_is_not_reported_as_delivering() {
+        let broken = ConnectorHealth {
+            connector: "broken".to_owned(),
+            configured: true,
+            last_run: None,
+            last_sync: Some(SyncFacts {
+                status: "failed".to_owned(),
+                ..sync(0, None)
+            }),
+            storage: None,
+            streams: vec![],
+        };
+
+        assert_eq!(attention(&broken), Attention::SyncFailed);
+    }
+
+    #[test]
+    fn an_unrecorded_counter_is_not_read_as_a_mismatch() {
+        // Until the sweep covers the job the counters are unknown, and unknown
+        // beside a measured zero is a gap rather than a misdelivery.
+        let pending = ConnectorHealth {
+            connector: "pending".to_owned(),
+            configured: true,
+            last_run: None,
+            last_sync: Some(SyncFacts {
+                records_moved: None,
+                ..sync(0, Some(0))
+            }),
+            storage: None,
+            streams: vec![],
+        };
+
+        assert_eq!(attention(&pending), Attention::Quiet);
     }
 
     #[test]

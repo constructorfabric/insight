@@ -88,6 +88,72 @@ describe("connectorState", () => {
     expect(state).toBe("delivering");
   });
 
+  it("does not read an uncounted sync as a mismatch either", () => {
+    // The mover's counters arrive with the sweep. Until then nobody knows what
+    // the sync moved, and unknown beside a measured zero is a gap.
+    const state = connectorState(
+      row({ last_sync: sync({ records_moved: null, rows_landed: 0 }) })
+    );
+
+    expect(state).toBe("delivering");
+  });
+
+  it("reports a failed sync rather than calling the connector delivering", () => {
+    // The mover's own outcome. Nothing else on the page would have shown it.
+    const state = connectorState(
+      row({ last_run: null, last_sync: sync({ status: "failed", records_moved: 0 }) })
+    );
+
+    expect(state).toBe("sync_failed");
+  });
+
+  it("does not call a run still in flight healthy", () => {
+    expect(connectorState(row({ last_run: run({ status: "running" }) }))).toBe(
+      "in_flight"
+    );
+    expect(
+      connectorState(row({ last_run: null, last_sync: sync({ status: "running" }) }))
+    ).toBe("in_flight");
+  });
+
+  it("says a connector is no longer configured rather than still delivering", () => {
+    // History outlives configuration by design, so runs with no configuration
+    // are not "never configured" — they are a connector nothing manages now.
+    const state = connectorState(row({ configured: false }));
+
+    expect(state).toBe("unmanaged");
+  });
+
+  it("reports an out-of-band sync newer than the last run", () => {
+    // A surviving older run must not mask it: the newest data was never
+    // transformed, whether or not the pipeline ran yesterday.
+    const state = connectorState(
+      row({
+        last_run: run({ started_at: "2026-01-14T09:00:00Z" }),
+        last_sync: sync({ trigger: "out_of_band", started_at: "2026-01-15T09:00:00Z" }),
+      })
+    );
+
+    expect(state).toBe("sync_without_transform");
+  });
+
+  it("does not report an out-of-band sync older than the last run", () => {
+    const state = connectorState(
+      row({
+        last_run: run({ started_at: "2026-01-15T09:00:00Z" }),
+        last_sync: sync({ trigger: "out_of_band", started_at: "2026-01-14T09:00:00Z" }),
+      })
+    );
+
+    expect(state).toBe("delivering");
+  });
+
+  it("says nothing is stored rather than calling an empty connector healthy", () => {
+    const state = connectorState(row({ storage: storage({ physical_rows: 0 }) }));
+
+    expect(state).toBe("nothing_stored");
+  });
+
   it("ranks a delivery mismatch above a failed run", () => {
     const state = connectorState(
       row({
@@ -146,11 +212,22 @@ describe("connectorState", () => {
 
 describe("triggerLabel", () => {
   it.each<[SyncTrigger, string]>([
-    ["claimed", "scheduled"],
+    ["claimed", "started by the pipeline"],
     ["out_of_band", "started outside the pipeline"],
     ["unclaimed", "origin unknown"],
   ])("reads %s as %s", (trigger, expected) => {
     expect(triggerLabel(trigger)).toBe(expected);
+  });
+
+  it("does not claim a schedule the ledger never recorded", () => {
+    // `claimed` means a pipeline run claimed the job, not that a schedule
+    // started it — the ledger records no schedule at all.
+    expect(triggerLabel("claimed")).not.toContain("schedul");
+  });
+
+  it("reads a word outside the vocabulary as unknown, not as nothing", () => {
+    // A silently absent label is indistinguishable from nothing recorded.
+    expect(triggerLabel("something-new" as SyncTrigger)).toBe("origin unknown");
   });
 
   it("never presents unknown provenance as a manual sync", () => {
@@ -174,11 +251,14 @@ describe("formatDelivery", () => {
   it("shows an unmeasured delivery as unmeasured rather than as zero", () => {
     expect(formatDelivery(12_400, null)).toBe("12,400 / not measured");
   });
+
+  it("shows uncounted records as unrecorded rather than as zero", () => {
+    expect(formatDelivery(null, 4_200)).toBe("not recorded / 4,200");
+  });
 });
 
 describe("formatting", () => {
   it.each([
-    [0, "—"],
     [45_000, "45s"],
     [97_000, "1m 37s"],
     [3_723_000, "1h 2m"],
@@ -186,12 +266,23 @@ describe("formatting", () => {
     expect(formatDuration(ms)).toBe(expected);
   });
 
+  it("renders a measured zero duration as a zero and an absent one as absent", () => {
+    // Same discipline as the delivery pairing: 0 is a measurement.
+    expect(formatDuration(0)).toBe("0ms");
+    expect(formatDuration(null)).toBe("not recorded");
+  });
+
   it.each([
-    [0, "—"],
     [1024, "1.0 KiB"],
     [314_572_800, "300 MiB"],
   ])("renders %s bytes as %s", (bytes, expected) => {
     expect(formatBytes(bytes)).toBe(expected);
+  });
+
+  it("renders a measured zero size as a zero and an absent one as absent", () => {
+    // A connector with rows: 0 and size: "—" said one measured zero two ways.
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(null)).toBe("unknown");
   });
 
   it("renders an age against a fixed now", () => {
@@ -202,8 +293,9 @@ describe("formatting", () => {
     expect(formatAge("2026-01-09T12:00:00Z", now)).toBe("6d ago");
   });
 
-  it("renders an unparseable stamp as unknown rather than as NaN", () => {
-    expect(formatAge("not-a-date")).toBe("—");
+  it("renders an unparseable or absent stamp as unknown rather than as NaN", () => {
+    expect(formatAge("not-a-date")).toBe("unknown");
+    expect(formatAge(null)).toBe("unknown");
   });
 });
 

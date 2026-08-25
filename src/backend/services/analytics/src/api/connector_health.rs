@@ -17,7 +17,14 @@ const MAX_CONNECTOR: usize = 128;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct ConnectorHealthResponse {
+    /// When this response was assembled. Says nothing about the facts' age.
     pub as_of: DateTime<Utc>,
+    /// When a controller tick last finished, or null when none ever has.
+    ///
+    /// This is the page's only freshness statement, and it has to come from the
+    /// recorded marker: serving the reader's own clock would read as "just now"
+    /// however long ago the controller last ran.
+    pub swept_at: Option<DateTime<Utc>>,
     /// False when nothing has recorded a run yet — a fresh install before the
     /// first controller cadence, or a stand where nothing records. The page says
     /// so rather than implying health.
@@ -54,8 +61,10 @@ pub(crate) struct SyncView {
     pub trigger: String,
     pub status: String,
     pub started_at: DateTime<Utc>,
-    pub duration_ms: u64,
-    pub records_moved: u64,
+    /// Null until the mover's history has been swept — only it knows how long a
+    /// sync took and how much it moved.
+    pub duration_ms: Option<u64>,
+    pub records_moved: Option<u64>,
     /// Rows measured as delivered by this sync. Null where the measurement
     /// window had passed — absence, never a zero.
     pub rows_landed: Option<u64>,
@@ -112,7 +121,13 @@ pub(crate) async fn get_connector_health(
         // A page state, not a failure: an install whose migration has not landed
         // shows an empty page that says so (spec FR-13).
         Err(read::ReadError::LedgerAbsent) => Vec::new(),
-        Err(error) => return Err(read_failed(&error)),
+        Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
+    };
+
+    let swept_at = match read::read_swept_at(&state.ch).await {
+        Ok(swept_at) => swept_at,
+        Err(read::ReadError::LedgerAbsent) => None,
+        Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
     };
 
     let history_available = health
@@ -121,6 +136,7 @@ pub(crate) async fn get_connector_health(
 
     Ok(Json(ConnectorHealthResponse {
         as_of: Utc::now(),
+        swept_at,
         history_available,
         connectors: health.into_iter().map(connector_row).collect(),
     }))
@@ -137,7 +153,7 @@ pub(crate) async fn get_connector_runs(
     let rows = match read::read_history(&state.ch, &connector).await {
         Ok(rows) => rows,
         Err(read::ReadError::LedgerAbsent) => Vec::new(),
-        Err(error) => return Err(read_failed(&error)),
+        Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
     };
 
     Ok(Json(ConnectorRunsResponse {
@@ -251,8 +267,8 @@ mod tests {
             claim,
             status: "ok".to_owned(),
             started_at: at(),
-            duration_ms: 310_000,
-            records_moved: 12_400,
+            duration_ms: Some(310_000),
+            records_moved: Some(12_400),
             rows_landed,
         }
     }
@@ -284,6 +300,23 @@ mod tests {
             json["rows_landed"].is_null(),
             "absence must not read as zero delivery"
         );
+    }
+
+    #[test]
+    fn an_uncounted_sync_serialises_its_counters_as_null() {
+        // Until the mover's history has been swept nobody knows what the sync
+        // moved. Reporting the pipeline row's zeros would print "0 recorded /
+        // 4200 landed" — a measurement nobody took.
+        let pending = SyncFacts {
+            records_moved: None,
+            duration_ms: None,
+            ..sync(Claim::Claimed, Some(4_200))
+        };
+        let json = serde_json::to_value(connector_row(health(Some(pending))).last_sync).unwrap();
+
+        assert!(json["records_moved"].is_null());
+        assert!(json["duration_ms"].is_null());
+        assert_eq!(json["rows_landed"], 4_200);
     }
 
     #[test]

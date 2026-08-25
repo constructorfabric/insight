@@ -71,11 +71,16 @@ function row(over: Partial<ConnectorHealthRow> = {}): ConnectorHealthRow {
   };
 }
 
-function respond(connectors: ConnectorHealthRow[], historyAvailable = true) {
+function respond(
+  connectors: ConnectorHealthRow[],
+  over: Partial<ConnectorHealthResponse> = {}
+) {
   health.value.data = {
-    as_of: "2026-01-15T12:00:00Z",
-    history_available: historyAvailable,
+    as_of: new Date().toISOString(),
+    swept_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    history_available: true,
     connectors,
+    ...over,
   };
 }
 
@@ -160,13 +165,33 @@ describe("connector health · what a row says", () => {
 
 describe("connector health · the page as a whole", () => {
   it("does not read as health when nothing has recorded a run", () => {
-    respond([row({ last_run: null, last_sync: null })], false);
+    respond([row({ last_run: null, last_sync: null })], {
+      history_available: false,
+    });
     render(<ConnectorHealthView />);
 
     expect(
       screen.getByText(/Nothing has recorded an ingestion run/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/no run history recorded yet/)).toBeInTheDocument();
+  });
+
+  it("states the swept time from the recorded marker, not from its own clock", () => {
+    // `as_of` is the reader's own clock and would read as "just now" however
+    // long ago the controller last ran — the one fabricated claim on the page.
+    respond([row()], {
+      as_of: new Date().toISOString(),
+      swept_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    });
+    render(<ConnectorHealthView />);
+
+    expect(screen.getByText(/last swept 3h ago/)).toBeInTheDocument();
+  });
+
+  it("says never swept when no tick has finished", () => {
+    respond([row()], { swept_at: null });
+    render(<ConnectorHealthView />);
+
+    expect(screen.getByText(/never swept/)).toBeInTheDocument();
   });
 
   it("counts states in tiles that cannot disagree with the badges", () => {
@@ -222,6 +247,75 @@ describe("connector health · expansion", () => {
     await userEvent.click(screen.getByText("example-tool"));
 
     expect(screen.getByText(/does not count entities/)).toBeInTheDocument();
+  });
+
+  it("opens a row from the keyboard, not only with a mouse", async () => {
+    // The expansion is the whole drill-down; a mouse-only control puts it out of
+    // reach of a keyboard or screen-reader operator entirely.
+    respond([row()]);
+    render(<ConnectorHealthView />);
+
+    const summary = screen.getByRole("button", { name: /example-tool/ });
+    summary.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(
+      screen.getByRole("heading", { name: "Recent runs" }),
+    ).toBeInTheDocument();
+  });
+
+  it("names who recorded an event and what it moved", async () => {
+    // Without these the history reads "ok · 2h ago" twelve times over, and the
+    // most likely investigation on this page dead-ends.
+    runs.value.data = {
+      connector: "example-tool",
+      runs: [
+        {
+          event: "sync.completed",
+          status: "ok",
+          step: null,
+          origin: "sweep",
+          trigger: "out_of_band",
+          started_at: "2026-01-15T09:00:00Z",
+          duration_ms: 60_000,
+          records_moved: 12_400,
+          rows_landed: null,
+        },
+      ],
+    };
+    respond([row()]);
+    render(<ConnectorHealthView />);
+
+    await userEvent.click(screen.getByText("example-tool"));
+
+    expect(screen.getByText(/recorded by sweep/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/started outside the pipeline/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/12,400 \/ not measured/)).toBeInTheDocument();
+  });
+
+  it("says how many recorded events it is not showing", async () => {
+    runs.value.data = {
+      connector: "example-tool",
+      runs: Array.from({ length: 30 }, (_unused, index) => ({
+        event: "run.finished",
+        status: "ok",
+        step: null,
+        origin: "pipeline",
+        trigger: null,
+        started_at: `2026-01-${String(index + 1).padStart(2, "0")}T09:00:00Z`,
+        duration_ms: 1_000,
+        records_moved: 0,
+        rows_landed: null,
+      })),
+    };
+    respond([row()]);
+    render(<ConnectorHealthView />);
+
+    await userEvent.click(screen.getByText("example-tool"));
+
+    expect(screen.getByText(/Showing 12 of 30 recorded events/)).toBeInTheDocument();
   });
 
   it("collapses a row that is clicked again", async () => {

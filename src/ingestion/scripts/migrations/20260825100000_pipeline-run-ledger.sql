@@ -40,12 +40,16 @@ ORDER BY (connector, ts, event_id)
 TTL toDateTime(ts) + INTERVAL 6 MONTH
 ;
 
--- The writers run as the ingestion user, which already owns bronze end to end,
--- so its sync-time window counts and system.parts observations need nothing here.
-GRANT INSERT ON ingestion_runs.pipeline_events TO presentation_ro;
-
--- The whole grant surface the read surface needs. No bronze grant is issued to
--- the reader in any form: row visibility in system.parts follows real data
--- access, so "metadata only" is not a reachable state and storage facts reach
--- the page as recorded `storage.observed` rows instead (spec §2.2, §3.7).
+-- The whole grant surface this change adds, and it is one line.
+--
+-- SELECT only, and only for the reader. `presentation_ro` is read-only BY
+-- CONSTRUCTION (see bootstrap-db/presentation-role.sql and its adversarial test)
+-- — granting it INSERT here would break that guarantee for the sake of a
+-- privilege the writers do not take through this role: the pipeline and the
+-- sweep authenticate as the ingestion user, which owns these databases already.
+--
+-- No bronze grant is issued to the reader in any form: row visibility in
+-- system.parts follows real data access, so "metadata only" is not a reachable
+-- state, and storage facts reach the page as recorded `storage.observed` rows
+-- instead (spec §2.2, §3.7).
 GRANT SELECT ON ingestion_runs.* TO presentation_ro;

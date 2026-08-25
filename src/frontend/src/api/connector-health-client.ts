@@ -26,8 +26,13 @@ export interface SyncFacts {
   trigger: SyncTrigger;
   status: string;
   started_at: string;
-  duration_ms: number;
-  records_moved: number;
+  /**
+   * Null until the mover's history has been swept — only it knows how long a
+   * sync took and how much it moved, so a pipeline-only row reports neither
+   * rather than reporting zeros nobody measured.
+   */
+  duration_ms: number | null;
+  records_moved: number | null;
   /**
    * Rows measured as delivered by this sync, or null where nothing measured it.
    *
@@ -67,7 +72,14 @@ export interface ConnectorHealthRow {
 }
 
 export interface ConnectorHealthResponse {
+  /** When the response was assembled. Says nothing about the facts' age. */
   as_of: string;
+  /**
+   * When a controller tick last finished, or null when none ever has. The only
+   * freshness the page may state — `as_of` is the reader's own clock and would
+   * read as "just now" however long ago the controller last ran.
+   */
+  swept_at: string | null;
   /**
    * False when nothing has recorded a run yet. The page says so rather than
    * showing an empty table that reads as health.
@@ -88,6 +100,13 @@ export interface RunEvent {
   records_moved: number;
   rows_landed: number | null;
 }
+
+/** The trigger words the surface serves. Anything else is unknown provenance. */
+export const SYNC_TRIGGERS: readonly SyncTrigger[] = [
+  "claimed",
+  "out_of_band",
+  "unclaimed",
+];
 
 export interface ConnectorRunsResponse {
   connector: string;
