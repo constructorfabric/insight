@@ -1376,6 +1376,7 @@ jobs:
       - merge-gateway
       - merge-identity
       - merge-identity-resolution
+      - merge-git-cli-proxy
       - merge-toolbox
       - merge-image
       - bump-descriptors
@@ -1388,6 +1389,7 @@ jobs:
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity.result      == 'success' || needs.merge-identity.result      == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
+      && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-image.result         == 'success' || needs.merge-image.result         == 'skipped')
       && (needs.bump-descriptors.result    == 'success' || needs.bump-descriptors.result    == 'skipped')
@@ -1398,6 +1400,7 @@ jobs:
         || needs.changes.outputs.gateway      == 'true'
         || needs.changes.outputs.identity     == 'true'
         || needs.changes.outputs.identity_resolution == 'true'
+        || needs.changes.outputs.git_cli_proxy == 'true'
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.umbrella     == 'true'
         || inputs.frontend_tag != ''
