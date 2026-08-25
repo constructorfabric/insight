@@ -2,6 +2,7 @@ pub mod ai;
 pub(crate) mod connector_health;
 pub mod contract_version;
 pub(crate) mod date_window;
+pub mod definitions;
 pub mod external_links;
 pub(crate) mod metric_access;
 pub mod metric_crud;
