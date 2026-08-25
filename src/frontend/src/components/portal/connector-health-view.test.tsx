@@ -235,7 +235,8 @@ describe("connector health · expansion", () => {
       .closest("section")!;
     expect(within(detail).getByText("reactions")).toBeInTheDocument();
     expect(within(detail).getByText("empty")).toBeInTheDocument();
-    expect(within(detail).getByText("158,000")).toBeInTheDocument();
+    // A populated stream shows what it holds AND what it costs.
+    expect(within(detail).getByText(/158,000 · 7\.0 MiB/)).toBeInTheDocument();
   });
 
   it("labels stored rows as physical so nothing reads them as entities", async () => {

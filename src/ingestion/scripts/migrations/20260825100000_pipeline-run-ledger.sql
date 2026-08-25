@@ -15,8 +15,6 @@ CREATE TABLE IF NOT EXISTS ingestion_runs.pipeline_events (
     run_id            String,
     job_id            String,
     connector         LowCardinality(String),
-    tenant_id         String,
-    source_id         String,
     event             LowCardinality(String),
     status            LowCardinality(String),
     origin            LowCardinality(String),
@@ -25,14 +23,12 @@ CREATE TABLE IF NOT EXISTS ingestion_runs.pipeline_events (
     started_at        DateTime64(3, 'UTC'),
     duration_ms       UInt64,
     records_moved     UInt64,
-    bytes_moved       UInt64,
     rows_landed       Nullable(UInt64),
     stream            LowCardinality(String),
     streams           UInt16,
     streams_with_data UInt16,
     rows_total        Nullable(UInt64),
-    bytes_on_disk     UInt64,
-    message           String
+    bytes_on_disk     UInt64
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)

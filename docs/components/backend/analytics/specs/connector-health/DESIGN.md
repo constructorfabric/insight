@@ -572,8 +572,6 @@ swept by exports and customer extracts, which must never carry service rows.
 | `run_id` | `String` | workflow name; empty on swept rows with no matching run |
 | `job_id` | `String` | mover job id; empty on pipeline boundary rows |
 | `connector` | `LowCardinality(String)` | hyphenated connector name |
-| `tenant_id` | `String` | |
-| `source_id` | `String` | |
 | `event` | `LowCardinality(String)` | `run.started` \| `sync.completed` \| `transform.completed` \| `run.finished` \| `storage.observed` \| `connector.configured` \| `sweep.completed` |
 | `status` | `LowCardinality(String)` | `ok` \| `failed` \| `cancelled` \| `running` |
 | `origin` | `LowCardinality(String)` | `pipeline` \| `sweep` |
@@ -582,14 +580,17 @@ swept by exports and customer extracts, which must never carry service rows.
 | `started_at` | `DateTime64(3, 'UTC')` | when the reported thing started |
 | `duration_ms` | `UInt64` | |
 | `records_moved` | `UInt64` | mover-reported |
-| `bytes_moved` | `UInt64` | mover-reported |
 | `rows_landed` | `Nullable(UInt64)` | storage rows whose extraction stamp falls inside this sync's window, measured by the pipeline at sync time; NULL on swept rows — the window has passed |
 | `stream` | `LowCardinality(String)` | the observed stream; empty on connector-level and non-storage rows |
 | `streams` | `UInt16` | connector-level `storage.observed` only |
 | `streams_with_data` | `UInt16` | connector-level `storage.observed` only |
 | `rows_total` | `Nullable(UInt64)` | physical rows present when observed; `storage.observed` only |
 | `bytes_on_disk` | `UInt64` | size when observed; `storage.observed` only |
-| `message` | `String` | brief failure reason; empty on success |
+
+Every column is read by the surface. A column nothing reads is a claim the
+ledger cannot back, so tenant and source identity, moved bytes and a failure
+message were dropped rather than carried as headroom — the failed step already
+says what a message would, and the read is instance-wide by construction.
 
 `ENGINE = MergeTree`, `PARTITION BY toYYYYMM(ts)`, `ORDER BY (connector, ts, event_id)`,
 `TTL toDateTime(ts) + INTERVAL 6 MONTH` (FR-5; length is an open PRD decision — 6 months is

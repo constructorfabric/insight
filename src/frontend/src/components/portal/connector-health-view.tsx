@@ -249,7 +249,7 @@ function ConnectorDetail({ row }: { row: ConnectorHealthRow }) {
                 <span className="tabular-nums text-muted-foreground">
                   {stream.physical_rows === 0
                     ? "empty"
-                    : stream.physical_rows.toLocaleString("en-US")}
+                    : `${stream.physical_rows.toLocaleString("en-US")} · ${formatBytes(stream.bytes_on_disk)}`}
                 </span>
               </li>
             ))}

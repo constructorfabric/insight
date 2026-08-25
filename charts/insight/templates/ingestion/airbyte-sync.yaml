@@ -74,10 +74,6 @@ spec:
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
                 - name: connector
                   value: {{ `"{{inputs.parameters.connector}}"` }}
-                - name: tenant_id
-                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
-                - name: source_id
-                  value: {{ `"{{inputs.parameters.source_id}}"` }}
 
     - name: resolve-connection-by-name
       retryStrategy:
@@ -187,10 +183,6 @@ spec:
                   value: {{ `"{{tasks.poll.status}}"` }}
                 - name: connector
                   value: {{ `"{{inputs.parameters.connector}}"` }}
-                - name: tenant_id
-                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
-                - name: source_id
-                  value: {{ `"{{inputs.parameters.source_id}}"` }}
                 - name: run_id
                   value: {{ `"{{workflow.name}}"` }}
                 - name: job_id

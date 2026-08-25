@@ -57,7 +57,6 @@ def job(job_id="77", status="succeeded", **overrides):
         "startTimeEpoch": 2000,
         "duration": "PT1M37S",
         "rowsSynced": 425,
-        "bytesSynced": 1024,
     }
     base.update(overrides)
     return base
@@ -73,7 +72,6 @@ def ledger_row(job_id="77", claim=UNCLAIMED, has_counters=True, **overrides):
         "status": "ok",
         "duration_ms": 97000,
         "records_moved": 425,
-        "bytes_moved": 1024,
     }
     base.update(overrides)
     return base

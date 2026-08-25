@@ -45,7 +45,6 @@ def ledger_row(raw: dict[str, str]) -> dict[str, Any]:
         "started_at_epoch": int(raw["started_at_epoch"]),
         "duration_ms": int(raw["duration_ms"]),
         "records_moved": int(raw["records_moved"]),
-        "bytes_moved": int(raw["bytes_moved"]),
     }
 
 

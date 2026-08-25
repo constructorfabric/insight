@@ -63,8 +63,6 @@ class Row:
     started_at_epoch: int = 0
     duration_ms: int = 0
     records_moved: int = 0
-    bytes_moved: int = 0
-    message: str = ""
 
 
 @dataclass
@@ -163,7 +161,6 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
                 started_at_epoch=started_at,
                 duration_ms=duration_ms(job.get("duration")),
                 records_moved=int(job.get("rowsSynced") or 0),
-                bytes_moved=int(job.get("bytesSynced") or 0),
             )
         )
 
@@ -206,7 +203,6 @@ def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
                 started_at_epoch=started_at,
                 duration_ms=int(row.get("duration_ms") or 0),
                 records_moved=int(row.get("records_moved") or 0),
-                bytes_moved=int(row.get("bytes_moved") or 0),
             )
         )
 

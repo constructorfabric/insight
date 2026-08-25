@@ -27,7 +27,6 @@ COLUMNS = (
     "started_at",
     "duration_ms",
     "records_moved",
-    "bytes_moved",
 )
 
 
@@ -49,7 +48,6 @@ def row_tuple(row: dict[str, Any]) -> str:
         f"toDateTime64({int(row['started_at_epoch'])}, 3)",
         str(int(row["duration_ms"])),
         str(int(row["records_moved"])),
-        str(int(row["bytes_moved"])),
     ]
     return "(" + ", ".join(fields) + ")"
 

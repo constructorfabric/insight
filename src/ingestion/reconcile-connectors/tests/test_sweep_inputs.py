@@ -106,7 +106,6 @@ class TestRequestAssembly:
                 "started_at_epoch": "10",
                 "duration_ms": "20",
                 "records_moved": "30",
-                "bytes_moved": "40",
             }
         )
         pipeline_only = ledger_row(
@@ -119,7 +118,6 @@ class TestRequestAssembly:
                 "started_at_epoch": "10",
                 "duration_ms": "0",
                 "records_moved": "0",
-                "bytes_moved": "0",
             }
         )
 
@@ -160,7 +158,6 @@ class TestInsertRendering:
             "started_at_epoch": 1700000000,
             "duration_ms": 97000,
             "records_moved": 425,
-            "bytes_moved": 1024,
         }
         base.update(overrides)
         return base

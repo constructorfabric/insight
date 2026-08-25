@@ -121,12 +121,11 @@ _sweep_ledger_state() {
                'has_counters', toString(max(origin = 'sweep')),
                'started_at_epoch', toString(toUnixTimestamp(argMax(started_at, (prec, ts)))),
                'duration_ms', toString(argMax(duration_ms, (prec, ts))),
-               'records_moved', toString(argMax(records_moved, (prec, ts))),
-               'bytes_moved', toString(argMax(bytes_moved, (prec, ts)))
+               'records_moved', toString(argMax(records_moved, (prec, ts)))
              ) AS row
       FROM (
         SELECT job_id, connector, claim, status, origin, ts, started_at,
-               duration_ms, records_moved, bytes_moved,
+               duration_ms, records_moved,
                multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1) AS prec
         FROM ${LEDGER_TABLE}
         WHERE event = 'sync.completed' AND job_id != ''
