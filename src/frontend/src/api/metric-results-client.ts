@@ -127,7 +127,8 @@ export type MetricResultView =
   | PeerView
   | BreakdownView
   | RollupView
-  | HistogramView;
+  | HistogramView
+  | MetricErrorView;
 
 export interface PeriodView {
   view: "period";
@@ -197,6 +198,25 @@ export interface HistogramView {
     entity_id: string;
     bins: HistogramBin[];
   }>;
+}
+
+export type MetricErrorCode =
+  | "SOURCE_RELATION_MISSING"
+  | "RESOURCE_EXHAUSTED"
+  | "QUERY_TIMEOUT"
+  | "RESULT_PARSE_FAILED"
+  | "QUERY_FAILED";
+
+/**
+ * A view whose computation failed. The request itself still answers 200:
+ * the failure arrives in the failed view's requested slot, and other views
+ * and metrics are unaffected. `message` is safe to render — admins get the
+ * underlying error text, everyone else a generic one.
+ */
+export interface MetricErrorView {
+  view: "error";
+  code: MetricErrorCode;
+  message: string;
 }
 
 export interface MetricResultsResponse {

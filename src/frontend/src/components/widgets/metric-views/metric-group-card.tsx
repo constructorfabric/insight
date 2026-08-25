@@ -160,6 +160,19 @@ export function MetricGroupCard({
   ).slice(0, 4);
   const isEmpty = !rows.some((row) => row.value != null);
 
+  // A failed computation must not render as silence: the server answered 200
+  // with the failure in the view's slot, and the message is written for the
+  // reader (admins get the underlying error). One note per distinct message —
+  // a group of metrics sharing a broken source repeats one cause, not N.
+  const errorNotes = [
+    ...new Set(
+      def.collection.metrics.flatMap((metricConfig) => {
+        const message = data.byKey.get(metricConfig.key)?.error?.message;
+        return message ? [message] : [];
+      })
+    ),
+  ];
+
   return (
     <Card
       // An empty card has nothing to drill into: render a plain, unfocusable
@@ -218,7 +231,7 @@ export function MetricGroupCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3">
         {isEmpty ? (
-          <GroupCardEmpty />
+          errorNotes.length > 0 ? null : <GroupCardEmpty />
         ) : (
           <>
             {preview.length > 0 ? (
@@ -280,6 +293,15 @@ export function MetricGroupCard({
             ) : null}
           </>
         )}
+        {errorNotes.length > 0 ? (
+          // A failed metric shows its message instead of silently rendering
+          // as empty; same subdued voice as the empty state.
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {errorNotes.map((note) => (
+              <p key={note}>{note}</p>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

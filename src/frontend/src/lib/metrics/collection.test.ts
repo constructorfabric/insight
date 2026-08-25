@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 import {
   MEDIAN_METRIC_FIXTURE,
   RATIO_METRIC_FIXTURE,
@@ -118,6 +119,46 @@ describe("normalizeMetricResult forward-compat", () => {
     const normalized = normalizeMetricResult(withUnknown);
     expect(normalized.period).toBeDefined();
     expect(normalized.peer).toBeDefined();
+  });
+});
+
+describe("normalizeMetricResult error views", () => {
+  it("stores the error instead of warning, keeping the healthy views", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const withError = {
+        ...SUM_METRIC_FIXTURE,
+        views: [
+          ...SUM_METRIC_FIXTURE.views,
+          buildMetricErrorView({ code: "QUERY_TIMEOUT", message: "took too long" }),
+        ],
+      };
+      const normalized = normalizeMetricResult(withError);
+      expect(normalized.error).toEqual({
+        code: "QUERY_TIMEOUT",
+        message: "took too long",
+      });
+      // The failed view's slot stays unset; sibling views are unaffected.
+      expect(normalized.period).toBeDefined();
+      expect(normalized.peer).toBeDefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps the first error when several views failed", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [
+        buildMetricErrorView({ code: "SOURCE_RELATION_MISSING", message: "first" }),
+        buildMetricErrorView({ code: "QUERY_FAILED", message: "second" }),
+      ],
+    });
+    expect(normalized.error).toEqual({
+      code: "SOURCE_RELATION_MISSING",
+      message: "first",
+    });
   });
 });
 
