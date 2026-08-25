@@ -529,6 +529,7 @@ class MetricResultsPeriodDto(BaseModel):
 class MetricSchemaErrorCode(StrEnum):
     table_not_found = 'table_not_found'
     column_not_found = 'column_not_found'
+    detail_key_not_found = 'detail_key_not_found'
     dimension_not_covered = 'dimension_not_covered'
     unknown = 'unknown'
 
