@@ -33,6 +33,8 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/ai/credentials",
         "/v1/ai/explain",
         "/v1/ai/settings",
+        "/v1/connector-health",
+        "/v1/connector-health/{connector}/runs",
         "/v1/feedback",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
@@ -53,7 +55,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        21,
+        23,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
@@ -84,5 +86,19 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         schemas.contains_key("TimeseriesDto"),
         "TimeseriesDto schema missing"
     );
+    Ok(())
+}
+
+#[test]
+fn the_instance_wide_connector_read_declares_its_role_refusal() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+
+    for path in ["/v1/connector-health", "/v1/connector-health/{connector}/runs"] {
+        let responses = &json["paths"][path]["get"]["responses"];
+        assert!(
+            responses.get("403").is_some(),
+            "an instance-wide read must declare the role refusal, got {responses:?} for {path}"
+        );
+    }
     Ok(())
 }

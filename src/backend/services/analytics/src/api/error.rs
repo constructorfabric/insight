@@ -27,6 +27,11 @@ pub struct UsageError;
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]
 pub struct FeedbackError;
 
+/// Resource namespace for `GET /v1/connector-health*` — the operator-gated,
+/// instance-wide read of what each connector has recorded.
+#[resource_error("gts.cf.insight.analytics_api.connector_health.v1~")]
+pub struct ConnectorHealthError;
+
 /// Resource namespace for `/v1/ai*` (written context, the tenant system
 /// prompt, per-person keys, and the explain call).
 #[resource_error("gts.cf.insight.analytics_api.ai_assist.v1~")]

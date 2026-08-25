@@ -158,6 +158,100 @@
           }
         ]
       },
+      "ConnectorHealthResponse": {
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorRow"
+            },
+            "type": "array"
+          },
+          "history_available": {
+            "description": "False when nothing has recorded a run yet — a fresh install before the\nfirst controller cadence, or a stand where nothing records. The page says\nso rather than implying health.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "as_of",
+          "history_available",
+          "connectors"
+        ],
+        "type": "object"
+      },
+      "ConnectorRow": {
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "last_run": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunView"
+              }
+            ]
+          },
+          "last_sync": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SyncView"
+              }
+            ]
+          },
+          "storage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/StorageView"
+              }
+            ]
+          },
+          "streams": {
+            "items": {
+              "$ref": "#/components/schemas/StreamView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "connector",
+          "configured",
+          "streams"
+        ],
+        "type": "object"
+      },
+      "ConnectorRunsResponse": {
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunEventView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "connector",
+          "runs"
+        ],
+        "type": "object"
+      },
       "ContextEntryResponse": {
         "properties": {
           "body": {
@@ -2035,6 +2129,63 @@
         ],
         "type": "object"
       },
+      "RunEventView": {
+        "properties": {
+          "duration_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "event": {
+            "type": "string"
+          },
+          "origin": {
+            "description": "Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.",
+            "type": "string"
+          },
+          "records_moved": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows_landed": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trigger": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "event",
+          "status",
+          "origin",
+          "started_at",
+          "duration_ms",
+          "records_moved"
+        ],
+        "type": "object"
+      },
       "RunResponse": {
         "description": "Result of `POST /v1/queries/{id}/run`.\n\n`rows` carry a per-query dynamic schema (the `SELECT` columns vary), so each\nrow is an untyped JSON object — the same shape as the metric query path.",
         "properties": {
@@ -2058,6 +2209,42 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "RunView": {
+        "properties": {
+          "duration_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "step": {
+            "description": "The step the run reached; absent when it did not fail.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transform_status": {
+            "description": "Outcome of this run's own transform step, when it got that far.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "started_at",
+          "duration_ms"
+        ],
         "type": "object"
       },
       "SavedQuery": {
@@ -2185,6 +2372,108 @@
         "required": [
           "label",
           "points"
+        ],
+        "type": "object"
+      },
+      "StorageView": {
+        "properties": {
+          "bytes_on_disk": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "physical_rows": {
+            "description": "Physical rows present when observed. On a deduplicating engine this\nsizes a connector; it does not count entities.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "streams": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "streams_with_data": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observed_at",
+          "streams",
+          "streams_with_data",
+          "physical_rows",
+          "bytes_on_disk"
+        ],
+        "type": "object"
+      },
+      "StreamView": {
+        "properties": {
+          "bytes_on_disk": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "physical_rows": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stream": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream",
+          "physical_rows",
+          "bytes_on_disk"
+        ],
+        "type": "object"
+      },
+      "SyncView": {
+        "properties": {
+          "duration_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "records_moved": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows_landed": {
+            "description": "Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trigger": {
+            "description": "`claimed`, `out_of_band`, or `unclaimed`. Unclaimed is unknown\nprovenance; it is never presented as a manual sync.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trigger",
+          "status",
+          "started_at",
+          "duration_ms",
+          "records_moved"
         ],
         "type": "object"
       },
@@ -3746,6 +4035,203 @@
           }
         ],
         "summary": "Replace this tenant's system prompt"
+      }
+    },
+    "/v1/connector-health": {
+      "get": {
+        "operationId": "analytics_api.connector_health.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorHealthResponse"
+                }
+              }
+            },
+            "description": "Connector health, ordered by what needs attention"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Report what each connector has recorded"
+      }
+    },
+    "/v1/connector-health/{connector}/runs": {
+      "get": {
+        "operationId": "analytics_api.connector_health.runs",
+        "parameters": [
+          {
+            "description": "Connector name as the ledger records it",
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorRunsResponse"
+                }
+              }
+            },
+            "description": "Recent run and sync events, newest first"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Recent recorded runs for one connector"
       }
     },
     "/v1/feedback": {

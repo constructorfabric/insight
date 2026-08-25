@@ -1,6 +1,7 @@
 //! HTTP API layer — routes and handlers.
 
 pub(crate) mod ai;
+mod connector_health;
 pub(crate) mod error;
 mod feedback;
 mod metric_definitions;
@@ -581,6 +582,38 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_401(openapi)
         .error_500(openapi)
         .handler(metric_definitions::list_metric_definitions)
+        .register(router, openapi);
+
+    // INVARIANT: bronze schemas are not tenant-partitioned, so this read is
+    // instance-wide and the handler gates on the admin role instead. It reads
+    // the run ledger only — no mover, no cluster API, no connector data.
+    router = OperationBuilder::get("/v1/connector-health")
+        .operation_id("analytics_api.connector_health.get")
+        .summary("Report what each connector has recorded")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<connector_health::ConnectorHealthResponse>(
+            openapi,
+            StatusCode::OK,
+            "Connector health, ordered by what needs attention",
+        )
+        .standard_errors(openapi)
+        .handler(connector_health::get_connector_health)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/connector-health/{connector}/runs")
+        .operation_id("analytics_api.connector_health.runs")
+        .summary("Recent recorded runs for one connector")
+        .authenticated()
+        .no_license_required()
+        .path_param("connector", "Connector name as the ledger records it")
+        .json_response_with_schema::<connector_health::ConnectorRunsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Recent run and sync events, newest first",
+        )
+        .standard_errors(openapi)
+        .handler(connector_health::get_connector_runs)
         .register(router, openapi);
 
     // Custom-metric CRUD + export/import — the `origin='custom'` authoring
