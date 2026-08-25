@@ -40,6 +40,10 @@ SWEEP_OVERLAP_SECONDS="${SWEEP_OVERLAP_SECONDS:-1800}"
 # a lost write is recent.
 SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"
 
+# A warehouse that stops answering must not hold the tick until the workflow's
+# own deadline, long after the connector work it observes has finished.
+SWEEP_QUERY_TIMEOUT_SECONDS="${SWEEP_QUERY_TIMEOUT_SECONDS:-60}"
+
 _sweep_ch_url() {
   local protocol="${RECONCILE_DEST_CLICKHOUSE_PROTOCOL:-http}"
   printf '%s://%s:%s/' "${protocol}" \
@@ -47,11 +51,24 @@ _sweep_ch_url() {
 }
 
 # _sweep_ch <sql> — run one statement, print the response body.
+#
+# INVARIANT: on failure this prints NOTHING. `--fail-with-body` writes the error
+# body to stdout, so a caller falling back on a non-zero exit would emit the
+# error text and its fallback both — two values where it parses one. The body is
+# captured, logged, and kept out of the caller's hands.
 _sweep_ch() {
-  printf '%s' "$1" | curl --fail-with-body --silent --show-error \
+  local body status
+  body="$(printf '%s' "$1" | curl --fail-with-body --silent --show-error \
+    --max-time "${SWEEP_QUERY_TIMEOUT_SECONDS}" \
     -H "X-ClickHouse-User: ${RECONCILE_DEST_CLICKHOUSE_USERNAME}" \
     -H "X-ClickHouse-Key: ${RECONCILE_DEST_CLICKHOUSE_PASSWORD}" \
-    --data-binary @- "$(_sweep_ch_url)"
+    --data-binary @- "$(_sweep_ch_url)" 2>&1)"
+  status=$?
+  if [[ ${status} -ne 0 ]]; then
+    log_line WARN "sweep: warehouse query failed (exit ${status}): ${body:0:200}"
+    return "${status}"
+  fi
+  printf '%s' "${body}"
 }
 
 _sweep_warehouse_ready_p() {
@@ -88,6 +105,12 @@ _sweep_watermark() {
 # job as already collected; the pipeline's own row carries the delivery
 # measurement and the claim, not the counters.
 _sweep_ledger_state() {
+  # Bounded on purpose. Unbounded, this grew with the table's whole retention and
+  # was handed to a helper as one argument, so past a few hundred jobs the exec
+  # failed with "Argument list too long" and every later tick failed the same way.
+  # The window covers what the planner can still act on: the claim horizon, plus
+  # the listing overlap, plus room for a tick that did not run.
+  local state_window=$(( SWEEP_CLAIM_HORIZON_SECONDS + SWEEP_OVERLAP_SECONDS + 86400 ))
   _sweep_ch "
     SELECT toJSONString(groupArray(row)) FROM (
       SELECT map(
@@ -107,9 +130,10 @@ _sweep_ledger_state() {
                multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1) AS prec
         FROM ${LEDGER_TABLE}
         WHERE event = 'sync.completed' AND job_id != ''
+          AND started_at >= now64(3) - INTERVAL ${state_window} SECOND
       )
       GROUP BY job_id
-    ) FORMAT TSVRaw" 2>/dev/null || printf '[]'
+    ) FORMAT TSVRaw" || printf '[]'
 }
 
 # _sweep_workflow_claims — {job_id: run_id} from the workflow layer's records.
@@ -118,7 +142,7 @@ _sweep_ledger_state() {
 # record naming a job id claims it by exact identity. Timing overlap is never
 # read as evidence: a manual sync may run while a pipeline run is mid-transform.
 _sweep_workflow_claims() {
-  local unreadable='{"claims":{},"readable":false,"horizon_epoch":0}'
+  local unreadable='{"claims":{},"readable":false}'
   local listing claims
   # The whole listing, because the job a run triggered lives in its node tree
   # and no server-side selector reaches it. Large, and paid once per tick by a
@@ -143,10 +167,20 @@ _sweep_connection_map() {
   local connections_json="$1"
   local descriptors_tsv="$2"
   local name connector_dir version type cdk_image enrich_image dbt_select
-  local pairs=""
+  local pairs="" match_rc
   while IFS=$'\037' read -r name connector_dir version type cdk_image enrich_image dbt_select; do
     [[ -n "${name}" ]] || continue
-    disc_match_descriptor_to_secret "${name}" >/dev/null 2>&1 || continue
+    disc_match_descriptor_to_secret "${name}" >/dev/null 2>&1
+    match_rc=$?
+    # INVARIANT: rc 1 and rc 2 are different answers and must stay apart. 1 is
+    # "no secret, so not managed"; 2 is "kubectl could not say". Treating 2 as 1
+    # let one flaky API call drop every connector from the snapshot — and an
+    # empty snapshot is a positive claim that everything was removed.
+    if [[ ${match_rc} -eq 2 ]]; then
+      log_line ERROR "sweep: cannot determine whether ${name} is configured; abandoning this tick"
+      return 1
+    fi
+    [[ ${match_rc} -eq 0 ]] || continue
     local conn_name
     conn_name="$(reconcile_compute_connection_name "${name}")"
     pairs+="${name}"$'\t'"${conn_name}"$'\n'
@@ -232,6 +266,11 @@ sweep_run() {
     tick_run_id="sweep-$(date -u +%s)-$$"
   fi
 
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+    log_event "sweep.skipped" "dry run; recording nothing" '{"reason":"dry_run"}'
+    return 0
+  fi
+
   if ! _sweep_warehouse_ready_p; then
     log_event "sweep.skipped" "run ledger unavailable; skipping sweep" \
       '{"reason":"warehouse_or_table_unreachable"}'
@@ -246,7 +285,11 @@ sweep_run() {
   fi
   connections_json="$(ab_list_connections "${workspace_id}")" || connections_json='[]'
   descriptors_tsv="$(disc_load_descriptors)"
-  mapping="$(_sweep_connection_map "${connections_json}" "${descriptors_tsv}")"
+  if ! mapping="$(_sweep_connection_map "${connections_json}" "${descriptors_tsv}")"; then
+    log_event "sweep.skipped" "configured set unknown; recording nothing" \
+      '{"reason":"secret_listing_failed"}'
+    return 0
+  fi
 
   local watermark jobs_json
   watermark="$(_sweep_watermark)"
@@ -258,6 +301,12 @@ sweep_run() {
   local ledger_json claims_json plan_json
   ledger_json="$(_sweep_ledger_state)"
   claims_json="$(_sweep_workflow_claims)"
+  # This input alone decides out-of-band versus unclaimed, so its absence is
+  # worth a line: without one, a tick that classified nothing looks identical to
+  # a tick that classified everything.
+  if [[ "${claims_json}" == *'"readable": false'* || "${claims_json}" == *'"readable":false'* ]]; then
+    log_line WARN "sweep: workflow records unreadable; no sync can be corroborated this tick"
+  fi
 
   local horizon_epoch
   horizon_epoch=$(( $(date -u +%s) - SWEEP_CLAIM_HORIZON_SECONDS ))

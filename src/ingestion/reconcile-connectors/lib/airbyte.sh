@@ -612,18 +612,57 @@ ab_list_connections() {
 # spec §3.2). Optional ISO-8601 lower bound; omitted means the mover's whole
 # retained history, which is what a first sweep wants.
 #
+# PAGED, because that history is what FR-6 promises. A single page silently
+# stopped at the newest 100 jobs and the watermark then advanced past the rest,
+# so everything older became permanently uncoverable — and the same loss hit any
+# window holding more than a page after an outage.
+#
 # The PUBLIC api deliberately: the private per-attempt detail carries richer
 # per-stream numbers but is not contract-stable across Airbyte upgrades, and
 # the ledger must not depend on it.
 # ---------------------------------------------------------------------------
+AB_JOBS_PAGE_SIZE="${AB_JOBS_PAGE_SIZE:-100}"
+
+# A backstop, not a budget: a first sweep against years of history must end.
+AB_JOBS_MAX_PAGES="${AB_JOBS_MAX_PAGES:-50}"
+
 ab_list_jobs() {
   local created_at_start="${1:-}"
-  local path="/api/public/v1/jobs?limit=100&orderBy=createdAt%7CDESC&jobType=sync"
-  if [[ -n "${created_at_start}" ]]; then
-    path="${path}&createdAtStart=${created_at_start}"
+  local offset=0 page pages=0 all="[]"
+  while (( pages < AB_JOBS_MAX_PAGES )); do
+    local path="/api/public/v1/jobs?limit=${AB_JOBS_PAGE_SIZE}&offset=${offset}"
+    path="${path}&orderBy=createdAt%7CDESC&jobType=sync"
+    if [[ -n "${created_at_start}" ]]; then
+      path="${path}&createdAtStart=${created_at_start}"
+    fi
+    if ! page="$(ab__curl GET "${path}")"; then
+      # Whatever was already collected is still worth recording; the next tick
+      # re-reads from the same watermark and covers the rest.
+      printf '%s' "${all}"
+      return 1
+    fi
+    local merged
+    merged="$(printf '%s\n%s' "${all}" "${page}" | python3 -c '
+import json, sys
+
+collected = json.loads(sys.stdin.readline())
+page = json.load(sys.stdin).get("data", [])
+collected.extend(page)
+print(len(page))
+print(json.dumps(collected))
+')" || { printf '%s' "${all}"; return 1; }
+    local page_count
+    page_count="$(printf '%s' "${merged}" | head -1)"
+    all="$(printf '%s' "${merged}" | tail -n +2)"
+    (( page_count < AB_JOBS_PAGE_SIZE )) && break
+    offset=$(( offset + AB_JOBS_PAGE_SIZE ))
+    pages=$(( pages + 1 ))
+  done
+  if (( pages >= AB_JOBS_MAX_PAGES )); then
+    printf 'ab_list_jobs: stopped at the %d-page backstop; older jobs are uncovered\n' \
+      "${AB_JOBS_MAX_PAGES}" >&2
   fi
-  ab__curl GET "${path}" \
-    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get("data",[])))'
+  printf '%s' "${all}"
 }
 
 # ---------------------------------------------------------------------------
