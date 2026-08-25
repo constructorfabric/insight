@@ -1,0 +1,278 @@
+{{- if .Values.ingestion.templates.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ledger-write
+  labels:
+    {{- include "insight.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestion-template
+spec:
+  serviceAccountName: argo-workflow
+  entrypoint: write
+  templates:
+    # Records one row in the ingestion run ledger (connector-health spec §3.2,
+    # Run Recorder). Callers supply the row; this template owns the insert, the
+    # optional delivery measurement, and the failed-step derivation.
+    #
+    # INVARIANT: recording is subordinate to the recorded (spec NFR-2) — every
+    # failure path here logs and exits 0, so a broken ledger never fails the run
+    # it describes, and never turns a green run red through an exit handler.
+    - name: write
+      # SECURITY:
+      #  Argo substitutes parameter refs as LITERAL TEXT at render time —
+      #  splicing them into Python source is a command-injection sink, and
+      #  `workflow.failures` in particular arrives as quoted JSON. Every
+      #  parameter is passed via env and read with os.environ.
+      inputs:
+        parameters:
+          - name: event
+          - name: connector
+            default: ""  # RULE-DEFAULTS-OK: empty on the sweep-marker row, which is instance-wide
+          - name: run_id
+          - name: job_id
+            default: ""  # RULE-DEFAULTS-OK: empty on run-boundary rows, which name no mover job
+          - name: tenant_id
+            default: ""  # RULE-DEFAULTS-OK: unknown to the exit handler, which sees workflow scope only
+          - name: source_id
+            default: ""  # RULE-DEFAULTS-OK: as tenant_id
+          - name: status
+          - name: claim
+            default: ""  # RULE-DEFAULTS-OK: empty on non-sync rows, which carry no trigger question
+          - name: step
+            default: ""  # RULE-DEFAULTS-OK: derived from failures_json when a run failed
+          - name: duration_ms
+            default: "0"  # RULE-DEFAULTS-OK: rows that report no elapsed time
+          - name: records_moved
+            default: "0"  # RULE-DEFAULTS-OK: as duration_ms
+          - name: bytes_moved
+            default: "0"  # RULE-DEFAULTS-OK: as duration_ms
+          - name: message
+            default: ""  # RULE-DEFAULTS-OK: empty on success
+          # Raw workflow-failures JSON, as the exit handler receives it. Read
+          # only when `step` is empty: the first failed node's displayName is
+          # the step the run reached.
+          - name: failures_json
+            default: ""  # RULE-DEFAULTS-OK: empty on a run that did not fail
+          # Delivery measurement (spec FR-3). When set, the row carries
+          # `rows_landed` counted over this connector's own bronze streams for
+          # rows stamped inside the window. Only the pipeline sets it — the
+          # sweep cannot, its window has passed.
+          - name: window_start_epoch
+            default: ""  # RULE-DEFAULTS-OK: no measurement requested
+          - name: clickhouse_url
+            default: {{ include "insight.clickhouse.url" . | quote }}
+          - name: clickhouse_user
+            default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
+      # A ledger row is one small insert plus at most one count; anything
+      # longer than this is a stuck warehouse, and the run must not wait.
+      activeDeadlineSeconds: 300
+      script:
+        image: python:3.12-alpine
+        command: [python3]
+        env:
+          - name: CLICKHOUSE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ required "clickhouse.passwordSecret.name is required" .Values.clickhouse.passwordSecret.name | quote }}
+                key:  {{ required "clickhouse.passwordSecret.key is required"  .Values.clickhouse.passwordSecret.key  | quote }}
+          - name: CLICKHOUSE_URL
+            value: {{ `"{{inputs.parameters.clickhouse_url}}"` }}
+          - name: CLICKHOUSE_USER
+            value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+          - name: LEDGER_EVENT
+            value: {{ `"{{inputs.parameters.event}}"` }}
+          - name: LEDGER_CONNECTOR
+            value: {{ `"{{inputs.parameters.connector}}"` }}
+          - name: LEDGER_RUN_ID
+            value: {{ `"{{inputs.parameters.run_id}}"` }}
+          - name: LEDGER_JOB_ID
+            value: {{ `"{{inputs.parameters.job_id}}"` }}
+          - name: LEDGER_TENANT_ID
+            value: {{ `"{{inputs.parameters.tenant_id}}"` }}
+          - name: LEDGER_SOURCE_ID
+            value: {{ `"{{inputs.parameters.source_id}}"` }}
+          - name: LEDGER_STATUS
+            value: {{ `"{{inputs.parameters.status}}"` }}
+          - name: LEDGER_CLAIM
+            value: {{ `"{{inputs.parameters.claim}}"` }}
+          - name: LEDGER_STEP
+            value: {{ `"{{inputs.parameters.step}}"` }}
+          - name: LEDGER_DURATION_MS
+            value: {{ `"{{inputs.parameters.duration_ms}}"` }}
+          - name: LEDGER_RECORDS_MOVED
+            value: {{ `"{{inputs.parameters.records_moved}}"` }}
+          - name: LEDGER_BYTES_MOVED
+            value: {{ `"{{inputs.parameters.bytes_moved}}"` }}
+          - name: LEDGER_MESSAGE
+            value: {{ `"{{inputs.parameters.message}}"` }}
+          - name: LEDGER_FAILURES_JSON
+            value: {{ `"{{inputs.parameters.failures_json}}"` }}
+          - name: LEDGER_WINDOW_START_EPOCH
+            value: {{ `"{{inputs.parameters.window_start_epoch}}"` }}
+        source: |
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          LEDGER = "ingestion_runs.pipeline_events"
+          STAMP = "_airbyte_extracted_at"
+          TIMEOUT_SECONDS = 60
+          # A window count over one connector's schema reads one narrow column;
+          # bronze sorts by its dedup key, so the window does not prune. That is
+          # affordable here and only here: one schema, inside a job that just
+          # spent far longer syncing.
+          MEASURE_TIMEOUT_SECONDS = 120
+
+
+          def log(event, **fields):
+              print(json.dumps({
+                  "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                  "level": fields.pop("level", "info"),
+                  "component": "ledger-write",
+                  "event": event,
+                  **fields,
+              }), flush=True)
+
+
+          def query(sql, timeout):
+              url = os.environ["CLICKHOUSE_URL"].rstrip("/") + "/"
+              req = urllib.request.Request(
+                  url,
+                  data=sql.encode(),
+                  headers={
+                      "X-ClickHouse-User": os.environ["CLICKHOUSE_USER"],
+                      "X-ClickHouse-Key": os.environ["CLICKHOUSE_PASSWORD"],
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=timeout) as resp:
+                  return resp.read().decode().strip()
+
+
+          def quote(value):
+              """Single-quoted SQL literal. Values reach here from env, never spliced."""
+              return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+          def bronze_schema(connector):
+              return "bronze_" + connector.replace("-", "_")
+
+
+          def failed_step(failures_json):
+              """First failed node's displayName — the step the run reached.
+
+              The workflow-level node repeats the workflow name and names no
+              step, so it is skipped.
+              """
+              if not failures_json:
+                  return ""
+              payload = json.loads(failures_json)
+              if isinstance(payload, str):
+                  payload = json.loads(payload)
+              workflow_name = os.environ.get("LEDGER_RUN_ID", "")
+              for node in payload:
+                  name = node.get("displayName", "")
+                  if name and name != workflow_name:
+                      return name
+              return ""
+
+
+          def rows_landed(connector, window_start_epoch):
+              """Rows this sync delivered: stamped inside its own window.
+
+              Exact at this moment — the window's rows are the newest versions,
+              so no merge can have collapsed them yet.
+              """
+              schema = bronze_schema(connector)
+              streams = query(
+                  "SELECT name FROM system.tables WHERE database = "
+                  f"{quote(schema)} AND engine LIKE '%MergeTree' "
+                  "AND name NOT LIKE '.inner%' FORMAT TSVRaw",
+                  TIMEOUT_SECONDS,
+              )
+              names = [s for s in streams.split("\n") if s]
+              if not names:
+                  return None
+
+              window = f"{STAMP} >= toDateTime64({int(window_start_epoch)}, 3) AND {STAMP} <= now64(3)"
+              counts = " UNION ALL ".join(
+                  f"SELECT count() AS n FROM `{schema}`.`{name}` WHERE {window}"
+                  for name in names
+                  if name.replace("_", "").isalnum()
+              )
+              if not counts:
+                  return None
+
+              total = query(f"SELECT sum(n) FROM ({counts}) FORMAT TSVRaw", MEASURE_TIMEOUT_SECONDS)
+              return int(total)
+
+
+          def measured_rows():
+              """None whenever the measurement was not asked for or did not work.
+
+              A failed measurement is honest absence, never a fabricated zero.
+              """
+              connector = os.environ.get("LEDGER_CONNECTOR", "")
+              window_start = os.environ.get("LEDGER_WINDOW_START_EPOCH", "")
+              if not connector or not window_start:
+                  return None
+              try:
+                  return rows_landed(connector, window_start)
+              except Exception as error:
+                  log("ledger.measure_failed", level="warning", error=repr(error))
+                  return None
+
+
+          def main():
+              landed = measured_rows()
+              step = os.environ.get("LEDGER_STEP", "")
+              if not step:
+                  try:
+                      step = failed_step(os.environ.get("LEDGER_FAILURES_JSON", ""))
+                  except Exception as error:
+                      log("ledger.step_parse_failed", level="warning", error=repr(error))
+                      step = ""
+
+              columns = {
+                  "run_id": quote(os.environ.get("LEDGER_RUN_ID", "")),
+                  "job_id": quote(os.environ.get("LEDGER_JOB_ID", "")),
+                  "connector": quote(os.environ.get("LEDGER_CONNECTOR", "")),
+                  "tenant_id": quote(os.environ.get("LEDGER_TENANT_ID", "")),
+                  "source_id": quote(os.environ.get("LEDGER_SOURCE_ID", "")),
+                  "event": quote(os.environ["LEDGER_EVENT"]),
+                  "status": quote(os.environ.get("LEDGER_STATUS", "")),
+                  "origin": quote("pipeline"),
+                  "claim": quote(os.environ.get("LEDGER_CLAIM", "")),
+                  "step": quote(step),
+                  "started_at": "now64(3)",
+                  "duration_ms": str(int(os.environ.get("LEDGER_DURATION_MS") or 0)),
+                  "records_moved": str(int(os.environ.get("LEDGER_RECORDS_MOVED") or 0)),
+                  "bytes_moved": str(int(os.environ.get("LEDGER_BYTES_MOVED") or 0)),
+                  "rows_landed": "NULL" if landed is None else str(landed),
+                  "message": quote(os.environ.get("LEDGER_MESSAGE", "")),
+              }
+
+              sql = (
+                  f"INSERT INTO {LEDGER} ({', '.join(columns)}) "
+                  f"VALUES ({', '.join(columns.values())})"
+              )
+              query(sql, TIMEOUT_SECONDS)
+              log(
+                  "ledger.recorded",
+                  ledger_event=os.environ["LEDGER_EVENT"],
+                  connector=os.environ.get("LEDGER_CONNECTOR", ""),
+                  step=step,
+                  rows_landed=landed,
+              )
+
+
+          try:
+              main()
+          except Exception as error:
+              # SAFETY: the run being recorded must not fail because recording did.
+              log("ledger.write_failed", level="error", error=repr(error))
+          sys.exit(0)
+{{- end }}
