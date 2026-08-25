@@ -70,7 +70,12 @@ history AS (
         ON r.insight_source_id = fh.insight_source_id
         AND r.data_source = fh.data_source
         AND r.field_id = fh.field_id
-    WHERE ifNull(r.role, '') != '' OR fh.event_kind = 'synthetic_initial'
+    -- `availability` carries its role directly (above), so it must survive this
+    -- filter too — r.role is NULL for it, being a contract sentinel with no
+    -- vendor binding row.
+    WHERE ifNull(r.role, '') != ''
+       OR fh.field_id = 'availability'
+       OR fh.event_kind = 'synthetic_initial'
 ),
 issue_pivot AS (
     SELECT
