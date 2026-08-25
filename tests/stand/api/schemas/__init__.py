@@ -41,6 +41,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .analytics import (
+    ConnectorHealthResponse,
+    ConnectorRunsResponse,
     CustomMetric,
     CustomMetricInput,
     CustomMetricListResponse,
@@ -127,6 +129,8 @@ __all__: Sequence[str] = (
     "AccountBindingResponse",
     "AccountSearchResponse",
     "AttentionResponse",
+    "ConnectorHealthResponse",
+    "ConnectorRunsResponse",
     "CorrectionResponse",
     "CustomMetric",
     "CustomMetricInput",

@@ -42,6 +42,10 @@ SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
 #: derives correctly and a literal path wins over this one.
 SOME_METRIC_KEY: Final[str] = "scratch.probe"
 
+#: Stand-in for `{connector}`. A name no descriptor carries, so the sweep's call
+#: cannot be mistaken for a real connector's row.
+SOME_CONNECTOR: Final[str] = "scratch-no-such-connector"
+
 #: Stand-in -> the parameter it stands in for. These values are synthetic and
 #: chosen for this purpose, so a path segment equal to one of them IS the
 #: parameter — which is what lets the template be derived rather than declared
@@ -50,6 +54,7 @@ _PARAMETERS: Final[dict[str, str]] = {
     SOME_ID: "{id}",
     SOME_METRIC_KEY: "{metric_key}",
     SOME_ACCOUNT_ID: "{account_id}",
+    SOME_CONNECTOR: "{connector}",
 }
 
 
@@ -93,7 +98,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 22 operations.
+#: analytics — 24 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -129,6 +134,12 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # invisible here and asserted in test_feedback.py.
     _a("POST", "/v1/feedback"),
     _a("GET", "/v1/feedback"),
+    # Connector health. Both are `.authenticated()` at the edge and admin-gated
+    # inside the handler, so the refusal is invisible here and asserted in
+    # test_connector_health.py. `{connector}` is a connector name, so its
+    # stand-in is one that no real connector could be.
+    _a("GET", "/v1/connector-health"),
+    _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/runs"),
 )
 
 #: identity-resolution — 26 operations. `/health` and `/healthz` are the host

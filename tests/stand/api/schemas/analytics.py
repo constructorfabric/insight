@@ -674,6 +674,21 @@ class RollupValueDto(BaseModel):
     value: float | None = None
 
 
+class RunEventView(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int = Field(..., ge=0)
+    event: str
+    origin: str = Field(..., description='Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.')
+    records_moved: int = Field(..., ge=0)
+    rows_landed: int | None = Field(None, ge=0)
+    started_at: UnzonedDatetime
+    status: str
+    step: str | None = None
+    trigger: str | None = None
+
+
 class RunResponse(BaseModel):
     """
     Result of `POST /v1/queries/{id}/run`.
@@ -700,6 +715,17 @@ class RunSavedQueryRequest(BaseModel):
         extra='forbid',
     )
     period: str | None = None
+
+
+class RunView(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int = Field(..., ge=0)
+    started_at: UnzonedDatetime
+    status: str
+    step: str | None = Field(None, description='The step the run reached; absent when it did not fail.')
+    transform_status: str | None = Field(None, description="Outcome of this run's own transform step, when it got that far.")
 
 
 class SavedQuery(BaseModel):
@@ -761,6 +787,38 @@ class SnapshotSeries(BaseModel):
     )
     label: str
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
+
+
+class StorageView(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bytes_on_disk: int = Field(..., ge=0)
+    observed_at: UnzonedDatetime
+    physical_rows: int = Field(..., description='Physical rows present when observed. On a deduplicating engine this\nsizes a connector; it does not count entities.', ge=0)
+    streams: int = Field(..., ge=0)
+    streams_with_data: int = Field(..., ge=0)
+
+
+class StreamView(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bytes_on_disk: int = Field(..., ge=0)
+    physical_rows: int = Field(..., ge=0)
+    stream: str
+
+
+class SyncView(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int = Field(..., ge=0)
+    records_moved: int = Field(..., ge=0)
+    rows_landed: int | None = Field(None, description='Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.', ge=0)
+    started_at: UnzonedDatetime
+    status: str
+    trigger: str = Field(..., description='`claimed`, `out_of_band`, or `unclaimed`. Unclaimed is unknown\nprovenance; it is never presented as a manual sync.')
 
 
 class TelemetryRecord(BaseModel):
@@ -897,6 +955,26 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class ConnectorRow(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool
+    connector: str
+    last_run: RunView | None = None
+    last_sync: SyncView | None = None
+    storage: StorageView | None = None
+    streams: list[StreamView]
+
+
+class ConnectorRunsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    runs: list[RunEventView]
 
 
 class ContextEntryResponse(BaseModel):
@@ -1128,6 +1206,15 @@ class UsageSummaryResponse(BaseModel):
     since: str
     totals: UsageTotals
     until: str
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: UnzonedDatetime
+    connectors: list[ConnectorRow]
+    history_available: bool = Field(..., description='False when nothing has recorded a run yet — a fresh install before the\nfirst controller cadence, or a stand where nothing records. The page says\nso rather than implying health.')
 
 
 class CustomMetric(BaseModel):
