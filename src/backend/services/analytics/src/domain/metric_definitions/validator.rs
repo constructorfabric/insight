@@ -10,7 +10,7 @@ use crate::domain::metric_definitions::definition::{
     ObservationSource, SourceKind,
 };
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
-use crate::domain::metric_definitions::evidence_presentation::EvidencePresentation;
+use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 use crate::domain::metric_definitions::repository::{
     MetricDefinitionValidationSpec, SourceMeasureEvidence, all_managed_sources,
     managed_definition_validation_specs, source_evidence_contracts, update_definition_status,
@@ -908,12 +908,13 @@ fn declared_details_present(
 ) -> bool {
     expected.iter().all(|measure| {
         let measure_key = measure.measure_key.as_str();
-        let Some(declared) = measure.evidence_presentation.as_deref() else {
-            return true;
-        };
-        let Some(declared) = EvidencePresentation::parse(declared) else {
-            tracing::warn!(measure_key, "metric evidence presentation is not readable");
-            return false;
+        let declared = match &measure.presentation {
+            StoredPresentation::Absent => return true,
+            StoredPresentation::Declared(declared) => declared,
+            StoredPresentation::Unreadable => {
+                tracing::warn!(measure_key, "metric evidence presentation is not readable");
+                return false;
+            }
         };
         let Some(probe) = actual.get(measure_key) else {
             return true;
@@ -1102,7 +1103,7 @@ mod tests {
         SourceMeasureEvidence {
             measure_key: measure_key.to_owned(),
             evidence_granularity: value.map(str::to_owned),
-            evidence_presentation: None,
+            presentation: StoredPresentation::Absent,
         }
     }
 
@@ -1110,7 +1111,7 @@ mod tests {
         SourceMeasureEvidence {
             measure_key: measure_key.to_owned(),
             evidence_granularity: Some(value.to_owned()),
-            evidence_presentation: Some(presentation.to_owned()),
+            presentation: StoredPresentation::read(Some(presentation)),
         }
     }
 

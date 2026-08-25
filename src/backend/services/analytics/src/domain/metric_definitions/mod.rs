@@ -16,7 +16,9 @@ pub use definition::{
     CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation, MetricDefinition,
     MetricDirection, MetricFormat, ObservationSource, RatioDenominatorAggregation,
 };
-pub use evidence_presentation::{EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation};
+pub use evidence_presentation::{
+    EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation, StoredPresentation,
+};
 pub use repository::load_definitions;
 pub(crate) use repository::load_definitions_with_ids;
 pub use seeds::reconcile_builtin_definitions;

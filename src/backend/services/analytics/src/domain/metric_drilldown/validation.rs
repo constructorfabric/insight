@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{
-    EvidenceGranularity, EvidencePresentation, MetricDefinition, load_definitions_with_ids,
+    EvidenceGranularity, MetricDefinition, StoredPresentation, load_definitions_with_ids,
 };
 use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
@@ -279,10 +279,9 @@ async fn load_evidence_plan(
                 .as_deref()
                 .and_then(EvidenceGranularity::from_db)
                 .ok_or_else(config_error)?;
-            let presentation = match row.evidence_presentation.as_deref() {
-                Some(declared) => EvidencePresentation::parse(declared).ok_or_else(config_error)?,
-                None => EvidencePresentation::undeclared(granularity),
-            };
+            let presentation = StoredPresentation::read(row.evidence_presentation.as_deref())
+                .or_undeclared(granularity)
+                .ok_or_else(config_error)?;
             Ok(EvidenceInput {
                 role,
                 presentation,

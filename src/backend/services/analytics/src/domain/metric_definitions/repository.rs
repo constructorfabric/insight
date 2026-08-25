@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
+use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 
 use crate::domain::metric_definitions::definition::{
     ComputationSpec, CustomObservationSql, MetricBase, MetricComputation, MetricDefinition,
@@ -636,20 +637,27 @@ pub async fn all_managed_sources(
 
 /// What a measure claims its evidence rows look like: the granularity they
 /// carry, and the declaration of the columns the drilldown projects out of
-/// them. Both are stored as written — a value that does not parse is a
-/// configuration fault the validator reports, not one the loader hides.
-#[derive(FromQueryResult)]
+/// them. A declaration that does not parse survives as
+/// [`StoredPresentation::Unreadable`] rather than being dropped — the validator
+/// reports it, so the loader must not hide it.
 pub struct SourceMeasureEvidence {
     pub measure_key: String,
     pub evidence_granularity: Option<String>,
-    pub evidence_presentation: Option<String>,
+    pub presentation: StoredPresentation,
 }
 
 pub async fn source_evidence_contracts(
     db: &DatabaseConnection,
     source_id: Uuid,
 ) -> Result<Vec<SourceMeasureEvidence>, sea_orm::DbErr> {
-    SourceMeasureEvidence::find_by_statement(Statement::from_sql_and_values(
+    #[derive(FromQueryResult)]
+    struct Row {
+        measure_key: String,
+        evidence_granularity: Option<String>,
+        evidence_presentation: Option<String>,
+    }
+
+    Row::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
         "SELECT measure_key, evidence_granularity, evidence_presentation \
          FROM metric_source_measures \
@@ -659,6 +667,15 @@ pub async fn source_evidence_contracts(
     ))
     .all(db)
     .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| SourceMeasureEvidence {
+                measure_key: row.measure_key,
+                evidence_granularity: row.evidence_granularity,
+                presentation: StoredPresentation::read(row.evidence_presentation.as_deref()),
+            })
+            .collect()
+    })
 }
 
 // `updated_at = updated_at` in the status writers below pins the column so

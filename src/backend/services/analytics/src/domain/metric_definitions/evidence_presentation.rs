@@ -47,15 +47,43 @@ impl EvidencePresentation {
         }
     }
 
-    /// Reads a declaration back from the measure row. `None` means the stored
-    /// JSON does not describe a presentation — a configuration fault each
-    /// caller reports in its own terms, never a silent fallback to the default.
-    pub fn parse(json: &str) -> Option<Self> {
+    fn parse(json: &str) -> Option<Self> {
         serde_json::from_str(json).ok()
     }
 
     pub fn detail_keys(&self) -> impl Iterator<Item = &str> {
         self.detail_columns.iter().map(|column| column.key.as_str())
+    }
+}
+
+/// What a measure row holds under `evidence_presentation`. Three states rather
+/// than an `Option`, because stored JSON that does not describe a presentation
+/// is a configuration fault to report — not the absence of a declaration, which
+/// is ordinary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredPresentation {
+    Absent,
+    Declared(EvidencePresentation),
+    Unreadable,
+}
+
+impl StoredPresentation {
+    pub fn read(stored: Option<&str>) -> Self {
+        let Some(stored) = stored else {
+            return Self::Absent;
+        };
+        EvidencePresentation::parse(stored).map_or(Self::Unreadable, Self::Declared)
+    }
+
+    /// How the measure presents, given the granularity its rows carry. `None`
+    /// where the declaration is unreadable — the caller decides what an
+    /// unusable declaration costs it.
+    pub fn or_undeclared(&self, granularity: EvidenceGranularity) -> Option<EvidencePresentation> {
+        match self {
+            Self::Absent => Some(EvidencePresentation::undeclared(granularity)),
+            Self::Declared(presentation) => Some(presentation.clone()),
+            Self::Unreadable => None,
+        }
     }
 }
 
@@ -99,15 +127,19 @@ mod tests {
         };
         let stored = serde_json::to_string(&declared)
             .unwrap_or_else(|error| panic!("declaration must serialize: {error}"));
-        assert_eq!(EvidencePresentation::parse(&stored), Some(declared));
+        assert_eq!(
+            StoredPresentation::read(Some(&stored)),
+            StoredPresentation::Declared(declared)
+        );
     }
 
     #[test]
     fn a_column_declaring_no_type_reads_as_text() {
-        let parsed = EvidencePresentation::parse(
+        let StoredPresentation::Declared(parsed) = StoredPresentation::read(Some(
             r#"{"detail_columns":[{"key":"title","label":"Title"}],"show_value":true}"#,
-        )
-        .unwrap_or_else(|| panic!("declaration must parse"));
+        )) else {
+            panic!("declaration must parse");
+        };
         assert_eq!(parsed.detail_columns[0].r#type, EvidenceColumnType::String);
     }
 
@@ -120,10 +152,33 @@ mod tests {
             r#"{"detail_columns":[{"key":"ref"}],"show_value":true}"#,
         ] {
             assert_eq!(
-                EvidencePresentation::parse(stored),
-                None,
+                StoredPresentation::read(Some(stored)),
+                StoredPresentation::Unreadable,
                 "should reject: {stored:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_absent_declaration_and_an_unusable_one_read_apart() {
+        let granularity = EvidenceGranularity::Event;
+
+        assert_eq!(
+            StoredPresentation::read(None).or_undeclared(granularity),
+            Some(EvidencePresentation::undeclared(granularity)),
+            "declaring nothing is ordinary"
+        );
+        assert_eq!(
+            StoredPresentation::read(Some("not json")).or_undeclared(granularity),
+            None,
+            "an unusable declaration is a fault, not a default"
+        );
+
+        let declared = r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":true}"#;
+        let presentation = StoredPresentation::read(Some(declared))
+            .or_undeclared(granularity)
+            .unwrap_or_else(|| panic!("a readable declaration must resolve"));
+        assert!(presentation.show_value);
+        assert_eq!(presentation.detail_keys().collect::<Vec<_>>(), ["ref"]);
     }
 }
