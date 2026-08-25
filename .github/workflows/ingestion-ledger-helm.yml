@@ -40,5 +40,11 @@ jobs:
           python-version: "3.12"
       - name: Install test deps
         run: pip install pytest pyyaml
+      # The umbrella's subcharts are `file://` refs that `helm template`
+      # refuses to render until they are vendored into charts/insight/charts,
+      # which is untracked. A developer machine usually has them from an
+      # earlier build; a fresh checkout never does.
+      - name: Vendor chart dependencies
+        run: helm dependency build charts/insight
       - name: Render contract
         run: pytest charts/insight/tests/ -q

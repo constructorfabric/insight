@@ -66,8 +66,13 @@ def render(template: str) -> dict:
         ],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    # `check=True` would raise with the whole argv and none of the reason —
+    # a missing value or an unvendored subchart reads as an opaque exit 1.
+    if result.returncode != 0:
+        raise AssertionError(f"helm template {template} failed: {result.stderr.strip()}")
+
     return yaml.safe_load(result.stdout)
 
 
