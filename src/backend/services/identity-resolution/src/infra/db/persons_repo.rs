@@ -365,7 +365,7 @@ pub async fn provisional_persons(
     }
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,

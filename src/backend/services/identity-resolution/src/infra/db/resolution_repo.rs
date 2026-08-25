@@ -186,7 +186,7 @@ pub async fn current_bindings_in_tenant(
     // truncation would then refuse a complete answer.
     let probe = ceiling.rows().saturating_add(1);
     let mut rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             current_bindings_sql(Scope::WholeTenant),
             [tenant_id.as_bytes().to_vec().into(), probe.into()],
@@ -421,7 +421,7 @@ pub async fn append_binding_if_unbound(
         ],
     );
 
-    let result = match txn.execute(statement).await {
+    let result = match txn.execute_raw(statement).await {
         Ok(result) => result,
         // A lock conflict here means another login is writing THIS account
         // right now. "We did not write" is the truthful answer, and the
