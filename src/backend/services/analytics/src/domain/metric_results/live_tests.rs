@@ -27,16 +27,20 @@ const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 const TENANT: Uuid = Uuid::from_u128(0x2581);
 const PERSON: Uuid = Uuid::from_u128(0xfeed);
 
+// Empty counts as unset: the CI matrix passes '' to entries without a
+// provisioned ClickHouse, and set-but-empty must skip exactly like absent.
 fn client_or_skip() -> Option<insight_clickhouse::Client> {
-    let Ok(url) = std::env::var(URL_VAR) else {
+    let url = std::env::var(URL_VAR).unwrap_or_default();
+    if url.is_empty() {
         eprintln!("skipping: {URL_VAR} not set");
         return None;
-    };
+    }
     let mut config = insight_clickhouse::Config::new(url, "default");
     if let (Ok(user), Ok(password)) = (
         std::env::var("INTEGRATION_TESTS_CLICKHOUSE_USER"),
         std::env::var("INTEGRATION_TESTS_CLICKHOUSE_PASSWORD"),
-    ) {
+    ) && !user.is_empty()
+    {
         config = config.with_auth(user, password);
     }
     Some(insight_clickhouse::Client::new(config))
