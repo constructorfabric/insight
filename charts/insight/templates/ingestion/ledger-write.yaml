@@ -42,6 +42,10 @@ spec:
             default: ""  # RULE-DEFAULTS-OK: derived from failures_json when a run failed
           - name: duration_ms
             default: "0"  # RULE-DEFAULTS-OK: rows that report no elapsed time
+          # Argo reports a workflow's elapsed time in fractional seconds. Callers
+          # that have that rather than milliseconds pass it here.
+          - name: duration_seconds
+            default: ""  # RULE-DEFAULTS-OK: callers that already have milliseconds
           - name: records_moved
             default: "0"  # RULE-DEFAULTS-OK: as duration_ms
           - name: bytes_moved
@@ -57,7 +61,7 @@ spec:
           # `rows_landed` counted over this connector's own bronze streams for
           # rows stamped inside the window. Only the pipeline sets it — the
           # sweep cannot, its window has passed.
-          - name: window_start_epoch
+          - name: window_start
             default: ""  # RULE-DEFAULTS-OK: no measurement requested
           - name: clickhouse_url
             default: {{ include "insight.clickhouse.url" . | quote }}
@@ -99,6 +103,8 @@ spec:
             value: {{ `"{{inputs.parameters.step}}"` }}
           - name: LEDGER_DURATION_MS
             value: {{ `"{{inputs.parameters.duration_ms}}"` }}
+          - name: LEDGER_DURATION_SECONDS
+            value: {{ `"{{inputs.parameters.duration_seconds}}"` }}
           - name: LEDGER_RECORDS_MOVED
             value: {{ `"{{inputs.parameters.records_moved}}"` }}
           - name: LEDGER_BYTES_MOVED
@@ -107,9 +113,10 @@ spec:
             value: {{ `"{{inputs.parameters.message}}"` }}
           - name: LEDGER_FAILURES_JSON
             value: {{ `"{{inputs.parameters.failures_json}}"` }}
-          - name: LEDGER_WINDOW_START_EPOCH
-            value: {{ `"{{inputs.parameters.window_start_epoch}}"` }}
+          - name: LEDGER_WINDOW_START
+            value: {{ `"{{inputs.parameters.window_start}}"` }}
         source: |
+          import datetime
           import json
           import os
           import sys
@@ -120,6 +127,15 @@ spec:
 
           LEDGER = "ingestion_runs.pipeline_events"
           STAMP = "_airbyte_extracted_at"
+          # The workflow layer's outcome vocabulary, mapped to the ledger's at
+          # this boundary so no reader has to know both.
+          STATUS_FROM_WORKFLOW = {
+              "Succeeded": "ok",
+              "Failed": "failed",
+              "Error": "failed",
+              "Running": "running",
+              "Pending": "running",
+          }
           TIMEOUT_SECONDS = 60
           # A window count over one connector's schema reads one narrow column;
           # bronze sorts by its dedup key, so the window does not prune. That is
@@ -157,6 +173,24 @@ spec:
               return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
+          def normalized_status(raw):
+              return STATUS_FROM_WORKFLOW.get(raw, raw)
+
+
+          def elapsed_ms():
+              seconds = os.environ.get("LEDGER_DURATION_SECONDS", "")
+              if seconds:
+                  return int(float(seconds) * 1000)
+              return int(os.environ.get("LEDGER_DURATION_MS") or 0)
+
+
+          def window_start_epoch(raw):
+              """Epoch seconds from either an epoch or the workflow layer's RFC3339."""
+              if raw.isdigit():
+                  return int(raw)
+              return int(datetime.datetime.fromisoformat(raw).timestamp())
+
+
           def bronze_schema(connector):
               return "bronze_" + connector.replace("-", "_")
 
@@ -180,7 +214,7 @@ spec:
               return ""
 
 
-          def rows_landed(connector, window_start_epoch):
+          def rows_landed(connector, window_start):
               """Rows this sync delivered: stamped inside its own window.
 
               Exact at this moment — the window's rows are the newest versions,
@@ -197,7 +231,10 @@ spec:
               if not names:
                   return None
 
-              window = f"{STAMP} >= toDateTime64({int(window_start_epoch)}, 3) AND {STAMP} <= now64(3)"
+              window = (
+                  f"{STAMP} >= toDateTime64({window_start_epoch(window_start)}, 3) "
+                  f"AND {STAMP} <= now64(3)"
+              )
               counts = " UNION ALL ".join(
                   f"SELECT count() AS n FROM `{schema}`.`{name}` WHERE {window}"
                   for name in names
@@ -216,7 +253,7 @@ spec:
               A failed measurement is honest absence, never a fabricated zero.
               """
               connector = os.environ.get("LEDGER_CONNECTOR", "")
-              window_start = os.environ.get("LEDGER_WINDOW_START_EPOCH", "")
+              window_start = os.environ.get("LEDGER_WINDOW_START", "")
               if not connector or not window_start:
                   return None
               try:
@@ -243,12 +280,12 @@ spec:
                   "tenant_id": quote(os.environ.get("LEDGER_TENANT_ID", "")),
                   "source_id": quote(os.environ.get("LEDGER_SOURCE_ID", "")),
                   "event": quote(os.environ["LEDGER_EVENT"]),
-                  "status": quote(os.environ.get("LEDGER_STATUS", "")),
+                  "status": quote(normalized_status(os.environ.get("LEDGER_STATUS", ""))),
                   "origin": quote("pipeline"),
                   "claim": quote(os.environ.get("LEDGER_CLAIM", "")),
                   "step": quote(step),
                   "started_at": "now64(3)",
-                  "duration_ms": str(int(os.environ.get("LEDGER_DURATION_MS") or 0)),
+                  "duration_ms": str(elapsed_ms()),
                   "records_moved": str(int(os.environ.get("LEDGER_RECORDS_MOVED") or 0)),
                   "bytes_moved": str(int(os.environ.get("LEDGER_BYTES_MOVED") or 0)),
                   "rows_landed": "NULL" if landed is None else str(landed),

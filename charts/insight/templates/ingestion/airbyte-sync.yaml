@@ -33,6 +33,10 @@ spec:
         value: ""
       - name: tenant
         value: ""
+      - name: tenant_id
+        value: ""
+      - name: source_id
+        value: ""
       - name: airbyte_url
         value: {{ include "insight.airbyte.url" . | quote }}
   entrypoint: main
@@ -42,6 +46,15 @@ spec:
         parameters:
           - name: connection_name
           - name: airbyte_url
+          # Ledger identity. Empty when a caller predates the run ledger: the
+          # sync still runs, it just records no row of its own and the sweep
+          # covers the job a tick later.
+          - name: connector
+            default: ""  # RULE-DEFAULTS-OK: pre-ledger callers
+          - name: tenant_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: source_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
       steps:
         - - name: resolve-connection-by-name
             template: resolve-connection-by-name
@@ -59,6 +72,12 @@ spec:
                   value: {{ `"{{steps.resolve-connection-by-name.outputs.parameters.connection_id}}"` }}
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+                - name: connector
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.source_id}}"` }}
 
     - name: resolve-connection-by-name
       retryStrategy:
@@ -109,13 +128,23 @@ spec:
           fi
           printf '%s' "$id" > /tmp/connection_id.txt
 
+    # A DAG rather than steps: the ledger row must be written whether the poll
+    # succeeded or failed, and only `depends` can express that. The poll's
+    # failure still fails this DAG — recording an outcome never hides it.
     - name: sync
       inputs:
         parameters:
           - name: connection_id
           - name: airbyte_url
-      steps:
-        - - name: trigger
+          - name: connector
+            default: ""  # RULE-DEFAULTS-OK: pre-ledger callers, see `main`
+          - name: tenant_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: source_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+      dag:
+        tasks:
+          - name: trigger
             template: trigger-sync
             arguments:
               parameters:
@@ -123,14 +152,46 @@ spec:
                   value: {{ `"{{inputs.parameters.connection_id}}"` }}
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
-        - - name: poll
+
+          - name: poll
+            depends: trigger
             template: poll-job
             arguments:
               parameters:
                 - name: job_id
-                  value: {{ `"{{steps.trigger.outputs.result}}"` }}
+                  value: {{ `"{{tasks.trigger.outputs.result}}"` }}
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+
+          # The pipeline's claim on the job it started, carrying the delivery
+          # measurement the sweep cannot take later. Runs on either outcome:
+          # a failed sync is exactly the row the page needs most.
+          - name: record
+            depends: "poll.Succeeded || poll.Failed || poll.Errored"
+            when: {{ `"'{{inputs.parameters.connector}}' != ''"` }}
+            templateRef:
+              name: ledger-write
+              template: write
+            arguments:
+              parameters:
+                - name: event
+                  value: "sync.completed"
+                - name: claim
+                  value: "claimed"
+                - name: status
+                  value: {{ `"{{tasks.poll.status}}"` }}
+                - name: connector
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.source_id}}"` }}
+                - name: run_id
+                  value: {{ `"{{workflow.name}}"` }}
+                - name: job_id
+                  value: {{ `"{{tasks.trigger.outputs.result}}"` }}
+                - name: window_start
+                  value: {{ `"{{tasks.poll.startedAt}}"` }}
 
     - name: trigger-sync
       retryStrategy:

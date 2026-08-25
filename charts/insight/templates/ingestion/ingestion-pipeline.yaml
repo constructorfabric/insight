@@ -9,6 +9,20 @@ metadata:
 spec:
   serviceAccountName: argo-workflow
   entrypoint: pipeline
+  # Workflow-scope so the exit handler resolves them too. Declared with empty
+  # defaults because a submitter that predates the run ledger passes neither,
+  # and an unresolved reference in onExit would fail the run it only observes.
+  arguments:
+    parameters:
+      - name: connector
+        value: ""
+      - name: tenant_id
+        value: ""
+  # INVARIANT: this handler is the only writer that sees a run which died
+  # before its first step produced anything — proven on a stand to fire through
+  # workflowTemplateRef, including on a failure in the first task. The ledger
+  # row it writes is what makes such a run visible at all (spec FR-1).
+  onExit: record-run-finished
   templates:
     - name: pipeline
       # Connection-specific inputs (connection_name, insight_source_id,
@@ -46,6 +60,27 @@ spec:
             default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
       dag:
         tasks:
+          # Nothing depends on this task: the ledger observes the run, so the
+          # sync must never wait on a warehouse write to start.
+          - name: record-run-started
+            templateRef:
+              name: ledger-write
+              template: write
+            arguments:
+              parameters:
+                - name: event
+                  value: "run.started"
+                - name: status
+                  value: "running"
+                - name: connector
+                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
+                - name: run_id
+                  value: {{ `"{{workflow.name}}"` }}
+
           - name: sync
             templateRef:
               name: airbyte-sync
@@ -56,6 +91,12 @@ spec:
                   value: {{ `"{{inputs.parameters.connection_name}}"` }}
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
+                - name: connector
+                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
 
           - name: transform
             depends: sync
@@ -82,6 +123,32 @@ spec:
                   value: {{ `"{{inputs.parameters.clickhouse_port}}"` }}
                 - name: clickhouse_user
                   value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
+
+    # The terminal ledger row. `workflow.failures` arrives as quoted JSON and
+    # names the step the run reached; ledger-write parses it and maps the
+    # workflow status vocabulary onto the ledger's.
+    - name: record-run-finished
+      steps:
+        - - name: write
+            templateRef:
+              name: ledger-write
+              template: write
+            arguments:
+              parameters:
+                - name: event
+                  value: "run.finished"
+                - name: status
+                  value: {{ `"{{workflow.status}}"` }}
+                - name: connector
+                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                - name: run_id
+                  value: {{ `"{{workflow.name}}"` }}
+                - name: duration_seconds
+                  value: {{ `"{{workflow.duration}}"` }}
+                - name: failures_json
+                  value: {{ `"{{workflow.failures}}"` }}
 
     # Everything after the Airbyte sync, as its own entrypoint: a sync started
     # outside the pipeline (Airbyte UI, ad-hoc) gets the same chain by

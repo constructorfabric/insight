@@ -57,6 +57,12 @@ spec:
       parameters:
         - name: connection_name
           value: "${CONNECTION_NAME}"
+        # Ledger identity (connector-health spec FR-1): the run records itself
+        # under these, and the exit handler resolves them at workflow scope.
+        - name: connector
+          value: "${CONNECTOR}"
+        - name: tenant_id
+          value: "${TENANT}"
         - name: insight_source_id
           value: "${INSIGHT_SOURCE_ID}"
         - name: data_source
