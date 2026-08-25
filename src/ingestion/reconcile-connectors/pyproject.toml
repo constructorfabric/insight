@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insight-reconcile-connectors"
+version = "0.1.0"
+description = "Pure helpers for the Airbyte connector reconcile loop, shipped in the ingestion toolbox image"
+requires-python = ">=3.12"
+# Deliberately dependency-free: these run inside the reconcile CronWorkflow,
+# which has nothing but the standard library and the shell around it.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools]
+py-modules = ["sweep_plan"]
+
+[tool.setuptools.package-dir]
+"" = "python"

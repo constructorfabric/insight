@@ -187,6 +187,18 @@ COMPONENTS = [
         "cov_package": "reconcile_bronze_schema",
         "paths": ["src/ingestion/scripts"],
     },
+    # The reconcile loop's pure core: the sweep planner decides which ledger
+    # rows one tick writes (connector-health spec §3.2). Its rules are the
+    # change's densest logic — which jobs to cover, when timing may not be read
+    # as evidence, when a claim stays open — so they are measured, while the
+    # shell around them talks to Airbyte and has no measured lines.
+    {
+        "name": "reconcile-connectors",
+        "lang": "python",
+        "root": "src/ingestion/reconcile-connectors",
+        "cov_package": "sweep_plan",
+        "paths": ["src/ingestion/reconcile-connectors"],
+    },
     # Mock-server test rig for NOCODE connectors (feature-connector-mock-tests),
     # split into two CI jobs for clean results (review ask): the harness's own
     # unit tests (meta/) and the per-connector mock suites. Both measure the

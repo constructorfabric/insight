@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Plan one sweep tick's ledger rows (connector-health spec §3.2, Job Sweep).
+
+Pure over values: given what the mover, the ledger, the workflow layer and the
+descriptor set say, decide which rows to insert. No connection, no filesystem —
+`lib/sweep.sh` gathers the inputs and performs the insert.
+
+Reads a plan request as JSON on stdin, writes the rows to insert as JSON on
+stdout:
+
+    {
+      "jobs":            [{"jobId", "connectionId", "status", "startTime",
+                           "duration", "rowsSynced", "bytesSynced"}],
+      "connections":     {"<connectionId>": "<connector>"},
+      "ledger":          [{"job_id", "claim", "has_counters", "started_at_epoch"}],
+      "workflow_claims": {"<job_id>": "<run_id>"},
+      "records_readable": true,
+      "configured":      ["<connector>"],
+      "tick_run_id":     "<workflow name of this tick>",
+      "horizon_epoch":   1700000000
+    }
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+CLAIMED = "claimed"
+OUT_OF_BAND = "out_of_band"
+UNCLAIMED = "unclaimed"
+
+SYNC_COMPLETED = "sync.completed"
+CONNECTOR_CONFIGURED = "connector.configured"
+SWEEP_COMPLETED = "sweep.completed"
+
+ORIGIN = "sweep"
+
+# The mover's outcome vocabulary, mapped to the ledger's at this boundary.
+STATUS_FROM_MOVER = {
+    "succeeded": "ok",
+    "failed": "failed",
+    "cancelled": "cancelled",
+    "running": "running",
+    "incomplete": "failed",
+    "pending": "running",
+}
+
+
+@dataclass(frozen=True)
+class Row:
+    """One ledger row to insert. Field names are the ledger's column names."""
+
+    event: str
+    connector: str = ""
+    run_id: str = ""
+    job_id: str = ""
+    status: str = ""
+    claim: str = ""
+    origin: str = ORIGIN
+    started_at_epoch: int = 0
+    duration_ms: int = 0
+    records_moved: int = 0
+    bytes_moved: int = 0
+    message: str = ""
+
+
+@dataclass
+class Plan:
+    rows: list[Row] = field(default_factory=list)
+    # Jobs whose connection no longer exists: nothing the page could attribute,
+    # so they are reported rather than recorded under an empty connector.
+    unmappable_jobs: list[str] = field(default_factory=list)
+
+
+def ledger_status(mover_status: str) -> str:
+    return STATUS_FROM_MOVER.get(str(mover_status).lower(), str(mover_status).lower())
+
+
+def duration_ms(duration: Any) -> int:
+    """Milliseconds from the mover's ISO-8601 duration (`PT1M37S`) or a number."""
+    if duration is None or duration == "":
+        return 0
+    if isinstance(duration, (int, float)):
+        return int(float(duration) * 1000)
+
+    text = str(duration).strip().upper()
+    if not text.startswith("PT"):
+        return 0
+
+    seconds = 0.0
+    number = ""
+    for char in text[2:]:
+        if char.isdigit() or char == ".":
+            number += char
+            continue
+        if not number:
+            continue
+        value = float(number)
+        seconds += value * {"H": 3600, "M": 60, "S": 1}.get(char, 0)
+        number = ""
+    return int(seconds * 1000)
+
+
+def claim_for(job_id: str, workflow_claims: dict[str, str], records_readable: bool) -> tuple[str, str]:
+    """The claim this tick can justify, and the run that claims it.
+
+    Only job identity claims. Concurrent timing is never evidence, so a job the
+    records do not name is out-of-band only when the records were readable —
+    otherwise the question stays open for a later tick.
+    """
+    run_id = workflow_claims.get(job_id, "")
+    if run_id:
+        return CLAIMED, run_id
+    if records_readable:
+        return OUT_OF_BAND, ""
+    return UNCLAIMED, ""
+
+
+def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> None:
+    """A sync.completed row for every job the ledger does not hold at all."""
+    connections = request.get("connections") or {}
+    workflow_claims = request.get("workflow_claims") or {}
+    records_readable = bool(request.get("records_readable"))
+
+    for job in request.get("jobs") or []:
+        job_id = str(job.get("jobId", ""))
+        if not job_id or job_id in covered:
+            continue
+
+        connector = connections.get(str(job.get("connectionId", "")), "")
+        if not connector:
+            plan.unmappable_jobs.append(job_id)
+            continue
+
+        claim, run_id = claim_for(job_id, workflow_claims, records_readable)
+        plan.rows.append(
+            Row(
+                event=SYNC_COMPLETED,
+                connector=connector,
+                run_id=run_id,
+                job_id=job_id,
+                status=ledger_status(job.get("status", "")),
+                claim=claim,
+                started_at_epoch=int(job.get("startTimeEpoch") or 0),
+                duration_ms=duration_ms(job.get("duration")),
+                records_moved=int(job.get("rowsSynced") or 0),
+                bytes_moved=int(job.get("bytesSynced") or 0),
+            )
+        )
+
+
+def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
+    """A superseding row for every still-unclaimed job the records can settle.
+
+    Retried every tick while the job stays inside the workflow-record horizon,
+    so a temporarily unreachable record store delays a claim rather than
+    freezing one. Past the horizon the question is closed and unclaimed stands.
+    """
+    workflow_claims = request.get("workflow_claims") or {}
+    records_readable = bool(request.get("records_readable"))
+    if not records_readable:
+        return
+
+    horizon = int(request.get("horizon_epoch") or 0)
+    connections = request.get("connections") or {}
+
+    for row in request.get("ledger") or []:
+        if row.get("claim") != UNCLAIMED:
+            continue
+        if int(row.get("started_at_epoch") or 0) < horizon:
+            continue
+
+        job_id = str(row.get("job_id", ""))
+        claim, run_id = claim_for(job_id, workflow_claims, records_readable)
+        if claim == UNCLAIMED:
+            continue
+
+        plan.rows.append(
+            Row(
+                event=SYNC_COMPLETED,
+                connector=row.get("connector", "") or connections.get(str(row.get("connection_id", "")), ""),
+                run_id=run_id,
+                job_id=job_id,
+                status=row.get("status", ""),
+                claim=claim,
+                started_at_epoch=int(row.get("started_at_epoch") or 0),
+                duration_ms=int(row.get("duration_ms") or 0),
+                records_moved=int(row.get("records_moved") or 0),
+                bytes_moved=int(row.get("bytes_moved") or 0),
+            )
+        )
+
+
+def snapshot_rows(request: dict[str, Any], plan: Plan) -> None:
+    """The configured set, sealed by a marker written even when the set is empty.
+
+    The marker is what makes an empty snapshot representable: without it,
+    removing the last connector would leave the previous snapshot authoritative.
+    """
+    tick_run_id = str(request.get("tick_run_id", ""))
+    for connector in request.get("configured") or []:
+        plan.rows.append(Row(event=CONNECTOR_CONFIGURED, connector=connector, run_id=tick_run_id, status="ok"))
+    plan.rows.append(Row(event=SWEEP_COMPLETED, run_id=tick_run_id, status="ok"))
+
+
+def plan_sweep(request: dict[str, Any]) -> Plan:
+    plan = Plan()
+    covered = {str(row.get("job_id", "")) for row in request.get("ledger") or [] if row.get("has_counters")}
+
+    coverage_rows(request, covered, plan)
+    corroboration_rows(request, plan)
+    snapshot_rows(request, plan)
+    return plan
+
+
+def main() -> int:
+    request = json.load(sys.stdin)
+    plan = plan_sweep(request)
+    json.dump({"rows": [asdict(row) for row in plan.rows], "unmappable_jobs": plan.unmappable_jobs}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
