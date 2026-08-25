@@ -67,12 +67,14 @@ run_rows AS (
         started_at,
         duration_s,
         commit_known,
+        -- Labels are what surfaces display; the results builder substitutes
+        -- a literal "Unknown" for a NULL label, so every dimension carries one.
         CAST(
             [
-                tuple('repository', repo_full_name, CAST(NULL AS Nullable(String))),
+                tuple('repository', repo_full_name, toNullable(repo_full_name)),
                 tuple('pipeline', pipeline_key, toNullable(pipeline_name)),
-                tuple('trigger', trigger_category, CAST(NULL AS Nullable(String))),
-                tuple('outcome', outcome, CAST(NULL AS Nullable(String)))
+                tuple('trigger', trigger_category, toNullable(trigger_category)),
+                tuple('outcome', outcome, toNullable(outcome))
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS run_dimensions
     FROM runs
@@ -103,10 +105,10 @@ deployment_rows AS (
         if(d.is_production = 1, 'production', 'preview') AS env_kind,
         CAST(
             [
-                tuple('repository', d.repo_full_name, CAST(NULL AS Nullable(String))),
-                tuple('environment', d.environment, CAST(NULL AS Nullable(String))),
-                tuple('outcome', if(coalesce(o.state, '') = '', 'pending', o.state), CAST(NULL AS Nullable(String))),
-                tuple('env_kind', if(d.is_production = 1, 'production', 'preview'), CAST(NULL AS Nullable(String)))
+                tuple('repository', d.repo_full_name, toNullable(d.repo_full_name)),
+                tuple('environment', d.environment, toNullable(d.environment)),
+                tuple('outcome', if(coalesce(o.state, '') = '', 'pending', o.state), toNullable(if(coalesce(o.state, '') = '', 'pending', o.state))),
+                tuple('env_kind', if(d.is_production = 1, 'production', 'preview'), toNullable(if(d.is_production = 1, 'production', 'preview')))
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS deployment_dimensions
     FROM (
