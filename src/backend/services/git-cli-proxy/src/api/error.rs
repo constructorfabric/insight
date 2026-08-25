@@ -227,6 +227,17 @@ impl ApiError {
     }
 }
 
+/// The answer for a handler that outlived its budget (`api::HANDLER_BUDGET`).
+/// A plain 503 envelope: the connectors' declarative handlers RETRY 503, and
+/// the detail deliberately names no internals — the log line next to it does.
+#[must_use]
+pub fn handler_timed_out() -> Response {
+    CanonicalError::service_unavailable()
+        .with_detail("the request outlived the handler budget")
+        .create()
+        .into_response()
+}
+
 /// Detail naming a path or a git invocation is logged here and never reaches
 /// the wire; the crate additionally `serde(skip)`s an internal description.
 fn internal_error(error: &dyn std::fmt::Display) -> CanonicalError {
