@@ -38,6 +38,14 @@ spec:
       inputs:
         parameters:
           - name: connection_name
+          # Ledger identity as template INPUTS, not workflow scope: the manual
+          # submitter reaches this template by `templateRef`, which merges no
+          # `spec.arguments`, so a workflow-scope reference there is
+          # unresolvable and the run errors before it starts.
+          - name: connector
+            default: ""  # RULE-DEFAULTS-OK: a caller that predates the ledger
+          - name: tenant_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
           - name: insight_source_id
           - name: data_source                # "jira" → enriched path; anything else → legacy single-dbt
           - name: dbt_select_staging         # e.g. "tag:jira"; empty for non-jira
@@ -59,13 +67,21 @@ spec:
           - name: clickhouse_user
             default: {{ required "clickhouse.username is required" .Values.clickhouse.username | quote }}
       dag:
+        # INVARIANT: the real work is named alongside the recorders.
+        #
+        # A DAG's phase comes from its targets, and a target is any task nothing
+        # depends on — leaving the recorders as the only ones. Measured on a
+        # stand: a failed task plus a succeeded recorder reported the DAG
+        # Succeeded, which turned a failed dbt into a green run.
+        target: "sync transform record-run-started record-transform"
         tasks:
           # Nothing depends on this task: the ledger observes the run, so the
           # sync must never wait on a warehouse write to start.
           - name: record-run-started
+            when: {{ `"'{{inputs.parameters.connector}}' != ''"` }}
             templateRef:
               name: ledger-write
-              template: write
+              template: write-tolerated
             arguments:
               parameters:
                 - name: event
@@ -73,9 +89,9 @@ spec:
                 - name: status
                   value: "running"
                 - name: connector
-                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
                 - name: tenant_id
-                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
                 - name: source_id
                   value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
                 - name: run_id
@@ -92,9 +108,9 @@ spec:
                 - name: airbyte_url
                   value: {{ `"{{inputs.parameters.airbyte_url}}"` }}
                 - name: connector
-                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
                 - name: tenant_id
-                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
                 - name: source_id
                   value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
 
@@ -130,10 +146,10 @@ spec:
           # Omitted when the sync did not run, which is the honest answer.
           - name: record-transform
             depends: "transform.Succeeded || transform.Failed || transform.Errored"
-            when: {{ `"'{{workflow.parameters.connector}}' != ''"` }}
+            when: {{ `"'{{inputs.parameters.connector}}' != ''"` }}
             templateRef:
               name: ledger-write
-              template: write
+              template: write-tolerated
             arguments:
               parameters:
                 - name: event
@@ -141,9 +157,9 @@ spec:
                 - name: status
                   value: {{ `"{{tasks.transform.status}}"` }}
                 - name: connector
-                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
                 - name: tenant_id
-                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
                 - name: source_id
                   value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
                 - name: run_id
@@ -155,9 +171,10 @@ spec:
     - name: record-run-finished
       steps:
         - - name: write
+            when: {{ `"'{{workflow.parameters.connector}}' != ''"` }}
             templateRef:
               name: ledger-write
-              template: write
+              template: write-tolerated
             arguments:
               parameters:
                 - name: event

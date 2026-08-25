@@ -8,19 +8,90 @@ metadata:
     app.kubernetes.io/component: ingestion-template
 spec:
   serviceAccountName: argo-workflow
-  entrypoint: write
+  entrypoint: write-tolerated
   templates:
+    # INVARIANT: the only entry point callers use. A pod-level failure of the
+    # write — an image it cannot pull, an eviction, the deadline — must not
+    # reach the run being recorded, and `continueOn` is legal in `steps` while a
+    # `depends` DAG rejects it. Measured on a stand: with a failing inner step
+    # this template still completes, both as a DAG task and as an exit handler.
+    - name: write-tolerated
+      inputs:
+        parameters:
+          - name: event
+          - name: connector
+            default: ""  # RULE-DEFAULTS-OK: forwarded verbatim to `write`
+          - name: run_id
+          - name: job_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: tenant_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: source_id
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: status
+          - name: claim
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: step
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: duration_ms
+            default: "0"  # RULE-DEFAULTS-OK: as connector
+          - name: duration_seconds
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: records_moved
+            default: "0"  # RULE-DEFAULTS-OK: as connector
+          - name: bytes_moved
+            default: "0"  # RULE-DEFAULTS-OK: as connector
+          - name: message
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: failures_json
+            default: ""  # RULE-DEFAULTS-OK: as connector
+          - name: window_start
+            default: ""  # RULE-DEFAULTS-OK: as connector
+      steps:
+        - - name: write
+            template: write
+            continueOn: { failed: true, error: true }
+            arguments:
+              parameters:
+                - name: event
+                  value: {{ `"{{inputs.parameters.event}}"` }}
+                - name: connector
+                  value: {{ `"{{inputs.parameters.connector}}"` }}
+                - name: run_id
+                  value: {{ `"{{inputs.parameters.run_id}}"` }}
+                - name: job_id
+                  value: {{ `"{{inputs.parameters.job_id}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{inputs.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.source_id}}"` }}
+                - name: status
+                  value: {{ `"{{inputs.parameters.status}}"` }}
+                - name: claim
+                  value: {{ `"{{inputs.parameters.claim}}"` }}
+                - name: step
+                  value: {{ `"{{inputs.parameters.step}}"` }}
+                - name: duration_ms
+                  value: {{ `"{{inputs.parameters.duration_ms}}"` }}
+                - name: duration_seconds
+                  value: {{ `"{{inputs.parameters.duration_seconds}}"` }}
+                - name: records_moved
+                  value: {{ `"{{inputs.parameters.records_moved}}"` }}
+                - name: bytes_moved
+                  value: {{ `"{{inputs.parameters.bytes_moved}}"` }}
+                - name: message
+                  value: {{ `"{{inputs.parameters.message}}"` }}
+                - name: failures_json
+                  value: {{ `"{{inputs.parameters.failures_json}}"` }}
+                - name: window_start
+                  value: {{ `"{{inputs.parameters.window_start}}"` }}
+
     # Records one row in the ingestion run ledger (connector-health spec §3.2,
-    # Run Recorder). Callers supply the row; this template owns the insert, the
-    # optional delivery measurement, and the failed-step derivation.
-    #
-    # INVARIANT: recording is subordinate to the recorded (spec NFR-2) — every
-    # failure path here logs and exits 0, so a broken ledger never fails the run
-    # it describes, and never turns a green run red through an exit handler.
+    # Run Recorder). Callers reach it through `write-tolerated`, never directly.
     - name: write
       # SECURITY:
-      #  Argo substitutes parameter refs as LITERAL TEXT at render time —
-      #  splicing them into Python source is a command-injection sink, and
+      #  Argo substitutes parameter refs as LITERAL TEXT at run time — splicing
+      #  them into Python source is a command-injection sink, and
       #  `workflow.failures` in particular arrives as quoted JSON. Every
       #  parameter is passed via env and read with os.environ.
       inputs:
@@ -177,6 +248,22 @@ spec:
               return STATUS_FROM_WORKFLOW.get(raw, raw)
 
 
+          def started_at_sql():
+              """When the reported thing started, not when this row was written.
+
+              The caller passes the real start where it has one; otherwise the
+              write time is the closest fact available, and the row is written at
+              the moment the event happened.
+              """
+              raw = os.environ.get("LEDGER_WINDOW_START", "")
+              if not raw:
+                  return "now64(3)"
+              try:
+                  return f"toDateTime64({window_start_epoch(raw)}, 3)"
+              except (ValueError, TypeError):
+                  return "now64(3)"
+
+
           def elapsed_ms():
               seconds = os.environ.get("LEDGER_DURATION_SECONDS", "")
               if seconds:
@@ -195,8 +282,29 @@ spec:
               return "bronze_" + connector.replace("-", "_")
 
 
+          def without_attempt(step):
+              """`poll(0)` -> `poll`: a retry attempt is the step, not a step.
+
+              The earliest node to finish is the innermost retry attempt, so the
+              raw name carries an attempt index that changes between otherwise
+              identical failures.
+              """
+              return step.split("(", 1)[0] if step.endswith(")") else step
+
+
+          def is_plain_identifier(name):
+              return bool(name) and all(c.isalnum() or c == "_" for c in name)
+
+
           def failed_step(failures_json):
-              """First failed node's displayName — the step the run reached.
+              """The step whose failure caused the run to fail.
+
+              INVARIANT: chosen by earliest finish, not by position. The payload
+              is built by iterating a Go map, so its order is random, and one
+              failure yields several nodes — the retry node, its attempt, and
+              every DAG that inherited the phase. The earliest to finish is the
+              cause; picking the first entry recorded a different step for two
+              identical runs.
 
               The workflow-level node repeats the workflow name and names no
               step, so it is skipped.
@@ -206,12 +314,21 @@ spec:
               payload = json.loads(failures_json)
               if isinstance(payload, str):
                   payload = json.loads(payload)
+              # A run with no failures marshals to JSON `null`, which is every
+              # successful run — not something to warn about.
+              if not payload:
+                  return ""
+
               workflow_name = os.environ.get("LEDGER_RUN_ID", "")
-              for node in payload:
-                  name = node.get("displayName", "")
-                  if name and name != workflow_name:
-                      return name
-              return ""
+              named = [
+                  node
+                  for node in payload
+                  if node.get("displayName") and node.get("displayName") != workflow_name
+              ]
+              if not named:
+                  return ""
+              named.sort(key=lambda node: (node.get("finishedAt") or "", node.get("displayName")))
+              return without_attempt(named[0]["displayName"])
 
 
           def rows_landed(connector, window_start):
@@ -221,6 +338,11 @@ spec:
               so no merge can have collapsed them yet.
               """
               schema = bronze_schema(connector)
+              # SAFETY: names are spliced into a backticked identifier, not
+              # bound, so anything that is not a plain identifier is refused
+              # rather than quoted — the schema as much as the stream.
+              if not is_plain_identifier(schema):
+                  return None
               streams = query(
                   "SELECT name FROM system.tables WHERE database = "
                   f"{quote(schema)} AND engine LIKE '%MergeTree' "
@@ -238,7 +360,7 @@ spec:
               counts = " UNION ALL ".join(
                   f"SELECT count() AS n FROM `{schema}`.`{name}` WHERE {window}"
                   for name in names
-                  if name.replace("_", "").isalnum()
+                  if is_plain_identifier(name)
               )
               if not counts:
                   return None
@@ -284,7 +406,7 @@ spec:
                   "origin": quote("pipeline"),
                   "claim": quote(os.environ.get("LEDGER_CLAIM", "")),
                   "step": quote(step),
-                  "started_at": "now64(3)",
+                  "started_at": started_at_sql(),
                   "duration_ms": str(elapsed_ms()),
                   "records_moved": str(int(os.environ.get("LEDGER_RECORDS_MOVED") or 0)),
                   "bytes_moved": str(int(os.environ.get("LEDGER_BYTES_MOVED") or 0)),

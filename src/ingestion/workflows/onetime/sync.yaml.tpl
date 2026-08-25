@@ -35,6 +35,13 @@ spec:
               parameters:
                 - name: connection_name
                   value: "${CONNECTION_NAME}"
+                # Ledger identity, so a manual run is recorded like a scheduled
+                # one. Passed as template inputs because this submitter reaches
+                # `pipeline` by templateRef, which merges no spec.arguments.
+                - name: connector
+                  value: "${CONNECTOR}"
+                - name: tenant_id
+                  value: "${TENANT}"
                 - name: insight_source_id
                   value: "${SOURCE_ID}"
                 - name: data_source
