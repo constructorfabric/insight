@@ -307,8 +307,8 @@ rows, and size on disk.
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-stream-expansion`
 
 Expanding a connector shows its streams with per-stream physical rows and share of streams
-holding data, sourced from storage metadata. An empty stream inside an otherwise delivering
-connector is the expansion's primary signal.
+holding data, and when that picture was last observed. An empty stream inside an otherwise
+delivering connector is the expansion's primary signal.
 
 #### FR-9 — Facts, not verdicts
 
@@ -355,17 +355,18 @@ presented as the trigger.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-empty-ledger`
 
-Before the first sweep or on stands without a mover, the page renders storage-metadata facts
-(streams, rows, sizes) and states plainly that run history is not available — it does not
-error and does not imply health.
+Before the first controller cadence, or on stands where nothing records, the page states
+plainly that no observations are available yet and shows storage figures as unknown — it does
+not error and does not imply health.
 
 #### FR-14 — The read path depends on nothing external
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-no-external-reads`
 
-Serving the page requires only the warehouse. No mover, cluster API, or other external call
-is made on the request path; their unavailability cannot degrade the page beyond the
-staleness of the last sweep.
+Serving the page requires only the recorded facts. No mover, cluster API, or other external
+call is made on the request path, and the reader holds no access to raw connector data in any
+form; unavailability upstream cannot degrade the page beyond the staleness of the last
+recording.
 
 ## 6. Non-Functional Requirements
 
@@ -376,7 +377,8 @@ staleness of the last sweep.
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-nfr-interactive-read`
 
 Opening the page completes within an interactive budget on large installs, because the read
-path touches only the ledger and storage metadata — never a scan of raw stream data.
+path touches only recorded facts — never raw connector data, and never a measurement taken
+while the operator waits.
 
 #### NFR-2 — Recording never breaks ingestion
 
@@ -476,8 +478,8 @@ misrouted writes or a broken destination — not a connector the page calls heal
 
 On a new install the operator configures a subset of connectors. The page lists configured
 connectors with their first recorded runs, and shows the rest — schemas with no configuration
-record and no runs — as never configured at the bottom, not as failures (FR-15). Before the first sweep completes, the page says run
-history is not yet available rather than implying anything.
+record and no runs — as never configured at the bottom, not as failures (FR-15). Before the first controller cadence completes, the page says no observations are available
+yet rather than implying anything.
 
 ## 9. Acceptance Criteria
 
@@ -500,9 +502,9 @@ history is not yet available rather than implying anything.
 - [ ] No fresh/stale verdict appears anywhere; unknown states render as unknown (FR-9).
 - [ ] A non-operator caller is refused; the response is instance-wide for the operator
       (FR-11).
-- [ ] With the mover unreachable, the page still serves ledger and storage facts, and every
-      trigger classification it shows is reproducible from recorded facts alone (FR-12,
-      FR-14).
+- [ ] With the mover unreachable, the page still serves the last recorded facts, every
+      trigger classification it shows is reproducible from them alone, and the reader holds
+      no access to raw connector data (FR-12, FR-14).
 - [ ] A ledger write failure does not fail the ingestion run (NFR-2); a repeated sweep does
       not change reported state (NFR-3).
 

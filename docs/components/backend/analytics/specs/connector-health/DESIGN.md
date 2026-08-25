@@ -40,26 +40,26 @@ The design is a seam: a single append-only warehouse table — the **run ledger*
 those who know what happened from those who need to know it. Above the seam, two writers
 record facts at the moment they are cheap to know: the ingestion pipeline records its own run
 boundaries, and the reconcile loop sweeps the data mover's job history for everything the
-pipeline did not perform. Below the seam, the analytics service answers the operator's page
-from the ledger and warehouse storage metadata alone.
+pipeline did not perform and observes what bronze holds. Below the seam, the analytics service
+answers the operator's page from that one table.
 
 ```mermaid
 flowchart TB
     subgraph write["write path — at sync time"]
         AB[data mover] -->|job outcomes| SW[job sweep in reconcile tick]
         PL[ingestion pipeline] -->|run boundaries, step outcomes| LG[(run ledger)]
-        SW -->|swept sync outcomes + backfill| LG
+        SW -->|swept syncs, backfill, storage observations| LG
         PL -.->|counts own window rows at sync time| BR[(bronze streams)]
+        SW -.->|observes streams, rows, bytes| BR
     end
     subgraph read["read path — at page open"]
         LG --> AN[analytics read model]
-        SP[(storage metadata)] --> AN
         AN --> PO[portal pane]
     end
 ```
 
-Nothing on the read path calls anything outside the warehouse. Nothing on the write path is
-allowed to fail the run it records.
+The read path issues one query against one table — no external call, and no access to bronze
+in any form. Nothing on the write path is allowed to fail the run it records.
 
 ### 1.2 Architecture Drivers
 
@@ -80,7 +80,7 @@ allowed to fail the run it records.
 
 | NFR | Allocated to |
 |---|---|
-| NFR-1 interactive read | ledger + storage-metadata queries only; no stream-data scan on the request path |
+| NFR-1 interactive read | one small-table query; the request path reads neither bronze nor storage metadata |
 | NFR-2 recording never breaks ingestion | best-effort writers: ledger insert failures are logged and swallowed (§2.1) |
 | NFR-3 idempotent sweep | append-only rows deduplicated at read by job identity (§3.1, §3.7) |
 | NFR-4 bounded storage | table TTL; service database excluded from exports (§3.7) |
@@ -91,7 +91,7 @@ allowed to fail the run it records.
 |---|---|---|
 | Workflow templates | recording run boundaries and step outcomes | `charts/insight/templates/ingestion/` |
 | Reconcile loop | the sweep: mover job history → ledger | `src/ingestion/reconcile-connectors/` |
-| Warehouse | the ledger table, bronze storage metadata, grants | migration in `src/ingestion/scripts/migrations/` |
+| Warehouse | the ledger table and its grants | migration in `src/ingestion/scripts/migrations/` |
 | Analytics service | the read model and HTTP surface | `src/backend/services/analytics/` |
 | Portal | the Connector health pane replacing Data health | `src/frontend/` |
 
@@ -150,14 +150,16 @@ No writer updates or deletes ledger rows. Two writers may record the same sync (
 at run time, the sweep a tick later); reads resolve duplicates by job identity, preferring
 the richer row. This is what makes NFR-3 hold by construction.
 
-#### Metadata visibility without data access
+#### The reader gets no bronze access of any kind
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-constraint-metadata-only-grant`
 
-The analytics warehouse user gains visibility of bronze relations in storage metadata without
-gaining the right to read their rows. The read-only query-path contract (silver and
-presentation relations only) stays intact; this surface adds metadata visibility plus SELECT
-on the ledger database, nothing more.
+The read-only query-path role gains exactly one thing: SELECT on the ledger database. It
+gets no grant on bronze, in data or in metadata — measured on ClickHouse 25.7, `SHOW` on a
+bronze pattern does not make those relations visible in `system.parts` (row visibility there
+follows actual data access), so "metadata only" is not a reachable permission state. Storage
+facts therefore reach the page the same way every other fact does: recorded into the ledger
+by a writer that already owns bronze.
 
 #### No compose-stand behaviour beyond degradation
 
@@ -175,7 +177,7 @@ A **ledger event** is one immutable observation about one run or sync:
 
 | Field | Meaning |
 |---|---|
-| `event` | what is being reported: `run.started`, `sync.completed`, `transform.completed`, `run.finished`, `connector.configured` |
+| `event` | what is being reported: `run.started`, `sync.completed`, `transform.completed`, `run.finished`, `storage.observed`, `connector.configured`, `sweep.completed` |
 | `status` | outcome of the reported thing: `ok`, `failed`, `cancelled`, `running` |
 | `origin` | which writer recorded it: `pipeline` or `sweep`. Origin is provenance only — it never classifies how a sync was started |
 | `step` | for `run.finished`: the last step reached (`resolve`, `sync`, `transform`, `done`) |
@@ -211,9 +213,12 @@ TTL-shaped lag (FR-15). The marker doubles as the sweep's heartbeat (the page's 
 of"). A connector with a storage schema, no membership in the newest sealed snapshot, and no
 runs renders as never configured.
 
+A **storage observation** (`storage.observed`) is what bronze held when a sweep tick looked:
+one row per connector with stream counts, rows and bytes, and one per stream with its own —
+the only route by which storage facts reach the page (§2.2).
+
 A **connector summary** is the read model's unit: the connector's latest terminal event,
-latest sync counters, and storage facts (streams, streams with data, physical rows, bytes),
-merged by connector name. Bronze schema names map to connector names by stripping the schema
+latest sync counters, and its newest storage observation, merged by connector name. Bronze schema names map to connector names by stripping the schema
 prefix and mapping underscores back to the connector's hyphenated name; the mapping is a pure
 function with table-driven tests.
 
@@ -284,7 +289,12 @@ Each reconcile tick:
    final after it. Timing overlap never claims: a manual sync may run while a pipeline run
    is mid-transform. A lost best-effort pipeline row therefore degrades to a late claim,
    never to a false "manual".
-3. **Snapshot** the configured set (FR-15): one atomic insert of `connector.configured`
+3. **Observe** storage (FR-7, FR-8): one `system.parts` aggregate per tick over the bronze
+   schemas, written as `storage.observed` rows — one per connector carrying stream counts,
+   rows and bytes, plus one per stream carrying its own. This is a metadata query, no data
+   read, and it runs under the ingestion user's existing ownership of bronze. It is the only
+   path by which storage facts reach the page (§2.2).
+4. **Snapshot** the configured set (FR-15): one atomic insert of `connector.configured`
    rows — every connector the tick currently manages — sealed by a `sweep.completed` marker
    row, written even when the set is empty. The newest sealed snapshot is the configured
    set; a connector absent from it stopped being configured, so removal — including of the
@@ -298,10 +308,10 @@ never reconstructed. Implements
 
 ##### Responsibility boundaries
 
-Consumes the mover's public job listing and the workflow layer's execution records (for
-corroboration, while retained) — both under access the reconcile loop already holds. Reads
-no bronze data at all; any richer per-job mover detail is optional enrichment that may
-vanish without breaking the sweep. Never mutates mover state. Sweep failure logs and ends
+Consumes the mover's public job listing, the workflow layer's execution records (for
+corroboration, while retained), and `system.parts` metadata — all under access the reconcile
+loop already holds. Reads no bronze row data; any richer per-job mover detail is optional
+enrichment that may vanish without breaking the sweep. Never mutates mover state. Sweep failure logs and ends
 the step; the reconcile tick's connector work is unaffected (NFR-2).
 
 ##### Related components (by ID)
@@ -321,10 +331,11 @@ in a handler.
 
 ##### Responsibility scope
 
-Two warehouse queries per request: latest-run resolution over the ledger (arg-max per
+One warehouse query per request, over the ledger alone: latest-run resolution (arg-max per
 connector; duplicate rows for one `job_id` resolve by claim precedence then recency, counters
-from the sweep's rich row, run linkage from whichever row carries `run_id`) and per-stream
-storage facts from parts metadata. Pure functions merge them into connector summaries, read
+from the row that carries them, run linkage from whichever row carries `run_id`), newest
+`storage.observed` rows per connector and per stream, and the newest sealed configured-set
+snapshot. Pure functions merge them into connector summaries, read
 each sync's trigger from its resolved `claim` (§3.1 — stored by the writers; the read path
 never consults anything outside the warehouse), resolve the quiet states (broken / empty /
 configured-never-ran / never-configured) from runs plus the newest sealed configured-set
@@ -333,9 +344,9 @@ history slices for the expansion (FR-8, UC-1).
 
 ##### Responsibility boundaries
 
-Never queries bronze stream data; never calls the mover; never classifies freshness. Missing
-ledger table (migration not yet applied) degrades to storage-only summaries with
-`history_available = false` (FR-13).
+Holds no bronze access at all; never calls the mover; never classifies freshness. A missing
+ledger table (migration not yet applied) or an empty one degrades to the configured-set list
+with `history_available = false` and unknown storage figures (FR-13).
 
 ##### Related components (by ID)
 
@@ -401,6 +412,7 @@ GET /v1/connector-health
         "rows_landed": null
       },
       "storage": {
+        "observed_at": "2026-01-15T08:55:00Z",
         "streams": 12,
         "streams_with_data": 8,
         "physical_rows": 4200000,
@@ -518,6 +530,7 @@ sequenceDiagram
     RC->>WF: corroborate new + still-unclaimed by job_id in outputs
     RC->>LG: sync.completed per uncovered job (rows_landed NULL)
     RC->>LG: superseding claims for repaired rows
+    RC->>LG: storage.observed per connector and per stream
     RC->>LG: configured-set snapshot + sweep.completed marker
 ```
 
@@ -536,12 +549,12 @@ sequenceDiagram
     participant AN as analytics
     participant WH as warehouse
     PO->>AN: GET /v1/connector-health (admin)
-    AN->>WH: latest events per connector (ledger)
-    AN->>WH: streams, rows, bytes (parts metadata)
+    AN->>WH: one query over ingestion_runs.pipeline_events
+    WH-->>AN: runs, storage observations, configured snapshot
     AN-->>PO: summaries, ordered by attention
 ```
 
-Two queries, both over small relations; no external call (FR-14, NFR-1).
+One query over one small table; no external call and no bronze access (FR-14, NFR-1).
 
 ### 3.7 Database schemas & tables
 
@@ -561,7 +574,7 @@ swept by exports and customer extracts, which must never carry service rows.
 | `connector` | `LowCardinality(String)` | hyphenated connector name |
 | `tenant_id` | `String` | |
 | `source_id` | `String` | |
-| `event` | `LowCardinality(String)` | `run.started` \| `sync.completed` \| `transform.completed` \| `run.finished` \| `connector.configured` \| `sweep.completed` |
+| `event` | `LowCardinality(String)` | `run.started` \| `sync.completed` \| `transform.completed` \| `run.finished` \| `storage.observed` \| `connector.configured` \| `sweep.completed` |
 | `status` | `LowCardinality(String)` | `ok` \| `failed` \| `cancelled` \| `running` |
 | `origin` | `LowCardinality(String)` | `pipeline` \| `sweep` |
 | `claim` | `LowCardinality(String)` | `claimed` \| `out_of_band` \| `unclaimed`; empty on non-sync rows. The stored corroboration finding — the read path cannot re-derive it (§3.1) |
@@ -571,6 +584,11 @@ swept by exports and customer extracts, which must never carry service rows.
 | `records_moved` | `UInt64` | mover-reported |
 | `bytes_moved` | `UInt64` | mover-reported |
 | `rows_landed` | `Nullable(UInt64)` | storage rows whose extraction stamp falls inside this sync's window, measured by the pipeline at sync time; NULL on swept rows — the window has passed |
+| `stream` | `LowCardinality(String)` | the observed stream; empty on connector-level and non-storage rows |
+| `streams` | `UInt16` | connector-level `storage.observed` only |
+| `streams_with_data` | `UInt16` | connector-level `storage.observed` only |
+| `rows_total` | `Nullable(UInt64)` | physical rows present when observed; `storage.observed` only |
+| `bytes_on_disk` | `UInt64` | size when observed; `storage.observed` only |
 | `message` | `String` | brief failure reason; empty on success |
 
 `ENGINE = MergeTree`, `PARTITION BY toYYYYMM(ts)`, `ORDER BY (connector, ts, event_id)`,
@@ -583,6 +601,10 @@ Append-only: read-side resolution picks, per job identity, the winning claim by 
 sweep's coverage row otherwise), and run linkage from whichever winning-claim row carries
 `run_id`. Duplicate recording of the same sync — both writers, or an overlapping sweep —
 therefore changes nothing the page reports (NFR-3).
+
+**`rows_landed` vs `rows_total`**: `rows_landed` is one sync's own delivery, measured once by
+the pipeline; `rows_total` is what the schema held when a sweep tick last looked. The first
+answers "did this sync deliver", the second "how much is there now".
 
 **`rows_landed` semantics**: measured once, by the pipeline, immediately after its sync —
 a window `count()` on the extraction-stamp column of the connector's own streams. At that
@@ -609,13 +631,14 @@ Numbered migration, alongside the table DDL:
 
 | Grantee | Grant | Why |
 |---|---|---|
-| pipeline / sweep warehouse user | `INSERT ON ingestion_runs.pipeline_events` | the two writers (already the ingestion user; no new principal). The pipeline's sync-time window count over its own bronze streams needs no new grant: the ingestion user already owns bronze end to end |
-| read-only query-path role | `SELECT ON ingestion_runs.*` | the read model's ledger queries |
-| read-only query-path role | `SHOW ON bronze_*.*` (wildcard) | storage-metadata visibility without data access — parts metadata lists only relations the user can see (§2.2 constraint) |
+| pipeline / sweep warehouse user | `INSERT ON ingestion_runs.pipeline_events` | the two writers (already the ingestion user; no new principal). Its bronze window counts and `system.parts` observations need no new grant — it owns bronze end to end |
+| read-only query-path role | `SELECT ON ingestion_runs.*` | the read model's only query |
 
-If the warehouse's `SHOW`-only visibility proves insufficient for parts metadata in the
-deployed version, the fallback is wildcard `SELECT` on bronze confined to a dedicated role;
-the constraint in §2.2 still holds because the read model never issues a data query.
+That is the whole grant surface. No bronze grant is issued to the reader, in data or in
+metadata — measured on ClickHouse 25.7, neither `SHOW` on a `bronze_*` pattern nor a
+`bronze_*` wildcard `SELECT` makes existing bronze relations visible in `system.parts` for a
+role lacking real access, so the storage-observation route in §3.2 is not a preference but
+the only workable one.
 
 ### 3.8 Deployment Topology
 
@@ -624,7 +647,7 @@ No new services, images, or schedules.
 | Change | Where |
 |---|---|
 | exit handler + `run.started` / `run.finished` / `transform.completed` writes | `charts/insight/templates/ingestion/ingestion-pipeline.yaml`, `dbt-run.yaml` |
-| sweep step + watermark | `src/ingestion/reconcile-connectors/` (new lib + python helper, existing tick) |
+| sweep step + watermark + storage observations | `src/ingestion/reconcile-connectors/` (new lib + python helper, existing tick) |
 | table + grants migration | `src/ingestion/scripts/migrations/` |
 | endpoint | analytics service (domain module + api module + OpenAPI) |
 | pane replacement | portal Manage zone |
@@ -653,9 +676,10 @@ pre-sync failure leaves no job.
 - **Mover reads on the request path** — rejected: it couples page availability to the mover,
   costs orders of magnitude more latency than warehouse reads, and its richer detail is
   available to the sweep in the background instead.
-- **Stream-data scans on the request path** — rejected: storage metadata answers the
-  volume questions the page asks; per-stream timestamp or entity aggregates can become a
-  per-connector drill-down later without touching this design's seam.
+- **Any bronze access for the reader** — not a preference: measured on ClickHouse 25.7 the
+  reader cannot be given metadata visibility without data access, so storage facts are
+  recorded by the sweep instead. Per-stream timestamp or entity aggregates could later join
+  the same observation rows without touching the seam.
 - **Expected-connector detection** — deferred to
   [#744](https://github.com/constructorfabric/insight/issues/744); needs cluster
   configuration this design deliberately does not read.
@@ -676,7 +700,7 @@ the removed counters.
 | FR-4 | `transform.completed` events, §3.1 |
 | FR-5 | TTL in §3.7 |
 | FR-6 | first-tick backfill in `cpt-insightspec-connhealth-seq-sweep-tick` |
-| FR-7, FR-8 | `cpt-insightspec-connhealth-component-read-model`, §3.3 |
+| FR-7, FR-8 | `storage.observed` rows from `cpt-insightspec-connhealth-component-job-sweep`, `cpt-insightspec-connhealth-component-read-model`, §3.3 |
 | FR-9 | `cpt-insightspec-connhealth-principle-facts-with-provenance` |
 | FR-10 | attention ordering in `cpt-insightspec-connhealth-component-read-model` |
 | FR-11 | `cpt-insightspec-connhealth-constraint-instance-wide` |
