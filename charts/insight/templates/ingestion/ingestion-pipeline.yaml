@@ -124,6 +124,31 @@ spec:
                 - name: clickhouse_user
                   value: {{ `"{{inputs.parameters.clickhouse_user}}"` }}
 
+          # The transform's own outcome (spec FR-4). Neither the mover nor
+          # bronze knows it, so a successful sync followed by a failed dbt —
+          # fresh bronze, stalled downstream layers — is visible only here.
+          # Omitted when the sync did not run, which is the honest answer.
+          - name: record-transform
+            depends: "transform.Succeeded || transform.Failed || transform.Errored"
+            when: {{ `"'{{workflow.parameters.connector}}' != ''"` }}
+            templateRef:
+              name: ledger-write
+              template: write
+            arguments:
+              parameters:
+                - name: event
+                  value: "transform.completed"
+                - name: status
+                  value: {{ `"{{tasks.transform.status}}"` }}
+                - name: connector
+                  value: {{ `"{{workflow.parameters.connector}}"` }}
+                - name: tenant_id
+                  value: {{ `"{{workflow.parameters.tenant_id}}"` }}
+                - name: source_id
+                  value: {{ `"{{inputs.parameters.insight_source_id}}"` }}
+                - name: run_id
+                  value: {{ `"{{workflow.name}}"` }}
+
     # The terminal ledger row. `workflow.failures` arrives as quoted JSON and
     # names the step the run reached; ledger-write parses it and maps the
     # workflow status vocabulary onto the ledger's.
