@@ -19,28 +19,49 @@ retires.
 - **Definition store** — MySQL via sea-orm
   (`src/backend/services/analytics/src/migration/m20260625_000001_metric_definitions.rs`
   and follow-ups): `metric_sources` (observation relation registry with
-  schema-probe status machinery), `metric_source_measures` (measure keys
-  only — semantics live in dbt SQL), `metric_source_dimensions`,
-  `metric_definitions` (computation `sum|ratio|median|distinct_count`,
-  format, direction, tenant scoping, `origin builtin|custom`),
+  schema-probe status machinery; `source_kind` also admits
+  `custom_observation_sql` — an inline SELECT projecting the observation
+  contract, gated by a statement-level denylist in `domain/query_gate.rs`,
+  not an expression allowlist), `metric_source_measures` (measure keys
+  plus evidence granularity only — semantics live in dbt SQL),
+  `metric_source_dimensions`, `metric_definitions` (computation
+  `sum|ratio|median|distinct_count`, affine + clamp transform, format,
+  direction, subject, tags, tenant scoping, `origin builtin|custom`),
   `metric_definition_inputs`, `metric_definition_dimensions`. Builtin
-  definitions are Rust constants
-  (`domain/metric_definitions/builtin.rs`, incl. affine + clamp shaping)
-  reconciled at startup (`seeds.rs`).
+  definitions are a declarative YAML registry
+  (`domain/metric_definitions/registry.yaml`, embedded via
+  `include_str!` and parsed by `builtin.rs`) reconciled at startup
+  (`seeds.rs`) — authoring-as-data in the observation-relation shape,
+  not the domain model. Custom metrics are runtime-editable through
+  CRUD plus export/import (`domain/metric_crud.rs`, `/v1/metrics`).
+  The Phase 1 slice 1 tables below already exist
+  (`m20260805_000001_semantic_definition_core.rs`, physically prefixed
+  `semantic_`), schema only: no entities, seeds, or reads touch them.
 - **Emission** — dbt gold models
   (`src/ingestion/gold/*_metric_observations.sql`) hand-author measure
   semantics through shape macros
   (`src/ingestion/dbt/macros/metric_observation_measures.sql`); day grain
-  baked into the observation contract (`metric_date Date`).
+  baked into the observation contract (`metric_date Date`). Beneath them
+  a second gold layer, `*_metric_evidence`, carries per-record measure
+  rows serving the drilldown endpoints; observation models aggregate the
+  evidence relations.
 - **Validation** — `domain/metric_definitions/validator.rs` +
   `domain/schema_validator/`: relation/column probes plus dimension
-  coverage **probed from observed rows** (empty tenant → `Unchecked`).
+  coverage **probed from observed rows** (empty tenant → `Unchecked`),
+  windowed over recent observations.
 - **Serving** — `domain/metric_results/` compiles
-  period/timeseries/peer/breakdown/histogram queries over observation
-  relations; `/v1/metric-results`, `/v1/metrics/queries`.
+  period/timeseries/peer/breakdown/rollup/histogram queries over
+  observation relations; `/v1/metric-results` (batch shape included —
+  `/v1/metrics/queries` no longer exists). Grain is day/week/month in
+  the compiler; quarter and year are client-side sums over month
+  buckets, additive metrics only. No timezone model. No cache tier.
 - **Tests** — declarative e2e suite
   (`src/ingestion/tests/e2e/metrics/*.test.yaml`) seeds bronze and asserts
-  through the batch endpoint; dbt tests on observation shapes.
+  through `/v1/metric-results`; dbt tests on observation shapes.
+- **Field catalog source** — dbt `schema.yml` carries no `meta:` blocks
+  and no role annotations; the committed connectors-ddl DDL snapshot
+  (refreshed and gated by the pipeline) is the machine-readable schema
+  artifact that exists today.
 
 ## Metric Lifecycle, Before and After
 
@@ -52,7 +73,7 @@ Today:
 1. Hand-write a CTE + shape-macro call in the family's gold observation
    model, dimension array included — the meaning, as dbt SQL.
 2. Declare the measure key, metric, allowed dimensions, format, direction
-   in `builtin.rs` — the meaning again, as Rust.
+   in `registry.yaml` — the meaning again, as registry data.
 3. Deploy both; dbt pre-computes observation rows; startup seeds the
    store; the validator probes observed rows to confirm dimensions.
 4. Serving reads the pre-computed rows at their baked day grain.
@@ -83,18 +104,23 @@ optional-generated-versioned.
 | bronze → silver ingestion, class contracts | **keep** | the dataset layer; carries dedup/mutability correctness the target builds on |
 | purpose-built gold relations (state intervals, cohorts) | **keep** | become named datasets; derived-column logic belongs below the measure layer |
 | declarative e2e suite + batch endpoint | **keep** | the cutover invariant: same seeds, same requests, same expectations against the new executor |
-| public API contract (`/v1/metric-results`, `/v1/metrics/queries`) | **keep** | response shape is presentation contract, orthogonal to how values are computed |
+| public API contract (`/v1/metric-results`, `/v1/metric-drilldown` + export) | **keep** | response shape is presentation contract, orthogonal to how values are computed; only the drilldown cursor envelope re-versions (epoch vector) |
 | metric composition semantics (ratio/median/distinct-count, affine + clamp) | **keep semantics, rehome code** | proven definitions; they become data and compile in the new executor |
 | store technology + conventions (MySQL, sea-orm, forward-only migrations, seed reconciliation) | **keep** | conventions are fine; the schema is not |
 | store schema (`metric_sources` … `metric_definition_dimensions`) | **rewrite** | shaped around observation relations, not the domain model; measures are key-only; probe-status machinery solves a drift problem the target removes structurally |
 | `metric_results` query builder | **rewrite** | its input model is observation rows at day grain; the compiler's input model is datasets at query-time grain — a second input path bolted on would preserve the wrong core |
 | observation gold models + shape macros | **delete after cutover** | measure semantics move to definitions; materialization returns later as compiler-owned cache, not as authored models |
+| evidence gold models (`*_metric_evidence`) | **rewrite as named datasets** | the derivations they hold (instance dedup, content dedup + line reattribution, PR attribution, seat pricing, activity unions, derived populations) are dataset work and re-home as product datasets; the serving shape (record_id/kind/label stamping, granularity stamping, evidence_ref probing) dies with the separate drilldown path |
+| drilldown serving (`metric_drilldown/` query path + presentation) | **rewrite** | becomes the compiler's row mode over the same datasets; request/response contract, limits, and export machinery keep; display moves from per-measure declarations to catalog presentation roles |
 | row-probing dimension validation (`check_dimension_coverage`, `Unchecked` state, `dimension_not_covered` plumbing) | **delete** | capability must not depend on data; replaced by structural validation at startup and CI |
 | `metric_sources.source_ref` relation-name-as-data + column probe machinery | **delete** | replaced by the dataset registry and catalog artifact |
 
 Migration burden of the store rewrite is near zero by construction: builtin
 rows are startup-reconciled from code, so new tables repopulate from seeds.
-Any `origin = 'custom'` rows get a one-shot mapping migration.
+`origin = 'custom'` rows get a one-shot mapping migration: a custom metric
+carrying inline observation SQL maps to a custom dataset (the gated SQL
+layer) plus a measure derived from its declared measure keys; a custom
+metric composing builtin measures maps directly onto structured metrics.
 
 ## What Compiler-First Unlocks Immediately
 
@@ -113,7 +139,11 @@ Any `origin = 'custom'` rows get a one-shot mapping migration.
 
 The new store, authored definitions, and validators. No serving change.
 
-1. **Schema, new tables** (one migration, domain-shaped):
+1. **Schema, new tables** (one migration, domain-shaped). Shipped:
+   `m20260805_000001_semantic_definition_core.rs`, tables physically
+   prefixed `semantic_` so the store coexists with the untouched legacy
+   `metric_*` store until cutover; schema only, nothing reads or seeds
+   them yet.
    - `datasets` — key, database + relation, read discipline (dedup
      strategy), retention horizon, `origin` (`product` | `custom`).
    - `measures` — key, dataset ref, filter (JSON, closed-enum MBQL-style
@@ -132,10 +162,27 @@ The new store, authored definitions, and validators. No serving change.
      aggregation/expr biconditionals); the probe-status columns are not
      carried over.
 2. **Field catalog, minimal form.** The catalog generator (Rust, per
-   Decision 3) ships here, not in Phase 4: dataset field names, types,
-   and roles from dbt `schema.yml` `meta:` blocks, emitted as a
-   build-time artifact. Phase 1 needs it as the validation universe;
-   Phase 4 only extends it into the discovery surface.
+   Decision 3) ships here, not in Phase 4. The catalog is a join of two
+   inputs: a **schema artifact** per dataset (relation ref, field names
+   and types, engine/read discipline, sort key) and roles authored in
+   the service (entity / dimension / measurable / event time, plus
+   display roles). The join rejects a role naming a field the schema
+   does not have, so the catalog is a consistent validation universe at
+   build time with no live warehouse in CI.
+
+   The schema artifact is a seam, not an architecture: the catalog
+   consumes the artifact shape and never knows its producer. Current
+   producer: the connectors-ddl lane — which already builds a ClickHouse
+   from scratch with the real pipeline, dumps the committed DDL
+   snapshot, and gates drift — extended to also dump the column schema
+   in the artifact shape (`system.columns` + `system.tables`, same run,
+   same gate; no SQL parsing, no bespoke second snapshot pipeline).
+   Future producers slot in behind the same shape: a Rust-owned
+   ingestion runtime whose typed stream schemas are code supplies the
+   artifact in-process with no snapshot at all; datasets defined as
+   typed projections over raw JSON relations supply their captured
+   projection schemas. Phase 1 needs the catalog as the validation
+   universe; Phase 4 only extends it into the discovery surface.
 3. **Validators.** `domain/definitions/expr.rs`: `sqlparser` (ClickHouse
    dialect) + AST allowlist (catalog columns, literals, arithmetic,
    allowlisted functions; everything else rejected). Filter tree as serde
@@ -144,7 +191,9 @@ The new store, authored definitions, and validators. No serving change.
 4. **Authoring.** Product definitions as repo YAML
    (`src/ingestion/measures/<source_key>.yaml` and
    `metrics/<group>.yaml`), embedded and parsed at compile time, replacing
-   `builtin.rs` constants; a build-time test runs the full validator set
+   the observation-shaped `registry.yaml` (whose YAML-authoring mechanics
+   — `include_str!`, CI validation, seed reconciliation — carry over);
+   a build-time test runs the full validator set
    over every file (shape, enums, expressions, cross-references), so an
    invalid product definition fails CI and cannot ship; startup seed
    reconciliation as today. Repo YAML
@@ -159,8 +208,8 @@ The new store, authored definitions, and validators. No serving change.
    aggregation kind.
 6. **Structural validation.** Two stages replacing the row-probing path
    conceptually (the old path keeps serving until cutover). CI: definitions
-   validate against the field catalog derived from dbt `schema.yml` at the
-   same commit — contract mismatches cannot ship. Runtime: the probe
+   validate against the field catalog built from the schema artifact at
+   the same commit — contract mismatches cannot ship. Runtime: the probe
    reconciles contracts with the live warehouse; absent or lagging
    relations put affected definitions into an explicit self-healing
    `unavailable` state, alarmed if persistent, never a startup failure and
@@ -182,10 +231,13 @@ reconciled into the new store; old system untouched and serving.
    date range, grain, dimensions, filters) → ClickHouse SQL over
    datasets. Owns filter/expression rendering from validated ASTs,
    per-dataset read discipline (FINAL/dedup from dataset metadata),
-   tenancy predicates, grain bucketing in the tenant reporting time zone,
-   metric composition (all four computation types), the transform stage,
-   and guardrails (row caps, timeout classes, memory settings) so a
-   pathological definition degrades to an error, not an incident.
+   the injected scopes and query-time entity binding through the
+   identity mapping relations, grain bucketing in the tenant reporting
+   time zone, metric composition (all four computation types), the
+   transform stage, the drilldown row mode (same predicates, rows
+   instead of aggregation, epoch-vector cursor), and guardrails (row
+   caps, timeout classes, memory settings) so a pathological definition
+   degrades to an error, not an incident.
 2. **Parity, then cutover, per source family.** "Family" (git, tasks,
    wiki, collab, ai) is a migration-only unit — it is how the old
    observation tables, seeds, and e2e fixtures are already grouped, so it
@@ -196,7 +248,9 @@ reconciled into the new store; old system untouched and serving.
    the compiler path. A temporary flag selects executor per family;
    shadow-compare on live traffic per family until divergence classes
    (dedup, timezone, null propagation) are resolved deliberately; flip;
-   next family. Shadow runs double as the latency measurement that
+   next family. Drilldown flips with its family: row-mode output
+   reconciles against the evidence path before the flip, under the same
+   shadow harness. Shadow runs double as the latency measurement that
    triggers Decision 1's cache pull-forward. The flag and comparison harness are explicitly temporary
    — weeks per family, deleted at Phase 3, not a permanent dual-execution
    capability.
@@ -218,6 +272,9 @@ Immediately after the last family cuts over, while context is fresh:
 
 - gold observation models and shape macros, their dbt shape tests, and
   the observation build step;
+- evidence gold models once their derivations are re-homed as named
+  datasets, with the old drilldown query path and its per-measure
+  presentation plumbing (the API contract and export machinery remain);
 - the old serving query builder in `metric_results/` (request validation
   and response DTOs remain with the API);
 - row-probing validator machinery, `Unchecked` state,
@@ -234,8 +291,8 @@ smaller than before the project started.
 1. **Field catalog, full form.** The Phase 1 artifact (names, types,
    roles) extends with everything discovery needs: value↔label pairing
    surfaced per dimension, conformed dimension keys, display metadata.
-   Same generator, same `schema.yml` `meta:` source, same build-time
-   transport — until custom datasets exist, catalogs change only with
+   Same generator, same schema-artifact-plus-authored-roles source, same
+   build-time transport — until custom datasets exist, catalogs change only with
    product deploys.
 2. **Discovery API.** Extend `domain/catalog/`: metrics and measures with
    derived allowed dimensions (intersection over inputs,
@@ -280,9 +337,8 @@ a dashboard, and sees correct data — zero deploys, full audit history.
   implementation; new fixtures cover compiler-only behavior (grain
   variants, timezone edges, adversarial expressions rejected by
   validators).
-- **API stability.** `/v1/metric-results` and `/v1/metrics/queries`
-  contracts do not change during the rewrite; discovery grows additively
-  in Phase 4.
+- **API stability.** The `/v1/metric-results` contract does not change
+  during the rewrite; discovery grows additively in Phase 4.
 - **Migrations** forward-only per convention; the store rewrite is
   additive tables + seed repopulation + late drops, never in-place
   mutation of the old schema.

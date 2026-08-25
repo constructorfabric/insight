@@ -199,6 +199,12 @@ optional post-aggregation shaping stage (affine transform, clamping), and
 display identity (direction, format, naming). The MetricFlow metric types
 are the reference vocabulary.
 
+Percentile-family values (median, quartiles) are metric-level
+computations, not measure aggregations: the measure enum stays additive
+and distinct-count only, and a percentile metric computes at read time
+over the event-grain rows of its input measure — never a percentile of
+pre-aggregated values.
+
 A metric's dimension capability is derived, not declared: the intersection
 of its inputs' dimension sets, where dimension-agnostic inputs (constants,
 global denominators) are identity elements that do not shrink the set.
@@ -269,6 +275,7 @@ the definition:
 | event-time field | timeseries, grains, windows, time zones |
 | entity field | entity scoping, cohorts, peer comparison |
 | dimensions (value/label bindings) | breakdowns, filters, discovery pickers |
+| display fields (title, reference, actor, link material) | human-readable drilldown rows with served links |
 | aggregation, platform-applied | re-aggregation across grain and scope, the rollup cache, composition into metrics |
 
 Two things can never move into the SQL, because they are what the
@@ -344,12 +351,122 @@ date range, grain, dimensions, filters) in, warehouse SQL out. It owns:
 - per-dataset read discipline (deduplication, mutable-read handling),
   inherited from dataset metadata rather than re-decided per measure,
 - dimension-capability validation,
-- tenancy predicates on every query it emits,
+- the injected scopes on every query it emits,
 - the time model,
 - the post-aggregation transform stage.
 
 Product and user definitions compile through the same path; a product
 measure is not a special case, only a differently owned row.
+
+### Injected scopes
+
+Three server-injected scopes ride every compiled query, side by side at
+this single choke point. Definitions stay scope-agnostic, and no
+definition or client input can widen a scope.
+
+- **Tenancy.** The tenant predicate, on every read the compiler emits.
+- **Org-scope entity visibility.** An `entity ∈ visible_set` predicate,
+  the visible set resolved per request from the identity service's org
+  chart (self plus related subtree). A viewer reads per-entity values
+  only for people within that scope; people outside it are never
+  returned and their existence is not disclosed. Fail closed when the
+  authorization source is unavailable.
+- **Cohort isolation.** A person's peer cohort is drawn from within
+  their org-chart scope; tags and attributes refine the cohort inside
+  that boundary and never pull a person across it, so a shared tag
+  cannot route around scope isolation. The rule is enforced where
+  cohort membership is produced — the cohort dataset — and re-asserted
+  by the compiler for every cohort key, not only org-unit keys. Peer
+  and cross-cohort comparison is aggregates-only: distributions with no
+  member ids, suppressed below a minimum distinct-member floor so small
+  groups cannot disclose individuals.
+
+Beside the scopes rides **entity binding** — a resolution, not a
+restriction. Dataset rows carry the identity the source gave them; the
+canonical person is bound at query time through the identity mapping
+relations, injected by the compiler. Attribution policy — account
+binding before email, excluded persons, dual-claimant emails resolving
+to nobody — is owned there once, so an identity correction is visible on
+the next read, never waiting for a rebuild. Definitions reference entity
+fields; they never contain resolution logic.
+
+## Drilldown
+
+Every served value is inspectable: drilldown answers "which rows
+produced this number", and it is a compiler read mode, not a second
+pipeline. The same definition and the same request predicates — filter
+tree, entity scope, time range, dimension filters, injected scopes,
+entity binding — compile in two shapes: aggregate mode produces the
+value, row mode projects the dataset rows the aggregate read. One
+compiler and one predicate set, so rows and value cannot drift.
+
+**Reconciliation invariant.** Row mode reconciles with the raw
+pre-transform aggregate of the same compile over the same dataset build:
+the transform stage (affine, clamp, scale) is display shaping and does
+not apply to rows. When the value was served from the measure cache, the
+response discloses the build skew (cache watermark versus current
+dataset build) rather than presenting a cached value and live rows as
+one consistent read.
+
+Row semantics follow the aggregation kind:
+
+- additive aggregations (count, sum, avg, min, max) — every
+  filter-matching row, zero-contribution rows included, with the
+  measure's value expression projected per row as its contribution;
+- count_distinct — one row per distinct subject, dimension values
+  collapsed into the row, so row count equals the served value;
+- percentile-family metrics — the event-grain input rows with per-row
+  contribution: the population the aggregate was computed over,
+  complete, not a row-by-row reconstruction of the statistic;
+- ratio and derived metrics — per-input row mode tagged with the input
+  role, plus a per-day summary mode (numerator and denominator
+  re-aggregated at day grain). The summary mode is illustrative, not
+  additive, when a denominator is a distinct count whose subjects span
+  days.
+
+**Granularity is structural.** What a drilldown row is — a source event,
+a daily summary, a member of a derived population — is the dataset's row
+grain, read from the catalog, never declared per measure and never
+probed from stored rows. A measure over an event-grain dataset drills to
+events; a measure over a summary dataset drills to summaries, honestly.
+Computations with grain requirements (percentiles need event rows)
+validate structurally against the input dataset's grain at write time.
+
+**Display is declared.** The field catalog annotates datasets with
+presentation roles — title, reference, actor, link material — and every
+measure over a dataset inherits them; enum-valued dimensions render
+through the catalog's value→label binding, one resolution rule for every
+read path. Declarations validate like all others: a declared display
+field must exist in the dataset schema, and product definitions over
+event-grain datasets must carry display declarations, checked in CI — a
+feature-dead drilldown (dates and values only) stays legal for tenant
+definitions but can never ship silently as product. Row links are
+server-owned like all meaning: served with the row from declared link
+material, never synthesized in a client. Display material that does not
+exist as a dataset column (an external URL, an entity label) is dataset
+or ingestion work, not a declaration.
+
+**Row identity and pagination.** Every dataset declares a non-nullable
+sort key: a deterministic total order and a stable row identity for
+keyset pagination. Cursors bind to an epoch vector — one build epoch per
+relation read, advanced on every dataset rebuild, plus the
+identity-mapping epoch for person-scoped reads. Any epoch moving
+mid-pagination expires the cursor with an explicit error; a page never
+silently straddles two builds or two identity states. Reads over live
+views that cannot be epoch-stamped are served under an explicit
+best-effort pagination contract.
+
+Drilldown never reads the measure cache — the cache stores aggregates,
+and provenance questions are answered from rows. Person-scoped
+event-grain datasets default to a drilldown-serving projection (ordered
+by tenant, entity, time) as part of their cache policy, because their
+physical layout otherwise pays a full scan per page.
+
+Row reads carry the same injected scopes as aggregates: the org-scope
+visibility predicate makes per-person rows exactly as visible as
+per-person values, and cohort isolation keeps peer views memberless —
+there is no drilldown into a cohort aggregate, only into entities the
+viewer may see.
 
 ## Materialization
 
@@ -412,19 +529,24 @@ rebuild is a later author-declared opt-in. Version bumps invalidate
 exactly as for measures (reads fall back to the live view). Refresh
 walks the definition DAG topologically — upstream datasets before
 dependent datasets before dependent measure caches — triggered by
-ingestion completion like the availability probe. A failed rebuild keeps
-serving the previous table and alarms: data staleness is a surfaced,
-tolerable cache property ("as of" timestamps); semantic staleness never
-is. Rebuilds run under the same resource guardrails as queries, so a
+ingestion completion like the availability probe. A rebuild that fails
+under the same definition version keeps serving the previous table and
+alarms: data staleness is a surfaced, tolerable cache property ("as of"
+timestamps); semantic staleness never is. After a semantic version bump
+the previous table is never served — reads fall back to the live view or
+return unavailable, per the version rule below. Rebuilds run under the same resource guardrails as queries, so a
 pathological definition fails its promotion loudly rather than becoming
 a scheduled incident.
 
-The read decision, made per input measure independently: policy enabled,
-cached version equals current definition version, and the requested range
-inside the coverage watermarks → read cache; otherwise compile live from
-the dataset. A single metric may mix cached and live inputs in one query.
-Every degraded state — stale version, uncovered range, disabled policy —
-falls back to live compute: slower, never wrong.
+The read decision, made per input measure independently, gates first on
+availability: an `unavailable` definition returns its stored error —
+never cached rows, never a live compute. For an available definition:
+policy enabled, cached version equals current definition version, and
+the requested range inside the coverage watermarks → read cache;
+otherwise compile live from the dataset. A single metric may mix cached
+and live inputs in one query. Every degraded state — stale version,
+uncovered range, disabled policy — falls back to live compute: slower,
+never wrong.
 
 Every cached row is stamped with the definition version it was computed
 under. Version mismatch means recompute or reject — never silently serving
@@ -525,7 +647,9 @@ Four groups; the query contract is stable, the rest additive.
 - **Query** — request by metric key with entity scope, range, grain,
   dimensions, filters, view. Responses are self-describing and carry
   provenance: definition version, cache-or-computed, data-available-from,
-  availability state.
+  availability state. Drilldown is the row mode of the same contract:
+  the metric's contributing rows under the same scope, range, and
+  filters, paginated and exportable.
 - **Discovery** — the catalog of visible metrics and measures with their
   capability; dataset field catalogs with roles, retention, origin,
   display body, and lineage; paginated dimension values with an explicit
