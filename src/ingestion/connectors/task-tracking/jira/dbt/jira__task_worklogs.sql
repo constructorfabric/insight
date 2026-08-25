@@ -10,20 +10,20 @@
     tags=['jira', 'staging', 'silver:class_task_worklogs']
 ) }}
 
+-- State (including is_deleted — specs/DELETION-AND-VISIBILITY.md) is computed
+-- once in jira__worklog_state; this is the class-contract projection.
+
 SELECT
-    w.unique_key                                      AS unique_key,
-    w.source_id                                       AS insight_source_id,
-    CAST('jira' AS String)                            AS data_source,
-    toString(w.worklog_id)                            AS worklog_id,
-    w.id_readable                                     AS id_readable,
-    w.author_account_id                               AS author_id,
-    parseDateTime64BestEffortOrNull(w.started, 3)     AS work_date,
-    toFloat64OrNull(toString(w.time_spent_seconds))   AS duration_seconds,
-    w.comment                                         AS description,
-    parseDateTime64BestEffortOrNull(w.collected_at, 3) AS collected_at,
-    toUnixTimestamp64Milli(now64(3))                  AS _version
-FROM (
-    SELECT * FROM {{ source('bronze_jira', 'jira_worklogs') }}
-    ORDER BY _airbyte_extracted_at DESC
-    LIMIT 1 BY unique_key
-) w
+    s.unique_key                                        AS unique_key,
+    s.source_id                                         AS insight_source_id,
+    CAST('jira' AS String)                              AS data_source,
+    s.worklog_id                                        AS worklog_id,
+    s.id_readable                                       AS id_readable,
+    s.author_id                                         AS author_id,
+    s.work_date                                         AS work_date,
+    s.duration_seconds                                  AS duration_seconds,
+    s.description                                       AS description,
+    s.collected_at                                      AS collected_at,
+    toNullable(s.is_deleted)                            AS is_deleted,
+    toUnixTimestamp64Milli(now64(3))                    AS _version
+FROM {{ ref('jira__worklog_state') }} AS s FINAL

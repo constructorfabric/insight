@@ -1,0 +1,21 @@
+# Reusable JSON schema for bronze_jira.jira_issuetypes (the issue-type lookup
+# from GET /rest/api/3/issuetype): the API fields jira__task_issuetypes.sql
+# reads to build silver.class_task_issuetypes, plus the connector's identity
+# columns.
+schemas:
+  bronze_jira.jira_issuetypes:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      unique_key: {type: string}
+      source_id: {type: string}
+      tenant_id: {type: [string, "null"]}
+      id: {type: [string, "null"]}
+      name: {type: string}
+      untranslatedName: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}

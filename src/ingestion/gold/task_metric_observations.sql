@@ -167,7 +167,11 @@ worklog_per_day AS (
     FROM {{ ref('class_task_worklogs') }} AS w FINAL
     INNER JOIN task_users AS u
         ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
+    -- Deletion awareness comes from the class contract's is_deleted (worklog
+    -- tombstones + issue re-fetch diff + deleted parent issue) — see
+    -- specs/DELETION-AND-VISIBILITY.md in the jira connector.
     WHERE w.work_date IS NOT NULL
+      AND ifNull(w.is_deleted, 0) = 0
     GROUP BY u.tenant_id, u.email, toDate(w.work_date)
 ),
 -- Both sides of the accuracy ratio are gated to days with in-progress time —

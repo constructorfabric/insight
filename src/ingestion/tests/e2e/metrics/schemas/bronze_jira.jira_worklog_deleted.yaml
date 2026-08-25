@@ -1,0 +1,22 @@
+# Reusable JSON schema for the table (all real fields). Resolved by table name.
+# Mirrors the bronze_jira.jira_worklog_deleted DDL (deletion tombstones from
+# GET /rest/api/3/worklog/deleted — read by jira__task_worklogs.sql).
+schemas:
+  bronze_jira.jira_worklog_deleted:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      worklogId: {type: [number, string, "null"]}
+      updatedTime: {type: [number, string, "null"]}
+      properties: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      unique_key: {type: string}
+      worklog_id: {type: [number, string, "null"]}
+      deleted_at_ms: {type: [number, string, "null"]}
+      collected_at: {type: [string, "null"]}
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
