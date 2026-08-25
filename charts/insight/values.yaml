@@ -558,10 +558,13 @@ gitCliProxy:
     tag: ""
     pullPolicy: IfNotPresent
   # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
-  # dominate its memory: peak scales with cache.maxRepoBytes, times
-  # cache.heavyOpsConcurrency when heavy operations overlap. Size the limit
-  # to at least one repository cap with headroom, or a full-history walk of
-  # a workspace holding one large repository OOM-kills the pod in a loop.
+  # dominate its memory: the transient peak on a large repository reaches
+  # multiple GiB, tracking object counts and delta windows rather than the
+  # repository's on-disk size — no exact formula from cache.maxRepoBytes
+  # exists. 8Gi rides out an observed full-history walk over a large
+  # workspace at low heavy-op concurrency; raise it, or lower
+  # cache.heavyOpsConcurrency, if overlapping heavy operations still OOM
+  # the pod.
   resources:
     requests: {cpu: 200m, memory: 1Gi}
     limits: {cpu: "2", memory: 8Gi}

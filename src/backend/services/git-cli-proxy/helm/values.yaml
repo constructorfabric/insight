@@ -25,10 +25,12 @@ resources:
     memory: 1Gi
   limits:
     # git subprocesses (clone, repack) are the CPU/memory consumers here, and
-    # their peak scales with cache.maxRepoBytes (times cache.heavyOpsConcurrency
-    # when heavy operations overlap). Size the limit to at least one repository
-    # cap with headroom, or a full-history walk of a workspace holding one
-    # large repository OOM-kills the pod in a loop.
+    # their transient peak on a large repository reaches multiple GiB — it
+    # tracks object counts and delta windows, not the repository's on-disk
+    # size, so there is no exact formula from cache.maxRepoBytes. 8Gi rides
+    # out an observed full-history walk over a large workspace at low
+    # heavy-op concurrency; raise it, or lower cache.heavyOpsConcurrency, if
+    # overlapping heavy operations on large repositories still OOM the pod.
     cpu: "2"
     memory: 8Gi
 
