@@ -88,6 +88,30 @@ models:
         tests:
           - not_null
 
+  - name: git_derived_commits
+    description: >
+      Commits whose work is already counted on another commit, one row per
+      tenant/data_source/commit_hash/reason. merge_result is the commit a
+      merged pull request produced on its destination (a squash result or the
+      last rebased copy), marked only when every linked branch commit was
+      collected; patch_duplicate is a later carrier of a patch id an earlier
+      commit in the same repository authored (a rebase copy or a cherry-pick).
+      The git
+      evidence build excludes these from both the commit and the line figures,
+      so one authored change counts once and the two figures describe the same
+      set of commits.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the source"
+        tests:
+          - not_null
+      - name: reason
+        description: "Why the commit is derived"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge_result', 'patch_duplicate']
+
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.

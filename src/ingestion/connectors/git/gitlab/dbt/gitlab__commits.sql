@@ -59,7 +59,8 @@ SELECT
     if(COALESCE(c.parent_count, 0) > 1, 1, 0) AS is_merge_commit,
     'insight_gitlab' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    c._airbyte_extracted_at
+    c._airbyte_extracted_at,
+    CAST(NULL AS Nullable(String)) AS patch_id
 -- FINAL: a re-walk re-emits a commit under the same unique_key with the
 -- membership flag set, so Bronze holds the old row and the new one. Without
 -- FINAL a full-refresh build inserts both into staging under one now64()

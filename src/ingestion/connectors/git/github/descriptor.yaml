@@ -7,7 +7,14 @@ name: github
 #   on existing rows and history would never attribute. Only the one-shot
 #   scoped `dbt --full-refresh` a major bump dispatches re-materializes it.
 #   Safe: every git staging model is a pure projection of Bronze.
-version: "5.0.0"
+# 6.0.0: dbt staging carries the per-commit patch id into the class-contract
+#   column patch_id, the commit-content identity that folds a rebase copy or a
+#   cherry-pick onto the commit that first authored the change. MAJOR for the
+#   same reason as 5.0.0 — the patch id has been in Bronze all along, but
+#   staging never re-reads Bronze, so the column heals to NULL on existing
+#   rows, and a NULL identity never folds. Only the one-shot scoped
+#   `dbt --full-refresh` a major bump dispatches re-materializes the history.
+version: "6.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

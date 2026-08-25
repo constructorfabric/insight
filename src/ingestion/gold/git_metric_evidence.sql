@@ -77,6 +77,7 @@ commits_source AS (
         project_key,
         repo_slug,
         commit_hash,
+        data_source,
         author_name,
         message,
         date AS observed_at,
@@ -116,12 +117,60 @@ commits_source AS (
     WHERE trimBoth(author_email) != ''
       AND date IS NOT NULL
       AND is_merge_commit = 0
+      -- A semi-join by tuple for the same reason as branch scope above: a
+      -- derived commit (a squash/rebase result of a merged request, or a
+      -- later carrier of a patch an earlier commit authored) re-applies work
+      -- counted on another commit, so it contributes neither a commit nor —
+      -- because every file-change CTE attaches through this set — any lines.
+      AND (tenant_id, data_source, commit_hash) NOT IN (
+          SELECT tenant_id, data_source, commit_hash
+          FROM {{ ref('git_derived_commits') }}
+      )
     ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
     LIMIT 1 BY tenant_id, data_source, commit_hash
 ),
+-- File changes attached to the commit row that survived the hash collapse.
+-- The attach key carries NO repository: commit rows collapse across
+-- repositories (a fork and its upstream hold the same hash), and a
+-- repo-qualified attach would leave the rows recorded under the repository
+-- that lost the collapse matching no commit and contributing nothing. One
+-- hash is one diff, so any repository's rows describe the commit — the
+-- LIMIT 1 BY collapses the per-repository copies, and every row carries the
+-- surviving commit's coordinates.
+commit_file_changes AS (
+    SELECT
+        commits.tenant_id AS tenant_id,
+        commits.source_id AS source_id,
+        commits.project_key AS project_key,
+        commits.repo_slug AS repo_slug,
+        commits.commit_hash AS commit_hash,
+        commits.observed_at AS observed_at,
+        raw_file_change.data_source AS data_source,
+        raw_file_change.file_path AS file_path,
+        raw_file_change.file_extension AS file_extension,
+        raw_file_change.change_type AS change_type,
+        raw_file_change.lines_added AS lines_added,
+        raw_file_change.lines_removed AS lines_removed,
+        raw_file_change.pre_image_oid AS pre_image_oid,
+        raw_file_change.post_image_oid AS post_image_oid
+    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
+    INNER JOIN commits_source AS commits
+        ON commits.tenant_id = raw_file_change.tenant_id
+        AND commits.data_source = raw_file_change.data_source
+        AND commits.commit_hash = raw_file_change.commit_hash
+    ORDER BY raw_file_change.source_id, raw_file_change.project_key, raw_file_change.repo_slug
+    LIMIT 1 BY
+        tenant_id,
+        data_source,
+        commit_hash,
+        file_path,
+        lower(change_type),
+        pre_image_oid,
+        post_image_oid
+),
 -- One row per change CONTENT, not per commit that carries it. The same content
 -- entering a repository on two lines of history — a branch whose copy of a
--- tree was squashed onto the default branch as well, a cherry-pick, a
+-- tree also landed on the default branch, a cherry-pick, a
 -- reverted-then-restored file — is one authored change with one oid pair, and
 -- summing both commits' diffs would count those lines twice.
 --
@@ -134,38 +183,32 @@ commits_source AS (
 -- because LIMIT 1 BY reads their NULL keys as equal.
 deduplicated_file_changes AS (
     SELECT
-        raw_file_change.tenant_id AS tenant_id,
-        raw_file_change.source_id AS source_id,
-        raw_file_change.project_key AS project_key,
-        raw_file_change.repo_slug AS repo_slug,
-        raw_file_change.commit_hash AS commit_hash,
-        raw_file_change.data_source AS data_source,
-        raw_file_change.file_path AS file_path,
-        raw_file_change.file_extension AS file_extension,
-        raw_file_change.change_type AS change_type,
-        raw_file_change.lines_added AS lines_added,
-        raw_file_change.lines_removed AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
-    INNER JOIN commits_source AS commits
-        ON commits.tenant_id = raw_file_change.tenant_id
-        AND commits.source_id = raw_file_change.source_id
-        AND commits.project_key = raw_file_change.project_key
-        AND commits.repo_slug = raw_file_change.repo_slug
-        AND commits.commit_hash = raw_file_change.commit_hash
-    ORDER BY commits.observed_at, raw_file_change.commit_hash
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        data_source,
+        file_path,
+        file_extension,
+        change_type,
+        lines_added,
+        lines_removed
+    FROM commit_file_changes
+    ORDER BY observed_at, commit_hash
     LIMIT 1 BY
-        raw_file_change.tenant_id,
-        raw_file_change.data_source,
-        raw_file_change.project_key,
-        raw_file_change.repo_slug,
-        raw_file_change.file_path,
-        lower(raw_file_change.change_type),
-        raw_file_change.pre_image_oid,
-        raw_file_change.post_image_oid,
+        tenant_id,
+        data_source,
+        project_key,
+        repo_slug,
+        file_path,
+        lower(change_type),
+        pre_image_oid,
+        post_image_oid,
         if(
-            coalesce(raw_file_change.pre_image_oid, '') = ''
-                AND coalesce(raw_file_change.post_image_oid, '') = '',
-            raw_file_change.commit_hash,
+            coalesce(pre_image_oid, '') = ''
+                AND coalesce(post_image_oid, '') = '',
+            commit_hash,
             ''
         )
 ),
@@ -183,7 +226,7 @@ reported_commit_file_lines AS (
         commit_hash,
         sum(lines_added) AS lines_added,
         sum(lines_removed) AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} FINAL
+    FROM commit_file_changes
     GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
 ),
 authored_commit_file_lines AS (

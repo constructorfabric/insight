@@ -181,6 +181,18 @@ ORDER BY (tenant_id, source_id, project_key, repo_slug, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_derived_commits
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `commit_hash` String,
+    `reason` String
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.git_metric_evidence
 (
     `tenant_id` String,
