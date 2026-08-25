@@ -14,6 +14,7 @@ from lib.enrich import EnrichRunner
 from lib.expect_engine import evaluate_case
 from lib.fixture_loader import IdentityAccount, TestYaml
 from lib.identity_stub import IdentityStub, person_id_for
+from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.fixture
@@ -204,6 +205,7 @@ def test_metric_smoke(
     enrich_runner: EnrichRunner,
     analytics: AnalyticsProcess,
     identity_stub: IdentityStub,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
 ) -> None:
     ch_seeder.truncate_touched()
@@ -214,18 +216,7 @@ def test_metric_smoke(
     # 3. Build the dbt models the seeded tables feed: staging first (the `+`
     #    pulls <connector>__bronze_promoted), then the silver class models.
     staging, silver = dbt_runner.derive_selectors(test_yaml.touched_tables)
-    if staging:
-        # Record staging models in the ledger BEFORE building. They live in the
-        # `staging` schema and are read by the silver models via union_by_tag, so a
-        # prior test's staging rows (e.g. dates this test doesn't re-seed) would
-        # survive into the silver rebuild and contaminate later tests' gold-view
-        # aggregates. Recording up front (not after) means a build that raises
-        # partway still leaves the table in the truncate ledger so the next test
-        # cleans it; recording a model that never materialised is harmless
-        # (truncate_touched uses TRUNCATE TABLE IF EXISTS).
-        for st in staging:
-            ch_seeder.ledger.record("staging", st)
-        dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     # 3b. Connector enrich steps (descriptor.images.enrich), between staging and
     #     silver — mirrors prod: dbt(tag:<c>) → <c>-enrich → dbt(silver). Data-driven
     #     from descriptors, so any connector with an enrich step participates (jira
@@ -263,20 +254,10 @@ def test_metric_smoke(
         silver_set.update(dbt_runner.ephemeral_silver_targets(step.name))
     run_only_silver = silver_set & {"class_hr_working_hours"}
     tested_silver = silver_set - run_only_silver
-    if tested_silver:
-        # Record before building (same rationale as staging above): a build that
-        # raises partway still leaves the targets in the truncate ledger for the
-        # next test to clean.
-        for cls in tested_silver:
-            ch_seeder.ledger.record("silver", cls)
-        dbt_runner.build(" ".join(sorted(tested_silver)), worker_ctx=worker_ctx)
-    if run_only_silver:
-        for cls in run_only_silver:
-            ch_seeder.ledger.record("silver", cls)
-        dbt_runner.run(" ".join(sorted(run_only_silver)), worker_ctx=worker_ctx)
+    tracked_models.build(sorted(tested_silver), worker_ctx=worker_ctx)
+    tracked_models.run(sorted(run_only_silver), worker_ctx=worker_ctx)
     if "class_collab_meeting_activity" in silver_set:
-        ch_seeder.ledger.record("silver", "class_focus_metrics")
-        dbt_runner.run("class_focus_metrics", worker_ctx=worker_ctx, full_refresh=True)
+        tracked_models.run(["class_focus_metrics"], worker_ctx=worker_ctx, full_refresh=True)
 
     # 4. Identity bindings for the personas the cases address, BEFORE the
     #    gold build — the resolve macro joins them into person_id during the

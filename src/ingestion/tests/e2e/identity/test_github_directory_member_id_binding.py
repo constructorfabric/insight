@@ -28,6 +28,7 @@ from lib import identity_seed as seed
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
+from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 pytestmark = [pytest.mark.identity, pytest.mark.mutating]
@@ -142,6 +143,7 @@ def _org_member(*, run_tag: str, login: str, member_id: int, email: str, display
 def _run_connector_dbt_path(
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     bronze: dict[str, list[dict]],
 ) -> None:
@@ -151,12 +153,12 @@ def _run_connector_dbt_path(
 
     seeded = {tuple(fqn.split(".", 1)) for fqn in bronze}
     staging, silver = dbt_runner.derive_selectors(seeded)
-    dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     assert "identity_inputs" in silver, (
         f"github_directory__identity_inputs did not surface a silver:identity_inputs tag "
         f"(silver={silver}) — the connector's identity path is not reachable from its bronze table"
     )
-    dbt_runner.run("identity_inputs", worker_ctx=worker_ctx)
+    tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
 
 def _resolve_by_external_id(identity_svc, external_id: str) -> str | None:
@@ -178,6 +180,7 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     identity_svc,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     compose_stack: SessionConfig,
 ) -> None:
@@ -194,6 +197,7 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     _run_connector_dbt_path(
         ch_seeder,
         dbt_runner,
+        tracked_models,
         worker_ctx,
         {
             "bronze_github_directory.org_members": [
@@ -245,6 +249,7 @@ def test_the_binding_is_the_member_id_never_the_login(
     identity_svc,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
 ) -> None:
     """GitHub logins are renameable by their owner and re-registrable once
@@ -263,6 +268,7 @@ def test_the_binding_is_the_member_id_never_the_login(
     _run_connector_dbt_path(
         ch_seeder,
         dbt_runner,
+        tracked_models,
         worker_ctx,
         {
             "bronze_github_directory.org_members": [
@@ -294,6 +300,7 @@ def test_the_binding_is_the_member_id_never_the_login(
 def test_directory_and_activity_claims_meet_in_one_account(
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     compose_stack: SessionConfig,
 ) -> None:
@@ -320,6 +327,7 @@ def test_directory_and_activity_claims_meet_in_one_account(
     _run_connector_dbt_path(
         ch_seeder,
         dbt_runner,
+        tracked_models,
         worker_ctx,
         {
             "bronze_github_directory.org_members": [

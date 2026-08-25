@@ -28,8 +28,7 @@ import os
 from pathlib import Path
 
 import pytest
-from lib import clickhouse as ch
-from lib import compose, mariadb
+from lib import compose, mariadb, session_reset
 from lib.analytics import AnalyticsProcess, find_free_port, locate_binary
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig
@@ -39,6 +38,7 @@ from lib.fixture_loader import TestYaml, discover_tests
 from lib.fixture_loader import load as load_test
 from lib.identity_stub import IdentityStub
 from lib.migration_applier import apply_all as apply_ch_migrations
+from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 LOG = logging.getLogger("e2e.rig")
@@ -101,103 +101,15 @@ def compose_stack(session_cfg: SessionConfig):
             LOG.info("E2E_KEEP_CONTAINERS=1 — leaving containers up")
 
 
-# Silver/staging tables that a fixture may READ via a gold view but NOT seed
-# (each collab fixture seeds at most one class_collab_* table, yet
-# insight.collab_bullet_rows reads all four — and each class_collab_* unions
-# several per-source staging feeders). The per-test ledger only truncates what a
-# fixture seeds, so on a WARM ClickHouse (re-running `./e2e.sh test` without
-# `down`) the first collab fixture would inherit a prior session's rows in the
-# tables it does not seed — stale rows in a dbt-rebuilt class_collab_* would skew
-# its neighbours. The zoom staging models are also `incremental`/`append`, so a
-# warm rebuild would ALSO accumulate duplicate unique_keys (failing their dbt
-# `unique` test). Truncating these once at session start makes warm re-runs
-# deterministic; CI starts fresh anyway.
-_SESSION_START_TRUNCATE = [
-    ("silver", "class_collab_email_activity"),
-    ("silver", "class_collab_chat_activity"),
-    ("silver", "class_collab_meeting_activity"),
-    ("silver", "class_collab_document_activity"),
-    ("staging", "m365__collab_email_activity"),
-    ("staging", "m365__collab_chat_activity"),
-    ("staging", "m365__collab_meeting_activity"),
-    ("staging", "m365__collab_document_activity_onedrive"),
-    ("staging", "m365__collab_document_activity_sharepoint"),
-    # Zoom feeds class_collab_meeting_activity (cross-source meeting_hours).
-    ("staging", "zoom__collab_meeting_activity"),
-    ("staging", "zoom__meeting_sessions"),
-    # bronze_zoom.meetings is READ (via `+zoom__collab_meeting_activity` pulling
-    # zoom__meeting_sessions) by every test that seeds only participants — so it
-    # is neither seed-truncated by those tests nor ledger-truncated between them
-    # (derive_selectors records only models sourced from SEEDED tables). A prior
-    # session's leftover rows get re-appended into zoom__meeting_sessions on
-    # every such build, tripping its `unique` dbt test on the second one. Bronze
-    # participants added for symmetry.
-    ("bronze_zoom", "meetings"),
-    ("bronze_zoom", "participants"),
-    # Task-tracking: the bullet/MV chain reads class_task_* even when a fixture
-    # seeds only one connector, and the enrich path writes staging.jira__task_*.
-    # Reset them once at session start so warm re-runs are deterministic (CI is
-    # fresh anyway); per-test TRUNCATE handles cross-test isolation.
-    ("silver", "class_task_field_history"),
-    ("silver", "class_task_users"),
-    ("silver", "class_task_field_metadata"),
-    ("silver", "class_task_worklogs"),
-    ("staging", "jira__task_field_history"),
-    ("staging", "jira_issue_field_snapshot"),
-    ("staging", "jira_changelog_items"),
-    ("staging", "jira__task_field_metadata"),
-    # claude_team specs build staging.claude_team__ai_dev_usage — an incremental
-    # `append` model with a dbt `unique` test on unique_key. Session-start reset
-    # keeps warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
-    # duplicate keys.
-    ("staging", "claude_team__ai_dev_usage"),
-    # claude_team__ai_overage (cc_overage) is also incremental `append` with a
-    # dbt `unique` test — reset it too for warm-rerun determinism.
-    ("staging", "claude_team__ai_overage"),
-    # claude_team__ai_invoice and its class are both incremental behind a strict
-    # `_airbyte_extracted_at >` watermark. A warm re-run re-seeds the same
-    # timestamps, so without a reset the watermark admits nothing and every
-    # assertion below reads the previous session's rows instead of this one's.
-    ("staging", "claude_team__ai_invoice"),
-    ("silver", "class_ai_invoice"),
-    # claude_enterprise specs build staging.claude_enterprise__ai_dev_usage — an
-    # incremental `append` model with a dbt `unique` test on unique_key.
-    # Session-start reset keeps warm re-runs (reused CH volume, no `./e2e.sh
-    # down`) from accumulating duplicate keys.
-    ("staging", "claude_enterprise__ai_dev_usage"),
-    # Wiki: class_wiki_pages / class_wiki_engagement are incremental
-    # (delete+insert, `_version > max`) and union BOTH outline + confluence. A
-    # warm re-run with the same seed _version produces no new rows, leaving the
-    # prior test's data in place → cross-test contamination. Reset at session
-    # start (max(_version) over the emptied table = 0, so the first test's real
-    # millis _version reloads fully). CI starts fresh anyway.
-    ("silver", "class_wiki_pages"),
-    ("silver", "class_wiki_engagement"),
-    ("silver", "class_wiki_activity"),
-    # ai_smoke (cursor) builds staging.cursor__ai_dev_usage — an incremental
-    # `append` model guarded by a dbt `unique` test on unique_key. Without a
-    # session-start reset, a warm re-run (reused CH volume, no `./e2e.sh down`)
-    # appends the same rows again → duplicate unique_keys → the unique test fails.
-    ("staging", "cursor__ai_dev_usage"),
-    # chatgpt_team specs build staging.chatgpt_team__ai_dev_usage (codex) and
-    # staging.chatgpt_team__ai_assistant_usage (chat) — both incremental `append`
-    # models with a dbt `unique` test on unique_key. Session-start reset keeps
-    # warm re-runs (reused CH volume, no `./e2e.sh down`) from accumulating
-    # duplicate keys.
-    ("staging", "chatgpt_team__ai_dev_usage"),
-    ("staging", "chatgpt_team__ai_assistant_usage"),
-]
-
-
 @pytest.fixture(scope="session")
 def ch_migrations_applied(compose_stack: SessionConfig) -> SessionConfig:
-    """Apply ClickHouse migrations once at session start, then reset the
-    multi-reader silver/staging tables so warm re-runs are deterministic."""
+    """Apply ClickHouse migrations once at session start, then empty every
+    fixture-data relation so a re-run over a live ClickHouse starts where a fresh
+    one does."""
     cfg = compose_stack
     if _IS_PRIMARY:
         apply_ch_migrations(cfg)
-        for schema, table in _SESSION_START_TRUNCATE:
-            ch.execute(cfg, f"TRUNCATE TABLE IF EXISTS `{schema}`.`{table}`")
+        session_reset.truncate_data_tables(cfg)
     return cfg
 
 
@@ -272,6 +184,13 @@ def analytics(
 def ch_seeder(ch_migrations_applied: SessionConfig) -> CHSeeder:
     """Session-scoped seeder so its ledger persists across tests in the same worker."""
     return CHSeeder(ch_migrations_applied)
+
+
+@pytest.fixture
+def tracked_models(dbt_runner: DbtRunner, ch_seeder: CHSeeder) -> TrackedModels:
+    """Per-test dbt builds, with every relation they write registered for the
+    next test to truncate."""
+    return TrackedModels(dbt_runner, ch_seeder)
 
 
 @pytest.fixture(scope="session")
