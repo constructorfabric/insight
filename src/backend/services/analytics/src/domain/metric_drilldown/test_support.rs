@@ -5,7 +5,10 @@ use crate::domain::metric_definitions::definition::{
     MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
     ObservationSource,
 };
-use crate::domain::metric_definitions::{ComputationSpec, EvidenceRelation, MetricDefinition};
+use crate::domain::metric_definitions::{
+    ComputationSpec, EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation,
+    EvidenceRelation, MetricDefinition,
+};
 
 use super::cursor::selection_fingerprint;
 use super::dto::{
@@ -22,6 +25,37 @@ pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
         ),
         source_key: "git".to_owned(),
         measure_key: measure_key.to_owned(),
+    }
+}
+
+fn detail_column(key: &str, label: &str, r#type: EvidenceColumnType) -> EvidenceDetailColumn {
+    EvidenceDetailColumn {
+        key: key.to_owned(),
+        label: label.to_owned(),
+        r#type,
+    }
+}
+
+/// The declaration a commit measure carries in the registry.
+pub(super) fn commit_presentation() -> EvidencePresentation {
+    EvidencePresentation {
+        detail_columns: vec![
+            detail_column("ref", "Ref", EvidenceColumnType::String),
+            detail_column("title", "Title", EvidenceColumnType::String),
+            detail_column("repository", "Repository", EvidenceColumnType::String),
+            detail_column("author", "Author", EvidenceColumnType::String),
+            detail_column("lines_added", "Lines added", EvidenceColumnType::Number),
+            detail_column("lines_removed", "Lines removed", EvidenceColumnType::Number),
+        ],
+        show_value: false,
+    }
+}
+
+pub(super) fn commit_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
+    EvidenceInput {
+        role,
+        measure_key: measure_key.to_owned(),
+        presentation: commit_presentation(),
     }
 }
 

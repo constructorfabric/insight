@@ -44,10 +44,20 @@ sources:
     measures:
       - key: commit_count
         evidence_granularity: event
+        evidence_presentation: &commit_row
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: lines_added, label: Lines added, type: number }
+            - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
         evidence_granularity: derived_population
       - key: commit_change_size
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: code_lines_added
         evidence_granularity: source_summary
       - key: test_lines_added
@@ -60,36 +70,60 @@ sources:
         evidence_granularity: source_summary
       - key: pr_created
         evidence_granularity: event
+        evidence_presentation: &pull_request_counted
+          show_value: false
+          detail_columns: &pull_request_columns
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
       - key: pr_created_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_abandoned
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_reviewed
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_reviewer_count
         evidence_granularity: event
+        evidence_presentation: &pull_request_measured
+          show_value: true
+          detail_columns: *pull_request_columns
       - key: pr_multi_reviewed
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_merged_without_approval
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_cycle_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_change_size
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_first_review_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_review_wait_share
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_review_to_merge_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_approval_to_merge_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: default_commit_count
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: non_default_commit_count
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: default_code_lines_added
         evidence_granularity: source_summary
       - key: non_default_code_lines_added
@@ -104,12 +138,16 @@ sources:
         evidence_granularity: source_summary
       - key: default_pr_created
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: non_default_pr_created
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: default_pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: non_default_pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
     dimensions:
       - branch_scope
       - category
@@ -178,18 +216,31 @@ sources:
     measures:
       - key: tasks_closed
         evidence_granularity: event
+        evidence_presentation: &issue_counted
+          show_value: false
+          detail_columns: &issue_columns
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
       - key: bugs_fixed
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: closed_non_bug
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: due_date_on_time
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: due_date_with_due
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: slip_days_total
         evidence_granularity: event
+        evidence_presentation: &issue_measured
+          show_value: true
+          detail_columns: *issue_columns
       - key: late_count
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: estimation_error_pct
         evidence_granularity: derived_population
       - key: estimation_samples
@@ -210,10 +261,13 @@ sources:
         evidence_granularity: derived_population
       - key: dev_time_hours
         evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: resolution_days
         evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: pickup_days
         evidence_granularity: event
+        evidence_presentation: *issue_measured
     dimensions:
       - type
       - source
@@ -225,6 +279,11 @@ sources:
     measures:
       - key: pages_created
         evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
       - key: edits
         evidence_granularity: source_summary
       - key: pages_edited
@@ -240,12 +299,25 @@ sources:
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary
+        evidence_presentation: &seat_month_row
+          show_value: true
+          detail_columns:
+            - { key: billing_month, label: Billing month }
+            - { key: ceiling_usd, label: Ceiling, type: number }
       - key: extra_usage_limit_usd
         evidence_granularity: source_summary
+        evidence_presentation: *seat_month_row
       - key: seat_cost_usd
         evidence_granularity: source_summary
+        evidence_presentation: *seat_month_row
       - key: daily_extra_usage_usd
         evidence_granularity: source_summary
+        evidence_presentation:
+          show_value: true
+          detail_columns:
+            - { key: billing_month, label: Billing month }
+            - { key: month_to_date_usd, label: Month to date, type: number }
+            - { key: covers_days, label: Days covered, type: number }
     dimensions:
       - tool
       - seat_tier

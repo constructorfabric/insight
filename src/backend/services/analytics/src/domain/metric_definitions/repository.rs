@@ -634,19 +634,24 @@ pub async fn all_managed_sources(
     .await
 }
 
-pub async fn source_evidence_granularities(
+/// What a measure claims its evidence rows look like: the granularity they
+/// carry, and the declaration of the columns the drilldown projects out of
+/// them. Both are stored as written — a value that does not parse is a
+/// configuration fault the validator reports, not one the loader hides.
+#[derive(FromQueryResult)]
+pub struct SourceMeasureEvidence {
+    pub measure_key: String,
+    pub evidence_granularity: Option<String>,
+    pub evidence_presentation: Option<String>,
+}
+
+pub async fn source_evidence_contracts(
     db: &DatabaseConnection,
     source_id: Uuid,
-) -> Result<Vec<(String, Option<String>)>, sea_orm::DbErr> {
-    #[derive(FromQueryResult)]
-    struct Row {
-        measure_key: String,
-        evidence_granularity: Option<String>,
-    }
-
-    Row::find_by_statement(Statement::from_sql_and_values(
+) -> Result<Vec<SourceMeasureEvidence>, sea_orm::DbErr> {
+    SourceMeasureEvidence::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
-        "SELECT measure_key, evidence_granularity \
+        "SELECT measure_key, evidence_granularity, evidence_presentation \
          FROM metric_source_measures \
          WHERE source_id = ? AND is_enabled = TRUE \
          ORDER BY measure_key",
@@ -654,11 +659,6 @@ pub async fn source_evidence_granularities(
     ))
     .all(db)
     .await
-    .map(|rows| {
-        rows.into_iter()
-            .map(|row| (row.measure_key, row.evidence_granularity))
-            .collect()
-    })
 }
 
 // `updated_at = updated_at` in the status writers below pins the column so

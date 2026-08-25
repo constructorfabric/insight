@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{
-    EvidenceGranularity, MetricDefinition, load_definitions_with_ids,
+    EvidenceGranularity, EvidencePresentation, MetricDefinition, load_definitions_with_ids,
 };
 use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
@@ -36,7 +36,6 @@ struct CommonRequest {
 use super::error::{
     config_error, db_error, evidence_unavailable, invalid, invalid_error, parse_date,
 };
-use super::presentation::evidence_presentation;
 
 pub async fn validate_request(
     db: &DatabaseConnection,
@@ -252,8 +251,8 @@ async fn load_evidence_plan(
 ) -> Result<EvidencePlan, CanonicalError> {
     let rows = EvidenceInputRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
-        "SELECT i.input_role, m.measure_key, m.evidence_granularity, s.source_key, \
-                s.evidence_ref, s.evidence_schema_status \
+        "SELECT i.input_role, m.measure_key, m.evidence_granularity, m.evidence_presentation, \
+                s.source_key, s.evidence_ref, s.evidence_schema_status \
          FROM metric_definition_inputs i \
          INNER JOIN metric_source_measures m ON m.id = i.source_measure_id \
          INNER JOIN metric_sources s ON s.id = m.source_id \
@@ -280,9 +279,13 @@ async fn load_evidence_plan(
                 .as_deref()
                 .and_then(EvidenceGranularity::from_db)
                 .ok_or_else(config_error)?;
+            let presentation = match row.evidence_presentation.as_deref() {
+                Some(declared) => EvidencePresentation::parse(declared).ok_or_else(config_error)?,
+                None => EvidencePresentation::undeclared(granularity),
+            };
             Ok(EvidenceInput {
                 role,
-                presentation: evidence_presentation(&source_key, &row.measure_key, granularity),
+                presentation,
                 measure_key: row.measure_key,
             })
         })
