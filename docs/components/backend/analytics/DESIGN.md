@@ -31,6 +31,7 @@ date: 2026-04-08
   - [3.6 Interactions & Sequences](#36-interactions--sequences)
   - [3.7 Database Schemas & Tables](#37-database-schemas--tables)
 - [4. Additional Context](#4-additional-context)
+  - [Metric families specified beside this document](#metric-families-specified-beside-this-document)
   - [Inter-Service Authentication](#inter-service-authentication)
   - [Multi-Tenant OIDC](#multi-tenant-oidc)
 - [5. Traceability](#5-traceability)
@@ -142,6 +143,8 @@ The service never exposes ClickHouse table names to the frontend. All queries go
 Every ClickHouse query includes `insight_tenant_id`. User-supplied OData `$filter` values are ANDed with security filters, so users can narrow their view but never widen it.
 
 **IDOR prevention on person entities**: `POST /v1/metric-results` resolves the caller from the gateway JWT and asks identity, in one batch call, which of the requested person ids that caller may see (`POST /v1/visible-persons`). Any requested id outside the answer refuses the whole request with 403 — never a partial response, which would be indistinguishable from absent data. Reaching identity is required: an unconfigured or unreachable identity service is a server error, so an authorization backend that is down cannot read as "permitted".
+
+**Computation failure is per-view, authorization failure is whole-request**: the all-or-nothing rule above is about *permission*, not about *execution*. A ClickHouse failure while computing one metric's view (missing source relation, resource limit, timeout, unparseable result) answers 200 with a `view: "error"` variant in that view's slot — a stable `code` plus a `message` — so one broken metric cannot take down every other metric in the response. The message carries the underlying description only when identity confirms the caller holds the `admin` role; everyone else gets a generic per-code text, and the full error with its SQL is logged server-side. An identity that cannot answer the role check degrades the message to generic — it never turns a partial answer into a server error, because the check routes detail, not access.
 
 **IDOR prevention on the legacy query paths**: `POST /v1/metrics/{id}/query` and `POST /v1/metrics/queries` accept `person_id eq …` / `person_id in (…)` in `$filter`. Those ids go through the same gate as `/v1/metric-results` before any ClickHouse work, with the same failure matrix, so one id outside the caller's visible set refuses the whole request with 403. A `person_id` value that is not a person UUID is a 400 — since the cutover the column is a UUID, so a pre-cutover email would otherwise surface as a cast failure the caller cannot act on.
 

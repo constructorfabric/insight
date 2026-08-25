@@ -125,8 +125,19 @@ fn app_with_identity(db: DatabaseConnection, tenant: Uuid, identity: IdentityCli
 }
 
 /// Loopback identity serving `POST /v1/visible-persons` — answers with the
-/// intersection of the requested person ids and `visible`.
+/// intersection of the requested person ids and `visible` — and `GET /v1/me`
+/// reporting no roles (a non-admin caller).
 async fn spawn_identity(visible: &[Uuid]) -> Result<IdentityClient, Box<dyn std::error::Error>> {
+    spawn_identity_with_roles(visible, false).await
+}
+
+/// The seeded identity `admin` role id mirrored from `infra::identity`.
+const ADMIN_ROLE_ID: &str = "a4d11000-0000-4000-8000-000000000001";
+
+async fn spawn_identity_with_roles(
+    visible: &[Uuid],
+    admin: bool,
+) -> Result<IdentityClient, Box<dyn std::error::Error>> {
     let visible = Arc::new(
         visible
             .iter()
@@ -134,26 +145,39 @@ async fn spawn_identity(visible: &[Uuid]) -> Result<IdentityClient, Box<dyn std:
             .collect::<std::collections::HashSet<Uuid>>(),
     );
 
-    let app = Router::new().route(
-        "/v1/visible-persons",
-        axum::routing::post(move |axum::Json(req): axum::Json<Value>| {
-            let visible = Arc::clone(&visible);
-            async move {
-                let granted = req["person_ids"]
-                    .as_array()
-                    .map(|ids| {
-                        ids.iter()
-                            .filter_map(|v| v.as_str())
-                            .filter_map(|v| Uuid::parse_str(v).ok())
-                            .filter(|person_id| visible.contains(person_id))
-                            .map(|person_id| person_id.to_string())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                axum::Json(json!({"visible": granted}))
-            }
-        }),
-    );
+    let roles = if admin {
+        json!([{"role_id": ADMIN_ROLE_ID}])
+    } else {
+        json!([])
+    };
+    let app = Router::new()
+        .route(
+            "/v1/visible-persons",
+            axum::routing::post(move |axum::Json(req): axum::Json<Value>| {
+                let visible = Arc::clone(&visible);
+                async move {
+                    let granted = req["person_ids"]
+                        .as_array()
+                        .map(|ids| {
+                            ids.iter()
+                                .filter_map(|v| v.as_str())
+                                .filter_map(|v| Uuid::parse_str(v).ok())
+                                .filter(|person_id| visible.contains(person_id))
+                                .map(|person_id| person_id.to_string())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    axum::Json(json!({"visible": granted}))
+                }
+            }),
+        )
+        .route(
+            "/v1/me",
+            axum::routing::get(move || {
+                let roles = roles.clone();
+                async move { axum::Json(json!({"roles": roles})) }
+            }),
+        );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -262,11 +286,11 @@ async fn metric_results_forbids_a_person_outside_the_callers_visible_set() -> Te
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
 async fn metric_results_does_not_deny_a_person_inside_the_callers_visible_set() -> TestResult {
-    // ClickHouse is unreachable here, so an admitted request cannot reach a
-    // 200; what this pins is that the gate did not reject it. Asserting the
-    // exact 500 (not merely `!= 403`) is deliberate: a 400 from validation
-    // would satisfy a not-forbidden assertion and hide a request that never
-    // reached the gate at all.
+    // ClickHouse is unreachable here, so an admitted request answers 200 with
+    // an error view in the metric's slot; what this pins is that the gate did
+    // not reject it. Asserting the error view (not merely `!= 403`) is
+    // deliberate: a 400 from validation would satisfy a not-forbidden
+    // assertion and hide a request that never reached the gate at all.
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -282,9 +306,14 @@ async fn metric_results_does_not_deny_a_person_inside_the_callers_visible_set() 
 
     assert_eq!(
         resp.status(),
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "a visible person must pass the gate and fail only on the unreachable \
-         ClickHouse; a 400 would mean the request never got that far"
+        StatusCode::OK,
+        "a visible person must pass the gate; the unreachable ClickHouse \
+         answers inside the view, not as a request error"
+    );
+    let body = body_json(resp).await?;
+    assert_eq!(
+        body["metrics"][0]["views"][0]["view"], "error",
+        "the admitted request must have reached ClickHouse and failed there"
     );
     Ok(())
 }
@@ -597,7 +626,8 @@ async fn saved_query_is_tenant_scoped() -> TestResult {
 
 #[tokio::test]
 #[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
-async fn metric_results_loads_drilldown_capabilities_before_clickhouse_error() -> TestResult {
+async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_down() -> TestResult
+{
     let Some(db) = connect_or_skip().await else {
         return Ok(());
     };
@@ -606,7 +636,7 @@ async fn metric_results_loads_drilldown_capabilities_before_clickhouse_error() -
     let result: anyhow::Result<()> = async {
         // A visible person id, not an email: since the identity cutover an email
         // is refused by validation, which would give a 4xx before the request
-        // ever reached the drilldown-capability load this test is about.
+        // ever reached the ClickHouse failure this test is about.
         let app = app_with_identity(db.clone(), fixture.tenant_id, identity);
         let resp = app
             .oneshot(json_req(
@@ -622,7 +652,67 @@ async fn metric_results_loads_drilldown_capabilities_before_clickhouse_error() -
                 }),
             )?)
             .await?;
-        anyhow::ensure!(resp.status().is_server_error());
+        anyhow::ensure!(
+            resp.status() == StatusCode::OK,
+            "a ClickHouse outage must not 500 the request"
+        );
+
+        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let metric = &body["metrics"][0];
+        anyhow::ensure!(metric["metric_key"] == "git.commits");
+        anyhow::ensure!(
+            metric["drilldown"].is_object(),
+            "drilldown capabilities still load alongside the failed view"
+        );
+        let view = &metric["views"][0];
+        anyhow::ensure!(view["view"] == "error", "the failed view answers in place");
+        anyhow::ensure!(view["code"] == "QUERY_FAILED");
+        let message = view["message"].as_str().unwrap_or_default();
+        anyhow::ensure!(
+            !message.contains("127.0.0.1") && !message.contains("error sending request"),
+            "a non-admin must not see transport detail, got: {message}"
+        );
+        Ok(())
+    }
+    .await;
+    fixture.delete(&db).await?;
+    result.map_err(Into::into)
+}
+
+#[tokio::test]
+#[ignore = "requires live MariaDB (INTEGRATION_TESTS_MARIADB_URL)"]
+async fn admins_see_the_underlying_error_when_clickhouse_is_down() -> TestResult {
+    let Some(db) = connect_or_skip().await else {
+        return Ok(());
+    };
+    let fixture = DrilldownFixture::insert(&db, &["git.commits"], &[]).await?;
+    let identity = spawn_identity_with_roles(&[VISIBLE_PERSON], true).await?;
+    let result: anyhow::Result<()> = async {
+        let app = app_with_identity(db.clone(), fixture.tenant_id, identity);
+        let resp = app
+            .oneshot(json_req(
+                "POST",
+                "/v1/metric-results",
+                &json!({
+                    "entity": {"type": "person", "ids": [VISIBLE_PERSON.to_string()]},
+                    "period": {"from": "2026-07-01", "to": "2026-07-28"},
+                    "metrics": [{
+                        "metric_key": "git.commits",
+                        "views": [{"view": "period"}]
+                    }]
+                }),
+            )?)
+            .await?;
+        anyhow::ensure!(resp.status() == StatusCode::OK);
+
+        let body = body_json(resp).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+        let view = &body["metrics"][0]["views"][0];
+        anyhow::ensure!(view["view"] == "error");
+        let message = view["message"].as_str().unwrap_or_default();
+        anyhow::ensure!(
+            !message.is_empty() && !message.contains("could not be computed"),
+            "an admin must see the underlying description, got: {message}"
+        );
         Ok(())
     }
     .await;

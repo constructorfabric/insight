@@ -352,6 +352,7 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         MetricResultViewDto::Histogram { values } => {
             values.iter().map(|value| value.bins.len()).sum()
         }
+        MetricResultViewDto::Error { .. } => 0,
     }
 }
 

@@ -456,6 +456,10 @@ class MetricResultViewDto6(BaseModel):
     view: View5
 
 
+class View6(StrEnum):
+    error = 'error'
+
+
 class Type3(StrEnum):
     person = 'person'
 
@@ -533,7 +537,15 @@ class MetricSchemaErrorCode(StrEnum):
     unknown = 'unknown'
 
 
-class View6(StrEnum):
+class MetricViewErrorCode(StrEnum):
+    SOURCE_RELATION_MISSING = 'SOURCE_RELATION_MISSING'
+    RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED'
+    QUERY_TIMEOUT = 'QUERY_TIMEOUT'
+    RESULT_PARSE_FAILED = 'RESULT_PARSE_FAILED'
+    QUERY_FAILED = 'QUERY_FAILED'
+
+
+class View7(StrEnum):
     period = 'period'
 
 
@@ -541,10 +553,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View6
+    view: View7
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     peer = 'peer'
 
 
@@ -553,10 +565,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -567,10 +579,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
+class View10(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -579,10 +591,10 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View9
+    view: View10
 
 
-class View10(StrEnum):
+class View11(StrEnum):
     rollup = 'rollup'
 
 
@@ -592,10 +604,10 @@ class MetricViewRequest5(BaseModel):
     )
     dimensions: list[str]
     group_limit: MetricGroupLimitRequest | None = None
-    view: View10
+    view: View11
 
 
-class View11(StrEnum):
+class View12(StrEnum):
     histogram = 'histogram'
 
 
@@ -603,7 +615,7 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View11
+    view: View12
 
 
 class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
@@ -1063,6 +1075,20 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
+class MetricResultViewDto7(BaseModel):
+    """
+    This view's computation failed; sibling views and metrics are
+    unaffected. `message` detail depends on the caller's role: admins get
+    the underlying description, everyone else a generic one.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    code: MetricViewErrorCode
+    message: str
+    view: View6
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1220,8 +1246,8 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
 
 
 class MetricResultDto5(BaseModel):
