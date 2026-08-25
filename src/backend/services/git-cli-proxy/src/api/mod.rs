@@ -86,6 +86,7 @@ async fn answer_within(budget: Duration, request: Request, next: Next) -> Respon
     if let Ok(response) = tokio::time::timeout(budget, next.run(request)).await {
         return response;
     }
+    metrics::record_handler_timeout();
     tracing::error!(%method, %path, budget_s = budget.as_secs(),
         "handler exceeded its budget; answering 503");
     error::handler_timed_out()
