@@ -19,6 +19,11 @@ const HISTORY_LIMIT: u64 = 50;
 /// two sides of the seam never disagree about which row wins.
 const CLAIM_RANK: &str = "multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1)";
 
+/// The last tick that finished writing. Every snapshot read keys on it, so a
+/// tick still in flight never contributes half a picture.
+const SEALED_TICK: &str =
+    "SELECT argMax(run_id, ts) FROM ingestion_runs.pipeline_events WHERE event = 'sweep.completed'";
+
 /// One row per connector: its newest terminal run, and the transform outcome
 /// belonging to that same run rather than to whichever ran last.
 const RUNS_SQL: &str = "\
@@ -45,17 +50,20 @@ const TRANSFORMS_SQL: &str = "\
 /// neither row is complete alone.
 const SYNCS_SQL: &str = "\
     SELECT connector,
-           argMax(claim, (rank, ts))         AS claim,
-           argMax(status, (rank, ts))        AS status,
-           any(started_at)                   AS started_at,
-           max(duration_ms)                  AS duration_ms,
-           max(records_moved)                AS records_moved,
-           max(rows_landed)                  AS rows_landed,
-           max(has_measurement)              AS has_measurement
+           argMax(claim, (rank, ts))               AS claim,
+           argMax(status, (rank, ts))              AS status,
+           argMax(started_at, (from_sweep, ts))    AS started_at,
+           max(duration_ms)                        AS duration_ms,
+           max(records_moved)                      AS records_moved,
+           max(landed_or_zero)                     AS rows_landed,
+           max(measured)                           AS has_measurement
     FROM (
       SELECT connector, job_id, claim, status, started_at, duration_ms,
-             records_moved, coalesce(rows_landed, 0) AS rows_landed,
-             rows_landed IS NOT NULL AS has_measurement, ts,
+             records_moved,
+             ifNull(rows_landed, 0) AS landed_or_zero,
+             rows_landed IS NOT NULL AS measured,
+             origin = 'sweep' AS from_sweep,
+             ts,
              {CLAIM_RANK} AS rank
       FROM {LEDGER}
       WHERE event = 'sync.completed' AND connector != ''
@@ -68,28 +76,22 @@ const SYNCS_SQL: &str = "\
     )
     GROUP BY connector";
 
-/// The newest storage observation per connector, and its per-stream rows.
+/// Storage as the newest SEALED tick observed it.
+///
+/// Keyed on the marker rather than on the newest row: two ticks a millisecond
+/// apart would otherwise resolve arbitrarily, and a half-written observation set
+/// could win. The marker is written last, so it names a complete tick.
 const STORAGE_SQL: &str = "\
     SELECT connector, ts AS observed_at, streams, streams_with_data, rows_total, bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream = '' AND connector != ''
-      AND (connector, run_id) IN (
-        SELECT connector, argMax(run_id, ts)
-        FROM {LEDGER}
-        WHERE event = 'storage.observed' AND stream = '' AND connector != ''
-        GROUP BY connector
-      )";
+      AND run_id = ({SEALED_TICK})";
 
 const STREAMS_SQL: &str = "\
     SELECT connector, stream, rows_total, bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream != '' AND connector != ''
-      AND (connector, run_id) IN (
-        SELECT connector, argMax(run_id, ts)
-        FROM {LEDGER}
-        WHERE event = 'storage.observed' AND stream != '' AND connector != ''
-        GROUP BY connector
-      )";
+      AND run_id = ({SEALED_TICK})";
 
 /// The configured set is the membership of the newest SEALED snapshot.
 ///
@@ -99,24 +101,29 @@ const STREAMS_SQL: &str = "\
 const CONFIGURED_SQL: &str = "\
     SELECT connector
     FROM {LEDGER}
-    WHERE event = 'connector.configured'
-      AND run_id = (
-        SELECT argMax(run_id, ts) FROM {LEDGER} WHERE event = 'sweep.completed'
-      )";
+    WHERE event = 'connector.configured' AND run_id = ({SEALED_TICK})";
 
+/// One connector's recent runs and syncs, newest first.
+///
+/// Snapshot bookkeeping is excluded: `storage.observed` and
+/// `connector.configured` say what a tick saw, not what a run did, and reading
+/// them here would bury the history under one line per tick.
 const HISTORY_SQL: &str = "\
     SELECT event, status, step, origin, claim, started_at, duration_ms,
-           records_moved, coalesce(rows_landed, 0) AS rows_landed,
+           records_moved,
+           ifNull(rows_landed, 0) AS rows_landed_or_zero,
            rows_landed IS NOT NULL AS has_measurement
     FROM {LEDGER}
-    WHERE connector = ? AND event != 'storage.observed'
-    ORDER BY ts DESC
+    WHERE connector = ?
+      AND event NOT IN ('storage.observed', 'connector.configured', 'sweep.completed')
+    ORDER BY started_at DESC
     LIMIT {HISTORY_LIMIT}";
 
 fn sql(template: &str) -> String {
     template
         .replace("{LEDGER}", LEDGER)
         .replace("{CLAIM_RANK}", CLAIM_RANK)
+        .replace("{SEALED_TICK}", SEALED_TICK)
         .replace("{HISTORY_LIMIT}", &HISTORY_LIMIT.to_string())
 }
 
@@ -186,7 +193,7 @@ pub(crate) struct HistoryRow {
     pub(crate) started_at: DateTime<Utc>,
     pub(crate) duration_ms: u64,
     pub(crate) records_moved: u64,
-    pub(crate) rows_landed: u64,
+    pub(crate) rows_landed_or_zero: u64,
     pub(crate) has_measurement: bool,
 }
 
@@ -416,6 +423,50 @@ mod tests {
             sync_facts(vec![row])[0].1.rows_landed,
             Some(0),
             "moved records and nothing landed is the finding, not a gap"
+        );
+    }
+
+    #[test]
+    fn no_statement_aliases_a_nullable_column_to_its_own_name() {
+        // Found by running these against ClickHouse: an alias shadows the source
+        // column, so `coalesce(rows_landed, 0) AS rows_landed` next to
+        // `rows_landed IS NOT NULL` makes the null test read the alias and answer
+        // true for every row — turning an absent measurement into a measured
+        // zero, which is exactly the false mismatch this surface must not invent.
+        for template in [SYNCS_SQL, HISTORY_SQL] {
+            let rendered = sql(template);
+            let scope = rendered
+                .rsplit_once("FROM (")
+                .map_or(rendered.as_str(), |(_, inner)| inner);
+            assert!(
+                scope.contains("rows_landed IS NOT NULL"),
+                "the measurement must still be distinguished from a zero: {rendered}"
+            );
+            assert!(
+                !scope.contains("AS rows_landed,"),
+                "the scope that tests for null must not alias the column to its own name: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_snapshot_read_keys_on_the_sealed_tick() {
+        for template in [STORAGE_SQL, STREAMS_SQL, CONFIGURED_SQL] {
+            assert!(
+                sql(template).contains("sweep.completed"),
+                "a tick still in flight must never contribute half a picture"
+            );
+        }
+    }
+
+    #[test]
+    fn run_history_leaves_out_per_tick_bookkeeping() {
+        let rendered = sql(HISTORY_SQL);
+
+        assert!(rendered.contains("NOT IN ('storage.observed'"));
+        assert!(
+            rendered.contains("ORDER BY started_at DESC"),
+            "a reader orders runs by when they ran, not by when a row was written"
         );
     }
 

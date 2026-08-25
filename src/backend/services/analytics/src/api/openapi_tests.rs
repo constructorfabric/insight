@@ -93,7 +93,10 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
 fn the_instance_wide_connector_read_declares_its_role_refusal() -> anyhow::Result<()> {
     let json = serde_json::to_value(openapi_document()?)?;
 
-    for path in ["/v1/connector-health", "/v1/connector-health/{connector}/runs"] {
+    for path in [
+        "/v1/connector-health",
+        "/v1/connector-health/{connector}/runs",
+    ] {
         let responses = &json["paths"][path]["get"]["responses"];
         assert!(
             responses.get("403").is_some(),

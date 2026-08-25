@@ -195,7 +195,7 @@ fn run_event_view(row: read::HistoryRow) -> RunEventView {
         started_at: row.started_at,
         duration_ms: row.duration_ms,
         records_moved: row.records_moved,
-        rows_landed: row.has_measurement.then_some(row.rows_landed),
+        rows_landed: row.has_measurement.then_some(row.rows_landed_or_zero),
     }
 }
 
@@ -324,7 +324,7 @@ mod tests {
             started_at: at(),
             duration_ms: 1,
             records_moved: 0,
-            rows_landed: 0,
+            rows_landed_or_zero: 0,
             has_measurement: false,
         };
 
