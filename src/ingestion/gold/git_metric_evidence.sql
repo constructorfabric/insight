@@ -373,6 +373,19 @@ pr_commit_emails AS (
     WHERE email_count = max_count
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
+-- uniqExact, not count(): the link table is append-only per sync, so the same
+-- link row can arrive more than once and the count must not inflate.
+pr_commit_counts AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        pr_id,
+        uniqExact(commit_hash) AS linked_commit_count
+    FROM {{ ref('class_git_pull_requests_commits') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+),
 pull_request_review_summary AS (
     SELECT
         tenant_id,
@@ -406,6 +419,7 @@ pull_requests_source AS (
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
+        coalesce(pr_commit_counts.linked_commit_count, 0) AS linked_commit_count,
         coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
         coalesce(review_summary.has_approval, 0) AS has_approval,
         review_summary.first_reviewed_at AS first_reviewed_at,
@@ -472,6 +486,12 @@ pull_requests_source AS (
             AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS source_dimensions
     FROM {{ ref('class_git_pull_requests') }} AS prs FINAL
+    LEFT JOIN pr_commit_counts
+        ON pr_commit_counts.tenant_id = prs.tenant_id
+        AND pr_commit_counts.source_id = prs.source_id
+        AND pr_commit_counts.project_key = prs.project_key
+        AND pr_commit_counts.repo_slug = prs.repo_slug
+        AND pr_commit_counts.pr_id = prs.pr_id
     LEFT JOIN pr_commit_emails
         ON pr_commit_emails.tenant_id = prs.tenant_id
         AND pr_commit_emails.source_id = prs.source_id
@@ -489,6 +509,75 @@ pull_requests_source AS (
         AND defaults.source_id = prs.source_id
         AND defaults.project_key = prs.project_key
         AND defaults.repo_slug = prs.repo_slug
+),
+-- The reviewer/commenter perspective: one row per review verdict or comment,
+-- attributed to the ACTOR, not the pull request author. The request is joined
+-- for display fields, its destination branch, and the comment_target split;
+-- an event whose request the source has not reported still counts.
+review_person_map AS (
+    {{ resolve_person_id() }}
+),
+review_events_source AS (
+    SELECT
+        events.tenant_id AS tenant_id,
+        events.event_kind AS event_kind,
+        events.unique_key AS event_key,
+        events.pr_id AS pr_id,
+        events.pr_number AS pr_number,
+        lower(trimBoth(events.actor_email)) AS entity_id,
+        toDate(events.created_at) AS metric_date,
+        events.created_at AS observed_at,
+        coalesce(prs.title, '') AS title,
+        coalesce(prs.author_name, '') AS author_name,
+        lower(trimBoth(coalesce(prs.author_email, ''))) AS author_email,
+        coalesce(toString(actor_map.person_id), '') AS actor_person_id,
+        coalesce(toString(author_map.person_id), '') AS author_person_id,
+        -- Own vs others by canonical person where both emails resolve, by
+        -- normalized email otherwise. An undeterminable author reads `others`
+        -- — the agreed reading for an absent signal (see branch_scope), which
+        -- keeps own + others = total.
+        multiIf(
+            author_email = '', 'others',
+            actor_person_id != '' AND author_person_id != '',
+                if(actor_person_id = author_person_id, 'own', 'others'),
+            entity_id = author_email, 'own',
+            'others'
+        ) AS comment_target_value,
+        if(comment_target_value = 'own', 'Own PRs', 'Others'' PRs') AS comment_target_label,
+        if(coalesce(events.project_key, '') = '', '__unknown__', concat(coalesce(toString(events.source_id), ''), ':', events.project_key)) AS project_value,
+        if(coalesce(events.project_key, '') = '', 'Unknown', events.project_key) AS project_label,
+        concat(coalesce(toString(events.source_id), ''), ':', coalesce(events.project_key, ''), '/', coalesce(events.repo_slug, '')) AS repository_value,
+        if(coalesce(events.project_key, '') = '', coalesce(events.repo_slug, ''), concat(events.project_key, '/', events.repo_slug)) AS repository_label,
+        if(coalesce(prs.destination_branch, '') = '', '__unknown__', assumeNotNull(prs.destination_branch)) AS destination_branch_value,
+        if(coalesce(prs.destination_branch, '') = '', 'Unknown', assumeNotNull(prs.destination_branch)) AS destination_branch_label,
+        replaceOne(events.data_source, 'insight_', '') AS source_value,
+        {{ git_source_label('source_value') }} AS source_label,
+        CAST(arrayConcat(
+            if(
+                events.event_kind = 'comment',
+                [tuple('comment_target', comment_target_value, comment_target_label)],
+                []
+            ),
+            [
+                tuple('destination_branch', destination_branch_value, destination_branch_label),
+                tuple('repository', repository_value, repository_label),
+                tuple('project', project_value, project_label),
+                tuple('source', source_value, source_label)
+            ]
+        ) AS Array(Tuple(key String, value String, label Nullable(String)))) AS source_dimensions
+    FROM {{ ref('class_git_pr_review_events') }} AS events FINAL
+    LEFT JOIN {{ ref('class_git_pull_requests') }} AS prs FINAL
+        ON prs.tenant_id = events.tenant_id
+        AND prs.source_id = events.source_id
+        AND prs.project_key = events.project_key
+        AND prs.repo_slug = events.repo_slug
+        AND prs.pr_id = events.pr_id
+    LEFT JOIN review_person_map AS actor_map
+        ON actor_map.email = lower(trimBoth(events.actor_email))
+    LEFT JOIN review_person_map AS author_map
+        ON author_map.email = lower(trimBoth(coalesce(prs.author_email, '')))
+    WHERE trimBoth(events.actor_email) != ''
+      AND events.created_at IS NOT NULL
 ),
 pull_request_measures AS (
     SELECT
@@ -575,6 +664,14 @@ pull_request_measures AS (
                 toFloat64(1),
                 toDateTime64(assumeNotNull(closed_on), 3)
             )],
+            []
+        ),
+        -- No linked commit rows means the source did not report the request's
+        -- commits, not that it merged empty — such a request contributes no
+        -- value rather than a zero.
+        if(
+            state = 'MERGED' AND closed_on IS NOT NULL AND linked_commit_count > 0,
+            [tuple('pr_commit_count', toFloat64(linked_commit_count), toDateTime64(assumeNotNull(closed_on), 3))],
             []
         ),
         if(
@@ -812,6 +909,35 @@ SELECT
 FROM pull_request_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'git' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    assumeNotNull(metric_date) AS metric_date,
+    toNullable(toDateTime64(observed_at, 3)) AS observed_at,
+    if(event_kind = 'review', 'review_submitted', 'pr_comment') AS measure_key,
+    -- The silver event key disambiguates several events by one person on one
+    -- request; per-PR keying would collapse them into one record.
+    concat(repository_value, ':pr:', toString(pr_id), ':', measure_key, ':', coalesce(event_key, '')) AS record_id,
+    'pull_request' AS record_kind,
+    'event' AS granularity,
+    if(title = '', concat('PR #', toString(pr_number)), title) AS record_label,
+    toNullable(toFloat64(1)) AS contribution,
+    CAST(NULL AS Nullable(String)) AS subject_key,
+    source_dimensions AS dimensions,
+    map(
+        'ref', toString(pr_number),
+        'title', title,
+        'repository', repository_label,
+        'author', author_name
+    ) AS details
+FROM review_events_source
+WHERE tenant_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
 {{ resolved_person_id_join('src') }}

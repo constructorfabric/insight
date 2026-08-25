@@ -109,8 +109,24 @@ class ComputationDto4(BaseModel):
     computation: Computation3
 
 
-class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4]):
-    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4
+class Computation4(StrEnum):
+    percentile = 'percentile'
+
+
+class ComputationDto5(BaseModel):
+    """
+    Serialized as `computation: "percentile"` plus the sibling `p` (the
+    integer quantile, e.g. 75) — mirroring how `ratio` carries `scale`.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation4
+    p: int = Field(..., ge=0)
+
+
+class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5]):
+    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5
 
 
 class CreateSavedQueryRequest(BaseModel):
@@ -210,6 +226,7 @@ class MetricComputation(StrEnum):
     ratio = 'ratio'
     median = 'median'
     distinct_count = 'distinct_count'
+    percentile = 'percentile'
 
 
 class MetricDimensionDto(BaseModel):
@@ -379,7 +396,7 @@ class MetricOrigin(StrEnum):
     custom = 'custom'
 
 
-class Computation4(StrEnum):
+class Computation5(StrEnum):
     sum = 'sum'
 
 
@@ -387,10 +404,10 @@ class MetricResultDto1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation4
+    computation: Computation5
 
 
-class Computation5(StrEnum):
+class Computation6(StrEnum):
     ratio = 'ratio'
 
 
@@ -398,11 +415,11 @@ class MetricResultDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation5
+    computation: Computation6
     scale: float
 
 
-class Computation6(StrEnum):
+class Computation7(StrEnum):
     median = 'median'
 
 
@@ -410,10 +427,10 @@ class MetricResultDto3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation6
+    computation: Computation7
 
 
-class Computation7(StrEnum):
+class Computation8(StrEnum):
     distinct_count = 'distinct_count'
 
 
@@ -421,7 +438,23 @@ class MetricResultDto4(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation7
+    computation: Computation8
+
+
+class Computation9(StrEnum):
+    percentile = 'percentile'
+
+
+class MetricResultDto5(BaseModel):
+    """
+    Serialized as `computation: "percentile"` plus the sibling `p` (the
+    integer quantile, e.g. 75) — mirroring how `ratio` carries `scale`.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation9
+    p: int = Field(..., ge=0)
 
 
 class View(StrEnum):
@@ -1153,6 +1186,7 @@ class CustomMetric(BaseModel):
     metric_key: str
     observation_sql: str
     origin: str | None = None
+    p: int | None = Field(None, description='Percentile quantile — an integer in (0, 100), e.g. 75 for p75.\nRequired iff `computation` is `percentile`.', ge=0)
     peer_cohort_key: str | None = None
     scale: float | None = None
     short_label: str | None = None
@@ -1224,7 +1258,7 @@ class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
 
 
-class MetricResultDto5(BaseModel):
+class MetricResultDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -1241,32 +1275,38 @@ class MetricResultDto5(BaseModel):
     views: list[MetricResultViewDto]
 
 
-class MetricResultDto6(MetricResultDto1, MetricResultDto5):
+class MetricResultDto7(MetricResultDto1, MetricResultDto6):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto7(MetricResultDto2, MetricResultDto5):
+class MetricResultDto8(MetricResultDto2, MetricResultDto6):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto8(MetricResultDto3, MetricResultDto5):
+class MetricResultDto9(MetricResultDto3, MetricResultDto6):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto9(MetricResultDto4, MetricResultDto5):
+class MetricResultDto10(MetricResultDto4, MetricResultDto6):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto(RootModel[MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9]):
-    root: MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9
+class MetricResultDto11(MetricResultDto5, MetricResultDto6):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
+class MetricResultDto(RootModel[MetricResultDto7 | MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11]):
+    root: MetricResultDto7 | MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11
 
 
 class MetricResultsResponse(BaseModel):

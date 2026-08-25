@@ -232,13 +232,20 @@ pub(super) fn evidence_presentation(
             ],
             show_value: false,
         },
-        ("git", "pr_created" | "pr_created_merged" | "pr_merged") => EvidencePresentation {
+        // Reviewer-perspective events anchor on the reviewed pull request, so
+        // the row reads like the PR measures: the value is always 1 and stays
+        // hidden, `author` names whose request was reviewed or commented on.
+        (
+            "git",
+            "pr_created" | "pr_created_merged" | "pr_merged" | "review_submitted" | "pr_comment",
+        ) => EvidencePresentation {
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: false,
         },
         (
             "git",
-            "pr_cycle_hours"
+            "pr_commit_count"
+            | "pr_cycle_hours"
             | "pr_change_size"
             | "pr_first_review_hours"
             | "pr_review_wait_share"
@@ -510,6 +517,15 @@ mod tests {
     #[test]
     fn evidence_presentations_cover_domain_shapes() {
         assert!(!evidence_presentation("git", "pr_merged", EvidenceGranularity::Event).show_value);
+        for measure_key in ["review_submitted", "pr_comment"] {
+            let event = evidence_presentation("git", measure_key, EvidenceGranularity::Event);
+            assert!(!event.show_value, "{measure_key}");
+            assert_eq!(
+                event.detail_keys,
+                &["ref", "title", "repository", "author"],
+                "{measure_key}"
+            );
+        }
         assert!(
             evidence_presentation(
                 "task",
@@ -532,6 +548,7 @@ mod tests {
     #[test]
     fn git_pull_request_values_keep_their_numeric_column() {
         for measure_key in [
+            "pr_commit_count",
             "pr_cycle_hours",
             "pr_change_size",
             "pr_first_review_hours",

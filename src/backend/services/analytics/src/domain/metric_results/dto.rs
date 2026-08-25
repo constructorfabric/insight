@@ -151,9 +151,16 @@ pub struct MetricDimensionFilterDto {
 #[serde(tag = "computation", rename_all = "snake_case")]
 pub enum ComputationDto {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+    },
     Median,
     DistinctCount,
+    /// Serialized as `computation: "percentile"` plus the sibling `p` (the
+    /// integer quantile, e.g. 75) — mirroring how `ratio` carries `scale`.
+    Percentile {
+        p: u8,
+    },
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

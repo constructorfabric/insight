@@ -74,6 +74,8 @@ sources:
         evidence_granularity: event
       - key: pr_merged_without_approval
         evidence_granularity: event
+      - key: pr_commit_count
+        evidence_granularity: event
       - key: pr_cycle_hours
         evidence_granularity: event
       - key: pr_change_size
@@ -85,6 +87,10 @@ sources:
       - key: pr_review_to_merge_hours
         evidence_granularity: event
       - key: pr_approval_to_merge_hours
+        evidence_granularity: event
+      - key: review_submitted
+        evidence_granularity: event
+      - key: pr_comment
         evidence_granularity: event
       - key: default_commit_count
         evidence_granularity: event
@@ -114,6 +120,7 @@ sources:
       - branch_scope
       - category
       - change_type
+      - comment_target
       - destination_branch
       - file_extension
       - project
@@ -1273,6 +1280,30 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.pr_commits
+    source_key: git
+    subject: pull_requests
+    tags:
+      - distribution
+    label: Commits per PR
+    short_label: Commits/PR
+    description: Typical number of commits per merged pull request
+    explanation: Median count of commits linked to authored pull requests, over requests merged in the period. A merged request whose commits the source does not link contributes no value.
+    unit: commits
+    format: decimal
+    direction: neutral
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_commit_count
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
   - metric_key: git.pr_cycle_time_h
     source_key: git
     subject: pull_requests
@@ -1288,6 +1319,32 @@ metrics:
     direction: lower_is_better
     entity_type: person
     computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_cycle_hours
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_cycle_time_p75_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+    label: PR cycle time (p75)
+    short_label: Cycle p75
+    description: Slow-end hours from open to merge
+    explanation: 75th percentile of hours from opening a pull request to merging it, over requests merged in the period.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: !percentile
+      p: 75
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
@@ -1394,6 +1451,51 @@ metrics:
         measure_key: pr_approval_to_merge_hours
     dimensions:
       - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.reviews_performed
+    source_key: git
+    subject: pull_requests
+    tags:
+      - review
+    label: Reviews performed
+    short_label: Reviews
+    description: Review verdicts submitted on pull requests
+    explanation: Review verdicts the person submitted on any pull request, dated by submission. This is the reviewer's side of review coverage — it counts the reviews a person performed, not the reviews their own requests received.
+    unit: reviews
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: review_submitted
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_comments
+    source_key: git
+    subject: pull_requests
+    tags:
+      - review
+    label: PR comments
+    short_label: PR comments
+    description: Comments written on pull requests
+    explanation: Comments the person wrote on pull requests — conversation and inline review comments alike — dated by posting. The comment target dimension splits comments on the person's own requests from comments on other people's; a comment whose request author cannot be determined counts under others, so the two halves always add up to the total.
+    unit: comments
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_comment
+    dimensions:
+      - comment_target
       - project
       - repository
       - source

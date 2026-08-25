@@ -575,10 +575,22 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
+        ComputationSpec::Percentile { p, .. } => {
+            format!(
+                "quantileExactIf({})(value, value IS NOT NULL)",
+                quantile_level(*p)
+            )
+        }
         ComputationSpec::DistinctCount { .. } => {
             "toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL))".to_owned()
         }
     }
+}
+
+/// The quantile level literal for a percentile `p`, e.g. 75 -> "0.75". `p/100`
+/// with two decimal digits is always exact in text, so the SQL is stable.
+fn quantile_level(p: u8) -> String {
+    format!("{:.2}", f64::from(p) / 100.0)
 }
 
 // Deterministic fixed-width binning over each entity's exact [min, max]:
@@ -587,7 +599,8 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
 // dependent). `least(max_bin, …)` closes the last bin at the maximum; a
 // degenerate range (all values identical) maps everything to bin 0, which
 // the builder renders as one [v, v] bin. Validation guarantees the metric is
-// a median (single-measure predicate), so metric_where/metric_params fit.
+// a median or percentile (single-measure predicate), so
+// metric_where/metric_params fit.
 pub(crate) fn compile_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -946,6 +959,15 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
                 .to_owned()
         }
+        ComputationSpec::Percentile { value, p } => {
+            // Same honest-null OrNull contract as Median, at level p/100.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            format!(
+                "quantileExactIfOrNull({})(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)",
+                quantile_level(*p)
+            )
+        }
         ComputationSpec::DistinctCount { value } => {
             // OrNull like sum: an entity present via another measure but with
             // no rows for this one comes back NULL, not 0, so it never enters
@@ -1088,7 +1110,8 @@ fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
         .flat_map(|def| match &def.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
-            | ComputationSpec::DistinctCount { value } => {
+            | ComputationSpec::DistinctCount { value }
+            | ComputationSpec::Percentile { value, .. } => {
                 vec![(value.source_key.clone(), value.measure_key.clone())]
             }
             ComputationSpec::Ratio {
@@ -1138,7 +1161,8 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
-        | ComputationSpec::DistinctCount { .. } => {
+        | ComputationSpec::DistinctCount { .. }
+        | ComputationSpec::Percentile { .. } => {
             format!(
                 "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
             )
@@ -1169,7 +1193,8 @@ fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
         ],
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
-        | ComputationSpec::DistinctCount { .. } => Vec::new(),
+        | ComputationSpec::DistinctCount { .. }
+        | ComputationSpec::Percentile { .. } => Vec::new(),
     }
 }
 
@@ -1177,7 +1202,8 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
-        | ComputationSpec::DistinctCount { value } => vec![
+        | ComputationSpec::DistinctCount { value }
+        | ComputationSpec::Percentile { value, .. } => vec![
             req.tenant_id.to_string(),
             value.source_key.clone(),
             req.entity.entity_type().to_owned(),
@@ -1381,6 +1407,17 @@ mod tests {
             base: base(vec!["tool"]),
             spec: ComputationSpec::DistinctCount {
                 value: input(MetricInputRole::Value, "active_day"),
+            },
+        }
+    }
+
+    fn percentile_metric() -> MetricDefinition {
+        MetricDefinition {
+            transform: None,
+            base: base(vec!["source"]),
+            spec: ComputationSpec::Percentile {
+                value: input(MetricInputRole::Value, "pr_cycle_hours"),
+                p: 75,
             },
         }
     }
@@ -2018,16 +2055,21 @@ mod tests {
         // interleaves a median column (2 params) between sum (2) and ratio
         // (4) — the real git batch shape — so a per-computation param/`?`
         // desync surfaces here, not just in single-computation batches.
-        let (sum, median, ratio, distinct) = (
+        let (sum, median, ratio, distinct, percentile) = (
             sum_metric(),
             median_metric(),
             ratio_metric(),
             distinct_count_metric(),
+            percentile_metric(),
         );
         for query in [
-            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request(), &[]),
+            compile_period_batch_query(
+                &[&sum, &median, &ratio, &distinct, &percentile],
+                &request(),
+                &[],
+            ),
             compile_peer_batch_query(
-                &[&sum, &median, &ratio, &distinct],
+                &[&sum, &median, &ratio, &distinct, &percentile],
                 &request(),
                 "org_unit",
                 PeerPopulation::DeclaredCohort,
@@ -2078,6 +2120,67 @@ mod tests {
             bd.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
         );
+    }
+
+    #[test]
+    fn percentile_batches_as_a_leveled_quantile_ornull_column() {
+        // A percentile metric is a median at level p/100: same OrNull
+        // honest-null batching, same placeholder/param lockstep.
+        for query in [
+            compile_period_batch_query(&[&percentile_metric()], &request(), &[]),
+            compile_peer_batch_query(
+                &[&percentile_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
+        ] {
+            assert!(
+                query.sql.contains(
+                    "quantileExactIfOrNull(0.75)(value, source_key = ? AND measure_key = ?"
+                ),
+                "percentile must batch as an OrNull quantile column at its level"
+            );
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+    }
+
+    #[test]
+    fn percentile_single_views_and_histogram_use_the_declared_level() {
+        let ts = compile_timeseries_query(
+            &percentile_metric(),
+            &request(),
+            Bucket::Week,
+            &[],
+            &[],
+            None,
+        );
+        assert!(
+            ts.sql
+                .contains("quantileExactIf(0.75)(value, value IS NOT NULL)")
+        );
+        let bd = compile_breakdown_query(
+            &percentile_metric(),
+            &request(),
+            &["source".to_owned()],
+            &[],
+        );
+        assert!(
+            bd.sql
+                .contains("quantileExactIf(0.75)(value, value IS NOT NULL)")
+        );
+        // Histograms bin raw events, so the level never appears there — the
+        // query must still compile with the single-measure predicate shape.
+        let hist = compile_histogram_query(&percentile_metric(), &request(), &[]);
+        assert_eq!(hist.sql.matches('?').count(), hist.params.len());
+    }
+
+    #[test]
+    fn quantile_levels_render_exactly() {
+        assert_eq!(quantile_level(75), "0.75");
+        assert_eq!(quantile_level(5), "0.05");
+        assert_eq!(quantile_level(99), "0.99");
     }
 
     #[test]

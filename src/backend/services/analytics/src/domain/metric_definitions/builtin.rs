@@ -56,6 +56,9 @@ pub enum SeedComputation {
     },
     Median,
     DistinctCount,
+    Percentile {
+        p: u8,
+    },
 }
 
 impl SeedComputation {
@@ -65,13 +68,18 @@ impl SeedComputation {
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
             Self::DistinctCount => MetricComputation::DistinctCount,
+            Self::Percentile { .. } => MetricComputation::Percentile,
         }
     }
 
+    /// Value for the `metric_definitions.scale` column — the definition's one
+    /// numeric computation parameter: the ratio multiplier, or the percentile
+    /// quantile `p`.
     pub fn scale(self) -> Option<f64> {
         match self {
             Self::Sum | Self::Median | Self::DistinctCount => None,
             Self::Ratio { scale, .. } => Some(scale),
+            Self::Percentile { p } => Some(f64::from(p)),
         }
     }
 
@@ -81,7 +89,9 @@ impl SeedComputation {
                 denominator_aggregation,
                 ..
             } => denominator_aggregation,
-            Self::Sum | Self::Median | Self::DistinctCount => RatioDenominatorAggregation::Sum,
+            Self::Sum | Self::Median | Self::DistinctCount | Self::Percentile { .. } => {
+                RatioDenominatorAggregation::Sum
+            }
         }
     }
 }
@@ -236,7 +246,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 89, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 93, "builtin metric count");
     }
 
     #[test]
@@ -460,6 +470,33 @@ mod tests {
                 metric.metric_key
             );
         }
+    }
+
+    #[test]
+    fn percentile_metrics_have_single_value_role_and_an_inside_quantile() {
+        let mut seen = 0;
+        for metric in builtin_metrics() {
+            let SeedComputation::Percentile { p } = metric.computation else {
+                continue;
+            };
+            seen += 1;
+            assert!(
+                (1..=99).contains(&p),
+                "{} declares p={p}, outside (0, 100)",
+                metric.metric_key
+            );
+            assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);
+            assert_eq!(
+                metric.inputs[0].input_role,
+                MetricInputRole::Value,
+                "{}",
+                metric.metric_key
+            );
+        }
+        assert!(
+            seen >= 1,
+            "registry declares at least one percentile metric"
+        );
     }
 
     #[test]

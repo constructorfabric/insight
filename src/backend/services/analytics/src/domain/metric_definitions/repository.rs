@@ -548,6 +548,10 @@ fn build_definition(
         MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
+        MetricComputation::Percentile => ComputationSpec::Percentile {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+            p: percentile_from_scale(row.scale, &row.metric_key)?,
+        },
     };
 
     let transform = ValueTransform {
@@ -587,6 +591,28 @@ fn build_base(
         peer_cohort_key: row.peer_cohort_key.clone(),
         allowed_dimensions,
     })
+}
+
+/// A percentile definition stores its quantile `p` in the `scale` column (the
+/// definitions table's one numeric computation parameter). Anything but an
+/// integer strictly inside (0, 100) is a corrupt row, not a computable metric.
+pub(crate) fn percentile_from_scale(
+    scale: Option<f64>,
+    metric_key: &str,
+) -> Result<u8, CanonicalError> {
+    let scale = scale
+        .ok_or_else(|| config_error(&format!("missing percentile quantile for {metric_key}")))?;
+    if scale.fract() != 0.0 || !(1.0..=99.0).contains(&scale) {
+        return Err(config_error(&format!(
+            "percentile quantile for {metric_key} must be an integer in (0, 100), got {scale}"
+        )));
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "bounds-checked to an integral value in 1..=99 just above"
+    )]
+    Ok(scale as u8)
 }
 
 fn one_input(

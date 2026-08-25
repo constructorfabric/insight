@@ -62,6 +62,7 @@ fn sum_graph(suffix: &str) -> CustomMetric {
         direction: MetricDirection::HigherIsBetter,
         computation: MetricComputation::Sum,
         scale: None,
+        p: None,
         peer_cohort_key: Some("org_unit".to_owned()),
         transform: None,
         source_key: format!("custom_s{suffix}"),

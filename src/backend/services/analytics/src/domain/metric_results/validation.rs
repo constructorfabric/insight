@@ -435,13 +435,16 @@ fn validate_view_with_context(
             })
         }
         MetricViewRequest::Histogram => {
-            // Histograms bin per-event observation values; only median
-            // metrics have event-grain observations to bin.
-            if !matches!(def.spec, ComputationSpec::Median { .. }) {
+            // Histograms bin per-event observation values; only median and
+            // percentile metrics have event-grain observations to bin.
+            if !matches!(
+                def.spec,
+                ComputationSpec::Median { .. } | ComputationSpec::Percentile { .. }
+            ) {
                 return invalid(
                     "metrics.views",
                     format!(
-                        "metric {} does not support the histogram view; it requires a median computation",
+                        "metric {} does not support the histogram view; it requires a median or percentile computation",
                         def.key()
                     ),
                 );
@@ -834,6 +837,15 @@ mod tests {
         let mut def = sum_definition(vec![]);
         def.spec = ComputationSpec::Median {
             value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
+        };
+        def
+    }
+
+    fn percentile_definition() -> MetricDefinition {
+        let mut def = sum_definition(vec![]);
+        def.spec = ComputationSpec::Percentile {
+            value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
+            p: 75,
         };
         def
     }
@@ -1299,13 +1311,18 @@ mod tests {
     }
 
     #[test]
-    fn validate_view_gates_histogram_on_median_computation() {
+    fn validate_view_gates_histogram_on_event_grain_computations() {
         // Histograms bin per-event values; sum/ratio observations are
         // day-aggregated, so binning them would present aggregates as events.
+        // Median and percentile share the per-event observation shape.
         assert!(validate_view(&sum_definition(vec![]), MetricViewRequest::Histogram).is_err());
         assert!(validate_view(&ratio_definition(), MetricViewRequest::Histogram).is_err());
         assert!(matches!(
             validate_view(&median_definition(), MetricViewRequest::Histogram),
+            Ok(ValidatedMetricView::Histogram)
+        ));
+        assert!(matches!(
+            validate_view(&percentile_definition(), MetricViewRequest::Histogram),
             Ok(ValidatedMetricView::Histogram)
         ));
     }

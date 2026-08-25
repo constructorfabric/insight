@@ -14,6 +14,7 @@ import type {
   MetricViewRequest,
   PeerView,
   PeriodView,
+  RollupView,
   TimeseriesView,
 } from "@/api/metric-results-client";
 
@@ -37,6 +38,11 @@ type MetricCollectionViewConfig =
   | {
       view: "breakdown";
       dimensions: string[];
+    }
+  | {
+      view: "rollup";
+      dimensions: string[];
+      groupLimit?: MetricGroupLimit;
     }
   | { view: "histogram" };
 
@@ -110,6 +116,7 @@ export type NormalizedMetricResult = {
   timeseries?: TimeseriesView;
   peer?: PeerView;
   breakdown?: BreakdownView;
+  rollup?: RollupView;
   histogram?: HistogramView;
   drilldown?: MetricResult["drilldown"];
   selection?: MetricResult["selection"];
@@ -203,6 +210,9 @@ export function normalizeMetricResult(
       case "breakdown":
         normalized.breakdown = view;
         break;
+      case "rollup":
+        normalized.rollup = view;
+        break;
       case "histogram":
         normalized.histogram = view;
         break;
@@ -269,6 +279,9 @@ export const MAX_PROJECTED_ROWS = 4500;
  * count per entity but is a drilldown-only single-entity view — all three are
  * for single-entity surfaces and roster surfaces strip them via
  * `projectViews(["period", "peer"])`, so none should ride a chunked request.
+ * Rollup is not chunkable either, and for a harder reason: its rows carry no
+ * entity grain, so per-chunk results cannot be merged (a median or a distinct
+ * person count over half the roster is not half the answer).
  */
 export function entityChunkSize(
   collection: MetricCollectionConfig
@@ -279,6 +292,7 @@ export function entityChunkSize(
       if (
         view.view === "timeseries" ||
         view.view === "breakdown" ||
+        view.view === "rollup" ||
         view.view === "histogram"
       ) {
         return null;
@@ -377,6 +391,12 @@ function toRequestView(
       };
     case "breakdown":
       return { view: "breakdown", dimensions: view.dimensions };
+    case "rollup":
+      return {
+        view: "rollup",
+        dimensions: view.dimensions,
+        group_limit: view.groupLimit,
+      };
     case "histogram":
       return { view: "histogram" };
     default:

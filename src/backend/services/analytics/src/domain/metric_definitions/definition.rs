@@ -29,6 +29,7 @@ pub enum MetricComputation {
     Ratio,
     Median,
     DistinctCount,
+    Percentile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -251,6 +252,13 @@ pub enum ComputationSpec {
     DistinctCount {
         value: MetricInput,
     },
+    /// Exact p-th percentile of per-event observation values — `Median` with
+    /// `quantileExactIf(p/100)` instead of 0.5, honest-null like it. `p` is an
+    /// integer strictly inside (0, 100), enforced at every load boundary.
+    Percentile {
+        value: MetricInput,
+        p: u8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -303,7 +311,8 @@ impl MetricDefinition {
         match &self.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
-            | ComputationSpec::DistinctCount { value } => &value.observation,
+            | ComputationSpec::DistinctCount { value }
+            | ComputationSpec::Percentile { value, .. } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
     }
@@ -445,6 +454,7 @@ impl MetricComputation {
             Self::Ratio => "ratio",
             Self::Median => "median",
             Self::DistinctCount => "distinct_count",
+            Self::Percentile => "percentile",
         }
     }
 
@@ -454,6 +464,7 @@ impl MetricComputation {
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
             "distinct_count" => Some(Self::DistinctCount),
+            "percentile" => Some(Self::Percentile),
             _ => None,
         }
     }
@@ -533,6 +544,7 @@ mod tests {
             MetricComputation::Ratio,
             MetricComputation::Median,
             MetricComputation::DistinctCount,
+            MetricComputation::Percentile,
         ] {
             assert_eq!(
                 MetricComputation::from_db(computation.as_db()),

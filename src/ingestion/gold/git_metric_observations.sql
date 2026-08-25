@@ -18,6 +18,7 @@ FROM {{ ref('git_metric_evidence') }}
 WHERE measure_key NOT IN (
     'commit_day',
     'commit_change_size',
+    'pr_commit_count',
     'pr_cycle_hours',
     'pr_change_size',
     'pr_first_review_hours',
@@ -49,6 +50,7 @@ FROM {{ ref('git_metric_evidence') }}
 WHERE measure_key IN (
     'commit_day',
     'commit_change_size',
+    'pr_commit_count',
     'pr_cycle_hours',
     'pr_change_size',
     'pr_first_review_hours',

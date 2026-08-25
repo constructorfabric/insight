@@ -17,7 +17,12 @@ export type MetricResultViewKind =
   | "rollup"
   | "histogram";
 export type MetricBucket = "day" | "week" | "month";
-export type MetricComputation = "sum" | "ratio" | "median" | "distinct_count";
+export type MetricComputation =
+  | "sum"
+  | "ratio"
+  | "median"
+  | "percentile"
+  | "distinct_count";
 export type MetricEntityType = "person" | "tenant";
 export type MetricResultsEntity =
   | { type: "person"; ids: string[] }
@@ -87,6 +92,7 @@ export type MetricResult =
   | SumMetricResult
   | RatioMetricResult
   | MedianMetricResult
+  | PercentileMetricResult
   | DistinctCountMetricResult;
 
 interface MetricResultBase {
@@ -115,6 +121,12 @@ export interface RatioMetricResult extends MetricResultBase {
 
 export interface MedianMetricResult extends MetricResultBase {
   computation: "median";
+}
+
+export interface PercentileMetricResult extends MetricResultBase {
+  computation: "percentile";
+  /** The quantile as an integer, e.g. 75 — rides beside `computation` like ratio's `scale`. */
+  p: number;
 }
 
 interface DistinctCountMetricResult extends MetricResultBase {
