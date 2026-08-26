@@ -878,6 +878,15 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    -- Email-only resolution, like every branch except pull requests: the
+    -- account path is the PR rows' own rule, and `comment_target` compares
+    -- actor to author through the email map, so resolving the entity another
+    -- way could classify a comment against a person the row does not name.
+    -- The actor's account id is carried in silver for a later, deliberate
+    -- widening of that rule.
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     if(event_kind = 'review', 'review_submitted', 'pr_comment') AS measure_key,
