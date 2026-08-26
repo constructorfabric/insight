@@ -758,6 +758,162 @@
   {
     "columns": [
       {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "pr_id",
+        "type": "Int64"
+      },
+      {
+        "name": "pr_number",
+        "type": "Int64"
+      },
+      {
+        "name": "title",
+        "type": "String"
+      },
+      {
+        "name": "author_email",
+        "type": "String"
+      },
+      {
+        "name": "author_account_id",
+        "type": "String"
+      },
+      {
+        "name": "author_name",
+        "type": "String"
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime"
+      },
+      {
+        "name": "created_date",
+        "type": "Date"
+      },
+      {
+        "name": "closed_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "merged",
+        "type": "UInt8"
+      },
+      {
+        "name": "abandoned",
+        "type": "UInt8"
+      },
+      {
+        "name": "merged_without_approval",
+        "type": "UInt8"
+      },
+      {
+        "name": "reviewer_count",
+        "type": "UInt64"
+      },
+      {
+        "name": "first_reviewed_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "approved_at",
+        "type": "Nullable(DateTime)"
+      },
+      {
+        "name": "branch_scope",
+        "type": "String"
+      },
+      {
+        "name": "branch_scope_label",
+        "type": "String"
+      },
+      {
+        "name": "destination_branch",
+        "type": "String"
+      },
+      {
+        "name": "destination_branch_label",
+        "type": "String"
+      },
+      {
+        "name": "repository",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "project",
+        "type": "String"
+      },
+      {
+        "name": "project_label",
+        "type": "String"
+      },
+      {
+        "name": "source",
+        "type": "String"
+      },
+      {
+        "name": "source_label",
+        "type": "String"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "files_changed",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "cycle_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "first_review_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "review_to_merge_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "approval_to_merge_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "review_wait_share",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_pull_requests",
+    "sorting_key": "tenant_id, author_email, created_at"
+  },
+  {
+    "columns": [
+      {
         "name": "source_key",
         "type": "String"
       },

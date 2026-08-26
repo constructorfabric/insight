@@ -198,6 +198,85 @@ models:
       - name: lines_removed
         description: "Lines this change removed"
 
+  - name: git_pull_requests
+    description: >
+      Opened pull requests: one row per request a person raised, with the review
+      it received, the durations of each stage, and the change it carried. A
+      semantic-layer dataset — measures aggregate it and drilldown projects it.
+      Identity stays as the source gave it, in both forms the source offers
+      (author_email and author_account_id); the person is bound when a query
+      runs, account first. No identity is derived here.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: pr_id
+        description: "Request identifier within the repository"
+        tests:
+          - not_null
+      - name: pr_number
+        description: "Number the request is quoted by in its source"
+      - name: title
+        description: "Request title"
+      - name: author_email
+        description: >
+          Lowercased author email exactly as the source reports it, '' when the
+          source names the author only by account.
+        tests:
+          - not_null
+      - name: author_account_id
+        description: "Source-native account id of the author; the first key a query resolves the person by"
+      - name: created_at
+        description: "When the request was opened; the dataset's event time"
+      - name: created_date
+        description: "Opened day, the partition key"
+      - name: closed_at
+        description: "When the request was closed, nullable while it is open"
+      - name: merged
+        description: "Whether the request reached the merged state"
+      - name: abandoned
+        description: "Whether the request was closed without merging"
+      - name: merged_without_approval
+        description: "Whether the request merged with no reviewer approval recorded"
+      - name: reviewer_count
+        description: "Reviewers with evidence of a review: a review time, or an approval"
+      - name: first_reviewed_at
+        description: "Earliest recorded review time, nullable when no review carries one"
+      - name: approved_at
+        description: >
+          Latest approval time; nullable when nobody approved AND when an
+          approval carries no time, so it is not a test for approval.
+      - name: branch_scope
+        description: "Whether the request targets the repository's default branch: default | non_default"
+        tests:
+          - accepted_values:
+              values: ['default', 'non_default']
+      - name: destination_branch
+        description: "Branch the request targets, or __unknown__"
+      - name: repository
+        description: "Repository dimension value, qualified by source"
+      - name: project
+        description: "Project dimension value, qualified by source"
+      - name: source
+        description: "Source system dimension value"
+      - name: lines_added
+        description: "Lines the request adds, nullable when the source reports no stats"
+      - name: lines_removed
+        description: "Lines the request removes, nullable when the source reports no stats"
+      - name: files_changed
+        description: "Files the request touches, nullable when the source reports no stats"
+      - name: cycle_hours
+        description: "Hours from opening to merge, nullable unless the request merged"
+      - name: first_review_hours
+        description: "Hours from opening to the first recorded review"
+      - name: review_to_merge_hours
+        description: "Hours from the first recorded review to the merge"
+      - name: approval_to_merge_hours
+        description: "Hours from the latest approval to the merge"
+      - name: review_wait_share
+        description: "Percentage of a merged request's cycle spent waiting for its first review"
+
   - name: git_default_branch_commits
     description: >
       Commits that reached a repository's default branch through a merged pull

@@ -131,6 +131,7 @@ pub async fn reconcile_product_definitions(db: &DatabaseConnection) -> Result<()
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::domain::field_catalog::model::CatalogDataset;
 
     #[test]
     fn every_shipped_definition_is_valid() {
@@ -160,14 +161,35 @@ mod tests {
 
     #[test]
     fn a_dataset_carries_the_read_discipline_its_engine_demands() {
-        let definitions = product_definitions().expect("definitions are valid");
-        let replacing = definitions
-            .datasets
-            .iter()
-            .find(|dataset| dataset.key == "git_pull_requests")
-            .expect("git_pull_requests is catalogued");
-        assert_eq!(replacing.read_discipline, ReadDiscipline::Final);
-        assert_eq!(replacing.relation, "silver.class_git_pull_requests");
+        let catalogued = |key: &str, database: &str, read_discipline| CatalogDataset {
+            key: key.to_owned(),
+            database: database.to_owned(),
+            relation: key.to_owned(),
+            read_discipline,
+            sorting_key: Vec::new(),
+            fields: Vec::new(),
+        };
+        let catalog = FieldCatalog {
+            datasets: vec![
+                catalogued(
+                    "class_git_pull_requests",
+                    "silver",
+                    CatalogReadDiscipline::Collapsing,
+                ),
+                catalogued(
+                    "git_pull_requests",
+                    "insight",
+                    CatalogReadDiscipline::Direct,
+                ),
+            ],
+        };
+
+        let projected = datasets_from_catalog(&catalog);
+
+        assert_eq!(projected[0].relation, "silver.class_git_pull_requests");
+        assert_eq!(projected[0].read_discipline, ReadDiscipline::Final);
+        assert_eq!(projected[1].relation, "insight.git_pull_requests");
+        assert_eq!(projected[1].read_discipline, ReadDiscipline::None);
     }
 
     #[test]

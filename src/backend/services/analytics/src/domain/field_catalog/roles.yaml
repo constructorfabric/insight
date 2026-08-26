@@ -78,16 +78,44 @@ datasets:
         display: [location]
 
   - key: git_pull_requests
-    database: silver
-    relation: class_git_pull_requests
+    database: insight
+    relation: git_pull_requests
     fields:
       tenant_id: tenant
       author_email: entity
-      created_on: event_time
-      data_source: dimension
-      repo_slug: dimension
-      project_key: dimension
-      pr_id:
+      created_at: event_time
+      closed_at: event_time
+      first_reviewed_at: event_time
+      approved_at: event_time
+      lines_added: measurable
+      lines_removed: measurable
+      files_changed: measurable
+      reviewer_count: measurable
+      cycle_hours: measurable
+      first_review_hours: measurable
+      review_to_merge_hours: measurable
+      approval_to_merge_hours: measurable
+      review_wait_share: measurable
+      branch_scope:
+        role: dimension
+        label_field: branch_scope_label
+      destination_branch:
+        role: dimension
+        label_field: destination_branch_label
+      repository:
+        role: dimension
+        label_field: repository_label
+      project:
+        role: dimension
+        label_field: project_label
+      source:
+        role: dimension
+        label_field: source_label
+      pr_number:
         display: [reference]
       title:
         display: [title]
+      author_name:
+        display: [actor]
+      repository_label:
+        display: [location]
