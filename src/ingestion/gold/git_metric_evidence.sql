@@ -12,7 +12,11 @@ SELECT
     src.entity_type,
     {{ normalized_email('src.entity_id') }} AS entity_id,
     src.account_source_type,
-    src.account_source_id,
+    -- INVARIANT: every account column is a plain String across every evidence
+    -- relation. The class PR source_id is Nullable, and one family typing this
+    -- column differently would fail the service's exact-column probe and blank
+    -- that family's metrics.
+    coalesce(src.account_source_id, '') AS account_source_id,
     src.account_id,
     src.metric_date,
     src.observed_at,

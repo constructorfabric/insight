@@ -637,7 +637,7 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
     ("entity_type", "String"),
     ("entity_id", "String"),
     ("account_source_type", "String"),
-    ("account_source_id", "Nullable(String)"),
+    ("account_source_id", "String"),
     ("account_id", "String"),
     ("metric_date", "Date"),
     ("observed_at", "Nullable(DateTime64(3))"),
