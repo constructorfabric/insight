@@ -7,9 +7,7 @@
 //! isolation. Binding to a dataset's field catalog (does the field exist, does
 //! its type admit the operator) is the seed pipeline's second validation stage.
 
-#![allow(dead_code)]
-// dead_code: the format, grammars, and store land ahead of the seed pipeline
-// that drives them; the allow leaves with the first caller.
+#![allow(dead_code)] // tests are this module's only callers in the crate
 
 pub mod definition;
 pub mod expr;

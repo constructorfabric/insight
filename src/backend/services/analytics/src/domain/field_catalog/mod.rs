@@ -1,18 +1,16 @@
 //! The field catalog: every dataset's typed, role-annotated fields. It is the
 //! validation universe a definition is checked against, the compiler's
-//! resolution table, and later the editor's palette — a field absent here does
-//! not exist at any layer above.
+//! resolution table, and an editor's palette — a field absent here does not
+//! exist at any layer above.
 //!
 //! Two inputs, joined at load: `columns.snapshot.json`, dumped from a
 //! ClickHouse the real pipeline built and gated against drift by the
 //! connectors-ddl lane, and `roles.yaml`, authored here. The snapshot is a seam,
-//! not an architecture — what the catalog consumes is the artifact's shape, so a
-//! future producer (typed ingestion-runtime schemas, captured projection
+//! not an architecture — what the catalog consumes is the artifact's shape, so
+//! another producer (typed ingestion-runtime schemas, captured projection
 //! schemas) replaces it without touching this module.
 
-#![allow(dead_code)]
-// dead_code: the catalog lands ahead of the seed pipeline and compiler that
-// read it; the allow leaves with the first consumer.
+#![allow(dead_code)] // tests are this module's only callers in the crate
 
 pub mod loader;
 pub mod model;

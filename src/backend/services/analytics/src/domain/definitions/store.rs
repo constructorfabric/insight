@@ -1,6 +1,6 @@
-//! The definition store's write path — the only one. Seed reconciliation and
-//! the future editing API both come through here, so a definition can never be
-//! written by a path that skips versioning or the audit trail.
+//! The definition store's write path — the only one. Every writer comes
+//! through here, so a definition can never be written by a path that skips
+//! versioning or the audit trail.
 //!
 //! Versioning is never hand-maintained: a write canonicalizes the definition's
 //! semantic fields, compares them against what the row already holds, and bumps

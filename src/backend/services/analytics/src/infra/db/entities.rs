@@ -158,7 +158,7 @@ pub mod semantic_measures {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-#[allow(dead_code)] // same as `semantic_measures`
+#[allow(dead_code)] // the store writes through SQL statements; the entity types the read side
 pub mod semantic_metrics {
     //! `semantic_metrics` entity — a composition of measures into a served
     //! value, with its display identity.
@@ -190,7 +190,7 @@ pub mod semantic_metrics {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-#[allow(dead_code)] // the audit trail is written, and read by operators, not by the service
+#[allow(dead_code)] // the audit trail is written here and read by operators, not by the service
 pub mod semantic_definition_revisions {
     //! `semantic_definition_revisions` entity — append-only audit of every
     //! definition write, from the store's first day.

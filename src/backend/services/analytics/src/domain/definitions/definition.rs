@@ -1,6 +1,6 @@
 //! The typed definition format. Authored YAML and stored rows are
-//! serializations of these types — parser, validators, store, and the future
-//! editing API consume the same ones, so the format is defined once.
+//! serializations of these types, and every consumer — parser, validators,
+//! store, editing API — reads the same ones, so the format is defined once.
 
 use serde::{Deserialize, Serialize};
 
