@@ -138,7 +138,11 @@ pub async fn active_roles_of_person(
         ],
     );
 
-    db.query_all_raw(stmt).await?.iter().map(row_to_role).collect()
+    db.query_all_raw(stmt)
+        .await?
+        .iter()
+        .map(row_to_role)
+        .collect()
 }
 
 /// All roles, ordered by name. Ported from `SqlRoles.ListAllRoles`.
