@@ -3,14 +3,14 @@
 # normalize_catalog.py
 #
 # Read an Airbyte discover_schema response from stdin and emit a syncCatalog
-# JSON suitable for connections/create. Every stream that advertises a
-# `unique_key` property is forced to destinationSyncMode=append_dedup with
-# primaryKey=[["unique_key"]]: the destination then creates the bronze table
-# as ReplacingMergeTree ORDER BY unique_key itself (engine-level dedup, same
-# append-only insert path). Streams without `unique_key` fall back to plain
-# append. syncMode=incremental when a default cursor is advertised
-# (default_cursor_field non-empty OR source_defined_cursor=true); otherwise
-# full_refresh.
+# JSON suitable for connections/create. Every stream is forced to
+# destinationSyncMode=append_dedup with primaryKey=[["unique_key"]]: the
+# destination then creates the bronze table as ReplacingMergeTree ORDER BY
+# unique_key itself (engine-level dedup, same append-only insert path).
+# A stream without a `unique_key` schema property fails the run — it would
+# land as an ever-duplicating table. syncMode=incremental when a default
+# cursor is advertised (default_cursor_field non-empty OR
+# source_defined_cursor=true); otherwise full_refresh.
 #
 # @cpt-algo: cpt-insightspec-algo-reconcile-normalize-catalog-append-only:p1
 # ---------------------------------------------------------------------------
@@ -54,12 +54,31 @@ def _stream_has_unique_key(stream: dict) -> bool:
 def normalize(discover_response: dict) -> dict:
     catalog = discover_response.get("catalog") or {}
     raw_streams = catalog.get("streams") or []
+
+    # unique_key is the dedup key of every bronze table (ReplacingMergeTree
+    # ORDER BY unique_key, created by the destination). A stream without it
+    # would land as an ever-duplicating table, so it is a hard error, not a
+    # degraded mode.
+    keyless = [
+        str(_field(entry.get("stream") or entry, "name") or "<unnamed>")
+        for entry in raw_streams
+        if not _stream_has_unique_key(entry.get("stream") or entry)
+    ]
+    if keyless:
+        raise ValueError(
+            f"streams without a {UNIQUE_KEY} schema property: {', '.join(sorted(keyless))} —"
+            " every stream must carry the identity stamp"
+            f" (tenant_id, source_id, {UNIQUE_KEY})"
+        )
+
     out_streams = []
     for entry in raw_streams:
         stream = entry.get("stream") or entry
         sync_mode = "incremental" if _stream_supports_incremental(stream) else "full_refresh"
         cfg = {
             "syncMode": sync_mode,
+            "destinationSyncMode": "append_dedup",
+            "primaryKey": [[UNIQUE_KEY]],
             # Per ADR-0015: every stream the source advertises is enabled.
             "selected": True,
             # Per ADR-0015: every field in jsonSchema is enabled. Explicit
@@ -69,19 +88,6 @@ def normalize(discover_response: dict) -> dict:
             # prior connection state.
             "fieldSelectionEnabled": False,
         }
-        if _stream_has_unique_key(stream):
-            cfg["destinationSyncMode"] = "append_dedup"
-            cfg["primaryKey"] = [[UNIQUE_KEY]]
-        else:
-            # A keyless stream cannot dedup; keep today's append behavior and
-            # surface the gap instead of failing the whole reconcile.
-            cfg["destinationSyncMode"] = "append"
-            name = _field(stream, "name") or "<unnamed>"
-            print(
-                f"normalize_catalog: stream {name} has no {UNIQUE_KEY} property;"
-                " falling back to destinationSyncMode=append",
-                file=sys.stderr,
-            )
         cursor = _field(stream, "defaultCursorField", "default_cursor_field") or []
         if sync_mode == "incremental" and cursor:
             cfg["cursorField"] = cursor
@@ -91,7 +97,12 @@ def normalize(discover_response: dict) -> dict:
 
 def main() -> int:
     payload = json.load(sys.stdin)
-    json.dump(normalize(payload), sys.stdout)
+    try:
+        normalized = normalize(payload)
+    except ValueError as e:
+        print(f"normalize_catalog: {e}", file=sys.stderr)
+        return 1
+    json.dump(normalized, sys.stdout)
     return 0
 
 

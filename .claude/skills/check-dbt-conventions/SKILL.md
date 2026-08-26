@@ -79,9 +79,9 @@ retired (#2877). FAIL if any of these reappear:
 
 ### Check 5 — Airbyte sync mode in the catalog builders
 
-- `src/ingestion/reconcile-connectors/python/normalize_catalog.py` must emit `destinationSyncMode = "append_dedup"` with `primaryKey = [["unique_key"]]` for every stream whose schema has a `unique_key` property, and plain `append` otherwise
-- `src/ingestion/scripts/bootstrap-db/create-connector-tables.sh` must build its configured catalog with the same rule (snapshot shape = real sync shape)
-- Must NOT emit `overwrite` anywhere
+- `src/ingestion/reconcile-connectors/python/normalize_catalog.py` must emit `destinationSyncMode = "append_dedup"` with `primaryKey = [["unique_key"]]` for every stream, and FAIL (non-zero exit) on any stream whose schema lacks a `unique_key` property
+- `src/ingestion/scripts/bootstrap-db/create-connector-tables.sh` must enforce the same contract (snapshot shape = real sync shape; keyless stream = hard error)
+- Must NOT emit `append` or `overwrite` anywhere
 
 ### Check 6 — Ephemeral wrapping for Rust-owned staging
 

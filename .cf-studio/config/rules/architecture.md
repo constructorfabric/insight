@@ -88,7 +88,7 @@ Evidence: `docs/CONNECTORS_REFERENCE.md:333–347` — `github_collection_runs`.
 5. **Connector → silver via `union_by_tag`** — connectors write to per-connector staging models tagged `silver:<class>`; silver class models do `union_by_tag('silver:<class>')`. Never write directly to silver from a connector.
 6. **Rust-owned staging tables** — wrap on the dbt side as `materialized='ephemeral'` (no DB object; dbt inlines as CTE).
 7. **Read pattern** — silver consumers MUST use `SELECT … FROM silver.X FINAL` or `argMax(... ORDER BY _version)`. RMT tables hold multiple versions per `unique_key` until background merge.
-8. **Airbyte sync mode** — always `destinationSyncMode='append_dedup'` with `primaryKey=[['unique_key']]` (plain `append` only for a stream without a `unique_key` property). `overwrite` is forbidden (data loss on retry). The 2.x destination performs no destination-side dedup work — append_dedup is the same append-only insert path with an engine-level-dedup table shape, so the old OOM concern does not apply.
+8. **Airbyte sync mode** — always `destinationSyncMode='append_dedup'` with `primaryKey=[['unique_key']]`. A stream without a `unique_key` schema property fails catalog normalization (it would land as an ever-duplicating table); `append` and `overwrite` are forbidden. The 2.x destination performs no destination-side dedup work — append_dedup is the same append-only insert path with an engine-level-dedup table shape, so the old OOM concern does not apply.
 
 ### Anti-patterns
 

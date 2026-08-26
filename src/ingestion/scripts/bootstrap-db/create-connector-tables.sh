@@ -74,10 +74,18 @@ jq -Rc 'fromjson? | select(.type == "CATALOG") | .catalog' "${WORKDIR}/discover.
   | tail -n 1 > "${WORKDIR}/catalog.json"
 [[ -s "${WORKDIR}/catalog.json" ]] || { echo "[${NAME}] no CATALOG message in discover output" >&2; exit 1; }
 
+# unique_key is the dedup key of every bronze table; a stream without it is
+# an authoring bug (missing identity stamp) and must fail here, not land as an
+# ever-duplicating table. Same contract as reconcile's normalize_catalog.py.
+KEYLESS="$(jq -r '[.streams[] | select((.json_schema.properties // {}) | has("unique_key") | not) | .name] | join(", ")' "${WORKDIR}/catalog.json")"
+if [[ -n "${KEYLESS}" ]]; then
+  echo "[${NAME}] streams without a unique_key schema property: ${KEYLESS} — every stream must carry the identity stamp (tenant_id, source_id, unique_key)" >&2
+  exit 1
+fi
+
 # append_dedup + primary_key [["unique_key"]] mirrors normalize_catalog.py:
 # the destination creates the table as ReplacingMergeTree ORDER BY unique_key
 # itself, so the dumped snapshot is byte-identical to what a real sync creates.
-# Keyless streams fall back to plain append (same as reconcile).
 jq --arg ns "${NAMESPACE}" '{streams: [.streams[] | {
     stream: {
       name: .name,
@@ -86,15 +94,12 @@ jq --arg ns "${NAMESPACE}" '{streams: [.streams[] | {
       supported_sync_modes: (.supported_sync_modes // ["full_refresh"])
     },
     sync_mode: "full_refresh",
+    destination_sync_mode: "append_dedup",
+    primary_key: [["unique_key"]],
     generation_id: 1,
     minimum_generation_id: 0,
     sync_id: 1
-  }
-  + (if (.json_schema.properties // {}) | has("unique_key")
-     then {destination_sync_mode: "append_dedup", primary_key: [["unique_key"]]}
-     else {destination_sync_mode: "append"}
-     end)
-  ]}' "${WORKDIR}/catalog.json" > "${WORKDIR}/configured_catalog.json"
+  }]}' "${WORKDIR}/catalog.json" > "${WORKDIR}/configured_catalog.json"
 
 jq -c --arg ns "${NAMESPACE}" '.streams[] | {
     type: "TRACE",
