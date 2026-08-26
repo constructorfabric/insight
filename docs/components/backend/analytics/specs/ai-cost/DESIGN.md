@@ -446,7 +446,7 @@ Per-event usage with `chargedCents` and `isChargeable`, keyed by user email.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-seq-serve-seat-window`
 
-1. Each `(person, month)` snapshot is emitted once, dated at the first day of its billing
+1. Each `(seat, month)` snapshot is emitted once, dated at the first day of its billing
    month, so the date never moves with the sync schedule. A window inside a month therefore
    returns nothing, and the per-day distribution is what such a window reads.
 2. A seat that spent nothing extra emits `0`; a seat with no ceiling emits no utilisation
