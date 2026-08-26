@@ -228,9 +228,13 @@ one row per connector with stream counts, rows and bytes, and one per stream wit
 the only route by which storage facts reach the page (§2.2).
 
 A **connector summary** is the read model's unit: the connector's latest terminal event,
-latest sync counters, and its newest storage observation, merged by connector name. Bronze schema names map to connector names by stripping the schema
-prefix and mapping underscores back to the connector's hyphenated name; the mapping is a pure
-function with table-driven tests.
+latest sync counters, and its newest storage observation, merged by connector name.
+
+The read model does no name mapping: it merges rows the writers have already keyed by
+connector. The mapping happens where storage is observed — the sweep strips the schema prefix
+and turns underscores back into hyphens, and the recorder derives the schema the same way in
+reverse. Both are expressions rather than a shared function, and both rest on a connector name
+never carrying an underscore, which nothing enforces.
 
 ### 3.2 Component Model
 
@@ -281,8 +285,9 @@ credentials, warehouse coordinates, and a periodic tick.
 
 Each reconcile tick:
 
-1. **Cover** mover jobs since a watermark (last swept job start, minus one interval of
-   overlap): a job with no `sync.completed` row at all gets one from the mover's history —
+1. **Cover** mover jobs since a watermark (the newest `job_created_at` the sweep has covered,
+   minus one interval of overlap — the axis the mover's listing is ordered by, see §3.7):
+   a job the sweep has not yet recorded a TERMINAL row for gets one from the mover's history —
    outcome, timestamps, duration, moved counters, `rows_landed = NULL` (the sweep takes no
    storage measurements; only the pipeline can, at sync time). A job already carrying a row
    with counters is not re-collected. This coverage skip is **not** a corroboration skip —
@@ -298,7 +303,7 @@ Each reconcile tick:
    final after it. Timing overlap never claims: a manual sync may run while a pipeline run
    is mid-transform. A lost best-effort pipeline row therefore degrades to a late claim,
    never to a false "manual".
-3. **Observe** storage (FR-7, FR-8): one `system.parts` aggregate per tick over the bronze
+3. **Observe** storage (FR-7, FR-8): two `system.parts` aggregates per tick — one per connector, one per stream over the bronze
    schemas, written as `storage.observed` rows — one per connector carrying stream counts,
    rows and bytes, plus one per stream carrying its own. This is a metadata query, no data
    read, and it runs under the ingestion user's existing ownership of bronze. It is the only
@@ -444,7 +449,7 @@ GET /v1/connector-health
 GET /v1/connector-health/{connector}/runs
 ```
 
-Recent ledger events for one connector, newest first, bounded page size — the expansion's
+Recent ledger events for one connector, newest first, bounded window — the expansion's
 run-history slice (UC-1, UC-2). Both responses are facts only; `last_run` and `last_sync` are
 separate objects because they are separate truths (a swept manual sync updates one and not
 the other), and either may be `null` with `history_available` saying why.
@@ -603,7 +608,7 @@ swept by exports and customer extracts, which must never carry service rows.
 | `rows_total` | `Nullable(UInt64)` | physical rows present when observed; `storage.observed` only |
 | `bytes_on_disk` | `UInt64` | size when observed; `storage.observed` only |
 
-Every column is read by the surface. A column nothing reads is a claim the
+Every column but `event_id` is read by the surface; that one exists to make the sort key unique. A column nothing reads is a claim the
 ledger cannot back, so tenant and source identity, moved bytes and a failure
 message were dropped rather than carried as headroom — the failed step already
 says what a message would, and the read is instance-wide by construction.
@@ -613,9 +618,9 @@ says what a message would, and the read is instance-wide by construction.
 the working default).
 
 Append-only: read-side resolution picks, per job identity, the winning claim by precedence
-(`claimed` > `out_of_band` > `unclaimed`), newest row within a precedence class; counters and
-`rows_landed` come from the row that carries them (the pipeline's, when it exists; the
-sweep's coverage row otherwise), and run linkage from whichever winning-claim row carries
+(`claimed` > `out_of_band` > `unclaimed`), newest row within a precedence class; counters come
+from the sweep's row — only the mover's history holds them — while `rows_landed` comes from
+the pipeline's, the only writer that measures it; and run linkage from whichever winning-claim row carries
 `run_id`. Duplicate recording of the same sync — both writers, or an overlapping sweep —
 therefore changes nothing the page reports (NFR-3).
 

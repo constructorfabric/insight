@@ -156,7 +156,7 @@ volume facts without reading data.
 
 **ID**: `cpt-insightspec-connhealth-actor-analytics`
 
-**Role**: serves the read surface to the portal from the ledger and storage metadata only.
+**Role**: serves the read surface to the portal from the ledger alone.
 
 #### Portal
 
@@ -170,7 +170,7 @@ run history.
 Facts flow one way. At run time the pipeline records its own boundaries and outcomes into
 the run ledger; on a fixed cadence the sweep reconciles the mover's job history into the same
 ledger, covering runs the pipeline did not perform. At read time the analytics service
-answers from the ledger plus warehouse storage metadata — no call leaves the warehouse on the
+answers from the ledger alone — no call leaves the warehouse on the
 request path.
 
 ### 3.1 Module-Specific Environment Constraints
@@ -200,7 +200,7 @@ request path.
   storage rows attributable to that same sync.
 - Recording of the currently configured connector set, so *never configured* is
   distinguishable from *configured and never ran*.
-- The read surface: one admin endpoint and one portal page — per-connector summary,
+- The read surface: two admin endpoints and one portal page — per-connector summary,
   per-stream expansion, run history.
 - Replacing the current Data health pane with this page.
 
@@ -276,7 +276,7 @@ state.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-bounded-history`
 
-Ledger rows are retained for a bounded, configurable period long enough to answer "when did
+Ledger rows are retained for a bounded period long enough to answer "when did
 this break" and "how often does it fail". Retained history outlives connection deletion in
 the mover.
 
@@ -324,7 +324,7 @@ delivering connector is the expansion's primary signal.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-facts-not-verdicts`
 
-The surface asserts only what the ledger and storage metadata record. No fresh/stale
+The surface asserts only what the ledger records. No fresh/stale
 classification is shown while thresholds have no runtime source; a state the system cannot
 know renders as *unknown*, never as healthy; row counts are labelled physical, never entity
 counts.
@@ -529,7 +529,8 @@ yet rather than implying anything.
   (including abnormal termination) — realisation in [DESIGN.md](DESIGN.md).
 - The reconcile loop, which already authenticates to the mover and runs on a periodic tick;
   the sweep extends it.
-- The warehouse, which stores the ledger and serves storage metadata.
+- The warehouse, which stores the ledger. Storage metadata is read by the sweep when it
+  records, never by the read surface.
 - Replacement target: the Manage-zone Data health pane in the portal.
 
 ## 11. Assumptions
