@@ -680,13 +680,14 @@ class RunEventView(BaseModel):
     )
     duration_ms: int = Field(..., ge=0)
     event: str
+    job_id: str | None = Field(..., description="The mover's job this event is about, so a reader can line it up against\nthe summary by identity instead of by timestamp.")
     origin: str = Field(..., description='Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.')
-    records_moved: int = Field(..., ge=0)
-    rows_landed: int | None = Field(None, ge=0)
+    records_moved: int | None = Field(..., description="Null on a row no sweep has reached: counters arrive with the mover's\nhistory, and the column's zero before then means nobody counted.", ge=0)
+    rows_landed: int | None = Field(..., ge=0)
     started_at: UnzonedDatetime
     status: str
-    step: str | None = None
-    trigger: str | None = None
+    step: str | None
+    trigger: str | None
 
 
 class RunResponse(BaseModel):
@@ -724,8 +725,8 @@ class RunView(BaseModel):
     duration_ms: int = Field(..., ge=0)
     started_at: UnzonedDatetime
     status: str
-    step: str | None = Field(None, description='The step the run reached; absent when it did not fail.')
-    transform_status: str | None = Field(None, description="Outcome of this run's own transform step, when it got that far.")
+    step: str | None = Field(..., description='The step the run reached; absent when it did not fail.')
+    transform_status: str | None = Field(..., description="Outcome of this run's own transform step, when it got that far.")
 
 
 class SavedQuery(BaseModel):
@@ -813,9 +814,10 @@ class SyncView(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    duration_ms: int | None = Field(None, description="Null until the mover's history has been swept — only it knows how long a\nsync took and how much it moved.", ge=0)
-    records_moved: int | None = Field(None, ge=0)
-    rows_landed: int | None = Field(None, description='Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.', ge=0)
+    duration_ms: int | None = Field(..., description="Null until the mover's history has been swept — only it knows how long a\nsync took and how much it moved.", ge=0)
+    job_id: str | None = Field(..., description="The mover's job this summary resolves to.")
+    records_moved: int | None = Field(..., ge=0)
+    rows_landed: int | None = Field(..., description='Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.', ge=0)
     started_at: UnzonedDatetime
     status: str
     trigger: str = Field(..., description='`claimed`, `out_of_band`, or `unclaimed`. Unclaimed is unknown\nprovenance; it is never presented as a manual sync.')
@@ -963,9 +965,9 @@ class ConnectorRow(BaseModel):
     )
     configured: bool
     connector: str
-    last_run: RunView | None = None
-    last_sync: SyncView | None = None
-    storage: StorageView | None = None
+    last_run: RunView | None
+    last_sync: SyncView | None
+    storage: StorageView | None
     streams: list[StreamView]
 
 
@@ -1215,7 +1217,7 @@ class ConnectorHealthResponse(BaseModel):
     as_of: UnzonedDatetime = Field(..., description="When this response was assembled. Says nothing about the facts' age.")
     connectors: list[ConnectorRow]
     history_available: bool = Field(..., description='False when nothing has recorded a run yet — a fresh install before the\nfirst controller cadence, or a stand where nothing records. The page says\nso rather than implying health.')
-    swept_at: UnzonedDatetime | None = Field(None, description='When a controller tick last finished, or null when none ever has.\n\nThis is the page\'s only freshness statement, and it has to come from the\nrecorded marker: serving the reader\'s own clock would read as "just now"\nhowever long ago the controller last ran.')
+    swept_at: UnzonedDatetime | None = Field(..., description='When a controller tick last finished, or null when none ever has.\n\nThis is the page\'s only freshness statement, and it has to come from the\nrecorded marker: serving the reader\'s own clock would read as "just now"\nhowever long ago the controller last ran.')
 
 
 class CustomMetric(BaseModel):

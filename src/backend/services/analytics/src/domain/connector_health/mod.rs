@@ -61,6 +61,9 @@ pub(crate) struct RunFacts {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SyncFacts {
+    /// The mover's job this summary resolves to, so a reader can line it up
+    /// against one history event instead of comparing whole populations.
+    pub(crate) job_id: String,
     pub(crate) claim: Claim,
     pub(crate) status: String,
     pub(crate) started_at: DateTime<Utc>,
@@ -261,6 +264,7 @@ mod tests {
 
     fn sync(records_moved: u64, rows_landed: Option<u64>) -> SyncFacts {
         SyncFacts {
+            job_id: "job-1".to_owned(),
             claim: Claim::Claimed,
             status: "ok".to_owned(),
             started_at: at(1),

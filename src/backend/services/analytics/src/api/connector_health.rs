@@ -24,6 +24,7 @@ pub(crate) struct ConnectorHealthResponse {
     /// This is the page's only freshness statement, and it has to come from the
     /// recorded marker: serving the reader's own clock would read as "just now"
     /// however long ago the controller last ran.
+    #[schema(required)]
     pub swept_at: Option<DateTime<Utc>>,
     /// False when nothing has recorded a run yet — a fresh install before the
     /// first controller cadence, or a stand where nothing records. The page says
@@ -37,8 +38,11 @@ impl toolkit::api::api_dto::ResponseApiDto for ConnectorHealthResponse {}
 pub(crate) struct ConnectorRow {
     pub connector: String,
     pub configured: bool,
+    #[schema(required)]
     pub last_run: Option<RunView>,
+    #[schema(required)]
     pub last_sync: Option<SyncView>,
+    #[schema(required)]
     pub storage: Option<StorageView>,
     pub streams: Vec<StreamView>,
 }
@@ -47,15 +51,20 @@ pub(crate) struct ConnectorRow {
 pub(crate) struct RunView {
     pub status: String,
     /// The step the run reached; absent when it did not fail.
+    #[schema(required)]
     pub step: Option<String>,
     pub started_at: DateTime<Utc>,
     pub duration_ms: u64,
     /// Outcome of this run's own transform step, when it got that far.
+    #[schema(required)]
     pub transform_status: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct SyncView {
+    /// The mover's job this summary resolves to.
+    #[schema(required)]
+    pub job_id: Option<String>,
     /// `claimed`, `out_of_band`, or `unclaimed`. Unclaimed is unknown
     /// provenance; it is never presented as a manual sync.
     pub trigger: String,
@@ -63,10 +72,13 @@ pub(crate) struct SyncView {
     pub started_at: DateTime<Utc>,
     /// Null until the mover's history has been swept — only it knows how long a
     /// sync took and how much it moved.
+    #[schema(required)]
     pub duration_ms: Option<u64>,
+    #[schema(required)]
     pub records_moved: Option<u64>,
     /// Rows measured as delivered by this sync. Null where the measurement
     /// window had passed — absence, never a zero.
+    #[schema(required)]
     pub rows_landed: Option<u64>,
 }
 
@@ -99,14 +111,24 @@ impl toolkit::api::api_dto::ResponseApiDto for ConnectorRunsResponse {}
 pub(crate) struct RunEventView {
     pub event: String,
     pub status: String,
+    #[schema(required)]
     pub step: Option<String>,
     /// Which writer recorded this row: `pipeline` or `sweep`. Provenance of the
     /// record, never of the sync — see `trigger` for that.
     pub origin: String,
+    #[schema(required)]
     pub trigger: Option<String>,
+    /// The mover's job this event is about, so a reader can line it up against
+    /// the summary by identity instead of by timestamp.
+    #[schema(required)]
+    pub job_id: Option<String>,
     pub started_at: DateTime<Utc>,
     pub duration_ms: u64,
-    pub records_moved: u64,
+    /// Null on a row no sweep has reached: counters arrive with the mover's
+    /// history, and the column's zero before then means nobody counted.
+    #[schema(required)]
+    pub records_moved: Option<u64>,
+    #[schema(required)]
     pub rows_landed: Option<u64>,
 }
 
@@ -116,17 +138,21 @@ pub(crate) async fn get_connector_health(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let health = match read::read_health(&state.ch).await {
+    // Resolved first and used for every snapshot read below, so one response
+    // cannot mix two ticks: a sweep landing mid-response would otherwise pair
+    // the newer configured set with the older storage.
+    let tick = match read::read_sealed_tick(&state.ch).await {
+        Ok(tick) => tick,
+        Err(read::ReadError::LedgerAbsent) => read::SealedTick::none(),
+        Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
+    };
+    let swept_at = tick.swept_at;
+
+    let health = match read::read_health(&state.ch, &tick).await {
         Ok(health) => health,
         // A page state, not a failure: an install whose migration has not landed
         // shows an empty page that says so (spec FR-13).
         Err(read::ReadError::LedgerAbsent) => Vec::new(),
-        Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
-    };
-
-    let swept_at = match read::read_swept_at(&state.ch).await {
-        Ok(swept_at) => swept_at,
-        Err(read::ReadError::LedgerAbsent) => None,
         Err(error @ read::ReadError::Clickhouse(_)) => return Err(read_failed(&error)),
     };
 
@@ -174,6 +200,7 @@ fn connector_row(health: ConnectorHealth) -> ConnectorRow {
             transform_status: run.transform_status,
         }),
         last_sync: health.last_sync.map(|sync| SyncView {
+            job_id: non_empty(sync.job_id),
             trigger: sync.claim.as_str().to_owned(),
             status: sync.status,
             started_at: sync.started_at,
@@ -208,9 +235,10 @@ fn run_event_view(row: read::HistoryRow) -> RunEventView {
         status: row.status,
         step: non_empty(row.step),
         origin: row.origin,
+        job_id: non_empty(row.job_id),
         started_at: row.started_at,
         duration_ms: row.duration_ms,
-        records_moved: row.records_moved,
+        records_moved: row.has_counters.then_some(row.moved_or_zero),
         rows_landed: row.has_measurement.then_some(row.rows_landed_or_zero),
     }
 }
@@ -264,6 +292,7 @@ mod tests {
 
     fn sync(claim: Claim, rows_landed: Option<u64>) -> SyncFacts {
         SyncFacts {
+            job_id: "job-1".to_owned(),
             claim,
             status: "ok".to_owned(),
             started_at: at(),
@@ -354,13 +383,58 @@ mod tests {
             step: String::new(),
             origin: "sweep".to_owned(),
             claim: "something-new".to_owned(),
+            job_id: "job-1".to_owned(),
             started_at: at(),
             duration_ms: 1,
-            records_moved: 0,
+            moved_or_zero: 0,
+            has_counters: true,
             rows_landed_or_zero: 0,
             has_measurement: false,
         };
 
         assert_eq!(run_event_view(row).trigger.as_deref(), Some("unclaimed"));
+    }
+
+    #[test]
+    fn a_counter_no_sweep_recorded_is_absent_rather_than_a_measured_zero() {
+        // The pipeline stores the column's zero because the column is not
+        // nullable; it means nobody counted, and the wire must say so or the
+        // page renders "0 records moved" for every run before its sweep.
+        let row = read::HistoryRow {
+            event: "run.finished".to_owned(),
+            status: "ok".to_owned(),
+            step: String::new(),
+            origin: "pipeline".to_owned(),
+            claim: String::new(),
+            job_id: String::new(),
+            started_at: at(),
+            duration_ms: 1,
+            moved_or_zero: 0,
+            has_counters: false,
+            rows_landed_or_zero: 0,
+            has_measurement: false,
+        };
+
+        assert_eq!(run_event_view(row).records_moved, None);
+    }
+
+    #[test]
+    fn a_counter_the_sweep_did_record_keeps_its_zero() {
+        let row = read::HistoryRow {
+            event: "sync.completed".to_owned(),
+            status: "ok".to_owned(),
+            step: String::new(),
+            origin: "sweep".to_owned(),
+            claim: "claimed".to_owned(),
+            job_id: "job-1".to_owned(),
+            started_at: at(),
+            duration_ms: 1,
+            moved_or_zero: 0,
+            has_counters: true,
+            rows_landed_or_zero: 0,
+            has_measurement: true,
+        };
+
+        assert_eq!(run_event_view(row).records_moved, Some(0));
     }
 }

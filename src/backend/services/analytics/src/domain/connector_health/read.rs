@@ -19,10 +19,21 @@ const HISTORY_LIMIT: u64 = 50;
 /// two sides of the seam never disagree about which row wins.
 const CLAIM_RANK: &str = "multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1)";
 
-/// The last tick that finished writing. Every snapshot read keys on it, so a
-/// tick still in flight never contributes half a picture.
-const SEALED_TICK: &str =
-    "SELECT argMax(run_id, ts) FROM ingestion_runs.pipeline_events WHERE event = 'sweep.completed'";
+/// The last tick that finished writing, resolved ONCE per response.
+///
+/// Its stamp is also what the page means by "swept as of": serving the
+/// response's own clock there would state a freshness the recorded facts do not
+/// support, and would read as "just now" however long ago the controller last
+/// ran.
+///
+/// Every snapshot read keys on it, so a tick still in flight never contributes
+/// half a picture. Resolving it per query would let a sweep landing between two
+/// of them mix ticks — the configured set from the newer, storage from the
+/// older — and answer with a state that never existed.
+const SEALED_TICK_SQL: &str = "\
+    SELECT argMax(run_id, ts) AS run_id, max(ts) AS ts
+    FROM {LEDGER}
+    WHERE event = 'sweep.completed'";
 
 /// One row per connector: its newest terminal run, and the transform outcome
 /// belonging to that same run rather than to whichever ran last.
@@ -37,10 +48,20 @@ const RUNS_SQL: &str = "\
     WHERE event = 'run.finished' AND connector != ''
     GROUP BY connector";
 
+/// Bounded to the runs the page shows.
+///
+/// Unbounded this read the whole retention to find one row per connector, and
+/// grew with every run ever recorded.
 const TRANSFORMS_SQL: &str = "\
     SELECT connector, run_id, argMax(status, ts) AS status
     FROM {LEDGER}
     WHERE event = 'transform.completed' AND connector != '' AND run_id != ''
+      AND (connector, run_id) IN (
+        SELECT connector, argMax(run_id, ts)
+        FROM {LEDGER}
+        WHERE event = 'run.finished' AND connector != ''
+        GROUP BY connector
+      )
     GROUP BY connector, run_id";
 
 /// One row per connector: the newest sync, resolved by claim precedence.
@@ -50,6 +71,7 @@ const TRANSFORMS_SQL: &str = "\
 /// neither row is complete alone.
 const SYNCS_SQL: &str = "\
     SELECT connector,
+           any(job_id)                             AS job_id,
            argMax(claim, (rank, ts))               AS claim,
            argMax(status, (rank, ts))              AS status,
            argMax(started_at, (from_sweep, ts))    AS started_at,
@@ -91,7 +113,7 @@ const STORAGE_SQL: &str = "\
            bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream = '' AND connector != ''
-      AND run_id = ({SEALED_TICK})
+      AND run_id = ?
     ORDER BY ts DESC
     LIMIT 1 BY connector";
 
@@ -99,7 +121,7 @@ const STREAMS_SQL: &str = "\
     SELECT connector, stream, ifNull(rows_total, 0) AS rows_total, bytes_on_disk
     FROM {LEDGER}
     WHERE event = 'storage.observed' AND stream != '' AND connector != ''
-      AND run_id = ({SEALED_TICK})
+      AND run_id = ?
     ORDER BY ts DESC
     LIMIT 1 BY (connector, stream)";
 
@@ -111,14 +133,7 @@ const STREAMS_SQL: &str = "\
 const CONFIGURED_SQL: &str = "\
     SELECT connector
     FROM {LEDGER}
-    WHERE event = 'connector.configured' AND run_id = ({SEALED_TICK})";
-
-/// When the last tick finished. This is what the page means by "swept as of" —
-/// serving the response's own clock there would state a freshness the recorded
-/// facts do not support, and would read as "just now" however long ago the
-/// controller last ran.
-const SWEPT_AT_SQL: &str = "\
-    SELECT max(ts) AS swept_at FROM {LEDGER} WHERE event = 'sweep.completed'";
+    WHERE event = 'connector.configured' AND run_id = ?";
 
 /// One connector's recent runs and syncs, newest first.
 ///
@@ -126,8 +141,9 @@ const SWEPT_AT_SQL: &str = "\
 /// `connector.configured` say what a tick saw, not what a run did, and reading
 /// them here would bury the history under one line per tick.
 const HISTORY_SQL: &str = "\
-    SELECT event, status, step, origin, claim, started_at, duration_ms,
-           records_moved,
+    SELECT event, status, step, origin, claim, job_id, started_at, duration_ms,
+           records_moved AS moved_or_zero,
+           origin = 'sweep' AS has_counters,
            ifNull(rows_landed, 0) AS rows_landed_or_zero,
            rows_landed IS NOT NULL AS has_measurement
     FROM {LEDGER}
@@ -140,7 +156,6 @@ fn sql(template: &str) -> String {
     template
         .replace("{LEDGER}", LEDGER)
         .replace("{CLAIM_RANK}", CLAIM_RANK)
-        .replace("{SEALED_TICK}", SEALED_TICK)
         .replace("{HISTORY_LIMIT}", &HISTORY_LIMIT.to_string())
 }
 
@@ -165,6 +180,7 @@ struct TransformRow {
 #[derive(Debug, Row, Deserialize)]
 struct SyncRow {
     connector: String,
+    job_id: String,
     claim: String,
     status: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
@@ -201,9 +217,28 @@ struct ConfiguredRow {
 }
 
 #[derive(Debug, Row, Deserialize)]
-struct SweptAtRow {
+struct SealedTickRow {
+    run_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    swept_at: DateTime<Utc>,
+    ts: DateTime<Utc>,
+}
+
+/// The one tick a whole response is read against.
+#[derive(Debug)]
+pub(crate) struct SealedTick {
+    run_id: String,
+    /// When it finished, or None when no tick ever has.
+    pub(crate) swept_at: Option<DateTime<Utc>>,
+}
+
+impl SealedTick {
+    /// No tick to read against — an install whose ledger is not there yet.
+    pub(crate) fn none() -> Self {
+        Self {
+            run_id: String::new(),
+            swept_at: None,
+        }
+    }
 }
 
 #[derive(Debug, Row, Deserialize)]
@@ -213,10 +248,17 @@ pub(crate) struct HistoryRow {
     pub(crate) step: String,
     pub(crate) origin: String,
     pub(crate) claim: String,
+    /// The mover's own job identity, so a reader can line one event up against
+    /// the summary rather than guessing by timestamp.
+    pub(crate) job_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub(crate) started_at: DateTime<Utc>,
     pub(crate) duration_ms: u64,
-    pub(crate) records_moved: u64,
+    /// INVARIANT: only meaningful when `has_counters`. Counters reach the ledger
+    /// with the sweep; a pipeline row stores the column's zero and means
+    /// "nobody counted", which is not the same statement.
+    pub(crate) moved_or_zero: u64,
+    pub(crate) has_counters: bool,
     pub(crate) rows_landed_or_zero: u64,
     pub(crate) has_measurement: bool,
 }
@@ -249,29 +291,62 @@ where
     })
 }
 
-/// When a tick last finished, or None when none ever has.
-pub(crate) async fn read_swept_at(
+/// A snapshot read, bound to the tick the whole response is keyed on.
+async fn fetch_at<T>(
     ch: &insight_clickhouse::Client,
-) -> Result<Option<DateTime<Utc>>, ReadError> {
-    let rows = fetch::<SweptAtRow>(ch, &sql(SWEPT_AT_SQL)).await?;
-    // An empty ledger answers with the epoch rather than no row, so the epoch is
-    // a sentinel here and never a sweep that happened in 1970.
-    Ok(rows
+    statement: &str,
+    run_id: &str,
+) -> Result<Vec<T>, ReadError>
+where
+    T: clickhouse::RowOwned + clickhouse::RowRead,
+{
+    ch.query(statement)
+        .bind(run_id)
+        .fetch_all::<T>()
+        .await
+        .map_err(|error| {
+            if absent_ledger(&error) {
+                return ReadError::LedgerAbsent;
+            }
+            ReadError::Clickhouse(error)
+        })
+}
+
+/// The newest sealed tick, read once and used for the whole response.
+pub(crate) async fn read_sealed_tick(
+    ch: &insight_clickhouse::Client,
+) -> Result<SealedTick, ReadError> {
+    let rows = fetch::<SealedTickRow>(ch, &sql(SEALED_TICK_SQL)).await?;
+
+    // An empty ledger answers with one row of zeroes rather than none, so the
+    // epoch is a sentinel here and never a sweep that happened in 1970.
+    let Some(row) = rows
         .into_iter()
-        .map(|row| row.swept_at)
-        .find(|stamp| *stamp != DateTime::<Utc>::UNIX_EPOCH))
+        .find(|row| row.ts != DateTime::<Utc>::UNIX_EPOCH)
+    else {
+        return Ok(SealedTick {
+            run_id: String::new(),
+            swept_at: None,
+        });
+    };
+
+    Ok(SealedTick {
+        run_id: row.run_id,
+        swept_at: Some(row.ts),
+    })
 }
 
 /// Every connector's recorded health, ordered by what needs attention.
 pub(crate) async fn read_health(
     ch: &insight_clickhouse::Client,
+    tick: &SealedTick,
 ) -> Result<Vec<ConnectorHealth>, ReadError> {
     let runs = fetch::<RunRow>(ch, &sql(RUNS_SQL)).await?;
     let transforms = fetch::<TransformRow>(ch, &sql(TRANSFORMS_SQL)).await?;
     let syncs = fetch::<SyncRow>(ch, &sql(SYNCS_SQL)).await?;
-    let storage = fetch::<StorageRow>(ch, &sql(STORAGE_SQL)).await?;
-    let streams = fetch::<StreamRow>(ch, &sql(STREAMS_SQL)).await?;
-    let configured = fetch::<ConfiguredRow>(ch, &sql(CONFIGURED_SQL)).await?;
+    let storage = fetch_at::<StorageRow>(ch, &sql(STORAGE_SQL), &tick.run_id).await?;
+    let streams = fetch_at::<StreamRow>(ch, &sql(STREAMS_SQL), &tick.run_id).await?;
+    let configured = fetch_at::<ConfiguredRow>(ch, &sql(CONFIGURED_SQL), &tick.run_id).await?;
 
     Ok(summarize(
         run_facts(runs, &transforms),
@@ -333,6 +408,7 @@ fn sync_facts(syncs: Vec<SyncRow>) -> Vec<(String, SyncFacts)> {
             (
                 row.connector,
                 SyncFacts {
+                    job_id: row.job_id,
                     claim: Claim::parse(&row.claim),
                     status: row.status,
                     started_at: row.started_at,
@@ -447,6 +523,7 @@ mod tests {
     #[test]
     fn an_uncounted_sync_reports_no_counters_rather_than_zeros() {
         let row = SyncRow {
+            job_id: "job-1".to_owned(),
             connector: "alpha".to_owned(),
             claim: "claimed".to_owned(),
             status: "ok".to_owned(),
@@ -474,6 +551,7 @@ mod tests {
     #[test]
     fn a_missing_measurement_stays_absent_rather_than_becoming_zero() {
         let row = SyncRow {
+            job_id: "job-1".to_owned(),
             connector: "alpha".to_owned(),
             claim: "out_of_band".to_owned(),
             status: "ok".to_owned(),
@@ -491,6 +569,7 @@ mod tests {
     #[test]
     fn a_measured_zero_is_reported_as_a_zero() {
         let row = SyncRow {
+            job_id: "job-1".to_owned(),
             connector: "alpha".to_owned(),
             claim: "claimed".to_owned(),
             status: "ok".to_owned(),
@@ -533,16 +612,6 @@ mod tests {
     }
 
     #[test]
-    fn every_snapshot_read_keys_on_the_sealed_tick() {
-        for template in [STORAGE_SQL, STREAMS_SQL, CONFIGURED_SQL] {
-            assert!(
-                sql(template).contains("sweep.completed"),
-                "a tick still in flight must never contribute half a picture"
-            );
-        }
-    }
-
-    #[test]
     fn run_history_leaves_out_per_tick_bookkeeping() {
         let rendered = sql(HISTORY_SQL);
 
@@ -562,7 +631,7 @@ mod tests {
             STORAGE_SQL,
             STREAMS_SQL,
             CONFIGURED_SQL,
-            SWEPT_AT_SQL,
+            SEALED_TICK_SQL,
             HISTORY_SQL,
         ] {
             let rendered = sql(template);
@@ -578,18 +647,28 @@ mod tests {
     }
 
     #[test]
-    fn the_configured_set_is_keyed_on_a_sealed_snapshot() {
-        assert!(
-            sql(CONFIGURED_SQL).contains("sweep.completed"),
-            "without the marker a half-written snapshot would read as the whole set"
-        );
+    fn every_snapshot_read_is_bound_to_one_tick_rather_than_resolving_its_own() {
+        // Resolving the seal per statement let a sweep landing between two of
+        // them answer with the newer configured set beside the older storage —
+        // a state that never existed on any tick.
+        for template in [CONFIGURED_SQL, STORAGE_SQL, STREAMS_SQL] {
+            let rendered = sql(template);
+            assert!(
+                rendered.contains("run_id = ?"),
+                "must take the tick as a bound parameter: {rendered}"
+            );
+            assert!(
+                !rendered.contains("sweep.completed"),
+                "must not resolve a seal of its own: {rendered}"
+            );
+        }
     }
 
     #[test]
     fn the_swept_stamp_comes_from_the_marker_not_from_the_reader() {
         // The page's only freshness statement. Reading the response's own clock
         // would say "just now" however long ago the controller last ran.
-        let rendered = sql(SWEPT_AT_SQL);
+        let rendered = sql(SEALED_TICK_SQL);
 
         assert!(rendered.contains("sweep.completed"));
         assert!(rendered.contains("max(ts)"));

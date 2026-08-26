@@ -305,9 +305,10 @@ describe("connector health · expansion", () => {
         step: null,
         origin: "pipeline",
         trigger: null,
+        job_id: null,
         started_at: `2026-01-${String(index + 1).padStart(2, "0")}T09:00:00Z`,
         duration_ms: 1_000,
-        records_moved: 0,
+        records_moved: null,
         rows_landed: null,
       })),
     };
@@ -316,7 +317,11 @@ describe("connector health · expansion", () => {
 
     await userEvent.click(screen.getByText("example-tool"));
 
-    expect(screen.getByText(/Showing 12 of 30 recorded events/)).toBeInTheDocument();
+    // The response is capped, so its length is not the history. Saying "of 30
+    // recorded events" claimed a total nobody counted.
+    const note = screen.getByText(/Showing 12 of the 30 most recent/);
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveTextContent(/older ones are not read here/);
   });
 
   it("collapses a row that is clicked again", async () => {

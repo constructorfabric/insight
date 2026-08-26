@@ -32,6 +32,8 @@ export type ConnectorState =
   | "sync_without_transform"
   /** Runs complete and nothing has ever been stored. */
   | "nothing_stored"
+  /** A recorded status this build has no reading for. Never "delivering". */
+  | "state_unknown"
   /** The last run completed and nothing contradicts it. */
   | "delivering"
   /** Configured, and nothing has run yet. */
@@ -82,6 +84,11 @@ const STATES: Record<ConnectorState, Omit<ConnectorStateLabel, "state"> & { tile
     tile: "nothing stored",
     tone: "warning",
   },
+  state_unknown: {
+    label: "unrecognised state",
+    tile: "unrecognised state",
+    tone: "warning",
+  },
   delivering: { label: "delivering", tile: "delivering", tone: "ok" },
   never_ran: { label: "never ran", tile: "never ran", tone: "idle" },
   not_configured: {
@@ -99,6 +106,19 @@ export function stateTileLabel(state: ConnectorState): string {
 
 const TERMINAL_FAILURES = new Set(["failed", "cancelled"]);
 const IN_FLIGHT = new Set(["running", "pending"]);
+const SUCCEEDED = new Set(["ok"]);
+
+/**
+ * Every status word this build knows how to read.
+ *
+ * A word outside it is not evidence of health: the recorder's vocabulary can
+ * outgrow the reader's, and falling through to "delivering" would turn a state
+ * nobody here understands into a reassurance.
+ */
+function recognised(status: string | null | undefined): boolean {
+  if (status === null || status === undefined) return true;
+  return TERMINAL_FAILURES.has(status) || IN_FLIGHT.has(status) || SUCCEEDED.has(status);
+}
 
 function failed(status: string | null | undefined): boolean {
   return status !== null && status !== undefined && TERMINAL_FAILURES.has(status);
@@ -150,6 +170,9 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
   }
 
   if (!run && !sync) return "never_ran";
+
+  // After the known-bad readings, before any reassurance.
+  if (!recognised(run?.status) || !recognised(sync?.status)) return "state_unknown";
 
   // A connector whose runs succeed while nothing is ever stored is one of the
   // four states this page exists to separate, and it is not delivering.

@@ -199,6 +199,28 @@ describe("connectorState", () => {
     ).toBe("not_configured");
   });
 
+  it("does not read a status it has no reading for as delivering", () => {
+    // The recorder's vocabulary can outgrow the reader's; a word this build
+    // does not know is not evidence of health.
+    expect(connectorState(row({ last_run: run({ status: "degraded" }) }))).toBe(
+      "state_unknown"
+    );
+    expect(
+      connectorState(row({ last_run: null, last_sync: sync({ status: "weird" }) }))
+    ).toBe("state_unknown");
+  });
+
+  it("still prefers a known-bad reading over an unrecognised one", () => {
+    const state = connectorState(
+      row({
+        last_run: run({ status: "failed" }),
+        last_sync: sync({ status: "brand-new-word" }),
+      })
+    );
+
+    expect(state).toBe("run_failed");
+  });
+
   it("gives every state words as well as a tone, so colour is never alone", () => {
     const labelled = connectorStateLabel(
       row({ last_sync: sync({ records_moved: 9, rows_landed: 0 }) })

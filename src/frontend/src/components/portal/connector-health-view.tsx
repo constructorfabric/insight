@@ -307,10 +307,12 @@ function RunHistory({ connector }: { connector: string }) {
               </li>
             ))}
           </ul>
-          {/* Silence here would read as "that is all there was". */}
+          {/* "of N recorded events" claimed a total the response does not
+              carry — it is capped, so N was the cap and not the history. */}
           {data.runs.length > HISTORY_SHOWN && (
             <p className="text-xs text-muted-foreground">
-              Showing {HISTORY_SHOWN} of {data.runs.length} recorded events.
+              Showing {HISTORY_SHOWN} of the {data.runs.length} most recent
+              recorded events; older ones are not read here.
             </p>
           )}
         </>

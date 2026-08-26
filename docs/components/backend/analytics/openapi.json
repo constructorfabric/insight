@@ -186,6 +186,7 @@
         },
         "required": [
           "as_of",
+          "swept_at",
           "history_available",
           "connectors"
         ],
@@ -239,6 +240,9 @@
         "required": [
           "connector",
           "configured",
+          "last_run",
+          "last_sync",
+          "storage",
           "streams"
         ],
         "type": "object"
@@ -2148,14 +2152,25 @@
           "event": {
             "type": "string"
           },
+          "job_id": {
+            "description": "The mover's job this event is about, so a reader can line it up against\nthe summary by identity instead of by timestamp.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "origin": {
             "description": "Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.",
             "type": "string"
           },
           "records_moved": {
+            "description": "Null on a row no sweep has reached: counters arrive with the mover's\nhistory, and the column's zero before then means nobody counted.",
             "format": "int64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "rows_landed": {
             "format": "int64",
@@ -2188,10 +2203,14 @@
         "required": [
           "event",
           "status",
+          "step",
           "origin",
+          "trigger",
+          "job_id",
           "started_at",
           "duration_ms",
-          "records_moved"
+          "records_moved",
+          "rows_landed"
         ],
         "type": "object"
       },
@@ -2251,8 +2270,10 @@
         },
         "required": [
           "status",
+          "step",
           "started_at",
-          "duration_ms"
+          "duration_ms",
+          "transform_status"
         ],
         "type": "object"
       },
@@ -2455,6 +2476,13 @@
               "null"
             ]
           },
+          "job_id": {
+            "description": "The mover's job this summary resolves to.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "records_moved": {
             "format": "int64",
             "minimum": 0,
@@ -2485,9 +2513,13 @@
           }
         },
         "required": [
+          "job_id",
           "trigger",
           "status",
-          "started_at"
+          "started_at",
+          "duration_ms",
+          "records_moved",
+          "rows_landed"
         ],
         "type": "object"
       },

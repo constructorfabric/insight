@@ -88,14 +88,18 @@ def test_the_summary_and_the_history_agree_on_whether_a_delivery_was_measured(
     Only meaningful where something records runs, so it carries the ingestion
     capability rather than passing silently over an empty list.
     """
+    # Keyed on the mover's job, not on the connector: the summary resolves ONE
+    # sync by claim precedence while the history lists every event, so "any
+    # event was measured" answers a different question and can disagree with a
+    # correct summary.
     measured = {
-        row.connector: row.last_sync.rows_landed is not None
+        row.connector: (row.last_sync.job_id, row.last_sync.rows_landed is not None)
         for row in health.connectors
-        if row.last_sync is not None
+        if row.last_sync is not None and row.last_sync.job_id is not None
     }
     assert measured, "the stand declares ingestion but recorded no sync to compare"
 
-    for connector, summary_measured in measured.items():
+    for connector, (job_id, summary_measured) in measured.items():
         response = admin_operator_session.client.get(_runs_path(connector))
         assert response.status_code == 200, (
             f"{connector}: history answered {response.status_code}: {response.text[:300]}"
@@ -103,7 +107,7 @@ def test_the_summary_and_the_history_agree_on_whether_a_delivery_was_measured(
         syncs = [
             event
             for event in response.parse(ConnectorRunsResponse).runs
-            if event.event == "sync.completed"
+            if event.event == "sync.completed" and event.job_id == job_id
         ]
         if not syncs:
             continue

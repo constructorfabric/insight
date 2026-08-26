@@ -228,15 +228,20 @@ request path.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-terminal-record`
 
-Every submitted run writes a terminal ledger record carrying outcome and the step reached —
-including runs that fail before the sync starts. A run that dies resolving its connection is
-a recorded failure naming that step, not an absent row.
+Every submitted run records its outcome and the step reached — including runs that fail
+before the sync starts. A run that dies resolving its connection is a recorded failure naming
+that step, not an absent row.
+
+The recorder is deliberately best-effort: it must never fail the run it only observes, so a
+recorder that cannot execute leaves that run without a terminal row. The page then shows no
+terminal record rather than inventing an outcome, and nothing downstream reads the absence as
+success.
 
 #### FR-2 — Every sync outcome is recorded, whoever started it
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-all-syncs-recorded`
 
-Sync outcome, start time, duration, and moved record/byte counters are recorded for every
+Sync outcome, start time, duration, and moved-record counters are recorded for every
 sync in the mover's job history — scheduled, reconcile-triggered, or started manually from
 the mover's own UI. Every sync record carries the mover's job identity, and every
 pipeline-recorded run claims the job it started by the same identity, so each sync is
@@ -356,7 +361,8 @@ presented as the trigger.
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-empty-ledger`
 
 Before the first controller cadence, or on stands where nothing records, the page states
-plainly that no observations are available yet and shows storage figures as unknown — it does
+plainly that nothing has recorded an ingestion run yet. Where a connector is listed with no
+observation behind it, its storage figures read as unknown rather than as zero. The page does
 not error and does not imply health.
 
 #### FR-14 — The read path depends on nothing external
