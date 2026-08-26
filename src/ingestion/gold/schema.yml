@@ -183,7 +183,10 @@ models:
                   - runs_matched_commit
                   - commits_observed
       - name: record_id
-        description: "Deterministic total-order key within the measure scope"
+        description: >
+          Deterministic total-order key within the measure scope; source_id
+          leads it, so two source instances covering the same repository
+          cannot collide.
         tests:
           - not_null
       - name: record_kind
@@ -208,8 +211,10 @@ models:
         description: "Unused by this family (no distinct-count measure); always NULL"
       - name: dimensions
         description: >
-          Run rows carry repository / pipeline / trigger / outcome;
-          deployment rows carry repository / environment / outcome / env_kind.
+          Run rows carry repository / pipeline / trigger / outcome /
+          hour_block; deployment rows carry repository / environment /
+          outcome / env_kind (production, or preview vs static by the
+          vendor's transient flag).
       - name: details
         description: "Drilldown display fields keyed by stable field name"
 

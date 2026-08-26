@@ -54,8 +54,11 @@ models:
       history. Gate semantics: is_gate = commit-triggered AND decided outcome
       (success/failure/timed_out); action_required runs never executed and
       are not decided. Commit-triggered includes the vendor's fork-safe PR
-      trigger (GitHub pull_request_target) — trigger_category maps it to
-      pull_request, and the gate follows the category. A different gate is a
+      trigger (GitHub pull_request_target — trigger_category maps it to
+      pull_request) and merge-queue runs (GitHub merge_group →
+      merge_queue), and the gate follows the category. Archive caveat: rows
+      classified before merge_queue joined the vocabulary keep
+      trigger_category='other' and is_gate=0. A different gate is a
       different class, not a flag here.
     columns:
       - name: tenant_id
@@ -72,7 +75,7 @@ models:
           Stable pipeline identity — the workflow file path, not its editable
           display name.
       - name: trigger_category
-        description: "Class trigger vocabulary: push | pull_request | schedule | manual | other"
+        description: "Class trigger vocabulary: push | pull_request | merge_queue | schedule | manual | other"
       - name: outcome
         description: >
           Class outcome vocabulary: success | failure | timed_out | cancelled |

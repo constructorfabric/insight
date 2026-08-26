@@ -52,6 +52,7 @@ runs AS (
 run_rows AS (
     SELECT
         tenant_id,
+        source_id,
         metric_date,
         repo_full_name,
         pipeline_key,
@@ -106,18 +107,30 @@ deployment_outcomes AS (
 deployment_rows AS (
     SELECT
         d.tenant_id AS tenant_id,
+        d.source_id AS source_id,
         toDate(d.created_at) AS metric_date,
         d.repo_full_name AS repo_full_name,
         d.deployment_id AS deployment_id,
         d.environment AS environment,
         if(coalesce(o.state, '') = '', 'pending', o.state) AS outcome,
-        if(d.is_production = 1, 'production', 'preview') AS env_kind,
+        -- Non-production splits by the vendor's transient flag: 'preview' is
+        -- an environment that exists to be torn down, 'static' one that
+        -- persists (staging, QA).
+        multiIf(
+            d.is_production = 1, 'production',
+            d.is_transient = 1, 'preview',
+            'static'
+        ) AS env_kind,
         CAST(
             [
                 tuple('repository', d.repo_full_name, toNullable(d.repo_full_name)),
                 tuple('environment', d.environment, toNullable(d.environment)),
                 tuple('outcome', if(coalesce(o.state, '') = '', 'pending', o.state), toNullable(if(coalesce(o.state, '') = '', 'pending', o.state))),
-                tuple('env_kind', if(d.is_production = 1, 'production', 'preview'), toNullable(if(d.is_production = 1, 'production', 'preview')))
+                tuple(
+                    'env_kind',
+                    multiIf(d.is_production = 1, 'production', d.is_transient = 1, 'preview', 'static'),
+                    toNullable(multiIf(d.is_production = 1, 'production', d.is_transient = 1, 'preview', 'static'))
+                )
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS deployment_dimensions
     FROM (
@@ -128,6 +141,7 @@ deployment_rows AS (
             deployment_id,
             environment,
             is_production,
+            is_transient,
             created_at
         FROM {{ ref('class_git_deployments') }} FINAL
         WHERE created_at IS NOT NULL
@@ -147,7 +161,9 @@ SELECT
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(started_at, 3)) AS observed_at,
     measure.1 AS measure_key,
-    concat(repo_full_name, ':', toString(run_id), ':', measure.1) AS record_id,
+    -- source_id leads the id: two source instances can cover the same
+    -- repository, and record_id must stay unique for stable drilldown order.
+    concat(coalesce(source_id, ''), ':', repo_full_name, ':', toString(run_id), ':', measure.1) AS record_id,
     'ci_run' AS record_kind,
     'event' AS granularity,
     concat(pipeline_name, ' #', toString(run_number)) AS record_label,
@@ -191,7 +207,7 @@ SELECT
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     'deployments' AS measure_key,
-    concat(repo_full_name, ':', deployment_id, ':deployments') AS record_id,
+    concat(coalesce(source_id, ''), ':', repo_full_name, ':', deployment_id, ':deployments') AS record_id,
     'deployment' AS record_kind,
     'event' AS granularity,
     concat(environment, ' · ', outcome) AS record_label,
@@ -222,7 +238,7 @@ SELECT
     assumeNotNull(toDate(date)) AS metric_date,
     toNullable(toDateTime64(date, 3)) AS observed_at,
     'commits_observed' AS measure_key,
-    concat(project_key, '/', repo_slug, ':', commit_hash, ':commits_observed') AS record_id,
+    concat(coalesce(source_id, ''), ':', project_key, '/', repo_slug, ':', commit_hash, ':commits_observed') AS record_id,
     'commit' AS record_kind,
     'event' AS granularity,
     concat(project_key, '/', repo_slug, ' ', substring(commit_hash, 1, 10)) AS record_label,

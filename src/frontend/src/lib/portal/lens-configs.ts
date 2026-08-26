@@ -607,14 +607,14 @@ const DEV: Record<string, LensEntry> = {
       },
       {
         kind: "trend",
-        title: "Runs per week",
+        title: "Runs over time",
         description: "Decided runs, all triggers.",
         metrics: ["ci.runs"],
         plot: "area",
       },
       {
         kind: "trend",
-        title: "Gate pass rate per week",
+        title: "Gate pass rate over time",
         description:
           "Success share of commit-triggered runs; first-try shows what green cost in retries.",
         metrics: ["ci.gate_pass_rate", "ci.gate_first_try_pass_rate"],
@@ -670,7 +670,7 @@ const DEV: Record<string, LensEntry> = {
         kind: "stacked-trend",
         metric: "ci.runs",
         splitBy: "outcome",
-        title: "Run outcomes per week",
+        title: "Run outcomes over time",
         description: "Every decided run classified, nothing dropped.",
       },
       {
@@ -683,16 +683,16 @@ const DEV: Record<string, LensEntry> = {
       },
       {
         kind: "trend",
-        title: "Median gate run duration per week",
+        title: "Median gate run duration",
         description: "A step reads as \"held at\", not \"drifted to\".",
         metrics: ["ci.run_duration_min"],
         plot: "step",
       },
       {
         kind: "trend",
-        title: "Gate pass rate per day",
+        title: "Gate pass rate against its window mean",
         description:
-          "The rule is the window average; flagged days fell 2σ below their own trailing week.",
+          "The rule is the window average; flagged buckets fell 2σ below their own trailing mean.",
         metrics: ["ci.gate_pass_rate"],
         referenceMean: true,
         flagOutliers: true,
@@ -701,7 +701,7 @@ const DEV: Record<string, LensEntry> = {
         kind: "small-multiples",
         metric: "ci.runs",
         dimension: "repository",
-        title: "Weekly runs per repository",
+        title: "Runs per repository",
         top: 12,
       },
       {

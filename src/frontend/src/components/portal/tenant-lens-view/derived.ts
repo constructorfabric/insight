@@ -1,5 +1,23 @@
-import type { MetricDimension } from "@/api/metric-results-client";
+import type { MetricBucket, MetricDimension } from "@/api/metric-results-client";
 import type { DateRange } from "@/api/period-to-date-range";
+
+/**
+ * The bucket a time-based section actually charted, as a reader-facing note.
+ * The lens picks day/week/month from the window, so a config title must not
+ * promise a period — the note states the one that was served.
+ */
+export function bucketNote(bucket: MetricBucket | null): string | null {
+  switch (bucket) {
+    case "day":
+      return "Daily buckets";
+    case "week":
+      return "Weekly buckets";
+    case "month":
+      return "Monthly buckets";
+    default:
+      return null;
+  }
+}
 
 /**
  * Every derived reading of the tenant lens lives here as a pure function over
@@ -35,7 +53,7 @@ export function dimLabel(row: DimRow | DimSeries, key: string): string | null {
 // commit-triggered AND carrying a decided outcome. Any client-side gate math
 // derived from ci.runs rows must use these constants and nothing else.
 // ---------------------------------------------------------------------------
-export const GATE_TRIGGERS = ["push", "pull_request"] as const;
+export const GATE_TRIGGERS = ["push", "pull_request", "merge_queue"] as const;
 export const GATE_DECIDED_OUTCOMES = ["success", "failure", "timed_out"] as const;
 export const GATE_PASS_OUTCOME = "success";
 

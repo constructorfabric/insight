@@ -74,6 +74,19 @@ describe("gateStatsBy", () => {
     expect(stats.gatePassed).toBe(7);
   });
 
+  it("counts merge-queue runs in the gate on both sides", () => {
+    const [stats] = gateStatsBy(
+      [
+        runRow("ci", "merge_queue", "success", 3),
+        runRow("ci", "merge_queue", "failure", 1),
+      ],
+      "pipeline"
+    );
+    expect(stats.gateRuns).toBe(4);
+    expect(stats.gatePassed).toBe(3);
+    expect(stats.passRate).toBeCloseTo(75);
+  });
+
   it("keeps timed_out in the gate denominator as a failure", () => {
     const [stats] = gateStatsBy([runRow("ci", "push", "timed_out", 5)], "pipeline");
     expect(stats.gateRuns).toBe(5);

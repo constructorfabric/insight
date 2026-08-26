@@ -6,7 +6,7 @@ import {
 } from "@/components/portal/section-trend";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 
-import { stackedTrend } from "./derived";
+import { bucketNote, stackedTrend } from "./derived";
 import { sectionNeeds, type ResolveView } from "./plan";
 import { tenantData } from "./data";
 
@@ -41,7 +41,9 @@ export function StackedTrendSection({
   return (
     <SectionTrend
       title={section.title}
-      description={section.description}
+      description={[section.description, bucketNote(r.timeseries?.bucket ?? bucket)]
+        .filter(Boolean)
+        .join(" · ")}
       series={series}
       data={data}
     />

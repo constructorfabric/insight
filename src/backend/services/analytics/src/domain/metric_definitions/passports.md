@@ -10,7 +10,7 @@ this file and the registry disagree.
 - Reads: runs
 - Formula: sum(runs)
 - Shape: integer, higher_is_better
-- Notes: Every CI pipeline run that reached a decided outcome in the period, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
+- Notes: Every CI pipeline run with a decided outcome, dated by the day the run started, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
 
 ## ci.gate_pass_rate — Gate pass rate
 
@@ -18,7 +18,7 @@ this file and the registry disagree.
 - Reads: gate_passed, gate_runs
 - Formula: 100 * (gate_passed / gate_runs)
 - Shape: percent, higher_is_better
-- Notes: Success share of gate runs — runs triggered by a push or pull request that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
+- Notes: Success share of gate runs — runs triggered by a push, a pull request, or the merge queue that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
 
 ## ci.gate_first_try_pass_rate — First-try pass rate
 
@@ -42,7 +42,7 @@ this file and the registry disagree.
 - Reads: run_duration_min
 - Formula: median(run_duration_min)
 - Shape: decimal, lower_is_better, unit min
-- Notes: Median wall-clock minutes from a gate run's start to its decision, over runs decided in the period. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
+- Notes: Median wall-clock minutes from a gate run's start to its decision, over decided runs dated by the day they started. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
 
 ## ci.run_duration_min_p90 — Gate run duration p90
 

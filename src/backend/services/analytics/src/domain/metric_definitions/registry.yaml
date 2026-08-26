@@ -293,7 +293,7 @@ metrics:
     label: CI runs
     short_label: Runs
     description: Pipeline runs with a decided outcome
-    explanation: Every CI pipeline run that reached a decided outcome in the period, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
+    explanation: Every CI pipeline run with a decided outcome, dated by the day the run started, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
     format: integer
     direction: higher_is_better
     entity_type: tenant
@@ -316,7 +316,7 @@ metrics:
     label: Gate pass rate
     short_label: Pass rate
     description: Share of commit-triggered runs that passed
-    explanation: Success share of gate runs — runs triggered by a push or pull request that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
+    explanation: Success share of gate runs — runs triggered by a push, a pull request, or the merge queue that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
     format: percent
     direction: higher_is_better
     entity_type: tenant
@@ -387,7 +387,7 @@ metrics:
     label: Gate run duration
     short_label: Duration
     description: Typical minutes a gate run takes
-    explanation: Median wall-clock minutes from a gate run's start to its decision, over runs decided in the period. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
+    explanation: Median wall-clock minutes from a gate run's start to its decision, over decided runs dated by the day they started. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
     unit: min
     format: decimal
     direction: lower_is_better

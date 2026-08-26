@@ -6,7 +6,7 @@ import {
 } from "@/components/portal/section-trend";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 
-import { mean, trailingOutlierDates } from "./derived";
+import { bucketNote, mean, trailingOutlierDates } from "./derived";
 import { sectionNeeds, type ResolveView } from "./plan";
 import { tenantData } from "./data";
 
@@ -24,9 +24,11 @@ export function TrendSection({
   const series: SectionTrendSeries[] = [];
   const byDate = new Map<string, SectionTrendPoint>();
   const firstMetricPoints: Array<{ date: string; value: number }> = [];
+  let servedBucket = bucket;
   for (const [index, key] of section.metrics.entries()) {
     const r = resolve(needs[index]);
     if (!r) continue;
+    servedBucket = r.timeseries?.bucket ?? servedBucket;
     series.push({
       key,
       label: r.short_label ?? r.label,
@@ -62,7 +64,9 @@ export function TrendSection({
     <div className="flex flex-col gap-1">
       <SectionTrend
         title={section.title}
-        description={section.description}
+        description={[section.description, bucketNote(servedBucket)]
+          .filter(Boolean)
+          .join(" · ")}
         series={series}
         data={points}
         targetLine={

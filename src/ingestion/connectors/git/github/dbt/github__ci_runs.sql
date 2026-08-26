@@ -40,6 +40,7 @@ SELECT
     multiIf(
         event = 'push', 'push',
         event IN ('pull_request', 'pull_request_target'), 'pull_request',
+        event = 'merge_group', 'merge_queue',
         event = 'schedule', 'schedule',
         event = 'workflow_dispatch', 'manual',
         'other'
@@ -52,8 +53,11 @@ SELECT
         conclusion = 'stale', 'cancelled',
         conclusion
     ) AS outcome,
+    -- Rows are an append archive: runs classified before merge_group joined
+    -- the gate keep trigger_category='other' and is_gate=0; only runs
+    -- classified from then on carry the merge_queue category.
     if(
-        event IN ('push', 'pull_request', 'pull_request_target')
+        event IN ('push', 'pull_request', 'pull_request_target', 'merge_group')
         AND conclusion IN ('success', 'failure', 'startup_failure', 'timed_out'),
         1, 0
     ) AS is_gate,
