@@ -1,0 +1,45 @@
+# Authored half of the field catalog: what each dataset field may be used for.
+#
+# The other half — field names, types, engine, sorting key — is
+# `columns.snapshot.json`, dumped from a ClickHouse the real pipeline built and
+# gated by the connectors-ddl lane. This file names datasets and roles; it never
+# restates a type. A role naming a field the snapshot does not carry, or a type
+# that cannot hold that role, fails the build.
+#
+# `key` is how a definition names the dataset; `relation` is where it lives.
+datasets:
+  - key: git_commits
+    database: silver
+    relation: class_git_commits
+    fields:
+      tenant_id: tenant
+      author_email: entity
+      date: event_time
+      lines_added: measurable
+      lines_removed: measurable
+      files_changed: measurable
+      branch: dimension
+      data_source: dimension
+      repo_slug: dimension
+      project_key: dimension
+      commit_hash:
+        display: [reference]
+      message:
+        display: [title]
+      author_name:
+        display: [actor]
+
+  - key: git_pull_requests
+    database: silver
+    relation: class_git_pull_requests
+    fields:
+      tenant_id: tenant
+      author_email: entity
+      created_on: event_time
+      data_source: dimension
+      repo_slug: dimension
+      project_key: dimension
+      pr_id:
+        display: [reference]
+      title:
+        display: [title]

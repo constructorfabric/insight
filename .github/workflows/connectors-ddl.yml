@@ -38,12 +38,14 @@ on:
     branches: [main]
     paths:
       - src/ingestion/**
+      - src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
       - .github/workflows/connectors-ddl.yml
       - .github/workflows/scripts/start-clickhouse.sh
   push:
     branches: [main]
     paths:
       - src/ingestion/**
+      - src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
       - .github/workflows/connectors-ddl.yml
       - .github/workflows/scripts/start-clickhouse.sh
   workflow_dispatch:
@@ -115,14 +117,22 @@ jobs:
         id: drift
         run: |
           set -euo pipefail
+          # dump-ddl.sh writes two serializations of one schema: the DDL a fresh
+          # cluster applies, and the column snapshot the analytics field catalog
+          # embeds (which lives in that service's tree because its image builds
+          # with src/backend as the context).
+          SNAPSHOT_PATHS=(
+            src/ingestion/scripts/connectors-ddl
+            src/backend/services/analytics/src/domain/field_catalog/columns.snapshot.json
+          )
           "${BOOTSTRAP_DIR}/dump-ddl.sh"
           # --intent-to-add so a brand-new connector's .sql file (untracked, and
           # therefore invisible to a plain `git diff`) counts as drift too.
-          git add --intent-to-add --all -- src/ingestion/scripts/connectors-ddl
-          git diff -- src/ingestion/scripts/connectors-ddl > "$RUNNER_TEMP/connectors-ddl.diff"
+          git add --intent-to-add --all -- "${SNAPSHOT_PATHS[@]}"
+          git diff -- "${SNAPSHOT_PATHS[@]}" > "$RUNNER_TEMP/connectors-ddl.diff"
           if [[ -s "$RUNNER_TEMP/connectors-ddl.diff" ]]; then
             echo "::error title=connectors-ddl snapshot is stale::This branch's connectors/dbt/migrations produce different DDL than the committed snapshot. Regenerate and commit it — no credentials needed: the one-block recipe in src/ingestion/scripts/bootstrap-db/README.md (bootstrap-db.sh, then dump-ddl.sh). Full diff below and in the connectors-ddl-drift artifact."
-            git diff --stat -- src/ingestion/scripts/connectors-ddl
+            git diff --stat -- "${SNAPSHOT_PATHS[@]}"
             head -n 200 "$RUNNER_TEMP/connectors-ddl.diff"
             exit 1
           fi
