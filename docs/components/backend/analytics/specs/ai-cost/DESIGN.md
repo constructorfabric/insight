@@ -199,7 +199,7 @@ platform-wide gap, tracked separately.
 |---|---|---|
 | **Priced token usage** | tokens consumed by an API key, valued at the rate in force that day | person × day × model × token type |
 | **Billing line item** | one charge the vendor made | day × line item × workspace or project |
-| **Seat extra-usage snapshot** | what a seat spent above its included usage in a billing month, and the ceiling set on that spend | person × month |
+| **Seat extra-usage snapshot** | what a seat spent above its included usage in a billing month, and the ceiling set on that spend | seat × month |
 | **Rate** | price per unit for a model and token type, valid over an interval, optionally tenant-specific | tenant × model × token type × tier × interval |
 | **Cost coverage** | whether a layer of cost is available for a provider | provider × layer |
 
@@ -539,7 +539,7 @@ straight from bronze, where both are already present.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-dbtable-overage-unchanged`
 
-Person × month, minor units plus currency, vendor extras in a JSON blob, assembled by tag.
+Seat × month, minor units plus currency, vendor extras in a JSON blob, assembled by tag.
 It needs gold models and registry entries, not a change to its shape.
 
 Its `overage_cents` column, `max(0, used − limit)`, is **not** what `ai.extra_usage_cost` reads:
@@ -568,8 +568,8 @@ macros, which own materialisation, storage keys and monthly partitioning.
 | measure | record | granularity |
 |---|---|---|
 | `token_cost_usd` | one row per `(person, day, model, token_type)` | `source_summary` |
-| `extra_usage_usd` | one row per `(person, month)` snapshot | `source_summary` |
-| `extra_usage_limit_usd` | one row per `(person, month)` snapshot | `source_summary` |
+| `extra_usage_usd` | one row per `(seat, month)` snapshot | `source_summary` |
+| `extra_usage_limit_usd` | one row per `(seat, month)` snapshot | `source_summary` |
 
 `details` carries what a reader needs without leaving the drilldown: for token cost the
 model, token type, token count and rate applied; for seat rows the seat tier, the ceiling,
