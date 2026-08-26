@@ -1,0 +1,26 @@
+# Git measures and metrics.
+#
+# One file per source family: a family is what a reviewer reads together, and
+# what an extraction moves in one step. Datasets are not authored here — they
+# are a projection of the field catalog, which already declares each relation
+# and how it must be read.
+measures:
+  - key: prs_created
+    dataset: git_pull_requests
+    description: Pull requests a person opened.
+    aggregation: count
+    event_time: created_on
+    entity: author_email
+    dimensions:
+      - { key: repository, value_field: repo_slug }
+      - { key: project, value_field: project_key }
+      - { key: source, value_field: data_source }
+
+metrics:
+  - key: git.prs_created
+    computation: { type: direct, measure: prs_created }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    label: PRs created
+    description: How many pull requests a person opened in the period.

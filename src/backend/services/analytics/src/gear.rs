@@ -175,6 +175,11 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
             // definitions a newer release introduced.
             crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
+            // The semantic-layer definitions converge under the same rule and
+            // the same session: the store must match this release's shipped
+            // definitions before any pod of it serves.
+            crate::domain::definitions::seeds::reconcile_product_definitions(&db).await?;
+
             // Same probe as `init`. An operator running `migrate` standalone
             // wants the integrity signal too (DESIGN §2.2).
             infra::db::check_probe::assert_required_checks(&db).await?;

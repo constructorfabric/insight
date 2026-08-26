@@ -51,8 +51,6 @@ pub enum StoreError {
     Db(#[from] DbErr),
     #[error("definition `{key}` was written concurrently; retry against version {version}")]
     Conflict { key: String, version: i32 },
-    #[error("definition `{key}` cannot be canonicalized: {reason}")]
-    Canonicalize { key: String, reason: String },
 }
 
 /// The version a write plan targets, decided before any row is touched.

@@ -7,12 +7,12 @@
 //! isolation. Binding to a dataset's field catalog (does the field exist, does
 //! its type admit the operator) is the seed pipeline's second validation stage.
 
-#![allow(dead_code)] // tests are this module's only callers in the crate
-
 pub mod definition;
 pub mod expr;
 pub mod filter;
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod live_tests;
+pub mod seeds;
 pub mod store;
+pub mod validate;
