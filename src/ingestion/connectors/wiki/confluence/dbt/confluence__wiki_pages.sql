@@ -1,4 +1,3 @@
--- depends_on: {{ ref('confluence__bronze_promoted') }}
 -- Bronze → Silver step 1: Confluence pages → class_wiki_pages
 --
 -- One row per (tenant, source, page). Dedupe by taking the latest extraction

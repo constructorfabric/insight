@@ -1,4 +1,3 @@
--- depends_on: {{ ref('zendesk__bronze_promoted') }}
 -- depends_on: {{ ref('zendesk__support_agent') }}
 -- depends_on: {{ ref('zendesk__support_event') }}
 {{ config(

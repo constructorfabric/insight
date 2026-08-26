@@ -1,4 +1,3 @@
--- depends_on: {{ ref('gitlab__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     unique_key='unique_key',

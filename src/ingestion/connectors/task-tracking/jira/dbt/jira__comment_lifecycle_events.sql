@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     alias='jira__comment_lifecycle_events',

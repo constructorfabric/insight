@@ -102,6 +102,5 @@ models:
       - name: _version
         tests: [not_null]
 
-# Bronze→RMT promotion is bootstrapped by chatgpt_team__bronze_promoted.sql.
 # subscription_usage/balance have no Silver model yet (billing not in a unified
 # stream — OQ-CGT-2); collection_runs is not produced by a declarative source.

@@ -1,4 +1,3 @@
--- depends_on: {{ ref('outline__bronze_promoted') }}
 {{ config(
     materialized='incremental',
     incremental_strategy='append',

@@ -1,4 +1,3 @@
--- depends_on: {{ ref('chatgpt_team__bronze_promoted') }}
 -- Bronze → Silver step 1: ChatGPT Team per-user per-day Codex usage → class_ai_dev_usage.
 --
 -- Source: bronze_chatgpt_team.chatgpt_team_codex_user_daily — daily aggregate
@@ -79,7 +78,7 @@ SELECT
     CAST(NULL AS Nullable(String))                      AS seat_status
 FROM (
     -- Bronze dedup: keep the latest extract per (email, date). Defensive depth —
-    -- becomes a no-op once promote_bronze_to_rmt merges (ADR-0002), but guards
+    -- is a no-op with bronze on ReplacingMergeTree (destination append_dedup), but guards
     -- against duplicate raw rows from multiple sync attempts.
     SELECT *
     FROM {{ source('bronze_chatgpt_team', 'chatgpt_team_codex_user_daily') }}

@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_invoice
 (
     `insight_tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `invoice_id` Nullable(String),
     `line_id` Nullable(String),
     `tool` String,
@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_accounts
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `account_id` Nullable(String),
     `name` Nullable(String),
     `domain` Nullable(String),
@@ -286,7 +286,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_activities
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `activity_id` Nullable(String),
     `activity_type` String,
     `owner_id` Nullable(String),
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_contacts
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `contact_id` Nullable(String),
     `email` Nullable(String),
     `first_name` Nullable(String),
@@ -334,7 +334,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_deals
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `deal_id` Nullable(String),
     `name` Nullable(String),
     `forecast_category` Nullable(String),
@@ -370,7 +370,7 @@ CREATE TABLE IF NOT EXISTS silver.class_crm_users
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `user_id` Nullable(String),
     `hs_user_id` Nullable(String),
     `email` Nullable(String),
@@ -411,7 +411,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_ci_runs
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `repo_full_name` String,
     `pipeline_key` String,
     `pipeline_name` String,
@@ -443,7 +443,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `commit_hash` String,
@@ -474,7 +474,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_deployment_events
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `repo_full_name` String,
     `deployment_id` String,
     `event_id` Int64,
@@ -495,7 +495,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_deployments
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `repo_full_name` String,
     `deployment_id` String,
     `environment` String,
@@ -519,7 +519,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_file_changes
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `commit_hash` String,
@@ -544,7 +544,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_item_events
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `item_type` String,
@@ -596,7 +596,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
@@ -630,7 +630,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_comments
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
@@ -656,7 +656,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_commits
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
@@ -697,7 +697,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_repositories
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `repo_uuid` String,
@@ -726,7 +726,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_repository_branches
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `branch_name` String,
@@ -746,7 +746,7 @@ CREATE TABLE IF NOT EXISTS silver.class_hr_events
 (
     `insight_tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `source_person_id` Nullable(String),
     `email` Nullable(String),
     `event_type` String,
@@ -770,7 +770,7 @@ CREATE TABLE IF NOT EXISTS silver.class_hr_working_hours
 (
     `insight_tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `source_person_id` Nullable(String),
     `email` Nullable(String),
     `display_name` Nullable(String),
@@ -865,7 +865,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 
 CREATE TABLE IF NOT EXISTS silver.class_task_comments
 (
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `insight_source_id` Nullable(String),
     `data_source` String,
     `comment_id` Nullable(String),
@@ -991,7 +991,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 
 CREATE TABLE IF NOT EXISTS silver.class_task_sprints
 (
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `insight_source_id` Nullable(String),
     `data_source` String,
     `sprint_id` Nullable(String),
@@ -1051,7 +1051,7 @@ SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_gr
 
 CREATE TABLE IF NOT EXISTS silver.class_task_worklogs
 (
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `insight_source_id` Nullable(String),
     `data_source` String,
     `worklog_id` Nullable(String),
@@ -1117,7 +1117,7 @@ CREATE TABLE IF NOT EXISTS silver.class_wiki_pages
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `page_id` Nullable(String),
     `space_id` Nullable(String),
     `space_name` Nullable(String),
@@ -1195,7 +1195,7 @@ CREATE TABLE IF NOT EXISTS silver.fct_git_commit
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `commit_hash` String,
@@ -1225,7 +1225,7 @@ CREATE TABLE IF NOT EXISTS silver.fct_git_file_change
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `commit_hash` String,
@@ -1254,7 +1254,7 @@ CREATE TABLE IF NOT EXISTS silver.fct_git_pr
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
