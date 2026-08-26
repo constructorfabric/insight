@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_footer_comment_replies
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_footer_comment_replies
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_footer_comments
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_footer_comments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_footer_comments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comment_replies
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comment_replies
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comment_replies
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comments
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comments
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_inline_comments
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_page_versions
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_page_versions
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_page_versions
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_pages
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_pages
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_pages
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_spaces
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_spaces
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -165,6 +165,6 @@ CREATE TABLE IF NOT EXISTS bronze_confluence.wiki_spaces
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

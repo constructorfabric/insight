@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_chat_proje
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_chat_proje
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_connectors
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_connectors
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_connectors
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_skills
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_skills
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_skills
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_summaries
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_summaries
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_summaries
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_users
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_users
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -156,6 +156,6 @@ CREATE TABLE IF NOT EXISTS bronze_claude_enterprise.claude_enterprise_users
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

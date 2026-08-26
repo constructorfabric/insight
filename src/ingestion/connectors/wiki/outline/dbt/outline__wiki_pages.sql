@@ -1,4 +1,3 @@
--- depends_on: {{ ref('outline__bronze_promoted') }}
 -- Bronze → Silver step 1: Outline documents → class_wiki_pages
 --
 -- One row per (tenant, source, document). Dedupe by taking the latest

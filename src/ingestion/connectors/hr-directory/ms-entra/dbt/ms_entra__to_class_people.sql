@@ -1,4 +1,3 @@
--- depends_on: {{ ref('ms_entra__bronze_promoted') }}
 -- Bronze → Silver step 1: MS Entra users → class_people
 -- Full-refresh source. Maps directory records to the unified person registry.
 -- Current-state snapshot: exactly one row per user. `valid_from` records when

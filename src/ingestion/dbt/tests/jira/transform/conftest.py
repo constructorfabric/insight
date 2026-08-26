@@ -10,7 +10,7 @@ tables the chain reads, builds it, and reads the journal back:
 Nothing is stubbed. Bronze is created from `scripts/connectors-ddl/jira.sql` —
 the snapshot the connectors-ddl gate keeps byte-identical to what the real
 connectors produce — so the tables have production's engines and column types,
-including the plain MergeTree that `jira__bronze_promoted` then promotes.
+including the ReplacingMergeTree shape the Airbyte destination creates.
 
 Deliberately independent of `tests/e2e`: that rig boots MariaDB, Keycloak stubs
 and the analytics binary to assert an HTTP response, none of which says anything

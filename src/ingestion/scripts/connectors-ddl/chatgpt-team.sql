@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_chat_activity
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `date` Nullable(String),
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_chat_activity
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_sessions_daily
@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `date` Nullable(String),
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily_org
@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_seats
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `user_id` Nullable(String),
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_seats
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_balance
@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_balance
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `snapshot_date` Nullable(String),
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_balance
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_usage
@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_usage
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `snapshot_date` Nullable(String),
@@ -219,6 +219,6 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_subscription_usage
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

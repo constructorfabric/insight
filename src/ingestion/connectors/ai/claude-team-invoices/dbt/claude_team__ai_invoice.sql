@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team_invoices__bronze_promoted') }}
 -- Bronze → Silver: Claude Team vendor invoices → class_ai_invoice
 --
 -- Source: bronze_claude_team_invoices.claude_team_invoice_lines — one row per

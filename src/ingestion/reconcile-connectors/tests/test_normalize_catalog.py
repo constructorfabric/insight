@@ -1,4 +1,4 @@
-"""What `normalize_catalog_to_append.py` promises the connection PATCH.
+"""What `normalize_catalog.py` promises the connection PATCH.
 
 The catalog it emits is built from the discover response, not from whatever the
 connection already carries, and every advertised stream comes out selected.
@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-NORMALIZER = Path(__file__).resolve().parents[1] / "python" / "normalize_catalog_to_append.py"
+NORMALIZER = Path(__file__).resolve().parents[1] / "python" / "normalize_catalog.py"
 
 
 def _stream(name: str, *, cursor: list[str] | None = None) -> dict:
@@ -54,13 +54,16 @@ def test_a_stream_the_connection_has_never_seen_comes_out_selected() -> None:
     assert selected == {"repositories": True, "brand_new": True}
 
 
-def test_every_stream_appends_and_keeps_all_its_fields() -> None:
-    """Append-only at the destination, and no inherited field exclusion: an
-    update PATCH must not carry a stale `selectedFields` list."""
+def test_a_keyed_stream_dedups_on_unique_key_and_keeps_all_its_fields() -> None:
+    """The destination owns the bronze shape: `append_dedup` keyed on `unique_key`
+    is what makes it create the table as ReplacingMergeTree ORDER BY that key. No
+    inherited field exclusion either: an update PATCH must not carry a stale
+    `selectedFields` list."""
     out = _normalize([_stream("brand_new")])
 
     config = out["streams"][0]["config"]
-    assert config["destinationSyncMode"] == "append"
+    assert config["destinationSyncMode"] == "append_dedup"
+    assert config["primaryKey"] == [["unique_key"]]
     assert config["fieldSelectionEnabled"] is False
     assert "selectedFields" not in config
 

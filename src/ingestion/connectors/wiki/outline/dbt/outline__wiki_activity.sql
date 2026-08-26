@@ -1,4 +1,3 @@
--- depends_on: {{ ref('outline__bronze_promoted') }}
 -- Bronze → Silver step 1: Outline revisions → class_wiki_activity
 --
 -- Per-user per-day edit activity rolled up from wiki_page_versions. One row

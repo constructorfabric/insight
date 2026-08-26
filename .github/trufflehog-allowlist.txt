@@ -29,7 +29,6 @@ a1d64ea5858af851  Gitlab             src/ingestion/tools/seed/insight_seed/gener
 b7724cdd5c80cebb  Gitlab             src/ingestion/tools/seed/tests/test_git_repos.py  # a bronze relation name in the vendor-relation assertion, not a token
 17941e7c349f9b80  Gitlab             src/ingestion/connectors/git/gitlab/README.md  # code identifier / constant name
 0d11bcc8018d8086  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__account_emails.sql  # code identifier / constant name
-80d5a03ac107ffac  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__bronze_promoted.sql  # code identifier / constant name
 ee8d1fe3c4f9e4e5  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__ci_runs.sql  # code identifier / constant name
 1a229c8a7225a517  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__deployment_events.sql  # code identifier / constant name
 5eae1b0f9c40368f  Gitlab             src/ingestion/connectors/git/gitlab/dbt/gitlab__deployments.sql  # code identifier / constant name
