@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.25.07.50-5e838e9" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.09.06-da72f4d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.25.07.50-5e838e9" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.09.06-da72f4d" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -380,12 +380,47 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # How a login finds its person. Two modes, declared — never a fallback
+    # chain, so a token that cannot answer the configured question is refused
+    # rather than quietly answered a different way:
+    #
+    #   external_id (default) — by the IdP's own stable user id under
+    #     `sourceType`. Right whenever a connector observes the provider's
+    #     accounts: the id is immutable and belongs to the directory the
+    #     person authenticated against.
+    #   email — by the token's standard `email` claim, matched against the
+    #     addresses the ROSTER states (identityResolution.rosterSourceType).
+    #     For installs whose IdP has no directory connector of its own:
+    #     nothing seeds an id binding for the provider, so external_id matches
+    #     nobody and EVERY sign-in is refused. Needs no claim mapping — the
+    #     `email` claim rides the standard `email` scope — and reads neither
+    #     `sourceType` nor `externalIdClaim`. Requires rosterSourceType to be
+    #     set; identity refuses the lookup without one rather than matching an
+    #     address any source at all happened to state.
+    #
+    # What `email` mode additionally requires, both enforced at render:
+    #   - `provisionOnLogin: false` — minting needs a source-native id, so no
+    #     login provisions in this mode;
+    #   - identityResolution.rosterSourceType set.
+    # NOT enforced: that `scopes` names `email`. The claim need not be
+    # requested to arrive — an IdP may emit it from an always-on client scope,
+    # and Keycloak 26 errors on a scope the client is not assigned, so
+    # demanding it here refuses working installs.
+    # It also refuses a token whose `email_verified` is explicitly false: in
+    # this mode the address IS the credential. An IdP that lets a user edit
+    # their own address unverified must be fixed at the IdP.
+    # ROLLING BACK to a chart that predates this key: put `sourceType` back in
+    # the same commit — the older chart requires it unconditionally and will
+    # refuse to render without it.
+    resolveBy: external_id
     # The identity-resolution source_type this IdP is seeded under (e.g.
-    # "ms-entra") — required; the login-bootstrap person lookup is scoped to
-    # it. No default: an empty value fails config validation at boot.
+    # "ms-entra") — the login-bootstrap person lookup is scoped to it. Required
+    # when resolveBy is external_id (an empty value fails config validation at
+    # boot); unread when resolveBy is email.
     sourceType: ""
     # id_token claim carrying the IdP's stable external user id for
-    # sourceType (e.g. Entra's "oid"). Defaults to "sub".
+    # sourceType (e.g. Entra's "oid"). Defaults to "sub". Unread when
+    # resolveBy is email.
     externalIdClaim: "sub"
     # Provision a person on first successful login instead of refusing one the
     # journal has no binding for yet.
@@ -435,6 +470,13 @@ keycloak:
     passwordSecret: {name: "", key: ""}
   route:
     enabled: false
+  # Login theme, shipped with this Keycloak. Inert until a realm sets
+  # `loginTheme: insight` — never set that when keycloakConfig points at a
+  # Keycloak this chart does not deploy. `returnUrl` is where the overridden
+  # page hands the browser back to (relative to the Gateway host the SPA and
+  # Keycloak share).
+  theme:
+    returnUrl: "/?auth_error=kc_page_expired"
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
 # the gitops `keycloak-broker-realms` target) with keycloak-config-cli on every
@@ -557,9 +599,15 @@ gitCliProxy:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
     tag: ""
     pullPolicy: IfNotPresent
+  # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
+  # dominate its memory. The service caps git's own pack budgets so their
+  # peak cannot scale with the repository; this limit is the headroom above
+  # that ceiling rather than a figure derived from cache.maxRepoBytes. Lower
+  # cache.heavyOpsConcurrency before raising it — overlapping heavy
+  # operations are what push a correctly-capped pod over.
   resources:
-    requests: {cpu: 200m, memory: 256Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: {cpu: 200m, memory: 1Gi}
+    limits: {cpu: "2", memory: 8Gi}
   persistence:
     size: 50Gi
     storageClass: ""

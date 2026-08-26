@@ -51,6 +51,80 @@ pub struct Principal<'a> {
     pub asserted_tenant: Uuid,
 }
 
+/// Why an address cannot be used to resolve a login at all — decided before any
+/// query runs, so a shape that could never answer never reaches the journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RosterEmailRefusal {
+    /// The caller resolved no address. In email mode that means a token reached
+    /// the authenticator without the claim it was configured to resolve by.
+    AddressMissing,
+    /// No roster is declared, so there is no source whose addresses may admit
+    /// anyone. Widening to every source instead is the one thing this lookup
+    /// may not do.
+    RosterUnconfigured,
+    /// The caller's token carries no tenant. An address is not unique across
+    /// tenants sharing a journal, so without one the lookup cannot be confined.
+    TenantUnresolved,
+}
+
+/// An address the roster may be asked about, with the two things that confine
+/// the question.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RosterEmail<'a> {
+    pub tenant_id: Uuid,
+    pub source_type: &'a str,
+    pub address: &'a str,
+}
+
+/// Whether this address may be asked about at all.
+///
+/// # Errors
+///
+/// Returns the refusal describing which confinement is missing.
+pub fn parse_roster_email<'a>(
+    address: &'a str,
+    roster_source_type: &'a str,
+    tenant_id: Uuid,
+) -> Result<RosterEmail<'a>, RosterEmailRefusal> {
+    let address = address.trim();
+    if address.is_empty() {
+        return Err(RosterEmailRefusal::AddressMissing);
+    }
+    let source_type = roster_source_type.trim();
+    if source_type.is_empty() {
+        return Err(RosterEmailRefusal::RosterUnconfigured);
+    }
+    if tenant_id.is_nil() {
+        return Err(RosterEmailRefusal::TenantUnresolved);
+    }
+    Ok(RosterEmail {
+        tenant_id,
+        source_type,
+        address,
+    })
+}
+
+/// The person a login resolves to, and how many the roster offered.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RosterEmailMatch {
+    pub person_id: Uuid,
+    /// More than one means the roster states this address for several people.
+    /// The seed refuses to auto-link that shape and an operator may have split
+    /// them deliberately, so answering it is a decision the caller records
+    /// rather than one the journal makes quietly.
+    pub candidates: usize,
+}
+
+/// Pick the person an address resolves to. `None` when the roster states it for
+/// nobody who still holds a live account under it.
+#[must_use]
+pub fn choose_roster_email_match(candidates: &[Uuid]) -> Option<RosterEmailMatch> {
+    candidates.first().map(|&person_id| RosterEmailMatch {
+        person_id,
+        candidates: candidates.len(),
+    })
+}
+
 /// Trim and bound the principal a request names.
 ///
 /// Left unbounded, an over-long id is a database error under strict SQL and,
@@ -382,5 +456,73 @@ mod tests {
                 "collided with an earlier case at: {case}"
             );
         }
+    }
+
+    #[test]
+    fn an_address_is_asked_about_only_when_every_confinement_is_present() -> R {
+        let tenant = Uuid::from_u128(7);
+
+        let asked = parse_roster_email("  ivan@vz.com  ", " bamboohr ", tenant)
+            .map_err(|r| format!("a well-formed address was refused: {r:?}"))?;
+        assert_eq!(asked.address, "ivan@vz.com", "trimmed, never re-cased");
+        assert_eq!(asked.source_type, "bamboohr");
+        assert_eq!(asked.tenant_id, tenant);
+
+        // Each missing confinement refuses on its own, and says which — the
+        // three mean different operator mistakes and would otherwise all read
+        // as "this person cannot log in".
+        for (address, source, tenant_id, expected) in [
+            (
+                "   ",
+                "bamboohr",
+                tenant,
+                RosterEmailRefusal::AddressMissing,
+            ),
+            (
+                "ivan@vz.com",
+                "  ",
+                tenant,
+                RosterEmailRefusal::RosterUnconfigured,
+            ),
+            (
+                "ivan@vz.com",
+                "bamboohr",
+                Uuid::nil(),
+                RosterEmailRefusal::TenantUnresolved,
+            ),
+        ] {
+            assert!(
+                matches!(
+                    parse_roster_email(address, source, tenant_id),
+                    Err(refusal) if refusal == expected
+                ),
+                "{address:?}/{source:?} must be refused as {expected:?}",
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_contested_address_still_resolves_but_says_it_was_contested() {
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+
+        assert_eq!(choose_roster_email_match(&[]), None);
+        assert_eq!(
+            choose_roster_email_match(&[first]),
+            Some(RosterEmailMatch {
+                person_id: first,
+                candidates: 1
+            })
+        );
+        // The install answers rather than refusing, so the count is what the
+        // caller records. Losing it here would make the choice unauditable.
+        assert_eq!(
+            choose_roster_email_match(&[first, second]),
+            Some(RosterEmailMatch {
+                person_id: first,
+                candidates: 2
+            })
+        );
     }
 }

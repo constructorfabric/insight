@@ -53,6 +53,8 @@ pub enum GitError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin declines to serve the repository")]
+    OriginUnavailable,
     #[error("origin refuses to serve explicitly requested objects")]
     PromisorRefused,
     #[error("the cache cannot take more disk right now")]
@@ -114,6 +116,18 @@ pub struct GitRunner {
 }
 
 const STDERR_TAIL_BYTES: usize = 4096;
+/// Delta-search threads per git invocation. Deliberately small and fixed:
+/// git's default is one per host CPU, which ignores the container's own CPU
+/// limit, so the default multiplies the per-thread memory budget below by a
+/// number this service does not control.
+const PACK_THREADS: usize = 2;
+/// Per-thread delta window budget. Peak pack memory is roughly
+/// `PACK_THREADS * PACK_WINDOW_MEMORY_MB + PACK_DELTA_CACHE_MB` plus object
+/// bookkeeping, which keeps the whole operation inside a low-single-digit-GiB
+/// pod limit on any repository size.
+const PACK_WINDOW_MEMORY_MB: usize = 256;
+/// Delta cache budget, shared across threads.
+const PACK_DELTA_CACHE_MB: usize = 256;
 const READ_TIMEOUT: Duration = Duration::from_mins(5);
 const PREFETCH_TIMEOUT: Duration = Duration::from_mins(10);
 const HEAVY_OP_TIMEOUT: Duration = Duration::from_mins(30);
@@ -448,6 +462,16 @@ impl GitRunner {
         // the store's own repack, on its schedule.
         pairs.push(("maintenance.auto", "false".to_owned()));
         pairs.push(("gc.auto", "0".to_owned()));
+        // Delta search is what makes a repack of a large repository expensive,
+        // and its budget is PER THREAD — with `pack.threads` unset git uses
+        // one per host CPU, which a container limit does not shrink. Left
+        // unbounded, a single `git` process on a large-object repository can
+        // outgrow any memory limit the pod is given and take the service with
+        // it. These caps trade pack density and repack time, neither of which
+        // a blob-purge cache depends on, for a bounded peak.
+        pairs.push(("pack.threads", PACK_THREADS.to_string()));
+        pairs.push(("pack.windowMemory", format!("{PACK_WINDOW_MEMORY_MB}m")));
+        pairs.push(("pack.deltaCacheSize", format!("{PACK_DELTA_CACHE_MB}m")));
         pairs
     }
 }
@@ -470,6 +494,13 @@ fn classify_failure(output: &Output) -> GitError {
     ];
     if throttled.iter().any(|m| lower.contains(m)) {
         return GitError::Throttled;
+    }
+
+    // Before `auth`: Bitbucket announces a suspended or disabled repository
+    // with this remote line plus a bare 403; reading that as a credential
+    // failure would fail the whole sync over one repository no retry can fix.
+    if lower.contains("this repository is currently not available") {
+        return GitError::OriginUnavailable;
     }
 
     let auth = [
@@ -577,6 +608,14 @@ mod tests {
                 "fatal: unable to access 'https://x/': The requested URL returned error: 429",
                 |e| matches!(e, GitError::Throttled),
             ),
+            // A suspended or disabled repository: the origin refuses it with
+            // a bare 403, which is neither a credential failure nor a rate
+            // limit.
+            (
+                "remote: This repository is currently not available.\n\
+                 fatal: unable to access 'https://x/': The requested URL returned error: 403",
+                |e| matches!(e, GitError::OriginUnavailable),
+            ),
             // A transport fault is not a missing repository: answering `404`
             // tells the connector its parent record is stale.
             (
@@ -674,6 +713,20 @@ mod tests {
         for (key, expected) in [("maintenance.auto", "false"), ("gc.auto", "0")] {
             assert!(
                 pairs.iter().any(|(k, v)| *k == key && v == expected),
+                "{key} must be pinned, got: {pairs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_invocation_bounds_pack_memory() {
+        // An unbounded delta search on a large-object repository grows past
+        // any pod memory limit and the kernel kills the whole service, not
+        // just the git process.
+        let pairs = GitRunner::new().config_pairs(None);
+        for key in ["pack.threads", "pack.windowMemory", "pack.deltaCacheSize"] {
+            assert!(
+                pairs.iter().any(|(k, v)| *k == key && !v.is_empty()),
                 "{key} must be pinned, got: {pairs:?}"
             );
         }

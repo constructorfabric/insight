@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
@@ -259,9 +259,7 @@ async fn load_evidence_plan(
          INNER JOIN metric_sources s ON s.id = m.source_id \
          WHERE i.metric_definition_id = ? AND m.is_enabled = TRUE AND s.is_enabled = TRUE \
          ORDER BY i.input_role, m.measure_key",
-        [Value::Bytes(Some(Box::new(
-            definition_id.as_bytes().to_vec(),
-        )))],
+        [Value::Bytes(Some(definition_id.as_bytes().to_vec()))],
     ))
     .all(db)
     .await

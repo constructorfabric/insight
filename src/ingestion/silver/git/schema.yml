@@ -74,6 +74,11 @@ models:
           - accepted_values:
               arguments:
                 values: [0, 1]
+      - name: patch_id
+        description: >
+          Content identity of the commit's diff: a rebase copy or a cherry-pick
+          carries a new hash but the same patch id. NULL for a source that does
+          not report it and for rows collected before the source did.
 
   - name: class_git_file_changes
     description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"

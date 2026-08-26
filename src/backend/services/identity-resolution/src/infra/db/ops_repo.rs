@@ -92,7 +92,7 @@ pub async fn enqueue(
              insight_tenant_id, author_person_id, request_json)
         VALUES (?, ?, 'queued', ?, ?, ?)
     ";
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
         [
@@ -117,7 +117,7 @@ pub async fn try_start(db: &DatabaseConnection, operation_id: Uuid) -> anyhow::R
     const SQL: &str =
         "UPDATE operations SET status = 'running' WHERE operation_id = ? AND status = 'queued'";
     let res = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [operation_id.as_bytes().to_vec().into()],
@@ -141,7 +141,7 @@ pub async fn complete(
         SET status = 'completed', summary_json = ?, completed_at = UTC_TIMESTAMP(6)
         WHERE operation_id = ?
     ";
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
         [summary_json.into(), operation_id.as_bytes().to_vec().into()],
@@ -165,7 +165,7 @@ pub async fn fail(
         SET status = 'failed', error_message = ?, completed_at = UTC_TIMESTAMP(6)
         WHERE operation_id = ?
     ";
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
         [
@@ -191,7 +191,7 @@ pub async fn get_by_id(
         "SELECT {COLUMNS} FROM operations WHERE insight_tenant_id = ? AND operation_id = ? LIMIT 1"
     );
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             [
@@ -234,7 +234,7 @@ pub async fn list(
     params.push(limit.into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -267,7 +267,7 @@ pub async fn corrections_for_account(
     );
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             [
@@ -303,7 +303,7 @@ pub async fn sweep_zombies(db: &DatabaseConnection, older_than: DateTime) -> any
           AND started_at < ?
     ";
     let res = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [older_than.into()],

@@ -194,3 +194,33 @@ def test_every_repository_listing_projects_the_field_the_exclusion_reads() -> No
         "these repository listings do not project values.slug, so the exclusion "
         f"filter cannot see it: {missing}"
     )
+
+
+def _requesters(node, out=None):
+    """Every HttpRequester mapping anywhere in the manifest tree."""
+    if out is None:
+        out = []
+    if isinstance(node, dict):
+        if node.get("type") == "HttpRequester":
+            out.append(node)
+        for value in node.values():
+            _requesters(value, out)
+    elif isinstance(node, list):
+        for item in node:
+            _requesters(item, out)
+    return out
+
+
+def test_every_requester_declares_an_error_handler() -> None:
+    """The CDK default handler makes a per-repository 403 fatal to the whole
+    stream, and on the fan-out parents that aborts partition generation: every
+    repository later in the updated_on-ordered walk is silently skipped while
+    the sync reports success. A handler on every requester is the invariant;
+    which action it takes per status is the stream's own decision."""
+    manifest = yaml.safe_load((connector_dir(_CONNECTOR) / "connector.yaml").read_text())
+    bare = [
+        requester.get("path", "<no path>")
+        for requester in _requesters(manifest["streams"])
+        if "error_handler" not in requester
+    ]
+    assert not bare, f"requesters relying on the CDK default error handler: {bare}"

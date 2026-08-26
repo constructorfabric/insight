@@ -428,7 +428,8 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits
     `is_merge_commit` UInt8,
     `data_source` String,
     `_version` Int64,
-    `_airbyte_extracted_at` DateTime64(3)
+    `_airbyte_extracted_at` DateTime64(3),
+    `patch_id` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key

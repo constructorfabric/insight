@@ -70,58 +70,9 @@ repository_default_branches AS (
     WHERE is_default = 1
     GROUP BY tenant_id, source_id, project_key, repo_slug
 ),
-commits_source AS (
-    SELECT
-        tenant_id,
-        source_id,
-        project_key,
-        repo_slug,
-        commit_hash,
-        author_name,
-        message,
-        date AS observed_at,
-        lower(trimBoth(author_email)) AS entity_id,
-        toDate(date) AS metric_date,
-        lines_added,
-        lines_removed,
-        -- A semi-join by tuple rather than a LEFT JOIN: the answer is
-        -- membership, and a nullable joined column would need guarding under
-        -- either join_use_nulls setting.
-        if(
-            is_default_branch = 1
-                OR (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
-                    SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
-                    FROM {{ ref('git_default_branch_commits') }}
-                ),
-            'default',
-            'non_default'
-        ) AS branch_scope_value,
-        {{ git_branch_scope_label('branch_scope_value') }} AS branch_scope_label,
-        if(coalesce(project_key, '') = '', '__unknown__', concat(coalesce(toString(source_id), ''), ':', project_key)) AS project_value,
-        if(coalesce(project_key, '') = '', 'Unknown', project_key) AS project_label,
-        concat(coalesce(toString(source_id), ''), ':', coalesce(project_key, ''), '/', coalesce(repo_slug, '')) AS repository_value,
-        if(coalesce(project_key, '') = '', coalesce(repo_slug, ''), concat(project_key, '/', repo_slug)) AS repository_label,
-        replaceOne(data_source, 'insight_', '') AS source_value,
-        {{ git_source_label('source_value') }} AS source_label,
-        CAST(
-            [
-                tuple('branch_scope', branch_scope_value, branch_scope_label),
-                tuple('repository', repository_value, repository_label),
-                tuple('project', project_value, project_label),
-                tuple('source', source_value, source_label)
-            ]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS source_dimensions
-    FROM {{ ref('class_git_commits') }} FINAL
-    WHERE trimBoth(author_email) != ''
-      AND date IS NOT NULL
-      AND is_merge_commit = 0
-    ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
-    LIMIT 1 BY tenant_id, data_source, commit_hash
-),
 -- One row per change CONTENT, not per commit that carries it. The same content
 -- entering a repository on two lines of history — a branch whose copy of a
--- tree was squashed onto the default branch as well, a cherry-pick, a
+-- tree also landed on the default branch, a cherry-pick, a
 -- reverted-then-restored file — is one authored change with one oid pair, and
 -- summing both commits' diffs would count those lines twice.
 --
@@ -134,38 +85,32 @@ commits_source AS (
 -- because LIMIT 1 BY reads their NULL keys as equal.
 deduplicated_file_changes AS (
     SELECT
-        raw_file_change.tenant_id AS tenant_id,
-        raw_file_change.source_id AS source_id,
-        raw_file_change.project_key AS project_key,
-        raw_file_change.repo_slug AS repo_slug,
-        raw_file_change.commit_hash AS commit_hash,
-        raw_file_change.data_source AS data_source,
-        raw_file_change.file_path AS file_path,
-        raw_file_change.file_extension AS file_extension,
-        raw_file_change.change_type AS change_type,
-        raw_file_change.lines_added AS lines_added,
-        raw_file_change.lines_removed AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
-    INNER JOIN commits_source AS commits
-        ON commits.tenant_id = raw_file_change.tenant_id
-        AND commits.source_id = raw_file_change.source_id
-        AND commits.project_key = raw_file_change.project_key
-        AND commits.repo_slug = raw_file_change.repo_slug
-        AND commits.commit_hash = raw_file_change.commit_hash
-    ORDER BY commits.observed_at, raw_file_change.commit_hash
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        data_source,
+        file_path,
+        file_extension,
+        change_type,
+        lines_added,
+        lines_removed
+    FROM {{ ref('git_commit_file_changes') }}
+    ORDER BY observed_at, commit_hash
     LIMIT 1 BY
-        raw_file_change.tenant_id,
-        raw_file_change.data_source,
-        raw_file_change.project_key,
-        raw_file_change.repo_slug,
-        raw_file_change.file_path,
-        lower(raw_file_change.change_type),
-        raw_file_change.pre_image_oid,
-        raw_file_change.post_image_oid,
+        tenant_id,
+        data_source,
+        project_key,
+        repo_slug,
+        file_path,
+        lower(change_type),
+        pre_image_oid,
+        post_image_oid,
         if(
-            coalesce(raw_file_change.pre_image_oid, '') = ''
-                AND coalesce(raw_file_change.post_image_oid, '') = '',
-            raw_file_change.commit_hash,
+            coalesce(pre_image_oid, '') = ''
+                AND coalesce(post_image_oid, '') = '',
+            commit_hash,
             ''
         )
 ),
@@ -183,7 +128,7 @@ reported_commit_file_lines AS (
         commit_hash,
         sum(lines_added) AS lines_added,
         sum(lines_removed) AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} FINAL
+    FROM {{ ref('git_commit_file_changes') }}
     GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
 ),
 authored_commit_file_lines AS (
@@ -234,7 +179,7 @@ authored_commits AS (
                     - (coalesce(reported.lines_removed, 0) - coalesce(authored.lines_removed, 0))
             ))
         ) AS lines_removed
-    FROM commits_source AS commits
+    FROM {{ ref('git_authored_commits') }} AS commits
     LEFT JOIN reported_commit_file_lines AS reported
         ON reported.tenant_id = commits.tenant_id
         AND reported.source_id = commits.source_id
@@ -313,7 +258,7 @@ file_changes_source AS (
         FROM deduplicated_file_changes AS raw_file_change
         GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category, file_extension_value, file_extension_label, change_type_value, change_type_label
     ) AS file_changes
-    INNER JOIN commits_source AS commits
+    INNER JOIN {{ ref('git_authored_commits') }} AS commits
         ON commits.tenant_id = file_changes.tenant_id
         AND commits.source_id = file_changes.source_id
         AND commits.project_key = file_changes.project_key
@@ -747,7 +692,7 @@ SELECT
     toNullable(toString(metric_date)) AS subject_key,
     source_dimensions AS dimensions,
     CAST(map() AS Map(String, String)) AS details
-FROM commits_source
+FROM {{ ref('git_authored_commits') }}
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
