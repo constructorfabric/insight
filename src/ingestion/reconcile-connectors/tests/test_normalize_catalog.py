@@ -34,14 +34,17 @@ def _stream(name: str, *, cursor: list[str] | None = None) -> dict:
 def _normalize(streams: list[dict]) -> dict:
     payload = json.dumps({"catalog": {"streams": [{"stream": s} for s in streams]}})
     done = subprocess.run(
-        [sys.executable, str(NORMALIZER)],
-        input=payload,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
+        [sys.executable, str(NORMALIZER)], input=payload, capture_output=True, text=True, encoding="utf-8", check=True
     )
     return json.loads(done.stdout)
+
+
+def _reject(streams: list[dict]) -> subprocess.CompletedProcess[str]:
+    """Run the normalizer over a catalog it is expected to refuse."""
+    payload = json.dumps({"catalog": {"streams": [{"stream": s} for s in streams]}})
+    return subprocess.run(
+        [sys.executable, str(NORMALIZER)], input=payload, capture_output=True, text=True, encoding="utf-8", check=False
+    )
 
 
 def test_a_stream_the_connection_has_never_seen_comes_out_selected() -> None:
@@ -78,3 +81,40 @@ def test_a_cursor_bearing_stream_is_incremental_and_a_bare_one_is_not() -> None:
     assert by_name["with_cursor"]["cursorField"] == ["updated_on"]
     assert by_name["without"]["syncMode"] == "full_refresh"
     assert "cursorField" not in by_name["without"]
+
+
+def test_a_stream_without_unique_key_stops_the_run_instead_of_landing_keyless() -> None:
+    """A keyless stream would be created as a table nothing dedups, growing by
+    one copy of every record per sync. Refusing the whole catalog is the point:
+    an emitted catalog is PATCHed onto a live connection, so a partial one
+    would put that shape into production."""
+    done = _reject([{"name": "keyless", "jsonSchema": {"type": "object", "properties": {}}}])
+
+    assert done.returncode == 1, done.stdout
+    assert done.stdout == "", "a refused catalog must emit nothing"
+    assert "keyless" in done.stderr
+
+
+def test_the_refusal_names_every_offending_stream_and_only_those() -> None:
+    """The message is the whole repair instruction — a connector author has to
+    see which streams to stamp without re-running discover by hand."""
+    done = _reject(
+        [
+            _stream("keyed"),
+            {"name": "beta", "jsonSchema": {"type": "object", "properties": {}}},
+            {"name": "alpha", "jsonSchema": {"type": "object", "properties": {}}},
+        ]
+    )
+
+    assert done.returncode == 1
+    assert "alpha, beta" in done.stderr, done.stderr
+    assert "keyed" not in done.stderr
+
+
+def test_a_stream_with_no_schema_at_all_is_refused_rather_than_skipped() -> None:
+    """A discover response that omits the schema must not read as 'no properties
+    to check' and slip past the gate."""
+    done = _reject([{"name": "schemaless"}])
+
+    assert done.returncode == 1
+    assert "schemaless" in done.stderr

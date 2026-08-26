@@ -863,13 +863,14 @@ print(json.dumps(arr))
 # detected" against a catalog that is already applied).
 #
 # Every stream in the supplied syncCatalog MUST set
-# destinationSyncMode = "append_dedup" with primaryKey [["unique_key"]]
-# (plain "append" only for a stream without a unique_key property; overwrite
-# is forbidden — it loses data on retries). The 2.x destination performs no
-# destination-side dedup work: append_dedup is the same append-only insert
-# path, it merely creates the table as ReplacingMergeTree ORDER BY the
-# primary key, so bronze dedups at the engine level without any promotion
-# step. Callers building syncCatalog (normalize_catalog.py) honour this.
+# destinationSyncMode = "append_dedup" with primaryKey [["unique_key"]];
+# a stream without a unique_key property is a hard error in
+# normalize_catalog.py (it would land as an ever-duplicating table), and
+# append/overwrite are forbidden (overwrite loses data on retries). The 2.x
+# destination performs no destination-side dedup work: append_dedup is the
+# same append-only insert path, it merely creates the table as
+# ReplacingMergeTree ORDER BY the primary key, so bronze dedups at the
+# engine level without any promotion step.
 # ---------------------------------------------------------------------------
 ab_create_connection() {
   local workspace_id="$1"
