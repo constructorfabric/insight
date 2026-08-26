@@ -346,7 +346,7 @@ metrics:
     subject: cost
     label: AI actual usage cost
     short_label: Actual cost
-    description: Exact monthly cost billed on top of the seat fee
+    description: Monthly cost billed on top of the seat fee, as last read
     explanation: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of the last reading inside that month, dated at its first day, so a shorter window returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
     format: currency
     direction: lower_is_better
@@ -365,7 +365,7 @@ metrics:
     label: AI actual usage cost — approximate distribution
     short_label: Actual cost / day
     description: The monthly billed cost spread across its days
-    explanation: The billed extra-usage cost on the days it was spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum, approximate in placement. No step crosses a month boundary, so the first day can cover several. A day with no reading shows no point; none is negative.
+    explanation: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
     format: currency
     direction: lower_is_better
     entity_type: person

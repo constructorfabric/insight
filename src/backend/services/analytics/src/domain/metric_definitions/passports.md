@@ -58,7 +58,7 @@ this file and the registry disagree.
 - Reads: daily_extra_usage_usd
 - Formula: sum(daily_extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: The billed extra-usage cost on the days it was spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum, approximate in placement. No step crosses a month boundary, so the first day can cover several. A day with no reading shows no point; none is negative.
+- Notes: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 
