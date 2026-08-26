@@ -98,14 +98,14 @@ CREATE OR REPLACE VIEW identity.account_assignment
 (
     `source_type` String,
     `source_id` UUID,
-    `account_id` Nullable(String),
+    `account_id` String,
     `person_id` UUID,
     `created_at` DateTime64(6, 'UTC')
 )
 AS SELECT
     insight_source_type AS source_type,
     insight_source_id AS source_id,
-    lower(trimBoth(value_effective)) AS account_id,
+    lower(trimBoth(assumeNotNull(value_effective))) AS account_id,
     person_id,
     created_at
 FROM identity.identity_persons
