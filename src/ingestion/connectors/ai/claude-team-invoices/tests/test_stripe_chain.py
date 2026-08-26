@@ -13,6 +13,7 @@ import pytest
 from source_claude_team_invoices.stripe_chain import (
     CATEGORY_OVERUSAGE,
     CATEGORY_SUBSCRIPTIONS,
+    PriceRef,
     StripeChainError,
     classify_line,
     is_proration,
@@ -127,7 +128,7 @@ def test_a_segment_that_is_not_base64_carries_no_identity() -> None:
 def test_a_line_names_its_tier_by_the_vendors_own_price_and_product() -> None:
     """The display name is localised marketing copy; these two are catalogue ids."""
     line = dict(SUBSCRIPTION_LINE, pricing={"price_details": {"price": "price_1ABC", "product": "prod_1ABC"}})
-    assert price_details(line) == ("price_1ABC", "prod_1ABC")
+    assert price_details(line) == PriceRef("price_1ABC", "prod_1ABC")
     shaped = shape_line(line, "in_1ABC")
     assert (shaped["price_id"], shaped["product_id"]) == ("price_1ABC", "prod_1ABC")
 
@@ -136,8 +137,10 @@ def test_a_line_names_its_tier_by_the_vendors_own_price_and_product() -> None:
     "pricing",
     [None, {}, {"price_details": None}, {"price_details": {}}, {"price_details": {"price": "", "product": ""}}],
 )
-def test_a_line_naming_no_tier_carries_absence_not_an_empty_string(pricing: Any) -> None:
-    assert price_details(dict(SUBSCRIPTION_LINE, pricing=pricing)) == (None, None), f"should be absent: {pricing!r}"
+def test_a_line_naming_no_tier_carries_absence_not_an_empty_string(pricing: Mapping[str, Any] | None) -> None:
+    assert price_details(dict(SUBSCRIPTION_LINE, pricing=pricing)) == PriceRef(None, None), (
+        f"should be absent: {pricing!r}"
+    )
 
 
 def test_category_comes_from_the_parent_not_the_description() -> None:

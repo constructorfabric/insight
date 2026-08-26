@@ -180,17 +180,25 @@ def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
     return sorted(set(offenders))
 
 
-def price_details(line: Mapping[str, Any]) -> tuple[str | None, str | None]:
-    """The line's price and product ids, or absence when it prices nothing.
+@dataclass(frozen=True)
+class PriceRef:
+    """The catalogue ids a line's `pricing.price_details` resolves to.
 
     These name the tier the way the vendor's own catalogue does: they survive a
     renamed or localised `hosted_invoice_product_name`, which the display fields
-    do not.
+    do not. Either field is absent on a line that prices nothing.
     """
+
+    price: str | None
+    product: str | None
+
+
+def price_details(line: Mapping[str, Any]) -> PriceRef:
+    """The line's price and product ids, absent where it names no tier."""
     pricing = line.get("pricing") or {}
     details = pricing.get("price_details") or {}
     price, product = details.get("price"), details.get("product")
-    return (str(price) if price else None, str(product) if product else None)
+    return PriceRef(str(price) if price else None, str(product) if product else None)
 
 
 def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
@@ -200,15 +208,15 @@ def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
     the window the invoice was issued in.
     """
     period = line.get("period") or {}
-    price_id, product_id = price_details(line)
+    price = price_details(line)
     return {
         "invoice_key": invoice_key,
         "line_id": line.get("id"),
         "description": line.get("description"),
         "product_name": line.get("hosted_invoice_product_name"),
         "tier_label": line.get("hosted_invoice_tier_label"),
-        "price_id": price_id,
-        "product_id": product_id,
+        "price_id": price.price,
+        "product_id": price.product,
         "category": classify_line(line),
         "is_proration": is_proration(line),
         "amount": line.get("amount"),
