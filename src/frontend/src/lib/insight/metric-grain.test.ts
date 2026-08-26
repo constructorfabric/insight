@@ -147,6 +147,9 @@ describe("activityEvents", () => {
         title: null,
         context: null,
         value: 3,
+        // Carried so a caller that knows the metric can decide whether the
+        // thing is addressable; nothing here names one.
+        values: { date: "2026-03-01", value: 3 },
       },
     ]);
   });

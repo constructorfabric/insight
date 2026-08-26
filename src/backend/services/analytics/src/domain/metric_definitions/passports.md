@@ -34,7 +34,7 @@ this file and the registry disagree.
 - Reads: cost_usd
 - Formula: sum(cost_usd)
 - Shape: currency, lower_is_better
-- Notes: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
+- Notes: Person-attributed AI usage priced at the vendor's token rates — what the consumption would cost if billed purely by usage. It includes usage a seat already covered and excludes seat fees, so it is not the invoiced amount, and only tools that price usage per person contribute. Never add it to actual usage cost, which is the billed part of this same consumption.
 
 ## ai.seat_cost — AI seat cost
 
@@ -42,7 +42,7 @@ this file and the registry disagree.
 - Reads: seat_cost_usd
 - Formula: sum(seat_cost_usd)
 - Shape: currency, lower_is_better
-- Notes: The invoiced price of a person's seat for a billing month, read from the per-seat amount on the invoice's subscription lines — the only place the vendor states a price for one seat. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction, and a window spanning two months returns both fees. Distinct from ai.extra_usage_cost, which is what the vendor billed on top of this fee; the two add up to what a seat cost in total. A seat carrying no tier returns no value, as does a month whose invoice priced several tiers and none of them is the seat's — a share of the invoice total would be an invention. Attribution mode is derived — the invoice prices a tier, not a person.
+- Notes: The invoiced price of one seat for a billing month, read from the per-seat amount on the invoice. A monthly figure, so a partial window returns the whole month and a window spanning two months returns both fees. A seat whose tier the invoice does not price returns no value rather than a share of the total. Add actual usage cost for the full cost of a seat.
 
 ## ai.extra_usage_cost — AI actual usage cost
 
@@ -50,7 +50,15 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
+- Notes: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted, priced at API rates. A monthly figure, so a window covering part of a month returns the whole month rather than a fraction. This is the exact billed amount; its per-day distribution approximates the same money, and neither adds to potential usage cost.
+
+## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
+
+- Source: ai_cost (ai_cost_metric_observations)
+- Reads: daily_extra_usage_usd
+- Formula: sum(daily_extra_usage_usd)
+- Shape: currency, lower_is_better
+- Notes: The billed extra-usage cost placed on the days it was spent. The vendor reports only a running month-to-date total, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and a correction never produces a negative day.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 
@@ -132,13 +140,45 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit commits
 - Notes: Distinct authored commits across connected git sources, excluding merge commits.
 
+## git.default_branch_commits — Commits on the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_commit_count
+- Formula: sum(default_commit_count)
+- Shape: integer, higher_is_better, unit commits
+- Notes: Authored commits reachable from the repository's default branch, or carried onto it by a merged pull request. A commit joins this metric when its branch lands, so a past period's figure rises as work merges. Merge commits excluded.
+
+## git.non_default_branch_commits — Commits outside the default branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_commit_count
+- Formula: sum(non_default_commit_count)
+- Shape: integer, neutral, unit commits
+- Notes: Authored commits not reachable from the repository's default branch — work in flight, or abandoned. A commit leaves this metric when its branch lands, so a past period's figure falls as work merges. A source that does not report branch membership counts here rather than inventing an answer. Merge commits excluded.
+
 ## git.code_lines — Code lines added
 
 - Source: git (git_metric_observations)
 - Reads: code_lines_added
 - Formula: sum(code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded.
+- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
+
+## git.default_branch_code_lines — Code lines added on the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_code_lines_added
+- Formula: sum(default_code_lines_added)
+- Shape: integer, higher_is_better, unit lines
+- Notes: Code lines whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Tests, configuration and documentation excluded.
+
+## git.non_default_branch_code_lines — Code lines added outside the default branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_code_lines_added
+- Formula: sum(non_default_code_lines_added)
+- Shape: integer, neutral, unit lines
+- Notes: Code lines whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Tests, configuration and documentation excluded.
 
 ## git.lines_added — Lines added
 
@@ -146,7 +186,31 @@ this file and the registry disagree.
 - Reads: lines_added
 - Formula: sum(lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation.
+- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
+
+## git.default_branch_lines_added — Lines added on the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_lines_added
+- Formula: sum(default_lines_added)
+- Shape: integer, higher_is_better, unit lines
+- Notes: Lines added whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges.
+
+## git.non_default_branch_lines_added — Lines added outside the default branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_lines_added
+- Formula: sum(non_default_lines_added)
+- Shape: integer, neutral, unit lines
+- Notes: Lines added whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges.
+
+## git.test_change_share — Test change share
+
+- Source: git (git_metric_observations)
+- Reads: test_lines_added, test_and_code_lines_added
+- Formula: 100 * (test_lines_added / test_and_code_lines_added)
+- Shape: percent, neutral
+- Notes: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
 
 ## git.lines_removed — Lines removed
 
@@ -154,7 +218,23 @@ this file and the registry disagree.
 - Reads: lines_removed
 - Formula: sum(lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
+
+## git.default_branch_lines_removed — Lines removed on the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_lines_removed
+- Formula: sum(default_lines_removed)
+- Shape: integer, neutral, unit lines
+- Notes: Lines removed whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges.
+
+## git.non_default_branch_lines_removed — Lines removed outside the default branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_lines_removed
+- Formula: sum(non_default_lines_removed)
+- Shape: integer, neutral, unit lines
+- Notes: Lines removed whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges.
 
 ## git.prs_created — Pull requests created
 
@@ -164,6 +244,22 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Pull requests opened, dated by creation.
 
+## git.default_branch_prs_created — Pull requests created into the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_pr_created
+- Formula: sum(default_pr_created)
+- Shape: integer, higher_is_better, unit PRs
+- Notes: Pull requests opened against the repository's default branch, dated by creation. Unlike the commit and line splits this one is settled when the request is opened and does not move afterwards.
+
+## git.non_default_branch_prs_created — Pull requests created into another branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_pr_created
+- Formula: sum(non_default_pr_created)
+- Shape: integer, neutral, unit PRs
+- Notes: Pull requests opened against something other than the repository's default branch — a release branch, a stacked request, an integration branch. A request whose destination the source does not report counts here rather than inventing an answer.
+
 ## git.prs_merged — Pull requests merged
 
 - Source: git (git_metric_observations)
@@ -171,6 +267,22 @@ this file and the registry disagree.
 - Formula: sum(pr_merged)
 - Shape: integer, higher_is_better, unit PRs
 - Notes: Authored pull requests that merged, dated by the merge.
+
+## git.default_branch_prs_merged — Pull requests merged into the default branch
+
+- Source: git (git_metric_observations)
+- Reads: default_pr_merged
+- Formula: sum(default_pr_merged)
+- Shape: integer, higher_is_better, unit PRs
+- Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics.
+
+## git.non_default_branch_prs_merged — Pull requests merged into another branch
+
+- Source: git (git_metric_observations)
+- Reads: non_default_pr_merged
+- Formula: sum(non_default_pr_merged)
+- Shape: integer, neutral, unit PRs
+- Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone.
 
 ## git.merge_rate — PR merge rate
 
@@ -180,11 +292,59 @@ this file and the registry disagree.
 - Shape: percent, higher_is_better
 - Notes: Of the pull requests created in the period, the share that have merged. Requests opened near the end of the period may not have merged yet, which lowers the rate at period edges.
 
+## git.pr_abandonment_rate — PR abandonment rate
+
+- Source: git (git_metric_observations)
+- Reads: pr_abandoned, pr_created
+- Formula: 100 * (pr_abandoned / pr_created)
+- Shape: percent, lower_is_better
+- Notes: Of pull requests created in the period, the share now closed without merging. Open requests are not abandoned. Requests created near the period end can still change outcome later.
+
+## git.review_coverage — Review coverage
+
+- Source: git (git_metric_observations)
+- Reads: pr_reviewed, pr_created
+- Formula: 100 * (pr_reviewed / pr_created)
+- Shape: percent, higher_is_better
+- Notes: Of pull requests created in the period, the share with at least one submitted review or approval. Assigned reviewers who never act do not count. Some sources provide approvals without review timestamps.
+
+## git.reviewers_per_pr — Reviewers per PR
+
+- Source: git (git_metric_observations)
+- Reads: pr_reviewer_count, pr_created
+- Formula: pr_reviewer_count / pr_created
+- Shape: decimal, neutral
+- Notes: Distinct reviewers who submitted a review or approval, divided by pull requests created in the period. Pull requests without review contribute zero, so read this with review coverage to separate breadth from coverage.
+
+## git.multi_reviewer_rate — Multi-reviewer rate
+
+- Source: git (git_metric_observations)
+- Reads: pr_multi_reviewed, pr_reviewed
+- Formula: 100 * (pr_multi_reviewed / pr_reviewed)
+- Shape: percent, neutral
+- Notes: Of pull requests with at least one submitted review or approval, the share with two or more distinct acting reviewers. This measures review breadth without conflating it with unreviewed pull requests.
+
+## git.merges_without_approval_rate — Merges without approval
+
+- Source: git (git_metric_observations)
+- Reads: pr_merged_without_approval, pr_merged
+- Formula: 100 * (pr_merged_without_approval / pr_merged)
+- Shape: percent, lower_is_better
+- Notes: Of pull requests merged in the period, the share with no approval reported by the connected source. This can reveal missing approval gates, but source configuration and incomplete review history can also affect it.
+
+## git.active_days — Active commit days
+
+- Source: git (git_metric_observations)
+- Reads: commit_day
+- Formula: distinct_count(commit_day)
+- Shape: integer, neutral, unit days
+- Notes: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
+
 ## git.commits_per_active_day — Commits per active day
 
 - Source: git (git_metric_observations)
 - Reads: commit_count, commit_day
-- Formula: commit_count / commit_day
+- Formula: commit_count / distinct_count(commit_day)
 - Shape: decimal, higher_is_better
 - Notes: Commits divided by the number of days with at least one commit.
 
@@ -194,7 +354,7 @@ this file and the registry disagree.
 - Reads: commit_change_size
 - Formula: median(commit_change_size)
 - Shape: integer, lower_is_better, unit lines
-- Notes: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+- Notes: Median diff size of authored commits (lines added plus removed), counting only content a commit is the first to introduce — a commit that repeats content already in the repository has a size of zero. Smaller commits are easier to review.
 
 ## git.pr_size — PR size
 
@@ -211,6 +371,38 @@ this file and the registry disagree.
 - Formula: median(pr_cycle_hours)
 - Shape: decimal, lower_is_better, unit h
 - Notes: Median hours from opening a pull request to merging it, over requests merged in the period.
+
+## git.first_review_time_h — Time to first review
+
+- Source: git (git_metric_observations)
+- Reads: pr_first_review_hours
+- Formula: median(pr_first_review_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: Median hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+
+## git.review_wait_share — Review wait share
+
+- Source: git (git_metric_observations)
+- Reads: pr_review_wait_share
+- Formula: median(pr_review_wait_share)
+- Shape: percent, lower_is_better
+- Notes: Median percentage of open-to-merge time elapsed before the first submitted review, over merged pull requests in the period. Sources without review timestamps contribute no value. High values suggest first review is the main cycle-time constraint.
+
+## git.review_to_merge_time_h — Review-to-merge time
+
+- Source: git (git_metric_observations)
+- Reads: pr_review_to_merge_hours
+- Formula: median(pr_review_to_merge_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: Median hours from first submitted review to merge, over merged pull requests in the period. Sources without review timestamps contribute no value. Read with time to first review to locate delay before or after review starts.
+
+## git.approval_to_merge_time_h — Approval-to-merge time
+
+- Source: git (git_metric_observations)
+- Reads: pr_approval_to_merge_hours
+- Formula: median(pr_approval_to_merge_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: Median hours from the latest reported approval with a timestamp to merge, over merged pull requests in the period. Sources that expose approvals without per-approval timestamps contribute no value. High values can identify delay after review gates clear.
 
 ## collab.messages_sent — Messages Sent
 

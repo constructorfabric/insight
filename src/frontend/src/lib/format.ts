@@ -19,6 +19,10 @@ const METRIC_CURRENCY_FORMAT = new Intl.NumberFormat(LOCALE, {
  */
 export const NO_METRIC_VALUE = "—";
 
+export function roundMetricValue(v: number, fmt: MetricFormat): number {
+  return fmt === "decimal" ? Math.round(v * 10) / 10 : Math.round(v);
+}
+
 /**
  * Formatting for `/v1/metric-results` values: the wire `format` decides
  * rounding and presentation; `unit` is a display suffix only. Bare number —
@@ -33,8 +37,8 @@ export function formatMetricNumber(
   fmt: MetricFormat,
 ): string {
   if (v == null || !Number.isFinite(v)) return NO_METRIC_VALUE;
-  if (fmt === "currency") return METRIC_CURRENCY_FORMAT.format(v);
-  const rounded = fmt === "decimal" ? Math.round(v * 10) / 10 : Math.round(v);
+  const rounded = roundMetricValue(v, fmt);
+  if (fmt === "currency") return METRIC_CURRENCY_FORMAT.format(rounded);
   return NF_THOUSANDS.format(rounded);
 }
 

@@ -116,10 +116,9 @@ streams:
         datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
         min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+      # Re-read the tail the vendor may still revise; no end bound.
+      # See README "Operational Constraints".
+      lookback_window: P3D
       # P1D step: one request per day. The /summaries endpoint supports multi-day
       # ranges via starting_date + ending_date, but ending_date is EXCLUSIVE — using
       # P31D with Airbyte's inclusive-inclusive cursor arithmetic causes silent data
@@ -298,10 +297,7 @@ streams:
         datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
         min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+      lookback_window: P3D
       step: P1D
       cursor_granularity: P1D
       start_time_option:
@@ -680,10 +676,7 @@ streams:
         datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
         min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+      lookback_window: P3D
       step: P1D
       cursor_granularity: P1D
       start_time_option:
@@ -837,10 +830,7 @@ streams:
         datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
         min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+      lookback_window: P3D
       step: P1D
       cursor_granularity: P1D
       start_time_option:
@@ -1014,10 +1004,7 @@ streams:
         datetime: "{{ config.get('start_date') or day_delta(-14, format='%Y-%m-%d') }}"
         datetime_format: "%Y-%m-%d"
         min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ day_delta(-3, format='%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
+      lookback_window: P3D
       step: P1D
       cursor_granularity: P1D
       start_time_option:

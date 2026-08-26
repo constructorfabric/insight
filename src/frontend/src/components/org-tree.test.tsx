@@ -1,14 +1,39 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OrgTree } from "@/components/org-tree";
 import type { IdentityPerson } from "@/types/insight";
 
-const mocks = vi.hoisted(() => ({ viewer: null as IdentityPerson | null }));
+const mocks = vi.hoisted(() => ({
+  viewer: null as IdentityPerson | null,
+  isFlat: false,
+  roster: [] as {
+    person_id: string;
+    display_name?: string | null;
+    email?: string | null;
+    username?: string | null;
+  }[],
+}));
 
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "root" }) }));
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: mocks.viewer }),
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: mocks.roster,
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
@@ -80,5 +105,45 @@ describe("OrgTree", () => {
     rerender(<OrgTree query="" />);
     expect(screen.queryByText("Deep Person")).not.toBeInTheDocument();
     expect(screen.getByText("Lead Person")).toBeInTheDocument();
+  });
+});
+
+describe("OrgTree on an organisation with no reporting lines", () => {
+  beforeEach(() => {
+    mocks.isFlat = true;
+    // The tree the profile serves is the viewer alone — the shape that left
+    // this pane showing one name beside a full Employees table.
+    mocks.viewer = { person_id: "root", display_name: "Me", email: "me@x", subordinates: [] } as IdentityPerson;
+    mocks.roster = [
+      { person_id: "root", display_name: "Me", email: "me@x" },
+      { person_id: "p-ann", display_name: "Ann Dev", email: "ann@x" },
+      { person_id: "p-bot", display_name: null, email: null, username: "octo-bot" },
+    ];
+  });
+
+  it("lists everyone the caller may see, not just the viewer", () => {
+    render(<OrgTree />);
+
+    expect(screen.getByText("Ann Dev")).toBeInTheDocument();
+    expect(screen.getByText("Me")).toBeInTheDocument();
+  });
+
+  it("names a person the journal knows only by a handle", () => {
+    render(<OrgTree />);
+
+    expect(screen.getByText("octo-bot")).toBeInTheDocument();
+  });
+
+  it("filters to what the reader typed", () => {
+    render(<OrgTree query="ann" />);
+
+    expect(screen.getByText("Ann Dev")).toBeInTheDocument();
+    expect(screen.queryByText("octo-bot")).toBeNull();
+  });
+
+  it("says so when a term matches nobody", () => {
+    render(<OrgTree query="nobody-by-this-name" />);
+
+    expect(screen.getByText(/matches/)).toBeInTheDocument();
   });
 });

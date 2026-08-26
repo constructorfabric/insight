@@ -9,7 +9,7 @@ import type { PortalSearch } from "@/lib/portal/portal-search";
 
 let currentPath = "/";
 let currentSearch: PortalSearch = {};
-let portalEnabled = true;
+let legacyShell = false;
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -59,7 +59,13 @@ vi.mock("@/components/theme-switcher", () => ({
 }));
 
 vi.mock("@/lib/portal/portal-store", () => ({
-  usePortalEnabled: () => portalEnabled,
+  readLegacyShell: () => legacyShell,
+}));
+
+const mocks = vi.hoisted(() => ({ openFeedback: vi.fn() }));
+
+vi.mock("@/components/feedback-context", () => ({
+  useFeedbackDialog: () => ({ openFeedback: mocks.openFeedback }),
 }));
 
 vi.mock("@/components/ui/avatar", () => ({
@@ -83,13 +89,19 @@ vi.mock("@/components/ui/sidebar", async () => {
     SidebarMenuButton: ({
       children,
       isActive,
+      onClick,
       render: renderProp,
     }: {
       children?: React.ReactNode;
       isActive?: boolean;
+      onClick?: () => void;
       render?: React.ReactNode;
     }) => (
-      <div data-testid="menu-button" data-active={String(Boolean(isActive))}>
+      <div
+        data-testid="menu-button"
+        data-active={String(Boolean(isActive))}
+        onClick={onClick}
+      >
         {isValidElement(renderProp)
           ? cloneElement(renderProp, {}, children)
           : children}
@@ -113,7 +125,8 @@ function linkOf(label: string): HTMLElement {
 beforeEach(() => {
   currentPath = "/";
   currentSearch = {};
-  portalEnabled = true;
+  legacyShell = false;
+  mocks.openFeedback.mockClear();
 });
 
 describe("AppSidebarFooter", () => {
@@ -132,8 +145,8 @@ describe("AppSidebarFooter", () => {
     );
   });
 
-  it("names the standalone screens while the portal is off", () => {
-    portalEnabled = false;
+  it("names the standalone screens under the legacy-shell hatch", () => {
+    legacyShell = true;
     render(<AppSidebarFooter />);
 
     expect(linkOf("Metric catalog")).toHaveAttribute("data-to", "/metrics");
@@ -164,8 +177,8 @@ describe("AppSidebarFooter", () => {
     expect(entry("What's new")).toHaveAttribute("data-active", "false");
   });
 
-  it("marks the standalone screen it is standing on while the portal is off", () => {
-    portalEnabled = false;
+  it("marks the standalone screen it is standing on under the hatch", () => {
+    legacyShell = true;
     currentPath = "/metrics";
     render(<AppSidebarFooter />);
 
@@ -183,5 +196,27 @@ describe("AppSidebarFooter", () => {
 
     await user.click(screen.getByText("What's new"));
     expect(onNavigate).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks the shell for the feedback dialog and dismisses the menu it sits in", async () => {
+    const onNavigate = vi.fn();
+    render(<AppSidebarFooter onNavigate={onNavigate} />);
+
+    await userEvent.click(entry("Send feedback"));
+
+    expect(mocks.openFeedback).toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalled();
+  });
+
+  it("offers feedback without navigating anywhere", () => {
+    render(<AppSidebarFooter />);
+
+    expect(entry("Send feedback").querySelector('[data-testid="link"]')).toBeNull();
+  });
+
+  it("leaves feedback out where the shell already offers it", () => {
+    render(<AppSidebarFooter showFeedback={false} />);
+
+    expect(screen.queryByText("Send feedback")).toBeNull();
   });
 });

@@ -25,6 +25,8 @@ feeds the shared `class_git_*` silver models.
 | pull_request_review_comments | `/repos/{r}/pulls/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
+| issue_fields | GraphQL `organization.issueFields` | full refresh |
+| issue_types | GraphQL `organization.issueTypes` | full refresh |
 | workflow_runs | `/repos/{r}/actions/runs` | created_at, weekly step windows |
 | deployments | `/repos/{r}/deployments` | created_at, newest-first data feed |
 | deployment_statuses | `/deployments/{id}/statuses` | windowed deployments parent |
@@ -35,6 +37,20 @@ feeds the shared `class_git_*` silver models.
 **org_members is deliberately absent**: the deployed `git/github-directory`
 connector already syncs the org roster for identity resolution. Folding it in
 here is a separate migration.
+
+**The two catalogue streams answer for identity, not volume.** A timeline event
+names the native issue field it changed by node id, and the issue payload names
+its type by display name only. Without `issue_fields` and `issue_types` neither
+identifier resolves to anything an operator can read, and a rename silently
+orphans whatever was bound to the old name. Both are organization-scoped, so
+they cost one paginated query per configured organization per sync.
+
+**Re-syncing an existing deployment.** `issues` gained the hoisted
+`issue_field_values_json` column and `issue_timeline_events` gained the field
+and type identifiers. Both are cursored, so an item nobody touches again is
+never re-read and would keep the old, emptier shape forever — clear the state
+of those two streams once the new descriptor is live. The catalogue streams
+have no state and need nothing.
 
 ## What `github_start_date` bounds
 
@@ -84,16 +100,19 @@ Three things to know before deploying:
 
 - **When `github-directory` is deployed, both connectors must share one
   `insight_source_id` — `github-main` in the shipped examples.** The seed and
-  the resolver key an account on (source type, source id, login); under
-  different ids the roster bindings and these claims describe different
+  the resolver key an account on (source type, source id, member id); under
+  different source ids the roster bindings and these claims describe different
   accounts, and a member with no published e-mail can end up as two persons.
   The id comes from the Secret's `insight.cyberfabric.com/source-id`
   annotation, so this is a deployment decision, not a code one.
-- **An unmatched active account is minted as a new person.** An outside
-  contributor, or a member committing under an address no roster carries,
-  becomes a fresh person and shows up in the seed's `accounts_minted_new`
-  counter. Merging a minted person into the right one (or excluding it) is the
-  operator's manual-resolution workflow, and an operator-authored binding wins
+- **An unmatched active account is not minted a person — it is queued.** This
+  connector states no account id (see the last point), so the seed has nothing
+  to write a binding from: minting here would create a person no account can
+  ever belong to. An outside contributor, or a member committing under an
+  address no roster carries, is instead counted under
+  `accounts_skipped_no_source_id` and surfaced on the operator's review queue
+  as `no_source_id`. Binding it to the right person (or excluding it as a bot)
+  is the manual-resolution workflow, and an operator-authored binding wins
   every later seed.
 - **Only `value_type='email'` rows are emitted, never the `value_type='id'`
   binding.** Bindings are the seed's decision to make; emitting them here

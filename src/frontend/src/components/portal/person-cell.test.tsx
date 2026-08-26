@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 /**
  * One person must read the same everywhere: name by the card's precedence
- * (display name → email → username → id), an identifying second line that
- * never repeats the name, and a leaver marked so nobody merges into them.
+ * (display name, then username, then email, then the id), an identifying second
+ * line that never repeats the name, and a leaver marked so nobody merges into
+ * them.
  */
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import "@/i18n";
@@ -21,8 +23,8 @@ function person(over: Partial<PersonSummary>): PersonSummary {
 describe("personDisplayName", () => {
   it.each<[string, Partial<PersonSummary>, string]>([
     ["display name first", { display_name: "Ann Lee", email: "a@example.com" }, "Ann Lee"],
-    ["email when unnamed", { email: "a@example.com", username: "alee" }, "a@example.com"],
-    ["username for a git-only identity", { username: "alee" }, "alee"],
+    ["the handle over the address", { email: "a@example.com", username: "alee" }, "alee"],
+    ["the address when there is no handle", { email: "a@example.com" }, "a@example.com"],
     ["the id when nothing else exists", {}, "01900000-0000-7000-8000-000000000001"],
   ])("picks %s", (_name, fields, expected) => {
     expect(personDisplayName(person(fields))).toBe(expected);
@@ -74,13 +76,21 @@ describe("PersonCell", () => {
   // minted is the wrong side of a merge — its counterpart holds the history.
   // The badge must not name one origin: a sign-in and a roster listing both
   // produce such a person, and the wording is the same warning either way.
-  it("marks a person the journal knows only from an automatic mint", () => {
+  it("marks a person the journal knows only from an automatic mint", async () => {
     render(
       <PersonCell person={person({ display_name: "New Joiner", provisional: true })} />,
     );
 
+    // One word, so the badge cannot widen the row it sits in — and the warning
+    // it stands for is reachable, not hover-only: this mark is what says a
+    // person is the wrong side of a merge.
+    const badge = screen.getByText(/^provisional$/i);
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute("tabindex", "0");
+
+    await userEvent.hover(badge);
     expect(
-      screen.getByText(/created by automation, not confirmed/i),
+      await screen.findByText(/created by automation, not confirmed/i),
     ).toBeInTheDocument();
     // A roster mint is not a sign-in. Naming one origin tells an operator the
     // wrong story about half of these people.

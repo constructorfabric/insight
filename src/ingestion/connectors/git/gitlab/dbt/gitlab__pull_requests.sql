@@ -50,6 +50,9 @@ SELECT
     ) AS state,
     COALESCE(mr.author_username, '') AS author_name,
     COALESCE(u.email, '') AS author_email,
+    -- Always '': the GitLab connector emits no identity inputs, so no account
+    -- binding exists to resolve against; attribution stays on author_email.
+    '' AS author_account_id,
     COALESCE(mr.source_branch, '') AS source_branch,
     COALESCE(mr.target_branch, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(mr.created_at) AS created_on,

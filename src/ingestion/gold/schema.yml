@@ -75,11 +75,72 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_authored_commits
+    description: >
+      One row per authored commit that reaches a git measure: the surviving row
+      of the commit-hash collapse, with branch scope, repository, project and
+      source dimensions already resolved. Materialized so the commit class read
+      and the collapse run once per build in their own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier; one row per tenant, data source and hash"
+        tests:
+          - not_null
+
+  - name: git_commit_file_changes
+    description: >
+      File changes attached to the commit row that survived the hash collapse,
+      one row per commit, path, change type and object id pair. Materialized so
+      the file-change class read runs in its own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit the change is attached to"
+        tests:
+          - not_null
+
+  - name: git_default_branch_commits
+    description: >
+      Commits that reached a repository's default branch through a merged pull
+      request: one row per tenant/source/project/repo/commit. Materialized so
+      the pull-request membership joins run once per build in their own query
+      budget; the git evidence build reads it as a semi-join set alongside the
+      sync-time is_default_branch flag.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the repository"
+        tests:
+          - not_null
+
+  - name: git_derived_commits
+    description: >
+      Commits whose work is already counted on another commit, one row per
+      tenant/data_source/commit_hash/reason. merge_result is the commit a
+      merged pull request produced on its destination (a squash result or the
+      last rebased copy), marked only when every linked branch commit was
+      collected; patch_duplicate is a later carrier of a patch id an earlier
+      commit in the same repository authored (a rebase copy or a cherry-pick).
+      The git
+      evidence build excludes these from both the commit and the line figures,
+      so one authored change counts once and the two figures describe the same
+      set of commits.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the source"
+        tests:
+          - not_null
+      - name: reason
+        description: "Why the commit is derived"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge_result', 'patch_duplicate']
+
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
-      Median inputs retain event grain; additive measures retain their
-      established daily and dimension summaries.
+      Median inputs retain event grain; additive measures retain daily and
+      dimension summaries. Active commit days retain their date subject and
+      dimensions for exact distinct counts at every supported breakdown.
     columns: *metric_evidence_columns
 
   - name: collab_metric_evidence
@@ -120,7 +181,8 @@ models:
       amount on the invoice's subscription lines; extra_usage_usd is the money
       the vendor billed once that seat exhausted the usage included in its fee;
       extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
-      only as the utilisation denominator.
+      only as the utilisation denominator; daily_extra_usage_usd is the same
+      billed money as extra_usage_usd, stepped across the days it was spent.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -162,8 +224,10 @@ models:
           - accepted_values:
               arguments:
                 values:
+                  - seat_cost_usd
                   - extra_usage_usd
                   - extra_usage_limit_usd
+                  - daily_extra_usage_usd
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -264,13 +328,13 @@ models:
     description: >
       Source measure observations for the unified metrics runtime, git
       family. Day-grain measures emit one row per (tenant, entity, day,
-      measure, dimension tuple); event-grain measures (commit_change_size,
-      pr_cycle_hours, pr_change_size) intentionally emit one row per source
-      event, so multiple rows per that key are valid — they feed median
-      metrics, which aggregate over events at query time. The column set is
-      the same published contract the analytics service schema validator
-      probes (`OBSERVATION_COLUMNS`); changing it requires a coordinated
-      backend change.
+      measure, dimension tuple); commit_day emits one row per dimensioned
+      active-date subject. Duration and size measures intentionally retain one
+      row per source event, so multiple rows per that key are valid — they
+      feed median metrics, which aggregate over events at query time. The
+      column set is the same published contract the analytics service schema
+      validator probes (`OBSERVATION_COLUMNS`); changing it requires a
+      coordinated backend change.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -303,8 +367,8 @@ models:
       - name: metric_date
         description: >
           Observation date: commit date for commit-derived measures,
-          created_on for pr_created/pr_change_size, close (merge) date for
-          pr_merged/pr_cycle_hours.
+          created_on for created-PR measures, first review for time to first
+          review, and close date for merged-PR measures.
         tests:
           - not_null
       - name: observed_at
@@ -322,13 +386,36 @@ models:
                   - commit_day
                   - commit_change_size
                   - code_lines_added
+                  - test_lines_added
+                  - test_and_code_lines_added
                   - lines_added
                   - lines_removed
                   - pr_created
                   - pr_created_merged
+                  - pr_abandoned
+                  - pr_reviewed
+                  - pr_reviewer_count
+                  - pr_multi_reviewed
                   - pr_merged
+                  - pr_merged_without_approval
                   - pr_cycle_hours
                   - pr_change_size
+                  - pr_first_review_hours
+                  - pr_review_wait_share
+                  - pr_review_to_merge_hours
+                  - pr_approval_to_merge_hours
+                  - default_commit_count
+                  - non_default_commit_count
+                  - default_code_lines_added
+                  - non_default_code_lines_added
+                  - default_lines_added
+                  - non_default_lines_added
+                  - default_lines_removed
+                  - non_default_lines_removed
+                  - default_pr_created
+                  - non_default_pr_created
+                  - default_pr_merged
+                  - non_default_pr_merged
       - name: value
         description: >
           Measure value. Rows are emitted only when the source provides a
@@ -339,7 +426,7 @@ models:
       - name: subject_key
         description: >
           Distinct-count subject for future distinct-count semantics. NULL
-          for measures without distinct-count support.
+          except on commit_day, where it contains the active calendar date.
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). `source` carries the git source

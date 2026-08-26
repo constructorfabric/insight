@@ -128,6 +128,34 @@ Server-side cookie/BFF flow — the SPA holds no tokens.
 4. A 401 bounces the whole page into `/auth/login?return_to=…` ([src/auth/use-auth.ts](src/auth/use-auth.ts)); there is no client-side token to refresh.
 5. The session is non-sliding: [src/auth/refresh.ts](src/auth/refresh.ts) drives `POST /auth/refresh` on the server-supplied `refresh_at`.
 
+## Per-Install Navigation Policy
+
+A deployment can hide navigation entries — at any nesting level — or mark
+them as still in development, with the `nav` chart value rendered into
+`/config.js` next to the Sentry DSN. Both lists take the same typed paths:
+
+```yaml
+nav:
+  hide:
+    - "zone:scorecard"
+    - "zone:aicost/item:idle-seats"
+    - "zone:directions/dir:sales"
+    - "zone:directions/dir:dev/lens:git-output"
+    - "zone:person/section:git_output"
+  planned:
+    - "zone:reports/item:report-builder"
+```
+
+A hidden entry disappears from every menu and from default/deep-link
+resolution. A `planned` entry is demoted to the "Planned" menu group and
+toggled by the viewer's "Show planned sections" switch. Planning is entirely
+deployment-owned: entries absent from `nav.planned` are treated as live. A path
+in both lists is hidden; a path that matches nothing is ignored (malformed ones
+warn in the browser console).
+This is presentation, not authorization — the API refuses on its own
+regardless of what the menu shows. Parsing and semantics live in
+[src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).
+
 ## Environment Variables
 
 Build-time (Vite, `.env.local`):

@@ -13,6 +13,7 @@ import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
 import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
 import type { MetricGroup } from "@/lib/insight/groups";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import { peerStatusToStatus } from "@/lib/insight/peer-status";
 import {
   forEntity,
@@ -123,7 +124,17 @@ export function MetricGroupCard({
     return [{ metric, value: entityData.value, rank, standing }];
   });
 
-  const counts = rankCounts(rows.map((row) => ({ row, rank: row.rank })));
+  // One fact, one vote. The stripe turns red on a PATTERN of weakness — two
+  // bottoms and more than a quarter of the rankable set — so a metric counted
+  // twice because a second one contains it moves the section's colour without
+  // anything about the person changing. Thinning the tally, not the rows: the
+  // list below still names every metric the group measures.
+  const counted = countableSignals(
+    rows,
+    (row) => row.metric.metric_key,
+    (row) => row.rank
+  );
+  const counts = rankCounts(counted.map((row) => ({ row, rank: row.rank })));
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);
 

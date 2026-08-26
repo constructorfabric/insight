@@ -64,6 +64,9 @@ impl IntoResponse for ApiError {
             Self::Store(StoreError::Throttled) | Self::Git(GitError::Throttled) => {
                 metrics::record_rejection(metrics::RejectReason::OriginThrottled);
             }
+            Self::Store(StoreError::OriginUnavailable) | Self::Git(GitError::OriginUnavailable) => {
+                metrics::record_origin_unavailable();
+            }
             _ => {}
         }
 
@@ -110,7 +113,8 @@ impl ApiError {
             Self::ProxyTokenRejected
             | Self::Store(StoreError::AuthRejected)
             | Self::Git(GitError::AuthRejected) => StatusCode::UNAUTHORIZED.as_u16(),
-            Self::Store(StoreError::NotFound) | Self::Git(GitError::NotFound) => {
+            Self::Store(StoreError::NotFound | StoreError::OriginUnavailable)
+            | Self::Git(GitError::NotFound | GitError::OriginUnavailable) => {
                 StatusCode::NOT_FOUND.as_u16()
             }
             Self::Store(StoreError::SnapshotChanged { .. }) => StatusCode::CONFLICT.as_u16(),
@@ -172,6 +176,15 @@ impl ApiError {
                     .with_resource("repository")
                     .create()
             }
+            // Suspended, disabled, or over the vendor's own limit at origin.
+            // The same 404 the connector already skips a deleted repository
+            // on, with a distinct detail so an operator can tell the two
+            // apart in logs and problem bodies.
+            Self::Store(StoreError::OriginUnavailable) | Self::Git(GitError::OriginUnavailable) => {
+                RepositoryError::not_found("origin declines to serve the repository")
+                    .with_resource("repository")
+                    .create()
+            }
             Self::Git(GitError::AdmissionRejected) => RepositoryError::resource_exhausted(
                 "the cache is full and nothing can be reclaimed",
             )
@@ -225,6 +238,17 @@ impl ApiError {
             Self::Serialization(internal) => internal_error(&internal),
         }
     }
+}
+
+/// The answer for a handler that outlived its budget (`api::HANDLER_BUDGET`).
+/// A plain 503 envelope: the connectors' declarative handlers RETRY 503, and
+/// the detail deliberately names no internals — the log line next to it does.
+#[must_use]
+pub fn handler_timed_out() -> Response {
+    CanonicalError::service_unavailable()
+        .with_detail("the request outlived the handler budget")
+        .create()
+        .into_response()
 }
 
 /// Detail naming a path or a git invocation is logged here and never reaches
@@ -319,9 +343,13 @@ mod tests {
                 StoreError::Git("boom".to_owned()).into(),
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
+            // A repository the origin refuses to serve: permanent for that
+            // repository, so the connector must see the skippable 404.
+            (StoreError::OriginUnavailable.into(), StatusCode::NOT_FOUND),
             // The same failures raised by a reader step, not by the clone.
             (GitError::AuthRejected.into(), StatusCode::UNAUTHORIZED),
             (GitError::NotFound.into(), StatusCode::NOT_FOUND),
+            (GitError::OriginUnavailable.into(), StatusCode::NOT_FOUND),
             (
                 GitError::TooLarge { cap_bytes: 1024 }.into(),
                 StatusCode::PAYLOAD_TOO_LARGE,

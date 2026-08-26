@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.20.01.58-5b8ac0a" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.06.12-7d4e7d7" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.20.01.58-5b8ac0a" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.06.12-7d4e7d7" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -380,12 +380,44 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # How a login finds its person. Two modes, declared — never a fallback
+    # chain, so a token that cannot answer the configured question is refused
+    # rather than quietly answered a different way:
+    #
+    #   external_id (default) — by the IdP's own stable user id under
+    #     `sourceType`. Right whenever a connector observes the provider's
+    #     accounts: the id is immutable and belongs to the directory the
+    #     person authenticated against.
+    #   email — by the token's standard `email` claim, matched against the
+    #     addresses the ROSTER states (identityResolution.rosterSourceType).
+    #     For installs whose IdP has no directory connector of its own:
+    #     nothing seeds an id binding for the provider, so external_id matches
+    #     nobody and EVERY sign-in is refused. Needs no claim mapping — the
+    #     `email` claim rides the standard `email` scope — and reads neither
+    #     `sourceType` nor `externalIdClaim`. Requires rosterSourceType to be
+    #     set; identity refuses the lookup without one rather than matching an
+    #     address any source at all happened to state.
+    #
+    # What `email` mode additionally requires, all enforced at render:
+    #   - `email` among `scopes` (below) — it is the mode's only input;
+    #   - `provisionOnLogin: false` — minting needs a source-native id, so no
+    #     login provisions in this mode;
+    #   - identityResolution.rosterSourceType set.
+    # It also refuses a token whose `email_verified` is explicitly false: in
+    # this mode the address IS the credential. An IdP that lets a user edit
+    # their own address unverified must be fixed at the IdP.
+    # ROLLING BACK to a chart that predates this key: put `sourceType` back in
+    # the same commit — the older chart requires it unconditionally and will
+    # refuse to render without it.
+    resolveBy: external_id
     # The identity-resolution source_type this IdP is seeded under (e.g.
-    # "ms-entra") — required; the login-bootstrap person lookup is scoped to
-    # it. No default: an empty value fails config validation at boot.
+    # "ms-entra") — the login-bootstrap person lookup is scoped to it. Required
+    # when resolveBy is external_id (an empty value fails config validation at
+    # boot); unread when resolveBy is email.
     sourceType: ""
     # id_token claim carrying the IdP's stable external user id for
-    # sourceType (e.g. Entra's "oid"). Defaults to "sub".
+    # sourceType (e.g. Entra's "oid"). Defaults to "sub". Unread when
+    # resolveBy is email.
     externalIdClaim: "sub"
     # Provision a person on first successful login instead of refusing one the
     # journal has no binding for yet.
@@ -483,6 +515,26 @@ analytics:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
+  metricCatalog:
+    tenantMetricsEnabled: false
+  # Explaining a metric with an LLM. Off everywhere until an operator turns it
+  # on, and turning it on without `tokenEncryptionKey` stops the service at
+  # boot rather than accepting keys it cannot seal.
+  aiAssist:
+    enabled: false
+    # Base64 of 32 random bytes: `openssl rand -base64 32`. Seals the Anthropic
+    # keys people store. Rotating it makes every stored key unreadable, and
+    # each person has to paste theirs again.
+    tokenEncryptionKey: ""
+    # One Anthropic key for the whole stand. Set it and nobody stores their
+    # own: every explanation is paid for by this key, and the SPA offers no
+    # place to paste a personal one.
+    apiKey: ""
+    # Restrict asking for an explanation to admins. On by default, because
+    # the common setup is a stand key and then every call spends the
+    # deployment's own money. Off for a stand where people bring their own.
+    adminOnly: true
+    model: "claude-sonnet-5"
   # The umbrella generates `insight-analytics-config` with every
   # APP__gears__analytics__config__* env var filled in from the
   # auto-generated credentials (see templates/secrets.yaml). The subchart
@@ -537,9 +589,15 @@ gitCliProxy:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
     tag: ""
     pullPolicy: IfNotPresent
+  # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
+  # dominate its memory. The service caps git's own pack budgets so their
+  # peak cannot scale with the repository; this limit is the headroom above
+  # that ceiling rather than a figure derived from cache.maxRepoBytes. Lower
+  # cache.heavyOpsConcurrency before raising it — overlapping heavy
+  # operations are what push a correctly-capped pod over.
   resources:
-    requests: {cpu: 200m, memory: 256Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: {cpu: 200m, memory: 1Gi}
+    limits: {cpu: "2", memory: 8Gi}
   persistence:
     size: 50Gi
     storageClass: ""
@@ -582,6 +640,7 @@ gitCliProxy:
 identityResolution:
   deploy: true
   replicaCount: 1
+  visibilityPolicy: "org_chart"
   image:
     repository: ghcr.io/constructorfabric/insight-identity-resolution
     tag: "" # MUST be set (e.g. "0.1.0")
@@ -618,7 +677,7 @@ identityResolution:
   # Manual run: kubectl create job --from=cronjob/<release>-identity-resolution-seed ...
   seed:
     enabled: true
-    schedule: "30 6 * * *" # daily, after overnight syncs + the 06:00 data-quality run
+    schedule: "*/15 * * * *" # freshness backstop; the pipeline + corrections publish on their own
   # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
   # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
   # over https on `issuer` and trusts its CA from the authn-tls cert Secret.
@@ -652,3 +711,25 @@ frontend:
     connectSrc: ""
     # DSN the SPA reads from /config.js at load. Empty disables reporting.
     dsn: ""
+  nav:
+    # Navigation entries hidden on this install, read by the SPA from
+    # /config.js. Typed paths, one per entry:
+    #   - "zone:scorecard"                          (a rail zone)
+    #   - "zone:aicost/item:idle-seats"             (a pane item)
+    #   - "zone:directions/dir:sales"               (a whole direction)
+    #   - "zone:directions/dir:dev/lens:git-output" (one lens, by URL slug)
+    #   - "zone:person/section:git_output"          (a Person-zone section)
+    #   - "metric:tasks.resolution_time"            (one metric, everywhere)
+    #   - "metric:ai.*"                             (a whole metric family)
+    # A metric path is not a menu entry: it gates the key itself, so the metric
+    # reaches no tile, attention row, heatmap column, drilldown block or report
+    # column, and no request asks for it.
+    # Unknown paths are ignored (the browser console warns). Presentation
+    # only — the API authorizes independently of what the menu shows.
+    hide: []
+    # Navigation entries this install marks as still in development — same
+    # path forms as `hide`. This is the only source of planned navigation:
+    # entries absent from this list are treated as live. Planned entries are
+    # toggled by the viewer's "Show planned sections" switch. A path in both
+    # lists is hidden.
+    planned: []

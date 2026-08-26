@@ -7,6 +7,13 @@ import type {
   MetricTimeseriesTableConfig,
 } from "@/lib/metrics/timeseries-table";
 import type { MetricTimeseriesChartConfig } from "@/lib/metrics/timeseries-chart";
+import {
+  gatesAnyMetric,
+  metricVisible,
+  navPolicy,
+  visiblePersonSections,
+  type InstanceNavPolicy,
+} from "@/lib/portal/nav-policy";
 
 /**
  * Dashboard composition registry: named groups of metrics and the KPI row.
@@ -136,7 +143,10 @@ const AI_ADOPTION_COLLECTION: MetricCollectionConfig = {
     { key: "ai.active_days", views: [{ view: "period" }, { view: "peer" }] },
     { key: "ai.cost", views: [{ view: "period" }, { view: "peer" }] },
     {
-      key: "ai.extra_usage_cost",
+      // The daily distribution, not the month's running total: this section
+      // reads a metric one day at a time, and a cumulative figure repeated on
+      // every day of the month is not a day's reading.
+      key: "ai.daily_approximate_extra_usage_cost",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
@@ -180,12 +190,39 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
+      // INVARIANT: no `branch_scope` breakdown on a metric already scoped to
+      // one branch. Not merely because the dimension would be constant —
+      // `/v1/metric-results` refuses a dimension a metric does not declare,
+      // and the call is all-or-nothing, so it would blank the whole section.
+      //
+      // The split keys stay in this collection even with no block of their
+      // own: `lens-configs.ts` may only name keys a group declares.
+      key: "git.default_branch_commits",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "git.prs_merged",
+      // `branch_scope` splits landed work from work still in flight. Two
+      // groups, so the summary card's ribbon always lights up — and one
+      // breakdown per card, because a second dimension cross-tabs into
+      // "GitHub · Default branch" instead of giving the plain pair.
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
+    {
+      key: "git.default_branch_prs_merged",
       views: [{ view: "period" }, { view: "peer" }],
     },
     {
       key: "git.lines_added",
-      views: [{ view: "period" }, { view: "peer" }],
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
     },
     {
       key: "git.pr_cycle_time_h",
@@ -199,8 +236,22 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       key: "git.commit_size",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
-    { key: "git.code_lines", views: [{ view: "period" }, { view: "peer" }] },
-    { key: "git.prs_created", views: [{ view: "period" }, { view: "peer" }] },
+    {
+      key: "git.code_lines",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
+    {
+      key: "git.prs_created",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["branch_scope"] },
+      ],
+    },
     { key: "git.merge_rate", views: [{ view: "period" }, { view: "peer" }] },
     {
       key: "git.commits_per_active_day",
@@ -216,6 +267,19 @@ const GIT_LINES_TABLE_COLUMN = {
     { text: " / " },
     {
       metric: "git.lines_removed",
+      prefix: "−",
+      tone: "destructive",
+    },
+  ],
+} satisfies MetricTimeseriesTableColumnConfig;
+
+const GIT_LINES_DEFAULT_TABLE_COLUMN = {
+  label: "Lines (default)",
+  template: [
+    { metric: "git.default_branch_lines_added", prefix: "+", tone: "success" },
+    { text: " / " },
+    {
+      metric: "git.default_branch_lines_removed",
       prefix: "−",
       tone: "destructive",
     },
@@ -387,18 +451,28 @@ export const GROUPS: readonly MetricGroup[] = [
       {
         id: "output-by-repository",
         view: "timeseries",
+        // Each total is followed by its default-branch reading, so a row says
+        // how much work a repository saw and how much of it landed without
+        // making the reader open a second block to find out.
         metrics: [
           "git.commits",
+          "git.default_branch_commits",
           "git.prs_merged",
+          "git.default_branch_prs_merged",
           "git.lines_added",
           "git.lines_removed",
+          "git.default_branch_lines_added",
+          "git.default_branch_lines_removed",
         ],
         defaultPresentation: "table",
         table: {
           columns: [
             { metric: "git.commits" },
+            { metric: "git.default_branch_commits", labelSource: "short" },
             { metric: "git.prs_merged", labelSource: "short" },
+            { metric: "git.default_branch_prs_merged", labelSource: "short" },
             GIT_LINES_TABLE_COLUMN,
+            GIT_LINES_DEFAULT_TABLE_COLUMN,
           ],
         },
         groupBy: {
@@ -421,6 +495,30 @@ export const GROUPS: readonly MetricGroup[] = [
         },
         groupBy: {
           default: "category",
+        },
+      },
+      {
+        // Landed work against work still in flight. Two groups only, so no
+        // limits: `branch_scope` is a partition, not a long tail. Last of the
+        // timeseries blocks because groups.test.ts indexes them positionally.
+        id: "output-by-branch-scope",
+        view: "timeseries",
+        metrics: [
+          "git.commits",
+          "git.prs_merged",
+          "git.lines_added",
+          "git.lines_removed",
+        ],
+        defaultPresentation: "table",
+        table: {
+          columns: [
+            { metric: "git.commits" },
+            { metric: "git.prs_merged", labelSource: "short" },
+            GIT_LINES_TABLE_COLUMN,
+          ],
+        },
+        groupBy: {
+          default: "branch_scope",
         },
       },
       {
@@ -472,7 +570,7 @@ export const GROUPS: readonly MetricGroup[] = [
       preview: [
         "ai.active_days",
         "ai.cost",
-        "ai.extra_usage_cost",
+        "ai.daily_approximate_extra_usage_cost",
         "ai.accepted_lines",
       ],
     },
@@ -591,4 +689,44 @@ export function groupIdForMetricKey(metricKey: string): GroupId | null {
     if (def.collection.metrics.some((m) => m.key === metricKey)) return def.id;
   }
   return null;
+}
+
+/**
+ * The groups this install shows, with the metrics it gates removed.
+ *
+ * Two gates, both from the per-install nav policy: a group whose Person-zone
+ * section the install hides or marks planned is not part of what this
+ * deployment measures, and neither is a group left with no visible metric of
+ * its own. Both matter beyond the menu — the coverage screen counts sections to
+ * say how much of a person's work the product can see, and counting a section
+ * this install does not show would report our own backlog as a gap in their
+ * data.
+ */
+export function visibleGroups(
+  showPlanned: boolean,
+  policy: InstanceNavPolicy = navPolicy()
+): readonly MetricGroup[] {
+  if (!gatesAnyMetric(policy) && policy.hide.personSections.size === 0 &&
+      policy.planned.personSections.size === 0) {
+    return GROUPS;
+  }
+
+  const kept: MetricGroup[] = [];
+  for (const group of visiblePersonSections(GROUPS, showPlanned, policy)) {
+    const metrics = group.collection.metrics.filter((m) =>
+      metricVisible(m.key, showPlanned, policy)
+    );
+    if (!metrics.length) continue;
+    const keep = (key: string) => metricVisible(key, showPlanned, policy);
+    kept.push({
+      ...group,
+      collection: { ...group.collection, metrics },
+      card: { preview: group.card.preview.filter(keep) },
+      drilldown: group.drilldown.flatMap((block) => {
+        const blockMetrics = block.metrics.filter(keep);
+        return blockMetrics.length ? [{ ...block, metrics: blockMetrics }] : [];
+      }),
+    });
+  }
+  return kept;
 }

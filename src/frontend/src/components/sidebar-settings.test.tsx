@@ -49,6 +49,15 @@ describe("SidebarSettings", () => {
     }
   });
 
+  it("offers no switch into the interface the portal replaced", () => {
+    render(<SidebarSettings />);
+
+    // Not hidden behind a state: there is no portal preference left to show,
+    // and `portal-store` deletes the key it used to live in.
+    expect(screen.queryByText("Portal")).not.toBeInTheDocument();
+    expect(screen.getByText("Show planned sections")).toBeInTheDocument();
+  });
+
   it("changes the focus mode through the toggle group", async () => {
     const user = userEvent.setup();
     render(<SidebarSettings />);

@@ -1,47 +1,39 @@
-import { Toaster as Sonner, type ToasterProps } from "sonner"
-import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon } from "lucide-react"
+import {
+  Toaster as KitToaster,
+  toast as kitToast,
+  type ToasterProps,
+} from "@gears-frontx/ui-kit";
+import { useTranslation } from "react-i18next";
 
-import { useTheme } from "@/components/theme-provider"
-import { Spinner } from "@/components/ui/spinner"
+type ToastOptions = {
+  description?: string;
+  duration?: number;
+};
 
-const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme } = useTheme()
-
-  return (
-    <Sonner
-      theme={theme as ToasterProps["theme"]}
-      className="toaster group"
-      icons={{
-        success: (
-          <CircleCheckIcon className="size-4" />
-        ),
-        info: (
-          <InfoIcon className="size-4" />
-        ),
-        warning: (
-          <TriangleAlertIcon className="size-4" />
-        ),
-        error: (
-          <OctagonXIcon className="size-4" />
-        ),
-        loading: <Spinner />,
-      }}
-      style={
-        {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
-        } as React.CSSProperties
-      }
-      toastOptions={{
-        classNames: {
-          toast: "cn-toast",
-        },
-      }}
-      {...props}
-    />
-  )
+function add(type: "success" | "error", title: string, options?: ToastOptions) {
+  return kitToast.add({
+    type,
+    title,
+    description: options?.description,
+    timeout: options?.duration,
+  });
 }
 
-export { Toaster }
+const toast = {
+  success: (title: string, options?: ToastOptions) => add("success", title, options),
+  error: (title: string, options?: ToastOptions) => add("error", title, options),
+};
+
+function Toaster(props: ToasterProps) {
+  const { t } = useTranslation();
+
+  return (
+    <KitToaster
+      label={t("common.a11y.notifications")}
+      closeLabel={t("common.actions.close")}
+      {...props}
+    />
+  );
+}
+
+export { Toaster, toast };

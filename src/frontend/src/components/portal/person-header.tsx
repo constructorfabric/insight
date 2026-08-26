@@ -16,6 +16,7 @@ import {
   usePortalNavActions,
 } from "@/lib/portal/portal-nav";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { cn } from "@/lib/utils";
 
 /**
@@ -77,7 +78,7 @@ export function PersonHeader({ person }: { person: string }) {
   const peers = [...(manager?.subordinates ?? [])]
     .filter((p) => p.person_id)
     .sort((a, b) =>
-      (a.display_name || a.email).localeCompare(b.display_name || b.email),
+      personDisplayName(a).localeCompare(personDisplayName(b)),
     );
   const hasPeers = peers.length > 1;
 
@@ -95,7 +96,7 @@ export function PersonHeader({ person }: { person: string }) {
 
   const title = (
     <h1 className="truncate text-lg font-semibold tracking-tight">
-      {data.display_name || data.email}
+      {personDisplayName(data)}
     </h1>
   );
 
@@ -140,7 +141,7 @@ export function PersonHeader({ person }: { person: string }) {
                         )}
                       />
                       <span className="truncate">
-                        {p.display_name || p.email}
+                        {personDisplayName(p)}
                       </span>
                     </DropdownMenuItem>
                   );

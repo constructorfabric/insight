@@ -5,6 +5,7 @@ import {
   MANAGE_ITEMS,
   manageItemsFor,
   partitionByReadiness,
+  peopleItemsFor,
   resolveZoneItem,
   ZONES,
   zoneItems,
@@ -13,15 +14,15 @@ import {
 const defaults = ZONES.map((z) => [z.id, defaultZoneItem(z.id)] as const);
 
 describe("zone item defaults", () => {
-  it("open each zone on its first built entry", () => {
+  it("open each zone on its first catalog entry", () => {
     expect(Object.fromEntries(defaults)).toEqual({
       overview: "at-a-glance",
       directions: null,
       person: null,
       people: "roster",
       aicost: "overview",
-      scorecard: null,
-      reports: "report-builder",
+      scorecard: "fixed",
+      reports: "delivery-trend",
       manage: "metric-catalog",
     });
   });
@@ -34,7 +35,7 @@ describe("zone item defaults", () => {
     }
   });
 
-  it("are null only where the zone lists nothing built", () => {
+  it("are null only where the zone lists no items", () => {
     for (const [zone, id] of defaults) {
       const { live } = partitionByReadiness(zoneItems(zone), false);
       expect(id === null, zone).toBe(live.length === 0);
@@ -66,8 +67,7 @@ describe("resolveZoneItem", () => {
     expect(resolveZoneItem("manage", "trend")).toBe("metric-catalog");
   });
 
-  it("stays null for a zone with nothing built to open on", () => {
-    expect(resolveZoneItem("scorecard", null)).toBeNull();
+  it("stays null for a zone with no catalog items", () => {
     expect(resolveZoneItem("person", null)).toBeNull();
   });
 });
@@ -87,5 +87,29 @@ describe("manageItemsFor", () => {
 
     expect(visible.map((i) => i.id)).not.toContain("identities");
     expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
+  });
+});
+
+describe("peopleItemsFor", () => {
+  it("keeps the reporting-line names when there is a reporting line", () => {
+    const labels = peopleItemsFor(false).map((item) => item.label);
+
+    expect(labels).toContain("Employees");
+    expect(labels).toContain("Median by Role");
+  });
+
+  it("names the same views for an organisation with no reporting lines", () => {
+    // Same ids, because the pane routes on them.
+    const items = peopleItemsFor(true);
+
+    expect(items.map((item) => item.id)).toEqual(["roster", "employees"]);
+    expect(items.map((item) => item.label)).toEqual(["Overview", "Roster"]);
+  });
+
+  it("drops the by-role cut a flat roster cannot make", () => {
+    // No job titles in that roster, so the median has nothing to group by.
+    expect(peopleItemsFor(true).map((item) => item.id)).not.toContain(
+      "median-by-role",
+    );
   });
 });

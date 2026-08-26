@@ -55,15 +55,26 @@ def numbers(text: str) -> list[str]:
 
 
 def assert_same_counts(shown: list[str], written: list[str]) -> None:
-    """One rendered row against its exported one.
+    """One rendered row against its exported one, read as numbers in order.
 
-    The table renders lines added and removed in one signed cell where the
-    export gives them a column each, so the numbers are compared rather than
-    the strings.
+    Not cell against column: the export writes one column per metric
+    (`model.columns` x `model.metrics`) while the table may render several of
+    them in a single cell — a signed lines pair is one cell against two
+    columns — and both visit the metrics in the same order.
+
+    Absence lines up as well. A point the response does not carry renders as a
+    dash, which `rendered_rows` normalizes to empty, and exports as an empty
+    cell; neither yields a number. And a metric missing from the response drops
+    its column from both sides at once, because the table resolves its columns
+    against the same `model.metrics` the export iterates.
+
+    Reading the row as one sequence is what keeps a column added to the block
+    from turning this into a positional puzzle again.
     """
-    label, commits, merged, lines = shown
-    assert [commits, merged] == written[1:3], f"{label}: counts on screen and exported differ"
-    assert numbers(lines) == written[3:5], f"{label}: rendered lines cell and export columns differ"
+    label, *cells = shown
+    assert numbers(" ".join(cells)) == numbers(" ".join(written[1:])), (
+        f"{label}: the numbers on screen are not the ones exported"
+    )
 
 
 @pytest.mark.requires_seed("dev_lead")
@@ -88,7 +99,17 @@ def test_git_output_repository_timeseries_switches_views_and_downloads(
     expect(
         table.get_by_role("columnheader", name=re.compile("insight", re.I)).first
     ).to_be_visible()
-    for heading in ("Commits", "PRs merged", "Lines"):
+    # Each total and the default-branch reading beside it: the pair is the point
+    # of the block, and a column silently dropped for a metric the response did
+    # not carry would otherwise read as a passing table.
+    for heading in (
+        "Commits",
+        "Commits (default)",
+        "PRs merged",
+        "PRs merged (default)",
+        "Lines",
+        "Lines (default)",
+    ):
         expect(table.get_by_role("columnheader", name=heading).first).to_be_visible()
     expect(table.get_by_role("cell", name="Total", exact=True)).to_be_visible()
     expect(table.get_by_role("cell", name="Grand total", exact=True)).to_be_visible()

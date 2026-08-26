@@ -1,3 +1,6 @@
+import { isRankable } from "@/lib/scoring";
+import type { PeerStatusWithNeutral } from "@/lib/peers";
+
 /**
  * Metrics that count a superset of what another metric counts.
  *
@@ -14,6 +17,10 @@
 export const METRIC_CONTAINS: Readonly<Record<string, readonly string[]>> = {
   // "All lines added, by file category" ⊃ "lines added to code files".
   "git.lines_added": ["git.code_lines"],
+  // Branch scope partitions each total, so the default-branch reading is a
+  // part of it by construction — not a correlated second measurement.
+  "git.commits": ["git.default_branch_commits"],
+  "git.prs_merged": ["git.default_branch_prs_merged"],
   // "Files shared with any recipient" ⊃ inside / outside the organization.
   "collab.files_shared": [
     "collab.files_shared_internal",
@@ -64,6 +71,33 @@ const RESTATEMENT_GROUP = new Map<string, number>(
  * items in the order the reader will meet them — most severe first, or in
  * candidate order for a row that is chosen rather than ranked.
  */
+/**
+ * The entries a standing may count as independent signals.
+ *
+ * A section's status and a person's problem count grade a PATTERN — how many
+ * separate things went wrong — so a metric another one already contains must
+ * not vote twice. Every surface that grades or tallies goes through here.
+ * Displayed rows do not: "what did we measure" and "how many independent
+ * things went wrong" are different questions.
+ *
+ * INVARIANT: thinning is over what actually READ for this entity — never over
+ * the collection, and never over a part that is present but unranked. A total
+ * whose narrower part says nothing is the only reading there is and keeps its
+ * vote, which is why the rank is required rather than optional: an entry with
+ * no comparison must not be able to displace one that has it.
+ */
+export function countableSignals<T>(
+  entries: readonly T[],
+  keyOf: (entry: T) => string,
+  rankOf: (entry: T) => PeerStatusWithNeutral | null
+): T[] {
+  const ranked = entries.filter((entry) => isRankable(rankOf(entry)));
+  const kept = dropRedundantMetrics(
+    ranked.map((entry) => ({ key: keyOf(entry), entry }))
+  );
+  return kept.map((item) => item.entry);
+}
+
 export function dropRedundantMetrics<T extends { key: string }>(
   items: readonly T[],
   alreadyShown: ReadonlySet<string> = new Set()

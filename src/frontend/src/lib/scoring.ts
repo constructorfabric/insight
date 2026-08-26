@@ -29,6 +29,16 @@ export function rankableCount(counts: RankCounts): number {
 }
 
 /**
+ * Whether a rank carries a comparison at all — the same set `rankCounts`
+ * tallies as ranked. A metric present in the response but unmeasured for this
+ * person, or measured against a pool too thin to disclose, ranks `neutral`: it
+ * is not a weak reading, it is no reading.
+ */
+export function isRankable(rank: PeerStatusWithNeutral | null): boolean {
+  return rank === "top" || rank === "in_pack" || rank === "bottom"
+}
+
+/**
  * Fraction of the rankable set a rank must clear to count as a section-wide
  * pattern rather than quartile noise. A quartile hands ~25% of any healthy
  * cohort to the bottom by construction, so a lone weak metric is expected, not

@@ -1,22 +1,32 @@
 use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
     AliasCollapse, EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat,
-    MetricInputRole, SourceKind, ValueTransform,
+    MetricInputRole, RatioDenominatorAggregation, SourceKind, ValueTransform,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityType {
     Person,
+    Tenant,
 }
 
 impl EntityType {
     pub fn as_db(self) -> &'static str {
         match self {
             Self::Person => "person",
+            Self::Tenant => "tenant",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "person" => Some(Self::Person),
+            "tenant" => Some(Self::Tenant),
+            _ => None,
         }
     }
 }
@@ -39,7 +49,11 @@ impl CohortKey {
 #[serde(rename_all = "snake_case")]
 pub enum SeedComputation {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+        #[serde(default)]
+        denominator_aggregation: RatioDenominatorAggregation,
+    },
     Median,
     DistinctCount,
 }
@@ -57,7 +71,17 @@ impl SeedComputation {
     pub fn scale(self) -> Option<f64> {
         match self {
             Self::Sum | Self::Median | Self::DistinctCount => None,
-            Self::Ratio { scale } => Some(scale),
+            Self::Ratio { scale, .. } => Some(scale),
+        }
+    }
+
+    pub fn denominator_aggregation(self) -> RatioDenominatorAggregation {
+        match self {
+            Self::Ratio {
+                denominator_aggregation,
+                ..
+            } => denominator_aggregation,
+            Self::Sum | Self::Median | Self::DistinctCount => RatioDenominatorAggregation::Sum,
         }
     }
 }
@@ -71,6 +95,14 @@ pub struct SourceSeed {
     /// `ObservationRelation::parse` (pinned by a registry test).
     pub source_ref: String,
     pub evidence_ref: String,
+    /// How many days a delivered day keeps changing before it settles, when the
+    /// suppliers revise one. Absent where nothing revises, or where nobody has
+    /// established it — a reader treats absence as "settles on arrival" rather
+    /// than as zero uncertainty. Where several suppliers feed one source the
+    /// longest window wins: calling a settled day provisional costs less than
+    /// the reverse.
+    #[serde(default)]
+    pub revision_window_days: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -188,9 +220,34 @@ mod tests {
     }
 
     #[test]
+    fn ratio_denominator_aggregation_defaults_to_sum_and_accepts_distinct_count() {
+        let default: SeedComputation = serde_yaml::from_str("!ratio\nscale: 1")
+            .unwrap_or_else(|error| panic!("default ratio must parse: {error}"));
+        let distinct: SeedComputation =
+            serde_yaml::from_str("!ratio\nscale: 1\ndenominator_aggregation: distinct_count")
+                .unwrap_or_else(|error| panic!("distinct ratio must parse: {error}"));
+
+        assert_eq!(
+            default.denominator_aggregation(),
+            RatioDenominatorAggregation::Sum
+        );
+        assert_eq!(
+            distinct.denominator_aggregation(),
+            RatioDenominatorAggregation::DistinctCount
+        );
+    }
+
+    #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 65, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 89, "builtin metric count");
+    }
+
+    #[test]
+    fn entity_types_round_trip_through_storage_values() {
+        for entity_type in [EntityType::Person, EntityType::Tenant] {
+            assert_eq!(EntityType::from_db(entity_type.as_db()), Some(entity_type));
+        }
     }
 
     #[test]
@@ -255,11 +312,13 @@ mod tests {
         }
     }
 
-    // INVARIANT: only additive computations may declare a collapse. Median is
-    // event-grain (collapsing moves the quantile) and distinct counts collapse
-    // through `uniqExact(subject_key)`, so neither has a correct rendering.
+    // INVARIANT: a median input may not declare a collapse — median is
+    // event-grain, and merging same-day rows moves the quantile. Additive
+    // computations collapse by design, and distinct counts are unaffected:
+    // they read `uniqExact(subject_key)` and the collapse groups by
+    // `subject_key`, so the collapse is a no-op there.
     #[test]
-    fn alias_collapse_is_declared_only_on_additive_computations() {
+    fn alias_collapse_is_never_declared_on_median_inputs() {
         let collapse_by_source: HashMap<&str, HashMap<&str, AliasCollapse>> = builtin_sources()
             .iter()
             .map(|builtin_source| {
@@ -278,11 +337,7 @@ mod tests {
             let collapses = collapse_by_source
                 .get(metric.source_key.as_str())
                 .unwrap_or_else(|| panic!("unknown source for {}", metric.metric_key));
-            let additive = matches!(
-                metric.computation,
-                SeedComputation::Sum | SeedComputation::Ratio { .. }
-            );
-            if additive {
+            if !matches!(metric.computation, SeedComputation::Median) {
                 continue;
             }
             for input in &metric.inputs {

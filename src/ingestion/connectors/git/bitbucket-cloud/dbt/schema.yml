@@ -14,7 +14,6 @@ sources:
       - name: repositories
       - name: branches
       - name: commits
-      - name: commit_branch_reachability
       - name: file_changes
       - name: pull_requests
       - name: pull_request_diffstat
@@ -22,34 +21,66 @@ sources:
       - name: pull_request_comments
       - name: pull_request_commits
       # Optional streams: permission- or feature-gated endpoints (Pipelines,
-      # Deployments, issue tracker) that a workspace may never populate, and
-      # tags that a repository may not have. An empty bronze table has no
-      # newest row, so the source-level SLA would raise a false staleness
-      # error — freshness is disabled per table instead.
+      # Deployments) that a workspace may never populate. An empty bronze
+      # table has no newest row, so the source-level SLA would raise a false
+      # staleness error — freshness is disabled per table instead.
       - name: pipelines
-        freshness: null
-      - name: pipeline_steps
-        freshness: null
-      - name: pipeline_step_test_reports
         freshness: null
       - name: deployments
         freshness: null
-      - name: environments
-        freshness: null
-      - name: tags
-        freshness: null
-      - name: issues
-        freshness: null
-      - name: issue_comments
-        freshness: null
-      - name: issue_changes
-        freshness: null
-      # Not wired into the source right now (no model reads it), so its table
-      # has no newest row to be fresh.
-      - name: pull_request_tasks
+      - name: workspace_members
+      - name: commit_authors
         freshness: null
 
 models:
+  - name: bitbucket_cloud__item_events
+    description: "Bitbucket pull-request lifecycle activity -> staging, feeds class_git_item_events"
+
+  - name: bitbucket_cloud__account_emails
+    description: "Every (Bitbucket account, e-mail) pair the connector observed, one row per pair"
+    columns:
+      - name: account_id
+        description: "Bitbucket account_id the e-mail was observed under (ADR-0002 account id)"
+        data_tests:
+          - not_null
+      - name: email
+        description: "Lowercased e-mail address the account committed under"
+        data_tests:
+          - not_null
+
+  - name: bitbucket_cloud__unowned_commit_emails
+    description: "Commit author e-mails no Bitbucket account claims, with the name their commits carry"
+    columns:
+      - name: email
+        description: "Lowercased commit author e-mail, and the account id it is published under. Unique per connection, not globally — the grain is (email, tenant_id, source_id)"
+        data_tests:
+          - not_null
+      - name: author_name
+        description: "Name from the author's most recent commit, so an operator can recognise them"
+      - name: last_committed_at
+        description: "Most recent commit authored under this address"
+
+  - name: bitbucket_cloud__identity_inputs
+    description: "E-mail claims and roster display names against Bitbucket accounts -> staging, feeds silver.identity_inputs"
+    columns:
+      - name: unique_key
+        description: "One claim per (tenant, source, account, value_type, operation, value)"
+        data_tests:
+          - not_null
+          - unique
+      - name: insight_source_type
+        description: "`bitbucket` for an account-keyed account, `bitbucket-commit-email` for an unowned e-mail"
+        data_tests:
+          - accepted_values:
+              values: ["bitbucket", "bitbucket-commit-email"]
+      - name: source_account_id
+        description: "The Bitbucket account_id, or the e-mail itself when no account claims it"
+      - name: value
+        description: "The claimed e-mail address, or the git author name for a display_name row"
+
+  - name: bitbucket_cloud__bronze_promoted
+    description: "Promotes every Bitbucket bronze table to ReplacingMergeTree keyed on unique_key"
+
   - name: bitbucket_cloud__repositories
     description: "Bitbucket Cloud repositories -> staging, feeds class_git_repositories"
 
@@ -58,9 +89,6 @@ models:
 
   - name: bitbucket_cloud__commits
     description: "Bitbucket Cloud commits -> staging, feeds class_git_commits"
-
-  - name: bitbucket_cloud__commit_branch_reachability
-    description: "Bitbucket Cloud commit-to-branch reachability events -> staging"
 
   - name: bitbucket_cloud__file_changes
     description: "Bitbucket Cloud file changes -> staging, feeds class_git_file_changes"

@@ -12,9 +12,10 @@ import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { PortalLayout } from "@/components/portal/portal-layout";
 import { isPortalShellPath } from "@/lib/portal/portal-routes";
-import { usePortalEnabled } from "@/lib/portal/portal-store";
+import { readLegacyShell } from "@/lib/portal/portal-store";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { queryClient } from "@/query-client";
+import { FeedbackDialogProvider } from "@/components/feedback-dialog-provider";
 import { MetricEvidenceDialogProvider } from "@/components/metric-evidence-dialog-provider";
 
 // Warms the exact key `useIcPerson` reads, so the shell mounts with the
@@ -55,7 +56,7 @@ function RootPending() {
 }
 
 function RootLayout() {
-  const portal = usePortalEnabled();
+  const portal = !readLegacyShell();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // The portal is a ROUTE now, so it renders through the Outlet like anything
   // else — otherwise its navigation could never live in the URL. It still owns
@@ -67,25 +68,27 @@ function RootLayout() {
           branch lives inside it, so a drilldown opened from a portal surface
           finds the same provider the legacy screens use. */}
       <MetricEvidenceDialogProvider>
-        <AuthGate>
-          {portal && portalRoute ? (
-            <PortalLayout />
-          ) : (
-            <SidebarProvider>
-              <AppSidebar />
-              <SidebarInset className="min-w-0 overflow-x-clip">
-                <MockBanner />
-                <ViewAsBanner />
-                <Outlet />
-              </SidebarInset>
-            </SidebarProvider>
-          )}
-        </AuthGate>
-        {/* Outside AuthGate: a toast must survive the surface that raised it
-            closing, and the identity verbs report their result by closing the
-            case window and toasting. Without this mount every `toast()` call
-            in the app is silently dropped. */}
-        <Toaster position="bottom-right" />
+        <FeedbackDialogProvider>
+          <AuthGate>
+            {portal && portalRoute ? (
+              <PortalLayout />
+            ) : (
+              <SidebarProvider>
+                <AppSidebar />
+                <SidebarInset className="min-w-0 overflow-x-clip">
+                  <MockBanner />
+                  <ViewAsBanner />
+                  <Outlet />
+                </SidebarInset>
+              </SidebarProvider>
+            )}
+          </AuthGate>
+          {/* Outside AuthGate: a toast must survive the surface that raised it
+              closing, and the identity verbs report their result by closing the
+              case window and toasting. Without this mount every `toast()` call
+              in the app is silently dropped. */}
+          <Toaster />
+        </FeedbackDialogProvider>
       </MetricEvidenceDialogProvider>
     </TooltipProvider>
   );

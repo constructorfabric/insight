@@ -55,10 +55,18 @@ export interface MeRole {
  * login token's realm roles, which no identity endpoint reads. An empty list
  * IS the "not an admin" answer; the endpoint never 403s.
  */
+/**
+ * Whose data a caller may see, as the identity service decides it: the
+ * reporting line plus explicit grants, or every person in the tenant.
+ */
+export type VisibilityPolicy = "org_chart" | "flat";
+
 export interface MeResponse {
   person_id: string;
   insight_tenant_id: string;
   roles: MeRole[];
+  /** Absent from an older service; readers treat that as `org_chart`. */
+  visibility_policy?: VisibilityPolicy;
 }
 
 /**
@@ -115,7 +123,7 @@ export interface PersonSummary {
 /** One account awaiting an operator decision. */
 export interface AttentionItem {
   /** `contested` | `binding_conflict` | `provisioned_at_login` |
-   *  `minted_from_roster` | `no_evidence` — open vocabulary. */
+   *  `minted_from_roster` | `no_source_id` | `no_evidence` — open vocabulary. */
   kind: string;
   source: string;
   source_id: string;
@@ -141,6 +149,8 @@ export interface ResolutionRates {
   observed: number;
   bound: number;
   pending: number;
+  /** Unbound accounts no seed run can bind — an operator decides, or nobody. */
+  no_source_id: number;
   no_evidence: number;
   excluded: number;
 }
@@ -157,12 +167,26 @@ export interface AttentionResponse {
   items_truncated?: boolean;
 }
 
+/** The queue's first read — a healthy backlog arrives whole. */
+export const QUEUE_FIRST_PAGE = 200;
+
+/** The service's own ceiling on `limit`: asking past it answers the same page,
+ *  so a reader who has reached it is told to work the backlog down instead.
+ *
+ *  INVARIANT: mirrors `MAX_QUEUE_LIMIT` in the identity-resolution service. */
+export const QUEUE_MAX_ITEMS = 1000;
+
 /**
  * The operator review queue (`GET /resolution/attention`) — accounts the
  * resolver could not decide, with the tenant-wide match rate. Admin-gated
  * server-side; the caller is expected to sit behind `useIsAdmin`.
+ *
+ * There is no cursor: the queue is derived from the whole tenant on every
+ * read, so asking for more of it is a larger `limit`, not a next page.
  */
-export async function getAttention(limit = 200): Promise<AttentionResponse> {
+export async function getAttention(
+  limit: number = QUEUE_FIRST_PAGE,
+): Promise<AttentionResponse> {
   const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -475,6 +499,38 @@ export async function searchPersons(
   return found;
 }
 
+/**
+ * The persons the caller may see (`GET /visible-persons`) — one page, ordered by
+ * the label each is shown under. Any signed-in caller may ask; the answer is
+ * their own visible set, so it needs no admin role.
+ */
+export async function listVisiblePersons(
+  page: PageRequest & { q?: string } = {},
+): Promise<PersonSearchResponse> {
+  const params = new URLSearchParams();
+  if (page.q) params.set("q", page.q);
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const res = await fetchWithAuth(
+    `${BASE}/visible-persons${query ? `?${query}` : ""}`,
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PersonSearchResponse;
+  try {
+    listed = (await res.json()) as PersonSearchResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
+}
+
 export interface PersonAccountEntry {
   source: string;
   source_id: string;
@@ -539,6 +595,7 @@ function toIdentityPerson(p: ProfileResponse): IdentityPerson {
     division: p.division ?? "",
     job_title: p.job_title ?? "",
     status: p.status ?? "",
+    username: p.username ?? "",
     parent_email: p.parent_email ?? null,
     // `parent_id` has no ProfileResponse source; preserve the prior default.
     parent_id: null,

@@ -59,6 +59,69 @@ export function useMetricDefinitionsResponse(): UseQueryResult<MetricDefinitionL
   });
 }
 
+/**
+ * The newest date this metric has an observation for, or null when the
+ * catalogue cannot say — an unread catalogue, or a custom metric, whose
+ * `last_observed_date` the validator leaves absent however much it serves.
+ * Callers read null as "no boundary known", never as "nothing collected".
+ *
+ * Rides the one cached catalogue query, so it costs no extra request.
+ */
+export function useCollectedThrough(metricKey: string): CollectionBoundary {
+  const { data } = useMetricDefinitionsResponse();
+  const definition = data?.metrics.find(
+    (metric) => metric.metric_key === metricKey
+  );
+  return {
+    collectedThrough: definition?.last_observed_date ?? null,
+    revisionWindowDays: definition?.revision_window_days ?? null,
+  };
+}
+
+export interface CollectionBoundary {
+  /** Newest date the metric has an observation for; null = no boundary known. */
+  collectedThrough: string | null;
+  /** Days back from it the suppliers may still revise; null = none declared. */
+  revisionWindowDays: number | null;
+}
+
+export interface DeclaredMetricDimensions {
+  /**
+   * Dimensions each metric declares, or null when the catalog could not be
+   * read. Asking for one a metric does not declare is rejected outright, so a
+   * caller with no catalog asks for none.
+   */
+  byMetricKey: ReadonlyMap<string, ReadonlySet<string>> | null;
+  isPending: boolean;
+}
+
+/**
+ * The dimensions each metric will accept as a display dimension.
+ *
+ * Same gate as `useAvailableMetricKeys`, one level down: a drilldown that asks
+ * for an undeclared dimension is a 400, not a request served without it.
+ */
+export function useDeclaredMetricDimensions(): DeclaredMetricDimensions {
+  const { data, isPending } = useQuery({
+    queryKey: ["metric-definitions"],
+    queryFn: listMetricDefinitions,
+    staleTime: 5 * 60 * 1000,
+  });
+  const byMetricKey = useMemo(
+    () =>
+      data
+        ? new Map(
+            data.metrics.map((m) => [
+              m.metric_key,
+              new Set(m.dimensions) as ReadonlySet<string>,
+            ])
+          )
+        : null,
+    [data]
+  );
+  return { byMetricKey, isPending };
+}
+
 export interface AvailableMetricKeys {
   /**
    * What this installation can serve, or null when the catalog could not be

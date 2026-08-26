@@ -80,6 +80,17 @@ playwright-cli snapshot --depth=6
 
 When a wait does time out, **screenshot before giving up**. A picture of the actual page — "Sign-in failed", an empty state, a 502 — turns a silent hang into a diagnosis in one look. The same reflex applies to any recipe from memory or an old note: routes and the auth stack have changed inside a month before. Check it against the running build, and say so when it turns out stale.
 
+## Rule out your own driving before believing a negative
+
+A negative observation is the easiest false finding to produce, because the way you drove the page can manufacture it. Before "the control does nothing", "the column never changed", "no request fired" or "the list is short" becomes a claim, reproduce it from a fresh `goto` on the shortest path to the symptom. Four instruments account for most of these:
+
+- **The page you have been clicking in holds a cache.** The SPA keeps query results, so a control whose answer is already cached fires no request and re-renders nothing. On a page you have been driving, "no request fired" measures the cache, not the control.
+- **A selector reaches the whole page, not the container you meant.** A control matching by role or label can sit outside the dialog you are testing, so its state says nothing about that dialog. Check containment before attributing behaviour to it.
+- **A rendered list is a window onto a longer one.** Record tables virtualise, and the API behind them pages with a cursor. Take the count from the record label or by following the cursor to the end, never from the rows in the DOM.
+- **A wait that did not time out still proves nothing** about a control that renders late. Give a slow surface its full time, and screenshot before calling anything missing.
+
+When a negative survives that pass, say which instrument you ruled out. When it does not, the finding was yours and never reaches the report.
+
 ## Routes worth knowing
 
 - `/ic/<url-encoded-email>/personal` — IC dashboard, personal view (`@` encodes as `%40`)
@@ -129,7 +140,21 @@ For a UI defect, three artifacts answer the three questions a reader has:
 2. **A contrast shot** — the same widget in a state that is correct, or a sibling that behaves. Answers "how do I know it's wrong?"
 3. **The page snapshot** — `playwright-cli snapshot --filename="$EVIDENCE/<case>.yml"`, plus `--boxes` when the complaint is about position or overlap. Answers "what was actually on screen?"
 
-Annotate before capturing rather than describing the element in prose afterwards. Then hand the issue to `file-bug-insight` — and be straight about the constraint it will repeat: GitHub has no API for uploading images to an issue, so the user drags the PNGs in themselves.
+Annotate before capturing rather than describing the element in prose afterwards. Then hand the issue to `file-bug-insight` — it owns attaching the images and has a working upload path, so don't tell the user to drag them in.
+
+### Scrub the frame, not just the widget
+
+A screenshot of a populated stand carries more than the thing you meant to capture. Person names, a scope picker, team metric values and other people's free text all render, and the issue tracker is public.
+
+Two moves, in order. Reproduce on a screen carrying no person data where the defect allows it — a config surface beats a populated table, though a metric name, group title or description there can be author-written too, so it is a better starting point rather than a safe one. Where the defect needs the populated screen, redact before uploading rather than cropping the layout apart, since the layout is usually part of what the reader needs to see.
+
+Read the whole frame every time, and treat any free text in it as personal until you have checked. The offending element is rarely the sensitive part.
+
+### Mock the response instead of writing the content
+
+To see how a surface renders hostile or extreme content, mock the response rather than creating it. `playwright-cli route "**/api/..." --body=...` puts XSS payloads, absurd lengths, empty states and error states through the real render path without a row landing in a shared stand's database. `unroute` afterwards.
+
+This is the difference between proving that four payloads render as escaped text and planting scripts in a stand colleagues read.
 
 ## When you can't get a browser
 

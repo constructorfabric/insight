@@ -33,7 +33,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..profiles import Person
-from .base import bulk_insert, deterministic_uuid, truncate
+from .base import deterministic_uuid
+from .insert import bulk_insert, truncate
 
 # Identity keys bindings on (source_type, source_id, account_id): one stable value must span claims and bindings.
 _BAMBOOHR_SOURCE_ID = "seed-bamboohr"

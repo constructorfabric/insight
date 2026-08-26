@@ -1,9 +1,3 @@
-/**
- * AI & Cost pane items with no dedicated data-backed view yet, and the note
- * each one renders instead. The wording must agree with the item's `readiness`
- * in nav-model — a product gap never reads as a screen we owe, and the reverse
- * (pinned by readiness.test.ts).
- */
 export const PANE_ITEM_COMING_SOON: Record<string, string> = {
   "per-tool":
     "Per-tool detail — the tool split is summarised on Overview → By tool; a standalone per-tool drilldown is pending.",

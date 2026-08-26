@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import type { PersonSummary } from "@/api/identity-client";
 import { useViewer } from "@/auth";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
@@ -19,7 +20,10 @@ import {
   usePortalNavActions,
 } from "@/lib/portal/portal-nav";
 import { useIcPerson } from "@/queries/ic-dashboard";
+import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
+import { personName } from "@/lib/identities/person-display";
 import { cn } from "@/lib/utils";
 
 // Mirrors the rail: a person with neither display name nor email is still a row.
@@ -46,7 +50,7 @@ function collectEmployees(root: IdentityPerson): EmployeeRow[] {
       if (!byId.has(key)) {
         byId.set(key, {
           personId: node.person_id,
-          displayName: node.display_name || node.email || UNNAMED_PERSON,
+          displayName: personName(node) ?? UNNAMED_PERSON,
           jobTitle: node.job_title ?? "",
           department: node.department ?? "",
           division: node.division ?? "",
@@ -64,6 +68,27 @@ function collectEmployees(root: IdentityPerson): EmployeeRow[] {
 }
 
 /**
+ * Rows for an organisation with no reporting lines: the roster as identity
+ * serves it. Named through `personName` so the precedence has one definition,
+ * with its own last resort — `person-display` stops at the id on purpose, and a
+ * raw id in this column is a row nobody can tell apart.
+ */
+function rosterEmployees(roster: readonly PersonSummary[]): EmployeeRow[] {
+  return roster
+    .map((person) => ({
+      personId: person.person_id,
+      displayName: personName(person) ?? UNNAMED_PERSON,
+      jobTitle: person.job_title ?? "",
+      // No reporting lines, and `PersonSummary` carries no org attributes.
+      department: "",
+      division: "",
+      supervisorName: "",
+      status: person.status ?? "",
+    }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+/**
  * Employees directory — every person in the viewer's org (flattened org tree),
  * searchable, each row linking into their Person view. Sourced entirely from
  * the identity profile tree (`getPerson` recurses), so no metric queries and no
@@ -73,11 +98,18 @@ export function EmployeesView() {
   const { setZone } = usePortalNavActions();
   const { personId: viewerPersonId } = useViewer();
   const { data, isPending, isError, refetch } = useIcPerson(viewerPersonId ?? "");
+  const { isFlat } = useVisibilityPolicy();
+  const flatRoster = useVisibleRoster(isFlat);
   const [query, setQuery] = useState("");
 
   const employees = useMemo(
-    () => (data ? collectEmployees(data) : []),
-    [data],
+    () =>
+      isFlat
+        ? rosterEmployees(flatRoster.roster)
+        : data
+          ? collectEmployees(data)
+          : [],
+    [isFlat, flatRoster.roster, data],
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -90,11 +122,17 @@ export function EmployeesView() {
     );
   }, [employees, query]);
 
-  if (isPending) return <CenteredSpinner className="min-h-[60vh]" />;
-  if (isError || !data)
+  const loading = isFlat ? flatRoster.isPending : isPending;
+  const failed = isFlat ? flatRoster.isError : isError || !data;
+  if (loading) return <CenteredSpinner className="min-h-[60vh]" />;
+  if (failed)
     return (
       <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon variant="card" state="error" onRetry={refetch} />
+        <ComingSoon
+          variant="card"
+          state="error"
+          onRetry={isFlat ? flatRoster.retry : refetch}
+        />
       </div>
     );
 
@@ -102,7 +140,9 @@ export function EmployeesView() {
     <div className="flex flex-col gap-3 p-4 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Employees</h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            {isFlat ? "Roster" : "Employees"}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length}
             {filtered.length !== employees.length ? ` of ${employees.length}` : ""}{" "}
@@ -126,9 +166,15 @@ export function EmployeesView() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Title</TableHead>
-              <TableHead>Department</TableHead>
-              <TableHead>Division</TableHead>
-              <TableHead>Manager</TableHead>
+              {/* A flat organisation fills none of these: no reporting line,
+                  and the roster carries no org attributes. */}
+              {isFlat ? null : (
+                <>
+                  <TableHead>Department</TableHead>
+                  <TableHead>Division</TableHead>
+                  <TableHead>Manager</TableHead>
+                </>
+              )}
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -150,15 +196,19 @@ export function EmployeesView() {
                 <TableCell className="text-muted-foreground">
                   {e.jobTitle || "—"}
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {e.department || "—"}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {e.division || "—"}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {e.supervisorName || "—"}
-                </TableCell>
+                {isFlat ? null : (
+                  <>
+                    <TableCell className="text-muted-foreground">
+                      {e.department || "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {e.division || "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {e.supervisorName || "—"}
+                    </TableCell>
+                  </>
+                )}
                 <TableCell>
                   {e.status ? (
                     <Badge

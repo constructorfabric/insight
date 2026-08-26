@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Sequence
 
 import yaml
 from dbt.cli.main import dbtRunner
@@ -34,6 +35,11 @@ from lib.config import SessionConfig
 from lib.worker import WorkerContext
 
 LOG = logging.getLogger("e2e.dbt")
+
+# Schema the generated test profile falls back to. A model that configures no
+# `schema` materializes here instead of `staging`/`silver`, out of reach of the
+# per-test truncate ledger — `meta/test_dbt_runner.py` guards against that.
+PROFILE_SCHEMA = "default"
 
 
 class DbtError(RuntimeError):
@@ -190,6 +196,41 @@ class DbtRunner:
                     silver.add(tag.split(":", 1)[1])
         return sorted(set(staging)), sorted(silver)
 
+    def materialized_relations(self, models: Sequence[str]) -> list[tuple[str, str]]:
+        """`(schema, identifier)` that each named model materializes into.
+
+        Read off the manifest rather than assumed by the caller, so a model
+        configuring its own schema (`silver`, `identity`) is reported under the
+        schema dbt actually writes to. Views and ephemeral models resolve to
+        nothing: they hold no rows of their own.
+
+        Raises rather than returning a short list. A caller feeds this the models
+        it is about to build so their relations can be truncated afterwards, and
+        a name that quietly resolved to nothing would leave those rows in place
+        for the next test to read — the failure this exists to prevent.
+        """
+        manifest = json.loads((self.target_dir / "manifest.json").read_text(encoding="utf-8"))
+        wanted = set(models)
+        by_name = {
+            node["name"]: node
+            for node in manifest.get("nodes", {}).values()
+            if node.get("resource_type") == "model" and node.get("name") in wanted
+        }
+        unknown = sorted(wanted - set(by_name))
+        if unknown:
+            raise DbtError(f"no dbt model is named {unknown} — the manifest knows nothing to build or truncate")
+
+        out: set[tuple[str, str]] = set()
+        for name, node in by_name.items():
+            if node.get("config", {}).get("materialized") in ("ephemeral", "view"):
+                continue
+            schema = node.get("schema")
+            identifier = node.get("alias") or name
+            if not schema:
+                raise DbtError(f"model {name} resolved no target schema in the manifest")
+            out.add((schema, identifier))
+        return sorted(out)
+
     def ephemeral_silver_targets(self, tag: str) -> list[str]:
         """Silver class identifiers produced from an EPHEMERAL staging model tagged `tag`.
 
@@ -289,7 +330,7 @@ class DbtRunner:
                         # at the compose service name (`clickhouse`).
                         "host": self.cfg.ch_host,
                         "port": self.cfg.ch_http_port,
-                        "schema": "default",
+                        "schema": PROFILE_SCHEMA,
                         "user": self.cfg.ch_user,
                         "password": self.cfg.ch_password,
                         "secure": False,

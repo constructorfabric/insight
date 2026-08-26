@@ -1,0 +1,29 @@
+schemas:
+  bronze_github.pull_request_commits:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      tenant_id: {type: string}
+      source_id: {type: string}
+      unique_key: {type: string}
+      data_source: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      sha: {type: string}
+      pull_number: {type: integer}
+      repo_full_name: {type: string}
+      author_login: {type: [string, "null"]}
+      author_name: {type: [string, "null"]}
+      author_email: {type: [string, "null"]}
+      authored_date: {type: [string, "null"]}
+      committer_login: {type: [string, "null"]}
+      committer_name: {type: [string, "null"]}
+      committer_email: {type: [string, "null"]}
+      committed_date: {type: [string, "null"]}
+      message: {type: [string, "null"]}
+      parent_shas: {type: [string, "null"]}
+      is_merge: {type: [boolean, "null"]}

@@ -34,6 +34,7 @@ export function ThemeProvider({
     const apply = (next: "light" | "dark") => {
       root.classList.remove("light", "dark");
       root.classList.add(next);
+      root.dataset.theme = next;
     };
 
     if (theme !== "system") {

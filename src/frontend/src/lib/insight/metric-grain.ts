@@ -107,6 +107,12 @@ export interface ActivityEvent {
   date: string;
   /** The metric's own reading for this event, when it has one. */
   value: number | null;
+  /**
+   * The evidence row this came from. Whether the thing is addressable depends
+   * on the provider and on columns this shape does not name, so that decision
+   * stays with the caller that knows the metric.
+   */
+  values: Readonly<Record<string, unknown>>;
 }
 
 /** Everything after the first line — a commit body, not its subject. */
@@ -136,6 +142,7 @@ export function activityEvents(rows: MetricEvidenceRow[]): ActivityEvent[] {
           context: typeof context === "string" ? context : null,
           date,
           value: num(row.values.value),
+          values: row.values,
         },
       ];
     })

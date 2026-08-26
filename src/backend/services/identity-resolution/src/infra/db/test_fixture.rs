@@ -78,6 +78,17 @@ impl Fixture {
         .await
     }
 
+    /// A person some connector claims as an account holder: an address AND the
+    /// canonical `id` binding that says a system holds it. What a roster
+    /// connector writes, and what the roster lists — [`Self::person`] alone
+    /// leaves an observation nobody has claimed.
+    pub(crate) async fn account_holder(&self, email: &str) -> anyhow::Result<Uuid> {
+        let person_id = self.person(email).await?;
+        self.observed(person_id, "id", &format!("acct-{}", person_id.simple()))
+            .await?;
+        Ok(person_id)
+    }
+
     /// Append one observation of `value_type` for an existing person — the
     /// building block for "this person's value changed later" scenarios.
     pub(crate) async fn observed(
@@ -93,6 +104,35 @@ impl Fixture {
             [
                 value_type.into(),
                 SOURCE_TYPE.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
+    /// The same observation, but stated by a DIFFERENT source. For the cases
+    /// where WHICH source said it is the point — a login resolved by address is
+    /// confined to the roster, so an address only a chat or an issue tracker
+    /// ever observed must admit nobody.
+    pub(crate) async fn observed_from(
+        &self,
+        source_type: &str,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                value_type.into(),
+                source_type.into(),
                 bytes(self.source_id),
                 bytes(self.tenant),
                 value.into(),
@@ -355,7 +395,7 @@ impl Fixture {
 
     async fn exec(&self, sql: &str, values: impl IntoIterator<Item = Value>) -> anyhow::Result<()> {
         self.db
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 sql,
                 values,

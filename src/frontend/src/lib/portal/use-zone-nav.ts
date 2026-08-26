@@ -1,11 +1,12 @@
 import { useNavigate } from "@tanstack/react-router";
 
+import { zoneHidden, zonePlanned } from "@/lib/portal/nav-policy";
 import { ZONES, type Zone } from "@/lib/portal/nav-model";
 import {
   usePortalShowPlanned,
 } from "@/lib/portal/portal-store";
 import { useActiveZone } from "@/lib/portal/use-active-zone";
-import { useViewerIsManager } from "@/lib/portal/use-viewer-is-manager";
+import { useViewerReach } from "@/lib/portal/use-viewer-reach";
 import { useIsAdmin } from "@/queries/identity-me";
 
 /**
@@ -28,13 +29,13 @@ export function useZoneNav(): {
 } {
   const navigate = useNavigate();
   const { activeZone, activePerson } = useActiveZone();
-  const { isManager, isPending: mgrPending } = useViewerIsManager();
+  const { canSeeOthers, isPending: reachPending } = useViewerReach();
   // A rail of scaffolds makes the built zones look unreliable.
   const showPlanned = usePortalShowPlanned();
-  // An IC (no reports) has no subtree to roll up, so org zones are hidden — the
-  // shell collapses to Person. While the viewer's identity is still resolving,
-  // assume manager so the nav doesn't flash a collapsed state.
-  const orgZonesVisible = isManager || mgrPending;
+  // A viewer with nobody to look at has nothing to roll up, so org zones are
+  // hidden and the shell collapses to Person. While the answer is resolving,
+  // assume they have a cohort so the nav doesn't flash a collapsed state.
+  const orgZonesVisible = canSeeOthers || reachPending;
   // Manage is opened by the admin role, not by having reports: the operator
   // persona is an IC by design. Fail closed while the role check is pending —
   // a rail entry that vanishes is worse than one that appears a beat late.
@@ -42,8 +43,9 @@ export function useZoneNav(): {
 
   const zones = ZONES.filter(
     (z) =>
+      !zoneHidden(z.id) &&
       (orgZonesVisible || IC_ZONES.has(z.id) || (z.id === "manage" && isAdmin)) &&
-      (z.readiness == null || showPlanned),
+      (!zonePlanned(z.id) || showPlanned),
   );
 
   function selectZone(zone: Zone) {

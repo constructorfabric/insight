@@ -17,13 +17,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
-const mocks = vi.hoisted(() => ({ tree: undefined as IdentityPerson | undefined }));
+const mocks = vi.hoisted(() => ({
+  tree: undefined as IdentityPerson | undefined,
+  isFlat: false,
+}));
 
 vi.mock("@/auth", () => ({
   useViewer: () => ({ email: "boss@x", personId: pid("boss") }),
 }));
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: mocks.tree }),
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
 }));
 
 import { portalRouter } from "@/test/portal-router";
@@ -33,11 +43,12 @@ import { useCohortLabel } from "./use-cohort-label";
 const person = (
   label: string,
   attrs: Partial<IdentityPerson> = {},
-  subs: IdentityPerson[] = [],
+  subs: IdentityPerson[] = []
 ): IdentityPerson => identityPerson(label, attrs, subs);
 
 beforeEach(() => {
   portalRouter.reset();
+  mocks.isFlat = false;
   // A roster that offers two real dimensions, so a slice has something to name.
   mocks.tree = person("boss", {}, [
     person("a", { division: "R&D", job_title: "Engineer" }),
@@ -49,6 +60,14 @@ beforeEach(() => {
 describe("useCohortLabel", () => {
   it("says 'team' when the roster is one undivided cohort", () => {
     expect(renderHook(() => useCohortLabel()).result.current).toBe("team");
+  });
+
+  it("says 'organisation' when flat visibility makes the whole org the cohort", () => {
+    mocks.isFlat = true;
+
+    expect(renderHook(() => useCohortLabel()).result.current).toBe(
+      "organisation"
+    );
   });
 
   it("names the active slice's own dimension", () => {
