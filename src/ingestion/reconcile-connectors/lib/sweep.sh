@@ -344,6 +344,10 @@ sweep_run() {
   local rows unmappable
   rows="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["rows"]))')"
   unmappable="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["unmappable_jobs"]))')"
+  undatable="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("undatable_jobs", [])))')"
+  if (( undatable > 0 )); then
+    log_line WARN "sweep: ${undatable} job(s) carried an unreadable start time and were left uncovered"
+  fi
 
   if ! _sweep_insert_rows "${rows}"; then
     log_line ERROR "sweep: could not record planned rows"

@@ -30,7 +30,7 @@ Realises [PRD.md](PRD.md). Scoped addition to the
 [Analytics service design](../../DESIGN.md) on the read side and to the ingestion pipeline's
 workflow templates and reconcile loop on the write side. Everything the parent design already
 specifies — the admin gate, error taxonomy, OpenAPI registration — applies unchanged; this
-document adds one table, two writers, one endpoint, and one portal pane.
+document adds one table, two writers, two endpoints, and one portal pane.
 
 ## 1. Architecture Overview
 
@@ -114,8 +114,12 @@ everything above the seam is down (FR-14).
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-principle-recording-subordinate`
 
 A ledger insert failure is logged and swallowed, never propagated: no sync fails, no
-reconcile tick aborts, because observability broke (NFR-2). The gap this leaves is repaired
-by the next sweep, which re-reads the mover's history.
+reconcile tick aborts, because observability broke (NFR-2).
+
+What the next sweep repairs is bounded by what the mover knows: it re-reads the mover's job
+history, so a lost write about a SYNC comes back. A run that died before starting one has no
+mover job behind it, and nothing can reconstruct it — the page then shows that run without a
+terminal record, which is the honest reading and never a success.
 
 #### Facts carry provenance, verdicts wait for grounds
 
@@ -443,11 +447,13 @@ this surface.
 ### 3.4 Internal Dependencies
 
 - The analytics service's existing warehouse client, admin-role gate, and OpenAPI
-  registration — the endpoint is one more `OperationBuilder` route.
+  registration — the summary and the per-connector drill-down are two more
+  `OperationBuilder` routes.
 - The portal's Manage-zone navigation: the `data-health` item is replaced by this pane; the
   admin-gate wrapper is reused as-is.
-- The deployed-stand suite's endpoint coverage gate: one contract test (admin 200,
-  non-admin refusal) accompanies the route.
+- The deployed-stand suite's endpoint coverage gate: contract tests (admin 200, non-admin
+  refusal, and a cross-surface reconciliation) accompany the routes. The ones needing
+  recorded runs carry the ingestion capability rather than passing over an empty list.
 
 ### 3.5 External Dependencies
 
@@ -686,8 +692,9 @@ the same way: every write goes through a `steps` wrapper carrying `continueOn`, 
 ### 4.2 What was deliberately not built
 
 - **Freshness verdicts** — the classifier from the PR #2713 sketch stays out until declared
-  thresholds have a runtime source; the ledger's own history gives the operator cadence
-  context without the product asserting one (UC-2).
+  thresholds have a runtime source. The page shows when the last run started and a bounded
+  window of recent events, which lets an operator judge cadence without the product
+  asserting one (UC-2); it is not a full history.
 - **Mover reads on the request path** — rejected: it couples page availability to the mover,
   costs orders of magnitude more latency than warehouse reads, and its richer detail is
   available to the sweep in the background instead.

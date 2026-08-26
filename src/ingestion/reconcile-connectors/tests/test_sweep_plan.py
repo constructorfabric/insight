@@ -81,6 +81,23 @@ def syncs(plan):
     return [row for row in plan.rows if row.event == SYNC_COMPLETED]
 
 
+class TestAJobWithNoReadableStartTime:
+    """The epoch is not a time the mover reported; it is a parse failure."""
+
+    def test_a_job_with_an_unreadable_start_time_is_not_recorded(self):
+        # Recording it puts a sync in 1970 on the page, and the claim decision
+        # reads this same stamp — a bogus one would call the job unclaimed on
+        # arithmetic rather than on evidence.
+        plan = plan_sweep(request(jobs=[job(startTimeEpoch=0)]))
+
+        assert syncs(plan) == []
+
+    def test_it_is_counted_so_the_tick_can_say_what_it_skipped(self):
+        plan = plan_sweep(request(jobs=[job(job_id="77", startTimeEpoch=0)]))
+
+        assert plan.undatable_jobs == ["77"]
+
+
 class TestAJobStillRunning:
     """A provisional row must not close the job that will get an outcome."""
 

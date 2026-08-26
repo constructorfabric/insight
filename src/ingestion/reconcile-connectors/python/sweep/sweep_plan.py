@@ -89,6 +89,10 @@ class Plan:
     # Jobs whose connection no longer exists: nothing the page could attribute,
     # so they are reported rather than recorded under an empty connector.
     unmappable_jobs: list[str] = field(default_factory=list)
+    #: Jobs whose start time the mover reported in a shape we cannot read. They
+    #: are left uncovered rather than recorded at the epoch, which the page
+    #: would render as a real sync in 1970.
+    undatable_jobs: list[str] = field(default_factory=list)
 
 
 def ledger_status(mover_status: str) -> str:
@@ -159,6 +163,12 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
             continue
 
         started_at = int(job.get("startTimeEpoch") or 0)
+        if started_at <= 0:
+            # Recording it would place a real sync at the epoch, and the claim
+            # decision below reads this stamp. Better uncovered and counted.
+            plan.undatable_jobs.append(job_id)
+            continue
+
         claim, run_id = claim_for(job_id, workflow_claims, records_readable, started_at, horizon)
         plan.rows.append(
             Row(
@@ -253,6 +263,7 @@ def main() -> int:
             "rows": [asdict(row) for row in plan.rows],
             "seal": asdict(plan.seal) if plan.seal else None,
             "unmappable_jobs": plan.unmappable_jobs,
+            "undatable_jobs": plan.undatable_jobs,
         },
         sys.stdout,
     )

@@ -442,10 +442,14 @@ a background integration owned by the reconcile loop; the read surface never dep
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-usecase-broken-sync`
 
-A connector's nightly run fails. The operator opens the page, sees the connector sorted to
-the top with its last run failed, the failed step named, and the run history showing when
-failures began and how many attempts were made. The operator knows whether the failure is in
-connection resolution, the sync itself, or the transform — before opening any logs.
+A connector's scheduled run fails. The operator opens the page, sees the connector sorted to
+the top with its last run failed, the failed step named, and the drill-down listing the most
+recent recorded events for that connector — enough to tell a one-off from a repeating
+failure. The operator knows whether the failure is in connection resolution, the sync itself,
+or the transform, before opening any logs.
+
+The drill-down reads a bounded window and says so; it is not a full history, and dating the
+first failure of a long series is out of scope for this surface.
 
 ### UC-2 — A silent stop is noticed
 

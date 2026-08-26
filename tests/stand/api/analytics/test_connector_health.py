@@ -99,6 +99,7 @@ def test_the_summary_and_the_history_agree_on_whether_a_delivery_was_measured(
     }
     assert measured, "the stand declares ingestion but recorded no sync to compare"
 
+    compared = 0
     for connector, (job_id, summary_measured) in measured.items():
         response = admin_operator_session.client.get(_runs_path(connector))
         assert response.status_code == 200, (
@@ -111,11 +112,17 @@ def test_the_summary_and_the_history_agree_on_whether_a_delivery_was_measured(
         ]
         if not syncs:
             continue
+        compared += 1
         history_measured = any(event.rows_landed is not None for event in syncs)
         assert history_measured == summary_measured, (
             f"{connector}: the summary says measured={summary_measured} while its history "
             f"says {history_measured} — one of the two lost the absent-vs-zero distinction"
         )
+
+    assert compared, (
+        "no summary/history pair lined up on a job id, so this test compared "
+        "nothing — the reconciliation it claims to make did not happen"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator")
