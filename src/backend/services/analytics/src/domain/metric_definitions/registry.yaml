@@ -1240,7 +1240,11 @@ metrics:
     label: Pull requests merged
     short_label: PRs merged
     description: Authored pull requests merged
-    explanation: Authored pull requests that merged, dated by the merge.
+    explanation: >-
+      Authored pull requests that merged, dated by the merge — so a request
+      counts in the period it landed and can carry commits written in earlier
+      ones. Under a branch-scope breakdown the split says where the request was
+      aimed, not where its commits sit.
     unit: PRs
     format: integer
     direction: higher_is_better
@@ -1265,7 +1269,8 @@ metrics:
     explanation: >-
       Pull requests that merged into the repository's default branch, dated by
       the merge. This is the surface that also promotes a branch's commits and
-      lines into their default-branch metrics.
+      lines into their default-branch metrics. A request counts in the period
+      it merged, so it can carry commits written in earlier ones.
     unit: PRs
     format: integer
     direction: higher_is_better
@@ -1289,7 +1294,8 @@ metrics:
     explanation: >-
       Pull requests that merged into something other than the repository's
       default branch, dated by the merge. Their commits do not count as having
-      reached the default branch on this evidence alone.
+      reached the default branch on this evidence alone. A request counts in the
+      period it merged, so it can carry commits written in earlier ones.
     unit: PRs
     format: integer
     direction: neutral

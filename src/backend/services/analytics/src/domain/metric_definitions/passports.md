@@ -354,7 +354,7 @@ this file and the registry disagree.
 - Reads: pr_merged
 - Formula: sum(pr_merged)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Authored pull requests that merged, dated by the merge.
+- Notes: Authored pull requests that merged, dated by the merge — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
 
 ## git.default_branch_prs_merged — Pull requests merged into the default branch
 
@@ -362,7 +362,7 @@ this file and the registry disagree.
 - Reads: default_pr_merged
 - Formula: sum(default_pr_merged)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics.
+- Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
 ## git.non_default_branch_prs_merged — Pull requests merged into another branch
 
@@ -370,7 +370,7 @@ this file and the registry disagree.
 - Reads: non_default_pr_merged
 - Formula: sum(non_default_pr_merged)
 - Shape: integer, neutral, unit PRs
-- Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone.
+- Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
 ## git.merge_rate — PR merge rate
 
