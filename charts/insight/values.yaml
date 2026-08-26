@@ -398,11 +398,14 @@ authenticator:
     #     set; identity refuses the lookup without one rather than matching an
     #     address any source at all happened to state.
     #
-    # What `email` mode additionally requires, all enforced at render:
-    #   - `email` among `scopes` (below) — it is the mode's only input;
+    # What `email` mode additionally requires, both enforced at render:
     #   - `provisionOnLogin: false` — minting needs a source-native id, so no
     #     login provisions in this mode;
     #   - identityResolution.rosterSourceType set.
+    # NOT enforced: that `scopes` names `email`. The claim need not be
+    # requested to arrive — an IdP may emit it from an always-on client scope,
+    # and Keycloak 26 errors on a scope the client is not assigned, so
+    # demanding it here refuses working installs.
     # It also refuses a token whose `email_verified` is explicitly false: in
     # this mode the address IS the credential. An IdP that lets a user edit
     # their own address unverified must be fixed at the IdP.
