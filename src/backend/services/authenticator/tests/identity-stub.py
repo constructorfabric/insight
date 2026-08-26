@@ -32,6 +32,7 @@ def person_id_for(*parts: str) -> str:
 
 class Handler(BaseHTTPRequestHandler):
     BY_EXTERNAL_ID_PATH = "/internal/persons/by-external-id"
+    BY_ROSTER_EMAIL_PATH = "/internal/persons/by-roster-email"
     BY_EMAIL_OVERRIDE_PATH = "/internal/persons/by-email-override"
 
     def do_GET(self):  # noqa: N802
@@ -53,6 +54,22 @@ class Handler(BaseHTTPRequestHandler):
             # non-email external id still gets a deterministic path-specific id.
             key = ("email", external_id) if "@" in external_id else ("id", source_type, external_id)
             value_type, value = "id", external_id
+        elif split.path == self.BY_ROSTER_EMAIL_PATH:
+            # The login bootstrap of an install running `idp.resolve_by: email`.
+            # Keyed on the address like the override path, so a rig that logs in
+            # through either resolves the same person — the real service does
+            # too, from the same `value_type='email'` observations. What it does
+            # NOT model is the confinement (tenant, roster source, live account):
+            # those are the database's answer and belong to identity's own live
+            # tests, not to a stub whose job is to keep the authenticator's e2e
+            # honest about which route it called.
+            email = (query.get("email") or [""])[0]
+            if not email:
+                self.send_response(400)
+                self.end_headers()
+                return
+            key = ("email", email)
+            value_type, value = "email", email
         elif split.path == self.BY_EMAIL_OVERRIDE_PATH:
             email = (query.get("email") or [""])[0]
             if not email:

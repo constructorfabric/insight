@@ -53,6 +53,8 @@ pub enum GitError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin declines to serve the repository")]
+    OriginUnavailable,
     #[error("origin refuses to serve explicitly requested objects")]
     PromisorRefused,
     #[error("the cache cannot take more disk right now")]
@@ -494,6 +496,13 @@ fn classify_failure(output: &Output) -> GitError {
         return GitError::Throttled;
     }
 
+    // Before `auth`: Bitbucket announces a suspended or disabled repository
+    // with this remote line plus a bare 403; reading that as a credential
+    // failure would fail the whole sync over one repository no retry can fix.
+    if lower.contains("this repository is currently not available") {
+        return GitError::OriginUnavailable;
+    }
+
     let auth = [
         "authentication failed",
         "http 401",
@@ -598,6 +607,14 @@ mod tests {
             (
                 "fatal: unable to access 'https://x/': The requested URL returned error: 429",
                 |e| matches!(e, GitError::Throttled),
+            ),
+            // A suspended or disabled repository: the origin refuses it with
+            // a bare 403, which is neither a credential failure nor a rate
+            // limit.
+            (
+                "remote: This repository is currently not available.\n\
+                 fatal: unable to access 'https://x/': The requested URL returned error: 403",
+                |e| matches!(e, GitError::OriginUnavailable),
             ),
             // A transport fault is not a missing repository: answering `404`
             // tells the connector its parent record is stale.

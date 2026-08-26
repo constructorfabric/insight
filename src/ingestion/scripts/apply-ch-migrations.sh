@@ -241,6 +241,27 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
 done
 
+echo "=== Healing git commit patch id column ==="
+# Same positional invariant: every projection feeding class_git_commits gained
+# patch_id at the tail (commit-content identity for counting an authored
+# change once, #2792). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Existing rows heal to NULL and carry a patch id from the first sync that
+# re-collects them. Idempotent.
+heal_git_commit_patch_id() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS patch_id Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE staging.${table} MODIFY COLUMN patch_id Nullable(String) AFTER _airbyte_extracted_at;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_commit_patch_id "${_git_source}__commits"
+done
+
 echo "=== Healing git pull-request author account column ==="
 # Same positional invariant: every projection feeding class_git_pull_requests
 # gained author_account_id after author_email (account-first person

@@ -6,12 +6,13 @@ drilldown sweep reconciles:
 
 * a seat with no ceiling has no ratio at all, and must not read as `0` — the room
   under a ceiling nobody set was never purchased;
-* a seat-month is dated at the day its snapshot was last READ, so a window that
-  contains that day returns the month in full rather than a slice of it;
+* a seat-month is dated at the FIRST DAY of the month it bills for, so a window
+  holding that day returns the month in full and a window inside the month
+  returns nothing rather than a slice;
 * the row therefore has to name the month it bills for, and the ceiling the
   amount is judged against, or a reader cannot place either.
 
-Every expectation is derived from what the stand serves — the read day and the
+Every expectation is derived from what the stand serves — the date and the
 billing month come out of the evidence itself — so the suite keeps working when
 the seed is anchored to another date.
 """
@@ -103,14 +104,14 @@ def test_a_seat_with_no_ceiling_reports_money_and_withholds_utilisation(
 
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.reliability
-def test_a_window_holding_the_read_day_returns_the_whole_billing_month(
+def test_a_window_holding_the_month_start_returns_the_whole_billing_month(
     session_for: Callable[[str], PersonaSession], stand_manifest: Manifest
 ) -> None:
     """A monthly fact, not a daily accrual — and that is observable from outside.
 
-    The read day and the amount come from the evidence, so this asserts the
-    dating rule rather than a seeded number: a one-day window on the read day
-    returns the month in full, and the same month cut off the day before returns
+    The date and the amount come from the evidence, so this asserts the dating
+    rule rather than a seeded number: a one-day window on the month's first day
+    returns the month in full, and a window inside the same month returns
     nothing.
     """
     session = session_for("dev_lead")
@@ -119,27 +120,29 @@ def test_a_window_holding_the_read_day_returns_the_whole_billing_month(
     rows = _evidence(session.client, session.person.uuid, start, end)
     assert rows, "no seat-month evidence over the seeded window"
     row = rows[0]
-    read_day = _dt.date.fromisoformat(str(row["date"]))
+    anchor = _dt.date.fromisoformat(str(row["date"]))
     month_total = float(row["value"])  # type: ignore[arg-type]
 
+    assert anchor.day == 1, f"a seat-month row is dated {anchor}, which is not a month start"
+
     on_the_day = _period_values(
-        session.client, session.person.uuid, [MONEY], read_day.isoformat(), read_day.isoformat()
+        session.client, session.person.uuid, [MONEY], anchor.isoformat(), anchor.isoformat()
     )
     assert on_the_day.get(MONEY) == pytest.approx(month_total), (
-        f"a window of the read day alone answered {on_the_day.get(MONEY)}, not the month's "
-        f"{month_total}"
+        f"a window of the month's first day alone answered {on_the_day.get(MONEY)}, not the "
+        f"month's {month_total}"
     )
 
-    day_before = (read_day - _dt.timedelta(days=1)).isoformat()
-    cut_off = _period_values(
+    # Days 2..21 of the same month — every month has them, and the row is not there.
+    inside = _period_values(
         session.client,
         session.person.uuid,
         [MONEY],
-        read_day.replace(day=1).isoformat(),
-        day_before,
+        (anchor + _dt.timedelta(days=1)).isoformat(),
+        (anchor + _dt.timedelta(days=20)).isoformat(),
     )
-    assert cut_off.get(MONEY) is None, (
-        f"a window ending before the read day answered {cut_off.get(MONEY)}"
+    assert inside.get(MONEY) is None, (
+        f"a window inside the billing month answered {inside.get(MONEY)}"
     )
 
 

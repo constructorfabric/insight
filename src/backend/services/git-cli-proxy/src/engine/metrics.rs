@@ -86,6 +86,7 @@ struct Instruments {
     evictions: Counter<u64>,
     rejections: Counter<u64>,
     handler_timeouts: Counter<u64>,
+    origin_unavailable: Counter<u64>,
     purge_escalations: Counter<u64>,
     cold_clones: Counter<u64>,
     fetches: Counter<u64>,
@@ -116,6 +117,15 @@ fn instruments() -> &'static Instruments {
                     "Requests cut off at the handler budget and answered 503. Zero in \
                      health; any rise means a hold inside the store is never released \
                      and the cut-off is containing it — find the wedge in the error log.",
+                )
+                .build(),
+            origin_unavailable: meter
+                .u64_counter("git_proxy.origin_unavailable")
+                .with_description(
+                    "Requests refused because the origin declines to serve the repository \
+                     (suspended, disabled, or over the vendor's own limit). Permanent per \
+                     repository: the connector skips it, so a non-zero value means \
+                     repositories are absent from bronze until the origin state changes.",
                 )
                 .build(),
             purge_escalations: meter
@@ -162,6 +172,10 @@ pub fn record_rejection(reason: RejectReason) {
 
 pub fn record_handler_timeout() {
     instruments().handler_timeouts.add(1, &[]);
+}
+
+pub fn record_origin_unavailable() {
+    instruments().origin_unavailable.add(1, &[]);
 }
 
 pub fn record_purge_escalation() {

@@ -6,7 +6,13 @@ name: bitbucket-cloud
 #   re-reads Bronze, so the column heals to '' on existing rows and only the
 #   one-shot scoped `dbt --full-refresh` a major bump dispatches
 #   re-materializes the history.
-version: "4.0.1"
+# 5.0.0: dbt staging carries the per-commit patch id into the class-contract
+#   column patch_id, the commit-content identity that folds a rebase copy or a
+#   cherry-pick onto the commit that first authored the change. MAJOR for the
+#   same reason as github 6.0.0 — the patch id has been in Bronze all along,
+#   but staging never re-reads Bronze, so the column heals to NULL on existing
+#   rows and a NULL identity never folds.
+version: "5.0.0"
 # A slot of its own: replication pods sharing a slot with other connector
 # syncs can be starved of workers, which surfaces as startup and activity
 # timeouts rather than as a connector error.

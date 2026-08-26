@@ -648,6 +648,11 @@ pub(crate) fn compile_histogram_query(
 // is canonical-grained and drops a person whose several HR emails claim
 // different org units, so nothing here collapses or tie-breaks. Keep it that
 // way: a pool that repairs its own input hides the input being wrong.
+//
+// WORKAROUND: ClickHouse inlines a WITH body once per reference, so a second
+// reference to entity_values re-scans the whole observation window. Both
+// shapes reference it exactly once and extract the target's own value from
+// the peer rows with a conditional aggregate.
 pub(crate) fn compile_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -683,7 +688,8 @@ fn compile_declared_cohort_peer_batch_query(
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
     let limit = query_row_limit();
 
-    let (carried, stats_selects, target_group) = peer_item_selects(defs);
+    let carried = peer_carried_selects(defs);
+    let stats_selects = per_target_aggregate_selects(defs);
 
     // Same switch as every other read (#1967): peer pools staying tenant-scoped
     // while the rest of the query bypasses would answer empty peers, which is
@@ -725,11 +731,9 @@ fn compile_declared_cohort_peer_batch_query(
         SELECT
             targets.entity_id AS entity_id{stats_selects}
         FROM targets
-        LEFT JOIN entity_values AS target_values
-            ON target_values.entity_id = targets.entity_id
         LEFT JOIN entity_values AS peer
             ON peer.cohort_id = targets.cohort_id
-        GROUP BY targets.entity_id{target_group}
+        GROUP BY targets.entity_id
         LIMIT {limit}
         SETTINGS join_use_nulls = 1
         "
@@ -751,8 +755,14 @@ fn compile_tenant_peer_batch_query(
     let limit = query_row_limit();
 
     let carried = peer_carried_selects(defs);
-    let (population_stat_selects, result_selects) = tenant_peer_item_selects(defs);
+    let captured_tuple = captured_target_tuple(defs);
+    let population_stat_selects = population_stat_selects(defs);
+    let result_selects = tenant_result_selects(defs);
 
+    // INVARIANT: population stats aggregate once over the whole pool and the
+    // requested targets' own values are captured in that same pass (bounded
+    // by MAX_PERSON_IDS tuples), so cost stays one scan and one aggregation
+    // regardless of how many targets the request carries.
     let sql = format!(
         r"
         WITH
@@ -773,14 +783,12 @@ fn compile_tenant_peer_batch_query(
         ),
         population_stats AS (
             SELECT
-                1 AS join_key{population_stat_selects}
+                groupArrayIf({captured_tuple}, peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows{population_stat_selects}
             FROM entity_values AS peer
         )
         SELECT
             targets.entity_id AS entity_id{result_selects}
         FROM targets
-        LEFT JOIN entity_values AS target_values
-            ON target_values.entity_id = targets.entity_id
         CROSS JOIN population_stats
         LIMIT {limit}
         SETTINGS join_use_nulls = 1
@@ -789,25 +797,25 @@ fn compile_tenant_peer_batch_query(
     CompiledQuery { sql, params }
 }
 
-// Per-item select fragments of the peer query: the carried (transformed)
-// value column, the guarded stats block, and the GROUP BY tail.
-fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
-    let carried = peer_carried_selects(defs);
+// Per-item aggregate selects over the single `peer` reference, grouped by
+// target: the target's own value plus the guarded stats block.
+fn per_target_aggregate_selects(defs: &[&MetricDefinition]) -> String {
     let mut stats_selects = String::new();
-    let mut target_group = String::new();
     for item_index in 0..defs.len() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
+        // INVARIANT: at most one peer row matches the target (the cohort
+        // relation is canonical-grained; entity_values groups by entity_id),
+        // so maxIf returns exactly that row's value — NULL when unobserved.
         let _ = write!(
             stats_selects,
             ",
-            target_values.{value} AS {target}",
+            maxIf(peer.{value}, peer.entity_id = targets.entity_id) AS {target}",
             target = aliases.target,
         );
         push_peer_stat_selects(&mut stats_selects, item_index);
-        let _ = write!(target_group, ", target_values.{value}");
     }
-    (carried, stats_selects, target_group)
+    stats_selects
 }
 
 fn peer_carried_selects(defs: &[&MetricDefinition]) -> String {
@@ -824,23 +832,42 @@ fn peer_carried_selects(defs: &[&MetricDefinition]) -> String {
     carried
 }
 
-fn tenant_peer_item_selects(defs: &[&MetricDefinition]) -> (String, String) {
-    let mut population_stat_selects = String::new();
-    let mut result_selects = String::new();
+fn captured_target_tuple(defs: &[&MetricDefinition]) -> String {
+    let mut tuple = "tuple(peer.entity_id".to_owned();
     for item_index in 0..defs.len() {
         let value = period_alias(item_index);
+        let _ = write!(tuple, ", peer.{value}");
+    }
+    tuple.push(')');
+    tuple
+}
+
+fn population_stat_selects(defs: &[&MetricDefinition]) -> String {
+    let mut selects = String::new();
+    for item_index in 0..defs.len() {
+        push_peer_stat_selects(&mut selects, item_index);
+    }
+    selects
+}
+
+fn tenant_result_selects(defs: &[&MetricDefinition]) -> String {
+    let mut result_selects = String::new();
+    for item_index in 0..defs.len() {
         let aliases = peer_aliases(item_index);
-        push_peer_stat_selects(&mut population_stat_selects, item_index);
+        // SAFETY: arrayFirst yields the default tuple when the target was not
+        // captured; its Nullable elements read NULL, so an unmeasured target
+        // stays NULL. Element 1 is the entity id, values start at 2.
         let _ = write!(
             result_selects,
             ",
-            target_values.{value} AS {target},
+            tupleElement(arrayFirst(t -> t.1 = targets.entity_id, population_stats.target_rows), {position}) AS {target},
             population_stats.{p25} AS {p25},
             population_stats.{median} AS {median},
             population_stats.{p75} AS {p75},
             population_stats.{min} AS {min},
             population_stats.{max} AS {max},
             population_stats.{n} AS {n}",
+            position = item_index + 2,
             target = aliases.target,
             p25 = aliases.p25,
             median = aliases.median,
@@ -850,7 +877,7 @@ fn tenant_peer_item_selects(defs: &[&MetricDefinition]) -> (String, String) {
             n = aliases.n,
         );
     }
-    (population_stat_selects, result_selects)
+    result_selects
 }
 
 fn push_peer_stat_selects(selects: &mut String, item_index: usize) {
@@ -1890,18 +1917,29 @@ mod tests {
 
         assert!(!query.sql.contains("metric_entity_cohorts_current"));
         assert!(query.sql.contains("arrayJoin([?, ?]) AS entity_id"));
-        assert!(
-            query.sql.contains(
-                "population_stats AS (\n            SELECT\n                1 AS join_key"
-            )
-        );
         assert!(query.sql.contains("CROSS JOIN population_stats"));
         assert!(!query.sql.contains("ON 1 = 1"));
-        assert!(query.sql.contains("target_values.m0 AS m0_target"));
+        // Stats aggregate once over the pool; the targets' own values ride the
+        // same pass as captured tuples, so target count never multiplies the
+        // aggregation state.
+        assert!(query.sql.contains(
+            "groupArrayIf(tuple(peer.entity_id, peer.m0), \
+             peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows"
+        ));
+        assert!(query.sql.contains(
+            "tupleElement(arrayFirst(t -> t.1 = targets.entity_id, \
+             population_stats.target_rows), 2) AS m0_target"
+        ));
         assert!(
             query
                 .sql
                 .contains("population_stats.m0_median AS m0_median")
+        );
+        assert!(
+            query
+                .sql
+                .contains("toUInt64(uniqExactIf(peer.entity_id, peer.m0 IS NOT NULL)) AS m0_n"),
+            "an empty observation window still yields the one aggregate row, so n reads 0"
         );
         assert_eq!(query.sql.matches("tenant_id = ?").count(), 1);
         assert_eq!(
@@ -1920,6 +1958,28 @@ mod tests {
             ]
         );
         assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn peer_batches_read_the_observation_window_once() {
+        // ClickHouse expands a WITH body once per reference, so a second
+        // reference to entity_values would scan the whole observation window
+        // again. Each shape must reference it exactly once (definition + one
+        // use) and extract the target's own value from that single reference.
+        let sum = sum_metric();
+        for population in [PeerPopulation::DeclaredCohort, PeerPopulation::Tenant] {
+            let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", population, &[]);
+            assert_eq!(
+                query.sql.matches("entity_values").count(),
+                2,
+                "one definition and one reference, got:\n{}",
+                query.sql
+            );
+            assert!(
+                !query.sql.contains("AS target_values"),
+                "the target join re-scans the window; extract from the single peer reference"
+            );
+        }
     }
 
     #[test]
@@ -1987,11 +2047,7 @@ mod tests {
         );
         // Honest-null must not depend on server config or column typing.
         assert!(query.sql.contains("SETTINGS join_use_nulls = 1"));
-        assert!(
-            query
-                .sql
-                .contains("GROUP BY targets.entity_id, target_values.m0, target_values.m1")
-        );
+        assert!(query.sql.contains("GROUP BY targets.entity_id"));
     }
 
     #[test]

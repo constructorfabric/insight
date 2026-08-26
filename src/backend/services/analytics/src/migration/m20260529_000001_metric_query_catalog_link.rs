@@ -252,7 +252,7 @@ impl MigrationTrait for Migration {
         let backend = manager.get_database_backend();
 
         for (metrics_hex, table_prefix) in QUERY_TO_CATALOG_PREFIX {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_LINKS_FOR_METRICS_SQL,
                 [Value::from(*metrics_hex), Value::from(*table_prefix)],
