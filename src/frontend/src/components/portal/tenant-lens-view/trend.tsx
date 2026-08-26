@@ -1,25 +1,31 @@
+import type { MetricBucket } from "@/api/metric-results-client";
 import {
   SectionTrend,
   type SectionTrendPoint,
   type SectionTrendSeries,
 } from "@/components/portal/section-trend";
-import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 
+import { mean, trailingOutlierDates } from "./derived";
+import { sectionNeeds, type ResolveView } from "./plan";
 import { tenantData } from "./data";
 
 /** Buckets of the single org series. */
 export function TrendSection({
   section,
-  data,
+  resolve,
+  bucket,
 }: {
   section: Extract<TenantSectionSpec, { kind: "trend" }>;
-  data: Map<string, NormalizedMetricResult>;
+  resolve: ResolveView;
+  bucket: MetricBucket;
 }) {
+  const needs = sectionNeeds(section, bucket);
   const series: SectionTrendSeries[] = [];
   const byDate = new Map<string, SectionTrendPoint>();
-  for (const key of section.metrics) {
-    const r = data.get(key);
+  const firstMetricPoints: Array<{ date: string; value: number }> = [];
+  for (const [index, key] of section.metrics.entries()) {
+    const r = resolve(needs[index]);
     if (!r) continue;
     series.push({
       key,
@@ -33,6 +39,9 @@ export function TrendSection({
       };
       row[key] = point.value;
       byDate.set(point.bucket_start, row);
+      if (index === 0) {
+        firstMetricPoints.push({ date: point.bucket_start, value: point.value });
+      }
     }
   }
   const points = [...byDate.values()].sort((a, b) =>
@@ -41,12 +50,32 @@ export function TrendSection({
   // One bucket draws as a dot pretending to be a trend — say nothing instead.
   if (!series.length || points.length < 2) return null;
 
+  firstMetricPoints.sort((a, b) => (a.date < b.date ? -1 : 1));
+  const windowMean = section.referenceMean
+    ? mean(firstMetricPoints.map((p) => p.value))
+    : null;
+  const flagged = section.flagOutliers
+    ? trailingOutlierDates(firstMetricPoints)
+    : [];
+
   return (
-    <SectionTrend
-      title={section.title}
-      description={section.description}
-      series={series}
-      data={points}
-    />
+    <div className="flex flex-col gap-1">
+      <SectionTrend
+        title={section.title}
+        description={section.description}
+        series={series}
+        data={points}
+        targetLine={
+          windowMean != null
+            ? { value: windowMean, label: "window mean" }
+            : undefined
+        }
+      />
+      {flagged.length > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Fell 2σ below their trailing mean: {flagged.join(", ")}
+        </p>
+      ) : null}
+    </div>
   );
 }

@@ -74,7 +74,16 @@ run_rows AS (
                 tuple('repository', repo_full_name, toNullable(repo_full_name)),
                 tuple('pipeline', pipeline_key, toNullable(pipeline_name)),
                 tuple('trigger', trigger_category, toNullable(trigger_category)),
-                tuple('outcome', outcome, toNullable(outcome))
+                tuple('outcome', outcome, toNullable(outcome)),
+                tuple(
+                    'hour_block',
+                    leftPad(toString(intDiv(toHour(started_at), 2) * 2), 2, '0'),
+                    toNullable(concat(
+                        leftPad(toString(intDiv(toHour(started_at), 2) * 2), 2, '0'),
+                        '–',
+                        leftPad(toString(intDiv(toHour(started_at), 2) * 2 + 2), 2, '0')
+                    ))
+                )
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS run_dimensions
     FROM runs

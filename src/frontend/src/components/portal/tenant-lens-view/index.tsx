@@ -4,22 +4,40 @@ import { Pending } from "@/components/portal/domain-lens-view";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
-import type {
-  MetricCollectionConfig,
-  NormalizedMetricResult,
-} from "@/lib/metrics/collection";
+import type { MetricCollectionConfig } from "@/lib/metrics/collection";
 import { pickTrendBucket } from "@/lib/portal/trend-data";
-import {
-  tenantSectionMetricKeys,
-  type TenantLensConfig,
-  type TenantSectionSpec,
+import type {
+  TenantLensConfig,
+  TenantSectionSpec,
 } from "@/lib/portal/lens-configs";
-import { useMetricCollection } from "@/queries/metric-results";
+import {
+  collectionSetPending,
+  useMetricCollection,
+  useMetricCollectionSet,
+} from "@/queries/metric-results";
 
+import { CalloutPairSection } from "./callout-pair";
 import { CompositionSection } from "./composition";
+import { CumulativeSection } from "./cumulative";
+import { DecompositionSection } from "./decomposition";
+import { DumbbellSection } from "./dumbbell";
+import { HeatmapHoursSection } from "./heatmap-hours";
 import { HistogramSection } from "./histogram";
+import { HourColumnsSection } from "./hour-columns";
+import { MarginalImpactSection } from "./marginal-impact";
+import { ScatterSection } from "./scatter-plot";
+import { SlopeSection, MomentumSection } from "./slope-momentum";
+import { SmallMultiplesSection } from "./small-multiples";
+import { StackedTrendSection } from "./stacked-trend";
 import { TileRow } from "./tiles";
 import { TrendSection } from "./trend";
+import { VerdictTableSection } from "./verdict-table";
+import { splitDateRange } from "./derived";
+import {
+  planTenantRequests,
+  sectionNeeds,
+  type ResolveView,
+} from "./plan";
 import { tenantData } from "./data";
 
 /**
@@ -28,25 +46,73 @@ import { tenantData } from "./data";
  * each value is one number. Sections come from the lens config; each
  * self-suppresses on degenerate data, and the whole tab collapses to an honest
  * "not ingested" state when no metric of the family is observed (rule 6).
+ *
+ * The backend takes one view of each kind per metric per request, so the
+ * section needs are packed into several concurrent requests by `plan.ts`:
+ * collection 0 (with the previous-period twin the tiles need), the overflow
+ * collections, and a first-/second-half pair for the slope/momentum sections.
  */
 export function TenantLensView({ config }: { config: TenantLensConfig }) {
   const { period, dateRange } = usePortalPeriod();
   // One entity → the projected-row budget is all headroom; the picker still
   // guards a pathological custom range, and month always fits.
   const bucket = pickTrendBucket(1, dateRange) ?? "month";
-  const collection = useMemo<MetricCollectionConfig>(
-    () => buildCollection(config, bucket),
+  const plan = useMemo(
+    () => planTenantRequests(config, bucket),
     [config, bucket]
   );
+  const halfRanges = useMemo(() => splitDateRange(dateRange), [dateRange]);
 
-  const data = useMetricCollection(
-    collection,
+  const main = useMetricCollection(
+    plan.collections[0],
     { type: "tenant" },
     dateRange,
     { previousPeriod: period }
   );
+  const extraEntries = useMemo(
+    () =>
+      plan.collections
+        .slice(1)
+        .map((collection, index) => ({ key: extraKey(index + 1), collection })),
+    [plan]
+  );
+  const extras = useMetricCollectionSet(
+    extraEntries,
+    { type: "tenant" },
+    dateRange
+  );
+  // Halves stay disabled (empty collection) when the window is too short to
+  // split — the slope/momentum sections then suppress themselves.
+  const halvesCollection = halfRanges ? plan.halves : EMPTY_COLLECTION;
+  const firstHalf = useMetricCollection(
+    halvesCollection,
+    { type: "tenant" },
+    halfRanges?.first ?? dateRange
+  );
+  const secondHalf = useMetricCollection(
+    halvesCollection,
+    { type: "tenant" },
+    halfRanges?.second ?? dateRange
+  );
 
-  if (data.isPending) {
+  const resolve: ResolveView = (need) => {
+    const location = plan.locate(need);
+    if (!location) return undefined;
+    if (location.at === "first-half") return firstHalf.byKey.get(need.metric);
+    if (location.at === "second-half") return secondHalf.byKey.get(need.metric);
+    const byKey =
+      location.index === 0
+        ? main.byKey
+        : extras.get(extraKey(location.index))?.byKey;
+    return byKey?.get(need.metric);
+  };
+
+  if (
+    main.isPending ||
+    collectionSetPending(extras) ||
+    firstHalf.isPending ||
+    secondHalf.isPending
+  ) {
     return (
       <div className="flex flex-col gap-6 p-6">
         <Skeleton className="h-8 w-64" />
@@ -59,31 +125,39 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
       </div>
     );
   }
-  if (data.isError) {
+  const failed = [
+    main,
+    ...extras.values(),
+    firstHalf,
+    secondHalf,
+  ].filter((result) => result.isError);
+  if (failed.length > 0) {
     return (
       <div className="mx-auto w-full max-w-md p-8">
         <ComingSoon
           variant="card"
           state="error"
           label={`${config.title} — unable to load`}
-          onRetry={data.refetch}
+          onRetry={() => failed.forEach((result) => result.refetch())}
         />
       </div>
     );
   }
-  // Observed = any lens metric returned a period value or any rows at all;
+  // Observed = any lens view returned a period value or any rows at all;
   // "no data yet" and "not collected" must not both render as zeros.
-  const observed = tenantSectionMetricKeys(config).some((key) => {
-    const r = data.byKey.get(key);
-    if (!r) return false;
-    const e = tenantData(r);
-    return (
-      e.value != null ||
-      e.series.length > 0 ||
-      e.breakdown.length > 0 ||
-      e.histogram.length > 0
-    );
-  });
+  const observed = config.sections
+    .flatMap((section) => sectionNeeds(section, bucket))
+    .some((need) => {
+      const r = resolve(need);
+      if (!r) return false;
+      const e = tenantData(r);
+      return (
+        e.value != null ||
+        e.series.length > 0 ||
+        e.breakdown.length > 0 ||
+        e.histogram.length > 0
+      );
+    });
   if (!observed) return <Pending label={config.notIngested} />;
 
   return (
@@ -98,97 +172,41 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
         <TenantSection
           key={`${section.kind}-${index}`}
           section={section}
-          data={data.byKey}
-          previous={data.previousByKey}
+          bucket={bucket}
+          resolve={resolve}
+          main={main}
         />
       ))}
     </div>
   );
 }
 
-/** The views each metric needs, unioned across the lens's sections. */
-function buildCollection(
-  config: TenantLensConfig,
-  bucket: NonNullable<ReturnType<typeof pickTrendBucket>>
-): MetricCollectionConfig {
-  const views = new Map<
-    string,
-    {
-      period: boolean;
-      timeseries: boolean;
-      breakdown: string[];
-      histogram: boolean;
-    }
-  >();
-  const need = (key: string) => {
-    const got = views.get(key) ?? {
-      period: false,
-      timeseries: false,
-      breakdown: [],
-      histogram: false,
-    };
-    views.set(key, got);
-    return got;
-  };
-  for (const s of config.sections) {
-    switch (s.kind) {
-      case "headline":
-      case "stat-tiles":
-        for (const k of s.metrics) need(k).period = true;
-        break;
-      case "trend":
-        for (const k of s.metrics) need(k).timeseries = true;
-        break;
-      case "composition": {
-        const dims = [s.dimension, ...(s.splitBy ? [s.splitBy] : [])];
-        need(s.metric).breakdown.push(...dims);
-        break;
-      }
-      case "histogram":
-        need(s.metric).histogram = true;
-        break;
-      default: {
-        const _exhaustive: never = s;
-        throw new Error(`Unhandled section: ${JSON.stringify(_exhaustive)}`);
-      }
-    }
-  }
-  return {
-    metrics: [...views.entries()].map(([key, v]) => ({
-      key,
-      views: [
-        ...(v.period ? [{ view: "period" as const }] : []),
-        ...(v.timeseries ? [{ view: "timeseries" as const, bucket }] : []),
-        ...(v.breakdown.length
-          ? [
-              {
-                view: "breakdown" as const,
-                dimensions: [...new Set(v.breakdown)],
-              },
-            ]
-          : []),
-        ...(v.histogram ? [{ view: "histogram" as const }] : []),
-      ],
-    })),
-  };
+const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
+
+function extraKey(index: number): string {
+  return `extra-${index}`;
 }
 
 function TenantSection({
   section,
-  data,
-  previous,
+  bucket,
+  resolve,
+  main,
 }: {
   section: TenantSectionSpec;
-  data: Map<string, NormalizedMetricResult>;
-  previous: Map<string, NormalizedMetricResult> | null;
+  bucket: NonNullable<ReturnType<typeof pickTrendBucket>>;
+  resolve: ResolveView;
+  main: ReturnType<typeof useMetricCollection>;
 }) {
   switch (section.kind) {
     case "headline":
+      // Period views live in collection 0 by construction (`plan.ts`), the
+      // only request with the previous-period twin the deltas need.
       return (
         <TileRow
           metrics={section.metrics}
-          data={data}
-          previous={previous}
+          data={main.byKey}
+          previous={main.previousByKey}
           minWidth="14rem"
         />
       );
@@ -200,18 +218,58 @@ function TenantSection({
           </p>
           <TileRow
             metrics={section.metrics}
-            data={data}
-            previous={previous}
+            data={main.byKey}
+            previous={main.previousByKey}
             minWidth="11rem"
           />
         </section>
       );
     case "trend":
-      return <TrendSection section={section} data={data} />;
+      return <TrendSection section={section} resolve={resolve} bucket={bucket} />;
     case "composition":
-      return <CompositionSection section={section} data={data} />;
+      return (
+        <CompositionSection section={section} resolve={resolve} bucket={bucket} />
+      );
     case "histogram":
-      return <HistogramSection section={section} data={data} />;
+      return <HistogramSection section={section} resolve={resolve} />;
+    case "stacked-trend":
+      return (
+        <StackedTrendSection section={section} resolve={resolve} bucket={bucket} />
+      );
+    case "small-multiples":
+      return (
+        <SmallMultiplesSection
+          section={section}
+          resolve={resolve}
+          bucket={bucket}
+        />
+      );
+    case "scatter":
+      return <ScatterSection section={section} resolve={resolve} bucket={bucket} />;
+    case "heatmap-hours":
+      return <HeatmapHoursSection section={section} resolve={resolve} />;
+    case "hour-columns":
+      return <HourColumnsSection section={section} resolve={resolve} />;
+    case "slope":
+      return <SlopeSection section={section} resolve={resolve} />;
+    case "momentum":
+      return <MomentumSection section={section} resolve={resolve} />;
+    case "marginal-impact":
+      return <MarginalImpactSection section={section} resolve={resolve} />;
+    case "callout-pair":
+      return <CalloutPairSection section={section} resolve={resolve} />;
+    case "dumbbell":
+      return <DumbbellSection section={section} resolve={resolve} />;
+    case "cumulative":
+      return (
+        <CumulativeSection section={section} resolve={resolve} bucket={bucket} />
+      );
+    case "decomposition":
+      return (
+        <DecompositionSection section={section} resolve={resolve} bucket={bucket} />
+      );
+    case "verdict-table":
+      return <VerdictTableSection section={section} resolve={resolve} />;
     default: {
       const _exhaustive: never = section;
       throw new Error(`Unhandled section: ${JSON.stringify(_exhaustive)}`);

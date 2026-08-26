@@ -781,8 +781,9 @@ models:
       - name: dimensions
         description: >
           Array(Tuple(key, value, label)). Run measures carry repository /
-          pipeline / trigger / outcome; deployments carry repository /
-          environment / outcome / env_kind.
+          pipeline / trigger / outcome / hour_block (two-hour start block of
+          the run, UTC); deployments carry repository / environment /
+          outcome / env_kind.
 
   - name: wiki_metric_observations
     description: >

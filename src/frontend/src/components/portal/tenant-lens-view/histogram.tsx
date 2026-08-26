@@ -10,10 +10,10 @@ import {
   YAxis,
   type ChartConfig,
 } from "@/components/ui/chart";
-import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { fmtCompact } from "@/lib/portal/metric-stats";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 
+import { type ResolveView } from "./plan";
 import { tenantData } from "./data";
 
 const HISTOGRAM_CONFIG: ChartConfig = { count: { label: "Runs" } };
@@ -21,12 +21,12 @@ const HISTOGRAM_CONFIG: ChartConfig = { count: { label: "Runs" } };
 /** Per-run distribution served by the backend. */
 export function HistogramSection({
   section,
-  data,
+  resolve,
 }: {
   section: Extract<TenantSectionSpec, { kind: "histogram" }>;
-  data: Map<string, NormalizedMetricResult>;
+  resolve: ResolveView;
 }) {
-  const r = data.get(section.metric);
+  const r = resolve({ view: "histogram", metric: section.metric });
   const bins = r ? (tenantData(r).histogram[0]?.bins ?? []) : [];
   if (!r || bins.length === 0) return null;
   const rows = bins.map((bin) => ({

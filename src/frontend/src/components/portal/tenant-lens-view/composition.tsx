@@ -4,26 +4,31 @@ import {
   UNSPLIT_SEGMENT,
   type BarEntry,
 } from "@/lib/portal/bar-rows";
-import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import type { MetricBucket } from "@/api/metric-results-client";
 import type { TenantSectionSpec } from "@/lib/portal/lens-configs";
 
+import { sectionNeeds, type ResolveView } from "./plan";
 import { tenantData } from "./data";
 
 /** The org total cut by one dimension. */
 export function CompositionSection({
   section,
-  data,
+  resolve,
+  bucket,
 }: {
   section: Extract<TenantSectionSpec, { kind: "composition" }>;
-  data: Map<string, NormalizedMetricResult>;
+  resolve: ResolveView;
+  bucket: MetricBucket;
 }) {
-  const r = data.get(section.metric);
+  // The served rows may be grouped finer than this section's dims (the
+  // planner merges summable breakdowns) — the aggregation below re-sums.
+  const r = resolve(sectionNeeds(section, bucket)[0]);
   if (!r) return null;
-  const bucket = new Map<string, BarEntry>();
+  const entries = new Map<string, BarEntry>();
   for (const row of tenantData(r).breakdown) {
     const dim = row.dimensions.find((d) => d.key === section.dimension);
     if (!dim?.value || row.value == null || row.value <= 0) continue;
-    const running = bucket.get(dim.value);
+    const running = entries.get(dim.value);
     const split = running?.split ?? (section.splitBy ? new Map() : undefined);
     if (split && section.splitBy) {
       const by = row.dimensions.find((d) => d.key === section.splitBy);
@@ -37,13 +42,13 @@ export function CompositionSection({
         value: (seen?.value ?? 0) + row.value,
       });
     }
-    bucket.set(dim.value, {
+    entries.set(dim.value, {
       label: dim.label?.trim() || running?.label || dim.value,
       value: (running?.value ?? 0) + row.value,
       split,
     });
   }
-  const rows = toBarRows(bucket);
+  const rows = toBarRows(entries);
   // A single bar with a single segment is an empty shell (rule 11) — but one
   // row CUT by a real split (one environment, several outcomes) is a reading.
   const segments = rows[0]?.segments?.length ?? 0;

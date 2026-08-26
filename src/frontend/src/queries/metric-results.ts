@@ -227,11 +227,14 @@ export function useMetricCollectionSet(
   const catalog = useAvailableMetricKeys();
   const gate = useMetricGate();
   const enabled =
-    ids.length > 0 && !catalog.isPending && Boolean(range.from && range.to);
+    entitySelected(entity, ids) &&
+    !catalog.isPending &&
+    Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
-  // results merge back into one collection result per key.
+  // results merge back into one collection result per key. A tenant entity
+  // names nobody, so it is always exactly one "chunk".
   const requests = collections.flatMap(({ key, collection: raw }) => {
     // Same catalog and install gates as `useMetricCollection` — see the notes there.
     const collection = filterCollectionByKey(
@@ -239,11 +242,16 @@ export function useMetricCollectionSet(
       gate
     );
     const chunkSize = entityChunkSize(collection);
-    const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
+    const chunks =
+      entity.type === "tenant" || chunkSize === null
+        ? [ids]
+        : chunkEntityIds(ids, chunkSize);
     return chunks.map((chunkIds) => {
       const request = buildMetricCollectionRequest(
         collection,
-        { type: entity.type, ids: chunkIds },
+        entity.type === "person"
+          ? { type: "person", ids: chunkIds }
+          : { type: "tenant" },
         range
       );
       return {
@@ -292,7 +300,7 @@ export function useMetricCollectionSet(
       isPending:
         (existing?.isPending ?? false) ||
         (query.isPending && active) ||
-        (ids.length > 0 && catalog.isPending),
+        (entitySelected(entity, ids) && catalog.isPending),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
       isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.

@@ -282,6 +282,7 @@ sources:
       - outcome
       - environment
       - env_kind
+      - hour_block
 metrics:
   - metric_key: ci.runs
     source_key: ci
@@ -305,6 +306,7 @@ metrics:
       - pipeline
       - trigger
       - outcome
+      - hour_block
   - metric_key: ci.gate_pass_rate
     source_key: ci
     subject: reliability
@@ -328,6 +330,7 @@ metrics:
     dimensions:
       - repository
       - pipeline
+      - hour_block
   - metric_key: ci.gate_first_try_pass_rate
     source_key: ci
     subject: reliability
@@ -396,6 +399,7 @@ metrics:
     dimensions:
       - repository
       - pipeline
+      - outcome
   - metric_key: ci.run_duration_min_p90
     source_key: ci
     subject: duration
