@@ -23,6 +23,7 @@ from theme_harness import (
     assert_theme_payload,
     keycloak_pod,
     render,
+    render_error,
     theme_configmap,
     theme_properties,
 )
@@ -49,6 +50,22 @@ def test_shipped_default_carries_the_marker_the_spa_retries_on() -> None:
     # is counted and the browser bounces back into the login it just failed.
     default = theme_properties(render(SUBCHART, *SUBCHART_BASE))["insightReturnUrl"]
     assert parse_qs(urlsplit(default).query)["auth_error"] == ["kc_page_expired"]
+
+
+def test_return_url_cannot_smuggle_a_theme_property_expression() -> None:
+    # Keycloak resolves ${...} in every theme property against the server's own
+    # environment — which on this pod carries the database password — and serves
+    # the result in the page. A newline would inject a second property. Both are
+    # refused at render time rather than documented.
+    for hostile in (
+        "${env.KC_BOOTSTRAP_ADMIN_PASSWORD}",
+        "/?next=${env.KC_DB_PASSWORD}",
+        "/?a=b\nparent=base",
+    ):
+        message = render_error(
+            SUBCHART, *SUBCHART_BASE, "--set-string", f"theme.returnUrl={hostile}"
+        )
+        assert "must be a literal URL" in message, hostile
 
 
 def test_theme_mounts_where_keycloak_discovers_it() -> None:

@@ -15,6 +15,16 @@
   ships with the server, not with the realm.
 */}}
 {{- $theme := default dict .Values.theme }}
+{{- $returnUrl := required "keycloak.theme.returnUrl must be a non-empty URL: the overridden page has nowhere to send the browser without one" $theme.returnUrl }}
+{{- /* SAFETY: Keycloak resolves ${...} in EVERY theme property against the
+       server's own environment and system properties, and the resolved value
+       is served in the page's HTML. This pod's environment carries the
+       database password. A newline is refused for the same reason: the value
+       lands inside theme.properties, where a second line is a second
+       property. */}}
+{{- if or (contains "${" $returnUrl) (contains "\n" $returnUrl) }}
+{{- fail "keycloak.theme.returnUrl must be a literal URL: Keycloak resolves ${...} against the server environment and serves the result in the page, and a newline injects a second theme property" }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -24,7 +34,7 @@ metadata:
 data:
   theme.properties: |
     parent=keycloak.v2
-    insightReturnUrl={{ required "keycloak.theme.returnUrl must be a non-empty URL: the overridden page has nowhere to send the browser without one" $theme.returnUrl }}
+    insightReturnUrl={{ $returnUrl }}
   login-page-expired.ftl: |
     {{- required "theme/insight/login/login-page-expired.ftl is missing from the chart"
           (.Files.Get "theme/insight/login/login-page-expired.ftl") | nindent 4 }}

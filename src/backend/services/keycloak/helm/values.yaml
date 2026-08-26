@@ -61,8 +61,9 @@ theme:
   # install that splits the two hosts must set an absolute URL. The
   # `auth_error` marker drives the SPA's retry-once-then-stop guard.
   #
-  # SAFETY: Keycloak runs every theme property through env substitution, so a
-  # `${env.NAME}` here would interpolate that variable into served HTML.
+  # SAFETY: Keycloak resolves ${...} in theme properties against the server's
+  # own environment and serves the result in the page, so such a value is
+  # refused at render time rather than published.
   returnUrl: "/?auth_error=kc_page_expired"
 
 resources:

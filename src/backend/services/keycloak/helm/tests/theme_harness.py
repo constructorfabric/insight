@@ -121,6 +121,19 @@ def render(chart: Path, *extra: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(proc.stdout) if doc]
 
 
+def render_error(chart: Path, *extra: str) -> str:
+    """`helm template` a chart that must NOT render; returns the message."""
+    proc = subprocess.run(
+        ["helm", "template", RELEASE, str(chart), *extra],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert proc.returncode != 0, f"expected a render failure, got:\n{proc.stdout[:400]}"
+    return proc.stderr
+
+
 def one(docs: list[dict], kind: str, name: str) -> dict:
     """The single `kind` named `<release>-<name>`."""
     want = f"{RELEASE}-{name}"
