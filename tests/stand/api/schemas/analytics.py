@@ -684,7 +684,7 @@ class RunEventView(BaseModel):
     origin: str = Field(..., description='Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.')
     records_moved: int | None = Field(..., description="Null on a row no sweep has reached: counters arrive with the mover's\nhistory, and the column's zero before then means nobody counted.", ge=0)
     rows_landed: int | None = Field(..., ge=0)
-    started_at: UnzonedDatetime
+    started_at: UnzonedDatetime | None = Field(..., description='Absent where nothing recorded when it began — a job the mover had not\nstarted carries no start time, and the epoch would be a sync that never ran.')
     status: str
     step: str | None
     trigger: str | None
@@ -723,7 +723,7 @@ class RunView(BaseModel):
         extra='forbid',
     )
     duration_ms: int = Field(..., ge=0)
-    started_at: UnzonedDatetime
+    started_at: UnzonedDatetime | None = Field(..., description='Absent where nothing recorded when it began.')
     status: str
     step: str | None = Field(..., description='The step the run reached; absent when it did not fail.')
     transform_status: str | None = Field(..., description="Outcome of this run's own transform step, when it got that far.")
@@ -818,7 +818,7 @@ class SyncView(BaseModel):
     job_id: str | None = Field(..., description="The mover's job this summary resolves to.")
     records_moved: int | None = Field(..., ge=0)
     rows_landed: int | None = Field(..., description='Rows measured as delivered by this sync. Null where the measurement\nwindow had passed — absence, never a zero.', ge=0)
-    started_at: UnzonedDatetime
+    started_at: UnzonedDatetime | None = Field(..., description='Absent where nothing recorded when it began — a job the mover had not\nstarted carries no start time, and the epoch would be a sync that never ran.')
     status: str
     trigger: str = Field(..., description='`claimed`, `out_of_band`, or `unclaimed`. Unclaimed is unknown\nprovenance; it is never presented as a manual sync.')
 

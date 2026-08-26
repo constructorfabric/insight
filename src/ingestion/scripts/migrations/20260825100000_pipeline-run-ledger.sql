@@ -20,7 +20,14 @@ CREATE TABLE IF NOT EXISTS ingestion_runs.pipeline_events (
     origin            LowCardinality(String),
     claim             LowCardinality(String),
     step              LowCardinality(String),
-    started_at        DateTime64(3, 'UTC'),
+    -- When the mover says the sync began. Nullable because a job the mover has
+    -- not started yet has no start time, and the epoch would be a lie.
+    started_at        Nullable(DateTime64(3, 'UTC')),
+    -- When the job was CREATED. The mover's listing is ordered and filtered by
+    -- this, so it — not `started_at` — is the axis the sweep's frontier moves
+    -- along: a job that waited a long time to start would otherwise let the
+    -- cursor jump past jobs nothing has read.
+    job_created_at    Nullable(DateTime64(3, 'UTC')),
     duration_ms       Nullable(UInt64),
     records_moved     UInt64,
     rows_landed       Nullable(UInt64),
@@ -56,5 +63,9 @@ TTL toDateTime(ts) + INTERVAL 6 MONTH
 -- measured zero. Idempotent: re-stating the current type is a no-op.
 ALTER TABLE ingestion_runs.pipeline_events
     MODIFY COLUMN IF EXISTS duration_ms Nullable(UInt64);
+ALTER TABLE ingestion_runs.pipeline_events
+    MODIFY COLUMN IF EXISTS started_at Nullable(DateTime64(3, 'UTC'));
+ALTER TABLE ingestion_runs.pipeline_events
+    ADD COLUMN IF NOT EXISTS job_created_at Nullable(DateTime64(3, 'UTC')) AFTER started_at;
 
 GRANT SELECT ON ingestion_runs.* TO presentation_ro;

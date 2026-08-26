@@ -52,8 +52,8 @@ LEDGER_TEMPLATE = "ledger-write"
 TOLERATED_ENTRY = "write-tolerated"
 
 
-def render(template: str) -> dict:
-    settings = [f"--set={key}={value}" for key, value in REQUIRED_VALUES.items()]
+def render(template: str, extra: dict[str, str] | None = None) -> dict:
+    settings = [f"--set={key}={value}" for key, value in {**REQUIRED_VALUES, **(extra or {})}.items()]
     result = subprocess.run(
         [
             "helm",
@@ -194,6 +194,37 @@ SUBMITTERS = [
 ]
 
 REPO = CHART.parents[1]
+
+
+class TestTheSweepIsToldItsPolicy:
+    """A value the chart declares must reach the loop, not a default beside it."""
+
+    HORIZON = "ingestion.reconcile.claimHorizonSeconds"
+
+    def test_the_configured_horizon_reaches_the_container(self) -> None:
+        # A `default` in the template made a misplaced value render as the
+        # default, so the render "passed" while the setting was never read.
+        # Only a non-default value proves the wiring.
+        document = render("reconcile-cron", {self.HORIZON: "4242"})
+        env = self._sweep_env(document)
+
+        assert env == "4242", (
+            "the configured horizon must reach the sweep; a default here hides "
+            f"a value declared in the wrong place. got: {env!r}"
+        )
+
+    def test_the_chart_declares_a_horizon_for_a_default_install(self) -> None:
+        document = render("reconcile-cron")
+
+        assert self._sweep_env(document), "values.yaml must carry it, or every install fails to render"
+
+    @staticmethod
+    def _sweep_env(document: dict) -> str | None:
+        spec = document["spec"]["workflowSpec"]["templates"][0]["container"]
+        for entry in spec.get("env", []):
+            if entry["name"] == "SWEEP_CLAIM_HORIZON_SECONDS":
+                return entry.get("value")
+        return None
 
 
 class TestEverySubmitterCarriesTheHandler:

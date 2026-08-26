@@ -66,7 +66,7 @@ nothing on it may decide whether the run failed.
 
 #### Functional Drivers
 
-- Every run leaves a terminal record naming the step reached (FR-1) — drives the exit-handler
+- A run records its outcome and the step reached, best-effort (FR-1) — drives the exit-handler
   design in §3.6.
 - Syncs started outside the pipeline are recorded (FR-2) — drives the sweep and its origin
   marking.
@@ -118,8 +118,9 @@ reconcile tick aborts, because observability broke (NFR-2).
 
 What the next sweep repairs is bounded by what the mover knows: it re-reads the mover's job
 history, so a lost write about a SYNC comes back. A run that died before starting one has no
-mover job behind it, and nothing can reconstruct it — the page then shows that run without a
-terminal record, which is the honest reading and never a success.
+mover job behind it and nothing can reconstruct it. If its boundary row landed, the page
+shows a run with no outcome; if nothing landed, the page does not know that run happened.
+Either reading is honest, and neither is a success (PRD FR-1).
 
 #### Facts carry provenance, verdicts wait for grounds
 
@@ -162,13 +163,13 @@ the richer row. This is what makes NFR-3 hold by construction.
 The read-only query-path role gains exactly one thing: SELECT on the ledger database. It gets
 no grant on bronze, in data or in metadata.
 
-This is a constraint, not a preference. `system.parts` is filtered by what the role can
-actually read, so a role granted only visibility — and not data access — sees no rows there
-for those relations. A "metadata only" grant that would let the reader size bronze without
-reading it is therefore not expressible. Storage facts reach the page the way every other
-fact does: recorded into the ledger by a writer that already owns bronze. The migration in
-§3.6 is the reproducible statement of the grant surface, and a static test over that
-migration asserts the reader is granted `SELECT` there and nothing that writes.
+Storage facts reach the page the way every other fact does: recorded into the ledger by a
+writer that already owns bronze. That keeps the read surface's grant surface to a single
+line, whatever a narrower bronze grant might or might not allow on a given engine — the
+design does not depend on the answer.
+
+The migration in §3.7 is the statement of that grant surface, and a static test over it
+asserts the reader is granted `SELECT` on the ledger and nothing that writes.
 
 #### No compose-stand behaviour beyond degradation
 
@@ -187,7 +188,7 @@ A **ledger event** is one immutable observation about one run or sync:
 | Field | Meaning |
 |---|---|
 | `event` | what is being reported: `run.started`, `sync.completed`, `transform.completed`, `run.finished`, `storage.observed`, `connector.configured`, `sweep.completed` |
-| `status` | outcome of the reported thing: `ok`, `failed`, `cancelled`, `running` |
+| `status` | outcome of the reported thing: `ok`, `failed`, `cancelled`, `running`, `unknown` |
 | `origin` | which writer recorded it: `pipeline` or `sweep`. Origin is provenance only — it never classifies how a sync was started |
 | `step` | for `run.finished`: the workflow task whose failure caused the run, by its own name; empty on success |
 | identity | `run_id` (workflow name) for pipeline rows; `job_id` (mover job) for sync rows — both when known |
@@ -415,6 +416,7 @@ GET /v1/connector-health
         "transform_status": null
       },
       "last_sync": {
+        "job_id": "8412",
         "trigger": "out_of_band",
         "status": "ok",
         "started_at": "2026-01-14T04:00:00Z",
@@ -586,12 +588,13 @@ swept by exports and customer extracts, which must never carry service rows.
 | `job_id` | `String` | mover job id; empty on pipeline boundary rows |
 | `connector` | `LowCardinality(String)` | hyphenated connector name |
 | `event` | `LowCardinality(String)` | `run.started` \| `sync.completed` \| `transform.completed` \| `run.finished` \| `storage.observed` \| `connector.configured` \| `sweep.completed` |
-| `status` | `LowCardinality(String)` | `ok` \| `failed` \| `cancelled` \| `running` |
+| `status` | `LowCardinality(String)` | `ok` \| `failed` \| `cancelled` \| `running` \| `unknown` — the closed set. A mover word outside its documented vocabulary is stored as `unknown` rather than passed through, so nothing downstream holds a value it cannot read |
 | `origin` | `LowCardinality(String)` | `pipeline` \| `sweep` |
 | `claim` | `LowCardinality(String)` | `claimed` \| `out_of_band` \| `unclaimed`; empty on non-sync rows. The stored corroboration finding — the read path cannot re-derive it (§3.1) |
 | `step` | `LowCardinality(String)` | the workflow task whose failure caused the run, by its own name, retry-attempt index stripped; empty on success. Chosen by earliest finish: the payload's order is a Go map's, and one failure yields several nodes |
-| `started_at` | `DateTime64(3, 'UTC')` | when the reported thing started |
-| `duration_ms` | `UInt64` | |
+| `started_at` | `Nullable(DateTime64(3, 'UTC'))` | when the reported thing started; NULL on a job the mover has not started, where the epoch would be a sync that never ran |
+| `job_created_at` | `Nullable(DateTime64(3, 'UTC'))` | when the mover created the job. The listing is ordered and filtered by this, so it is the axis the sweep's frontier moves along — a start time would let a job that waited to begin push the cursor past jobs nothing has read |
+| `duration_ms` | `Nullable(UInt64)` | elapsed time as reported; NULL where nobody timed it, which a zero could not express |
 | `records_moved` | `UInt64` | mover-reported |
 | `rows_landed` | `Nullable(UInt64)` | storage rows whose extraction stamp falls inside this sync's window, measured by the pipeline at sync time; NULL on swept rows — the window has passed |
 | `stream` | `LowCardinality(String)` | the observed stream; empty on connector-level and non-storage rows |

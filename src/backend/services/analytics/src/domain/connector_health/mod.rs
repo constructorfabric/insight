@@ -53,7 +53,7 @@ pub(crate) struct RunFacts {
     pub(crate) status: String,
     /// The step the run reached; empty when it did not fail.
     pub(crate) step: String,
-    pub(crate) started_at: DateTime<Utc>,
+    pub(crate) started_at: Option<DateTime<Utc>>,
     pub(crate) duration_ms: u64,
     /// Outcome of the transform step, when the run got that far.
     pub(crate) transform_status: Option<String>,
@@ -66,7 +66,7 @@ pub(crate) struct SyncFacts {
     pub(crate) job_id: String,
     pub(crate) claim: Claim,
     pub(crate) status: String,
-    pub(crate) started_at: DateTime<Utc>,
+    pub(crate) started_at: Option<DateTime<Utc>>,
     /// Absent until the mover's history has been swept: only that history knows
     /// how long a sync took and how much it moved, so reporting the pipeline
     /// row's zeros would state a measurement nobody made.
@@ -171,8 +171,8 @@ fn attention(health: &ConnectorHealth) -> Attention {
 /// Newest activity first within an attention band, so a stale broken connector
 /// does not outrank one that broke this morning.
 fn last_activity(health: &ConnectorHealth) -> Option<DateTime<Utc>> {
-    let run = health.last_run.as_ref().map(|r| r.started_at);
-    let sync = health.last_sync.as_ref().map(|s| s.started_at);
+    let run = health.last_run.as_ref().and_then(|r| r.started_at);
+    let sync = health.last_sync.as_ref().and_then(|s| s.started_at);
     run.max(sync)
 }
 
@@ -256,7 +256,7 @@ mod tests {
         RunFacts {
             status: status.to_owned(),
             step: String::new(),
-            started_at: at(1),
+            started_at: Some(at(1)),
             duration_ms: 1000,
             transform_status: transform.map(str::to_owned),
         }
@@ -267,7 +267,7 @@ mod tests {
             job_id: "job-1".to_owned(),
             claim: Claim::Claimed,
             status: "ok".to_owned(),
-            started_at: at(1),
+            started_at: Some(at(1)),
             duration_ms: Some(1000),
             records_moved: Some(records_moved),
             rows_landed,
@@ -424,11 +424,11 @@ mod tests {
     #[test]
     fn within_a_band_the_most_recent_activity_comes_first() {
         let older = RunFacts {
-            started_at: at(1),
+            started_at: Some(at(1)),
             ..run("failed", None)
         };
         let newer = RunFacts {
-            started_at: at(9),
+            started_at: Some(at(9)),
             ..run("failed", None)
         };
 

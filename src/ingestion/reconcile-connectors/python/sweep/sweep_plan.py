@@ -71,6 +71,7 @@ class Row:
     claim: str = ""
     origin: str = ORIGIN
     started_at_epoch: int = 0
+    created_at_epoch: int = 0
     duration_ms: int | None = None
     records_moved: int = 0
 
@@ -124,17 +125,27 @@ def duration_ms(duration: Any) -> int | None:
     if not text.startswith("PT"):
         return None
 
+    units = {"H": 3600, "M": 60, "S": 1}
     seconds = 0.0
     number = ""
+    saw_unit = False
     for char in text[2:]:
         if char.isdigit() or char == ".":
             number += char
             continue
-        if not number:
-            continue
-        value = float(number)
-        seconds += value * {"H": 3600, "M": 60, "S": 1}.get(char, 0)
+        # A unit this build does not know, or one with no number in front of it,
+        # means the shape is not what we think. Returning the partial sum would
+        # report a duration shorter than the truth as if it were measured.
+        if char not in units or not number:
+            return None
+        seconds += float(number) * units[char]
         number = ""
+        saw_unit = True
+
+    # Trailing digits with no unit, or `PT` with nothing after it.
+    if number or not saw_unit:
+        return None
+
     return int(seconds * 1000)
 
 
@@ -177,12 +188,16 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
             continue
 
         started_at = int(job.get("startTimeEpoch") or 0)
-        if started_at <= 0:
-            # Recording it would place a real sync at the epoch, and the claim
-            # decision below reads this stamp. Better uncovered and counted.
+        created_at = int(job.get("createdAtEpoch") or 0)
+        if created_at <= 0:
+            # Nothing places this job on the axis the frontier moves along, so
+            # recording it would let the cursor pass jobs nothing has read.
             plan.undatable_jobs.append(job_id)
             continue
 
+        # A job the mover has not started yet has no start time. That is
+        # recorded as absent; the claim decision then has no stamp to test and
+        # the job stays unclaimed until a later tick can settle it.
         claim, run_id = claim_for(job_id, workflow_claims, records_readable, started_at, horizon)
         plan.rows.append(
             Row(
@@ -193,6 +208,7 @@ def coverage_rows(request: dict[str, Any], covered: set[str], plan: Plan) -> Non
                 status=ledger_status(job.get("status", "")),
                 claim=claim,
                 started_at_epoch=started_at,
+                created_at_epoch=created_at,
                 duration_ms=duration_ms(job.get("duration")),
                 records_moved=int(job.get("rowsSynced") or 0),
             )

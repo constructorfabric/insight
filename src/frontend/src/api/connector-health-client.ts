@@ -16,7 +16,8 @@ export interface RunFacts {
   status: string;
   /** The step the run reached; absent when it did not fail. */
   step: string | null;
-  started_at: string;
+  /** Absent where nothing recorded when it began — never a stand-in zero. */
+  started_at: string | null;
   duration_ms: number;
   /** Outcome of this run's own transform step, when it got that far. */
   transform_status: string | null;
@@ -27,7 +28,8 @@ export interface SyncFacts {
   status: string;
   /** The mover's job this summary resolves to. */
   job_id: string | null;
-  started_at: string;
+  /** Absent where nothing recorded when it began — never a stand-in zero. */
+  started_at: string | null;
   /**
    * Null until the mover's history has been swept — only it knows how long a
    * sync took and how much it moved, so a pipeline-only row reports neither
@@ -99,7 +101,8 @@ export interface RunEvent {
   trigger: SyncTrigger | null;
   /** The mover's job, so an event lines up with the summary by identity. */
   job_id: string | null;
-  started_at: string;
+  /** Absent where nothing recorded when it began — never a stand-in zero. */
+  started_at: string | null;
   /** Null where nobody timed the row — absence, never a zero. */
   duration_ms: number | null;
   /** Null on a row no sweep has reached: nobody counted, which is not zero. */

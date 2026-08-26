@@ -228,14 +228,19 @@ request path.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-terminal-record`
 
-Every submitted run records its outcome and the step reached — including runs that fail
-before the sync starts. A run that dies resolving its connection is a recorded failure naming
-that step, not an absent row.
+A run records its outcome and the step reached, including a run that fails before its sync
+starts — a run that dies resolving its connection is a recorded failure naming that step.
 
-The recorder is deliberately best-effort: it must never fail the run it only observes, so a
-recorder that cannot execute leaves that run without a terminal row. The page then shows no
-terminal record rather than inventing an outcome, and nothing downstream reads the absence as
-success.
+This is best-effort by design, and the guarantee is stated as such. The recorder must never
+fail the run it only observes, so a recorder that cannot execute leaves no row. What follows
+from that is bounded and must not be overstated:
+
+- the boundary row landed but the terminal one did not — the page shows a run with no
+  outcome, never a successful one;
+- neither landed — the page does not know that run happened, and says nothing about it.
+
+Nothing downstream reads an absence as success. Making the guarantee absolute would need a
+durable source of run boundaries outside the ledger, which this change does not add.
 
 #### FR-2 — Every sync outcome is recorded, whoever started it
 

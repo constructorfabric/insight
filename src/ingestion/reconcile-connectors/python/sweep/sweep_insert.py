@@ -25,6 +25,7 @@ COLUMNS = (
     "origin",
     "claim",
     "started_at",
+    "job_created_at",
     "duration_ms",
     "records_moved",
 )
@@ -45,7 +46,9 @@ def row_tuple(row: dict[str, Any]) -> str:
         sql_literal(row["status"]),
         sql_literal(row["origin"]),
         sql_literal(row["claim"]),
-        f"toDateTime64({int(row['started_at_epoch'])}, 3)",
+        # Absent start, absent stamp: the epoch would be a sync that never ran.
+        "NULL" if not row["started_at_epoch"] else f"toDateTime64({int(row['started_at_epoch'])}, 3)",
+        "NULL" if not row.get("created_at_epoch") else f"toDateTime64({int(row['created_at_epoch'])}, 3)",
         "NULL" if row["duration_ms"] is None else str(int(row["duration_ms"])),
         str(int(row["records_moved"])),
     ]

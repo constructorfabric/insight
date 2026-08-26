@@ -55,6 +55,7 @@ def job(job_id="77", status="succeeded", **overrides):
         "connectionId": CONNECTION,
         "status": status,
         "startTimeEpoch": 2000,
+        "createdAtEpoch": 1900,
         "duration": "PT1M37S",
         "rowsSynced": 425,
     }
@@ -82,19 +83,22 @@ def syncs(plan):
 
 
 class TestAJobWithNoReadableStartTime:
-    """The epoch is not a time the mover reported; it is a parse failure."""
+    """A job the mover has not started is recorded; one it cannot place is not."""
 
-    def test_a_job_with_an_unreadable_start_time_is_not_recorded(self):
-        # Recording it puts a sync in 1970 on the page, and the claim decision
-        # reads this same stamp — a bogus one would call the job unclaimed on
-        # arithmetic rather than on evidence.
+    def test_a_job_not_started_yet_is_still_recorded_with_no_start_time(self):
+        # It must be covered, or the frontier passes it and its outcome is
+        # never read. Its start is absent, not the epoch.
         plan = plan_sweep(request(jobs=[job(startTimeEpoch=0)]))
 
+        (row,) = syncs(plan)
+        assert row.started_at_epoch == 0
+        assert row.created_at_epoch > 0, "it still sits on the frontier axis"
+
+    def test_a_job_the_listing_cannot_place_is_skipped_and_counted(self):
+        # Without the ordering stamp there is no way to advance past it safely.
+        plan = plan_sweep(request(jobs=[job(job_id="77", createdAtEpoch=0)]))
+
         assert syncs(plan) == []
-
-    def test_it_is_counted_so_the_tick_can_say_what_it_skipped(self):
-        plan = plan_sweep(request(jobs=[job(job_id="77", startTimeEpoch=0)]))
-
         assert plan.undatable_jobs == ["77"]
 
 
@@ -300,6 +304,9 @@ class TestVocabularyAtTheBoundary:
             ("", None),
             (None, None),
             ("not-a-duration", None),
+            ("PT1X", None),
+            ("PT1M37", None),
+            ("PT", None),
             (12.5, 12500),
         ],
     )

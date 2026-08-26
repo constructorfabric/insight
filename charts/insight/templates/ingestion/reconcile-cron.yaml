@@ -69,7 +69,7 @@ spec:
             # deployer can see it against their own Argo retention, rather than
             # in the loop's own default.
             - name: SWEEP_CLAIM_HORIZON_SECONDS
-              value: {{ .Values.ingestion.reconcile.claimHorizonSeconds | default 86400 | quote }}
+              value: {{ required "ingestion.reconcile.claimHorizonSeconds is required: it decides whether a sync with no claim is reported as started outside the pipeline" .Values.ingestion.reconcile.claimHorizonSeconds | quote }}
             - name: AIRBYTE_URL
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE

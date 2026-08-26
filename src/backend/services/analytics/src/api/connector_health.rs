@@ -53,7 +53,9 @@ pub(crate) struct RunView {
     /// The step the run reached; absent when it did not fail.
     #[schema(required)]
     pub step: Option<String>,
-    pub started_at: DateTime<Utc>,
+    /// Absent where nothing recorded when it began.
+    #[schema(required)]
+    pub started_at: Option<DateTime<Utc>>,
     pub duration_ms: u64,
     /// Outcome of this run's own transform step, when it got that far.
     #[schema(required)]
@@ -69,7 +71,10 @@ pub(crate) struct SyncView {
     /// provenance; it is never presented as a manual sync.
     pub trigger: String,
     pub status: String,
-    pub started_at: DateTime<Utc>,
+    /// Absent where nothing recorded when it began — a job the mover had not
+    /// started carries no start time, and the epoch would be a sync that never ran.
+    #[schema(required)]
+    pub started_at: Option<DateTime<Utc>>,
     /// Null until the mover's history has been swept — only it knows how long a
     /// sync took and how much it moved.
     #[schema(required)]
@@ -122,7 +127,10 @@ pub(crate) struct RunEventView {
     /// the summary by identity instead of by timestamp.
     #[schema(required)]
     pub job_id: Option<String>,
-    pub started_at: DateTime<Utc>,
+    /// Absent where nothing recorded when it began — a job the mover had not
+    /// started carries no start time, and the epoch would be a sync that never ran.
+    #[schema(required)]
+    pub started_at: Option<DateTime<Utc>>,
     /// Null on a row no sweep has reached — the same rule as the counters.
     #[schema(required)]
     pub duration_ms: Option<u64>,
@@ -297,7 +305,7 @@ mod tests {
             job_id: "job-1".to_owned(),
             claim,
             status: "ok".to_owned(),
-            started_at: at(),
+            started_at: Some(at()),
             duration_ms: Some(310_000),
             records_moved: Some(12_400),
             rows_landed,
@@ -386,7 +394,7 @@ mod tests {
             origin: "sweep".to_owned(),
             claim: "something-new".to_owned(),
             job_id: "job-1".to_owned(),
-            started_at: at(),
+            started_at: Some(at()),
             duration_or_zero: 1,
             has_duration: true,
             moved_or_zero: 0,
@@ -410,7 +418,7 @@ mod tests {
             origin: "pipeline".to_owned(),
             claim: String::new(),
             job_id: String::new(),
-            started_at: at(),
+            started_at: Some(at()),
             duration_or_zero: 1,
             has_duration: true,
             moved_or_zero: 0,
@@ -437,7 +445,7 @@ mod tests {
             origin: "sweep".to_owned(),
             claim: "claimed".to_owned(),
             job_id: "job-1".to_owned(),
-            started_at: at(),
+            started_at: Some(at()),
             duration_or_zero: 1,
             has_duration: true,
             moved_or_zero: 0,

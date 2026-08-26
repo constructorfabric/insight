@@ -48,7 +48,8 @@ def ledger_row(raw: dict[str, str]) -> dict[str, Any]:
         "claim": raw["claim"],
         "status": raw["status"],
         "has_counters": raw["has_counters"] == "1",
-        "started_at_epoch": int(raw["started_at_epoch"]),
+        # "0" is the warehouse saying NULL: a job the mover had not started.
+        "started_at_epoch": int(raw["started_at_epoch"] or 0),
         # Empty means the warehouse held NULL: nobody timed this one.
         "duration_ms": int(raw["duration_ms"]) if raw["duration_ms"] else None,
         "records_moved": int(raw["records_moved"]),
@@ -64,11 +65,13 @@ def build(
     horizon_epoch: int,
 ) -> dict[str, Any]:
     for job in jobs:
-        # `createdAt` is the field the listing is ORDERED by, so it is the one
-        # the frontier moves along. Falling back to it keeps a job whose
-        # `startTime` is unreadable inside the covered region — skipped without
-        # it, the watermark advances past the job and nothing asks again.
-        job["startTimeEpoch"] = epoch(job.get("startTime")) or epoch(job.get("createdAt"))
+        # Two different facts, kept apart. `startTime` is when the sync began
+        # and is absent for a job the mover has not started; `createdAt` is what
+        # the listing is ordered by, and so the axis the frontier moves along.
+        # Substituting one for the other would report a start that never
+        # happened and still leave the cursor on the wrong axis.
+        job["startTimeEpoch"] = epoch(job.get("startTime"))
+        job["createdAtEpoch"] = epoch(job.get("createdAt"))
 
     return {
         "jobs": jobs,

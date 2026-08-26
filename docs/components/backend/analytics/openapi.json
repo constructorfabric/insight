@@ -2185,8 +2185,12 @@
             ]
           },
           "started_at": {
+            "description": "Absent where nothing recorded when it began — a job the mover had not\nstarted carries no start time, and the epoch would be a sync that never ran.",
             "format": "date-time",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "status": {
             "type": "string"
@@ -2251,8 +2255,12 @@
             "type": "integer"
           },
           "started_at": {
+            "description": "Absent where nothing recorded when it began.",
             "format": "date-time",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "status": {
             "type": "string"
@@ -2505,8 +2513,12 @@
             ]
           },
           "started_at": {
+            "description": "Absent where nothing recorded when it began — a job the mover had not\nstarted carries no start time, and the epoch would be a sync that never ran.",
             "format": "date-time",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "status": {
             "type": "string"

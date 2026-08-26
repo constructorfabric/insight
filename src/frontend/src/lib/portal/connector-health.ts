@@ -135,7 +135,9 @@ function inFlight(status: string | null | undefined): boolean {
   return status !== null && status !== undefined && IN_FLIGHT.has(status);
 }
 
-function isNewer(a: string, b: string): boolean {
+/** Strictly newer. Unknown on either side is not an ordering. */
+function isNewer(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return false;
   return new Date(a).getTime() > new Date(b).getTime();
 }
 
@@ -182,6 +184,12 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
   }
 
   if (!run && !sync) return "never_ran";
+
+  // "Delivering" is a claim about a completed run. A sync alone — however it
+  // ended — is the mover reporting on itself, with nothing saying the run
+  // finished or that anything landed. That is a gap in the record, not a
+  // delivery, and the page must not colour it green.
+  if (!run) return "state_unknown";
 
   // After the known-bad readings, before any reassurance. The transform counts:
   // its outcome is one of the three this page reports, and a word we cannot

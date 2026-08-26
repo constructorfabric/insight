@@ -195,6 +195,18 @@ class TestInsertRendering:
 class TestTheCoverageFrontier:
     """The watermark is how far the SWEEP has read, not what the ledger holds."""
 
+    def test_the_watermark_moves_along_the_listings_own_ordering_field(self):
+        # The mover orders and filters by createdAt. A frontier on the sync's
+        # START time lets a job that waited to begin push the cursor past jobs
+        # created earlier and never read.
+        source = SWEEP_SH.read_text()
+        watermark = source.split("_sweep_watermark() {", 1)[1].split("\n}", 1)[0]
+
+        assert "max(job_created_at)" in watermark, (
+            "the frontier must move along createdAt, the axis the listing uses"
+        )
+        assert "max(started_at)" not in watermark
+
     def test_the_watermark_counts_only_rows_the_sweep_recorded(self):
         # The pipeline writes its own sync rows in real time. Counting those
         # puts the frontier at "now" on any running install, and the backfill
@@ -218,22 +230,24 @@ class TestTheCoverageFrontier:
 
 
 class TestPlacingAJobInTime:
-    """The frontier moves along `createdAt`, so a job must be placed on it."""
+    """Two axes, kept apart: when a sync began, and where the frontier is."""
 
-    def test_an_unreadable_start_time_falls_back_to_the_listing_order_field(self):
-        # Skipped outright, this job sits behind a watermark that later jobs
-        # push forward, and its outcome is never recorded.
+    def test_an_absent_start_time_is_not_filled_in_from_the_listing_order(self):
+        # They answer different questions. Substituting one would report a
+        # start that never happened, and still leave the cursor mis-placed.
         request = build(
             jobs=[{"jobId": "77", "startTime": "not-a-time", "createdAt": "2026-01-15T09:00:00"}],
             mapping={}, ledger=[], claims={}, tick_run_id="tick-1", horizon_epoch=0,
         )
 
-        assert request["jobs"][0]["startTimeEpoch"] > 0
+        job = request["jobs"][0]
+        assert job["startTimeEpoch"] == 0, "an unreadable start stays absent"
+        assert job["createdAtEpoch"] > 0, "the frontier axis is still known"
 
-    def test_a_job_datable_by_neither_field_is_left_at_zero_for_the_planner(self):
+    def test_a_job_placed_on_neither_axis_is_left_at_zero_for_the_planner(self):
         request = build(
             jobs=[{"jobId": "77", "startTime": "", "createdAt": ""}],
             mapping={}, ledger=[], claims={}, tick_run_id="tick-1", horizon_epoch=0,
         )
 
-        assert request["jobs"][0]["startTimeEpoch"] == 0
+        assert request["jobs"][0]["createdAtEpoch"] == 0

@@ -96,7 +96,7 @@ const SYNCS_SQL: &str = "\
       FROM {LEDGER}
       WHERE event = 'sync.completed' AND connector != '' AND job_id != ''
         AND (connector, job_id) IN (
-          SELECT connector, argMax(job_id, started_at)
+          SELECT connector, argMax(job_id, ifNull(started_at, job_created_at))
           FROM {LEDGER}
           WHERE event = 'sync.completed' AND connector != '' AND job_id != ''
           GROUP BY connector
@@ -171,8 +171,8 @@ struct RunRow {
     connector: String,
     status: String,
     step: String,
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    started_at: DateTime<Utc>,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
+    started_at: Option<DateTime<Utc>>,
     duration_ms: u64,
     run_id: String,
 }
@@ -190,8 +190,8 @@ struct SyncRow {
     job_id: String,
     claim: String,
     status: String,
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    started_at: DateTime<Utc>,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
+    started_at: Option<DateTime<Utc>>,
     // INVARIANT: field order matches the SELECT — the client reads positionally.
     duration_ms: u64,
     has_duration: bool,
@@ -260,8 +260,8 @@ pub(crate) struct HistoryRow {
     /// The mover's own job identity, so a reader can line one event up against
     /// the summary rather than guessing by timestamp.
     pub(crate) job_id: String,
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    pub(crate) started_at: DateTime<Utc>,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
+    pub(crate) started_at: Option<DateTime<Utc>>,
     /// INVARIANT: only meaningful when `has_duration`. Not tied to the
     /// counters: a pipeline-written `run.finished` carries the workflow layer's
     /// own elapsed time, while its `sync.completed` carries none until a sweep
@@ -509,7 +509,7 @@ mod tests {
             connector: connector.to_owned(),
             status: "ok".to_owned(),
             step: "done".to_owned(),
-            started_at: Utc.timestamp_opt(0, 0).unwrap(),
+            started_at: Some(Utc.timestamp_opt(0, 0).unwrap()),
             duration_ms: 1,
             run_id: run_id.to_owned(),
         }
@@ -695,7 +695,7 @@ mod tests {
             connector: "alpha".to_owned(),
             claim: "claimed".to_owned(),
             status: "ok".to_owned(),
-            started_at: Utc.timestamp_opt(0, 0).unwrap(),
+            started_at: Some(Utc.timestamp_opt(0, 0).unwrap()),
             duration_ms: 0,
             has_duration: false,
             records_moved: 0,
@@ -724,7 +724,7 @@ mod tests {
             connector: "alpha".to_owned(),
             claim: "out_of_band".to_owned(),
             status: "ok".to_owned(),
-            started_at: Utc.timestamp_opt(0, 0).unwrap(),
+            started_at: Some(Utc.timestamp_opt(0, 0).unwrap()),
             duration_ms: 1,
             has_duration: true,
             records_moved: 400,
@@ -743,7 +743,7 @@ mod tests {
             connector: "alpha".to_owned(),
             claim: "claimed".to_owned(),
             status: "ok".to_owned(),
-            started_at: Utc.timestamp_opt(0, 0).unwrap(),
+            started_at: Some(Utc.timestamp_opt(0, 0).unwrap()),
             duration_ms: 1,
             has_duration: true,
             records_moved: 400,

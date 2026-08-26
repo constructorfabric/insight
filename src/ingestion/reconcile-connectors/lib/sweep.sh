@@ -84,21 +84,28 @@ _sweep_warehouse_ready_p() {
 # mover's whole retained history — the backfill that gives a new install run
 # history from day one (spec FR-6).
 #
-# INVARIANT: sweep-origin rows only. This is the frontier of what the SWEEP has
-# read, not of what the ledger holds. The pipeline writes its own sync rows in
-# real time, so counting those would put the frontier at "now" on any running
-# install and the backfill behind it would never be requested again.
+# INVARIANT: `job_created_at`, sweep-origin rows only.
+#
+# The axis must be the one the mover's listing is ordered and filtered by. Using
+# the sync's START time instead lets a job that waited a long time to begin push
+# the cursor past jobs created earlier and never read — they leave the window
+# for good.
+#
+# Sweep-origin because this is the frontier of what the SWEEP has read, not of
+# what the ledger holds: the pipeline writes its own sync rows in real time, so
+# counting those would put the frontier at "now" on any running install and the
+# backfill behind it would never be requested again.
 _sweep_watermark() {
   local newest
   newest="$(_sweep_ch "
     SELECT if(
              count() = 0,
              '',
-             toString(max(started_at) - INTERVAL ${SWEEP_OVERLAP_SECONDS} SECOND)
+             toString(max(job_created_at) - INTERVAL ${SWEEP_OVERLAP_SECONDS} SECOND)
            )
     FROM ${LEDGER_TABLE}
     WHERE event = 'sync.completed' AND origin = 'sweep'
-      AND started_at > toDateTime64(0, 3)
+      AND job_created_at IS NOT NULL
     FORMAT TSVRaw" 2>/dev/null)" || return 0
   [[ -n "${newest}" ]] || return 0
   printf '%sZ' "${newest/ /T}"
@@ -125,17 +132,17 @@ _sweep_ledger_state() {
                'claim', argMax(claim, (prec, ts)),
                'status', argMax(status, (prec, ts)),
                'has_counters', toString(max(origin = 'sweep')),
-               'started_at_epoch', toString(toUnixTimestamp(argMax(started_at, (prec, ts)))),
+               'started_at_epoch', ifNull(toString(toUnixTimestamp(argMax(started_at, (prec, ts)))), '0'),
                'duration_ms', ifNull(toString(argMax(duration_ms, (prec, ts))), ''),
                'records_moved', toString(argMax(records_moved, (prec, ts)))
              ) AS row
       FROM (
-        SELECT job_id, connector, claim, status, origin, ts, started_at,
+        SELECT job_id, connector, claim, status, origin, ts, started_at, job_created_at,
                duration_ms, records_moved,
                multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2, 1) AS prec
         FROM ${LEDGER_TABLE}
         WHERE event = 'sync.completed' AND job_id != ''
-          AND started_at >= now64(3) - INTERVAL ${state_window} SECOND
+          AND ifNull(job_created_at, started_at) >= now64(3) - INTERVAL ${state_window} SECOND
       )
       GROUP BY job_id
     ) FORMAT TSVRaw" || printf '[]'

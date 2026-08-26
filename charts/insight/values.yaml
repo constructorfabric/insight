@@ -220,12 +220,6 @@ ingestion:
     schedule: "0 6 * * *" # daily 06:00 UTC, after overnight connector syncs
     successfulJobsHistoryLimit: 3
     failedJobsHistoryLimit: 3
-    # Beyond this, a sync with no recorded claim stays `unclaimed` rather than
-    # being called out-of-band: the run that could have claimed it may simply
-    # have been collected. Set it to the workflow layer's own retention — the
-    # default is deliberately short, because only a value LONGER than that
-    # retention can attribute a sync to a person on evidence that was deleted.
-    claimHorizonSeconds: 86400
     ttlSecondsAfterCompletion: 1800
     ttlSecondsAfterSuccess: 600
     ttlSecondsAfterFailure: 3600
@@ -233,6 +227,12 @@ ingestion:
   # cron-scheduled inside the cluster (see templates/ingestion/reconcile-cron.yaml).
   reconcile:
     schedule: "*/15 * * * *"
+    # How far back the workflow layer's own records are complete, and so how
+    # far back a missing claim is evidence that a sync started outside the
+    # pipeline. Set it to that layer's retention. Shorter only widens
+    # `unclaimed`, which is the honest answer; only a value LONGER than the real
+    # retention can attribute a sync on evidence that was deleted.
+    claimHorizonSeconds: 86400
     # Airbyte workspace UUID is auto-discovered at runtime via ab_workspace_id (ADR-0009) — no value to set.
     destinationId: "" # Optional override: explicit Airbyte destination UUID. Leave empty for fresh installs — reconcile auto-creates the Bronze ClickHouse destination by name (ADR-0012).
     destinationName: "" # Optional: name of the Bronze destination managed by reconcile. Default `clickhouse-bronze`.

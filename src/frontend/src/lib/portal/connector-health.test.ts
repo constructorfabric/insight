@@ -184,11 +184,14 @@ describe("connectorState", () => {
   });
 
   it("does not claim a transform was skipped when the sync's origin is unknown", () => {
+    // `unclaimed` is unknown provenance, so it is no evidence that the pipeline
+    // was bypassed — and with no run recorded, no evidence of delivery either.
     const state = connectorState(
       row({ last_run: null, last_sync: sync({ trigger: "unclaimed" }) })
     );
 
-    expect(state).toBe("delivering");
+    expect(state).not.toBe("sync_without_transform");
+    expect(state).toBe("state_unknown");
   });
 
   it("separates configured-and-never-ran from a schema nobody configured", () => {
@@ -221,6 +224,16 @@ describe("connectorState", () => {
     expect(state).toBe("state_unknown");
   });
 
+  it("does not call a connector delivering on a sync alone", () => {
+    // The mover reporting its own success is not a completed run: nothing says
+    // the pipeline finished or that anything landed. A gap, not a delivery.
+    const state = connectorState(
+      row({ last_run: null, last_sync: sync({ trigger: "claimed" }) })
+    );
+
+    expect(state).toBe("state_unknown");
+  });
+
   it("names a run that recorded no transform outcome at all", () => {
     // FR-4 makes "failed or absent transform" a state of its own: a finished
     // run always runs a transform, so nothing recorded means nothing rebuilt
@@ -231,10 +244,11 @@ describe("connectorState", () => {
   });
 
   it("does not claim a missing transform when no run was recorded", () => {
-    // Nothing ran, so there is nothing for a transform to have followed.
+    // Nothing ran, so there is nothing for a transform to have followed — and
+    // with no run there is nothing to call delivering either.
     expect(
       connectorState(row({ last_run: null, last_sync: sync() }))
-    ).toBe("delivering");
+    ).toBe("state_unknown");
   });
 
   it("still prefers a known-bad reading over an unrecognised one", () => {
