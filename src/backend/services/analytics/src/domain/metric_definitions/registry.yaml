@@ -849,14 +849,15 @@ metrics:
   - metric_key: git.default_branch_commits
     source_key: git
     subject: commits
-    label: Commits on the default branch
+    label: Commits that reached the default branch
     short_label: Commits (default)
     description: Authored commits that reached the default branch
     explanation: >-
       Authored commits reachable from the repository's default branch, or
       carried onto it by a merged pull request. A commit joins this metric when
-      its branch lands, so a past period's figure rises as work merges. Merge
-      commits excluded.
+      its branch lands, so a past period's figure rises as work merges. Dated by
+      the commit, so the request that merged it can fall in a later period.
+      Merge commits excluded.
     unit: commits
     format: integer
     direction: higher_is_better
@@ -873,15 +874,15 @@ metrics:
   - metric_key: git.non_default_branch_commits
     source_key: git
     subject: commits
-    label: Commits outside the default branch
+    label: Commits that have not reached the default branch
     short_label: Commits (other)
     description: Authored commits that have not reached the default branch
     explanation: >-
       Authored commits not reachable from the repository's default branch —
       work in flight, or abandoned. A commit leaves this metric when its branch
-      lands, so a past period's figure falls as work merges. A source that does
-      not report branch membership counts here rather than inventing an answer.
-      Merge commits excluded.
+      lands, so a past period's figure falls as work merges. Dated by the
+      commit, not by the merge. A source reporting no branch membership counts
+      here. Merge commits excluded.
     unit: commits
     format: integer
     direction: neutral
@@ -925,14 +926,14 @@ metrics:
   - metric_key: git.default_branch_code_lines
     source_key: git
     subject: code_changes
-    label: Code lines added on the default branch
+    label: Code lines that reached the default branch
     short_label: Code lines (default)
     description: Lines added to code files that reached the default branch
     explanation: >-
       Code lines whose commit is reachable from the repository's default
       branch, or was carried onto it by a merged pull request. Lines follow
-      their commit, so this rises as work merges. Tests, configuration and
-      documentation excluded.
+      their commit, so this rises as work merges. Dated by the commit, not by
+      the merge. Tests, configuration and documentation excluded.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -951,13 +952,14 @@ metrics:
   - metric_key: git.non_default_branch_code_lines
     source_key: git
     subject: code_changes
-    label: Code lines added outside the default branch
+    label: Code lines that have not reached the default branch
     short_label: Code lines (other)
     description: Lines added to code files that have not reached the default branch
     explanation: >-
       Code lines whose commit has not reached the repository's default branch —
       work in flight, or abandoned. Lines follow their commit, so this falls as
-      work merges. Tests, configuration and documentation excluded.
+      work merges. Dated by the commit, not by the merge. Tests, configuration
+      and documentation excluded.
     unit: lines
     format: integer
     direction: neutral
@@ -1004,13 +1006,14 @@ metrics:
   - metric_key: git.default_branch_lines_added
     source_key: git
     subject: code_changes
-    label: Lines added on the default branch
+    label: Lines added that reached the default branch
     short_label: Lines + (default)
     description: All lines added that reached the default branch
     explanation: >-
       Lines added whose commit is reachable from the repository's default
       branch, or was carried onto it by a merged pull request. Lines follow
-      their commit, so this rises as work merges.
+      their commit, so this rises as work merges. Dated by the commit, not by
+      the merge.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -1030,13 +1033,13 @@ metrics:
   - metric_key: git.non_default_branch_lines_added
     source_key: git
     subject: code_changes
-    label: Lines added outside the default branch
+    label: Lines added that have not reached the default branch
     short_label: Lines + (other)
     description: All lines added that have not reached the default branch
     explanation: >-
       Lines added whose commit has not reached the repository's default branch —
       work in flight, or abandoned. Lines follow their commit, so this falls as
-      work merges.
+      work merges. Dated by the commit, not by the merge.
     unit: lines
     format: integer
     direction: neutral
@@ -1110,13 +1113,14 @@ metrics:
   - metric_key: git.default_branch_lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed on the default branch
+    label: Lines removed that reached the default branch
     short_label: Lines − (default)
     description: All lines removed that reached the default branch
     explanation: >-
       Lines removed whose commit is reachable from the repository's default
       branch, or was carried onto it by a merged pull request. Lines follow
-      their commit, so this rises as work merges.
+      their commit, so this rises as work merges. Dated by the commit, not by
+      the merge.
     unit: lines
     format: integer
     direction: neutral
@@ -1136,13 +1140,13 @@ metrics:
   - metric_key: git.non_default_branch_lines_removed
     source_key: git
     subject: code_changes
-    label: Lines removed outside the default branch
+    label: Lines removed that have not reached the default branch
     short_label: Lines − (other)
     description: All lines removed that have not reached the default branch
     explanation: >-
       Lines removed whose commit has not reached the repository's default
       branch — work in flight, or abandoned. Lines follow their commit, so this
-      falls as work merges.
+      falls as work merges. Dated by the commit, not by the merge.
     unit: lines
     format: integer
     direction: neutral
@@ -1214,8 +1218,8 @@ metrics:
     explanation: >-
       Pull requests opened against something other than the repository's
       default branch — a release branch, a stacked request, an integration
-      branch. A request whose destination the source does not report counts
-      here rather than inventing an answer.
+      branch. Dated by creation. A request whose destination the source does
+      not report counts here rather than inventing an answer.
     unit: PRs
     format: integer
     direction: neutral
