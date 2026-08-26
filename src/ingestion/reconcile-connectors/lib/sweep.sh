@@ -80,9 +80,14 @@ _sweep_warehouse_ready_p() {
 
 # _sweep_watermark — ISO-8601 lower bound for the mover listing, or empty.
 #
-# Empty means the ledger holds no sync yet, and the sweep should ingest the
+# Empty means the sweep has covered nothing yet, and it should ingest the
 # mover's whole retained history — the backfill that gives a new install run
 # history from day one (spec FR-6).
+#
+# INVARIANT: sweep-origin rows only. This is the frontier of what the SWEEP has
+# read, not of what the ledger holds. The pipeline writes its own sync rows in
+# real time, so counting those would put the frontier at "now" on any running
+# install and the backfill behind it would never be requested again.
 _sweep_watermark() {
   local newest
   newest="$(_sweep_ch "
@@ -92,7 +97,8 @@ _sweep_watermark() {
              toString(max(started_at) - INTERVAL ${SWEEP_OVERLAP_SECONDS} SECOND)
            )
     FROM ${LEDGER_TABLE}
-    WHERE event = 'sync.completed' AND started_at > toDateTime64(0, 3)
+    WHERE event = 'sync.completed' AND origin = 'sweep'
+      AND started_at > toDateTime64(0, 3)
     FORMAT TSVRaw" 2>/dev/null)" || return 0
   [[ -n "${newest}" ]] || return 0
   printf '%sZ' "${newest/ /T}"

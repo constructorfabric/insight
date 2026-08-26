@@ -19,6 +19,8 @@ from sweep.sweep_connections import join
 from sweep.sweep_insert import statement
 from sweep.sweep_request import build, epoch, ledger_row
 
+SWEEP_SH = Path(__file__).resolve().parents[1] / "lib" / "sweep.sh"
+
 
 def workflow(name="wf-1", created="2026-08-25T09:00:00Z", trigger_result="77", nodes=None):
     if nodes is None:
@@ -188,3 +190,28 @@ class TestInsertRendering:
         rows = json.loads(json.dumps([self.row()]))
 
         assert statement("ledger", rows) == statement("ledger", [self.row()])
+
+
+class TestTheCoverageFrontier:
+    """The watermark is how far the SWEEP has read, not what the ledger holds."""
+
+    def test_the_watermark_counts_only_rows_the_sweep_recorded(self):
+        # The pipeline writes its own sync rows in real time. Counting those
+        # puts the frontier at "now" on any running install, and the backfill
+        # behind it is never requested again — FR-6 silently stops holding.
+        source = SWEEP_SH.read_text()
+        watermark = source.split("_sweep_watermark() {", 1)[1].split("\n}", 1)[0]
+
+        assert "origin = 'sweep'" in watermark, (
+            "the watermark must be the sweep's own coverage edge, or a running "
+            "pipeline pushes it past history nothing has read"
+        )
+
+    def test_the_mover_listing_is_read_oldest_first(self):
+        # Ascending order is what makes a truncated listing resumable: what is
+        # cut is newer than everything collected, so the next tick continues at
+        # the edge instead of leaving a hole behind the watermark.
+        airbyte = (SWEEP_SH.parent / "airbyte.sh").read_text()
+
+        assert "orderBy=createdAt%7CASC" in airbyte
+        assert "orderBy=createdAt%7CDESC" not in airbyte
