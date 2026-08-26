@@ -38,6 +38,8 @@ mod binding_reads_live_tests;
 #[cfg(test)]
 mod person_listing_live_tests;
 #[cfg(test)]
+mod roster_email_live_tests;
+#[cfg(test)]
 mod roster_live_tests;
 #[cfg(test)]
 pub(crate) mod test_fixture;

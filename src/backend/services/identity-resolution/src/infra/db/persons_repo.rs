@@ -135,6 +135,110 @@ pub async fn resolve_person_id_by_email_any_tenant(
     }
 }
 
+/// Roster-email → candidate `person_id`s for the login bootstrap of an install
+/// that resolves logins by address (`idp.resolve_by = email`,
+/// `GET /internal/persons/by-roster-email`).
+///
+/// A SEPARATE function from `resolve_person_id_by_email_any_tenant` on purpose,
+/// even though both match on an address: that one serves the admin `__override`
+/// and matches an address stated by ANY source in ANY tenant, which is the right
+/// latitude for an operator typing a name and far too much for a sign-in. This
+/// one is confined three ways.
+///
+/// **To the caller's tenant.** Unlike the two any-tenant resolvers, the tenant
+/// IS known here: the authenticator denies a login whose `id_token` named
+/// no tenant before it ever calls identity, and mints its service JWT with that
+/// tenant, so the handler reads it off the `SecurityContext`. An address cannot
+/// carry the uniqueness a directory id does — every tenant's roster writes into
+/// the same `(source_type, address)` key space, and one customer adding another
+/// customer's address to its own HR system would otherwise resolve that
+/// customer's login to a person of its choosing.
+///
+/// **To the source the install declares as its roster** (`roster_source_type`),
+/// so an address only a chat or an issue tracker ever observed admits nobody.
+///
+/// **To a person the roster still holds a live account for.** Exclusion
+/// (ADR-0003) is recorded only against an ACCOUNT, as a `value_type='id'` row
+/// naming the sentinel, and the seed then stops re-emitting that account's
+/// values — so the address row written before the exclusion stays newest
+/// forever and would keep resolving the person it named. Filtering the sentinel
+/// out of THIS query cannot help: no `email` row ever names it. The live-binding
+/// requirement is what makes an exclusion bite at the door, and it also answers
+/// "may an address observed with no account behind it admit anyone" with no.
+///
+/// Returns every distinct candidate, newest observation first. More than one
+/// means the roster states one address for two people — the seed refuses to
+/// auto-link that shape (`skipped_contested_email`) and an operator may have
+/// split them deliberately, so the caller decides what to do rather than being
+/// handed a silent winner.
+///
+/// Case handling matches the rest of the resolvers: the input is trimmed only,
+/// and `value_id`'s collation does case-insensitive matching (migration 004).
+///
+/// NB an address the roster has since replaced still resolves: rows are
+/// append-only and this matches any observation of the address, not only a
+/// person's current one. Deliberate for now — see the `resolve_by = email`
+/// notes in the chart values.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_ids_by_roster_email(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    roster_source_type: &str,
+    email: &str,
+) -> anyhow::Result<Vec<Uuid>> {
+    const SQL: &str = r"
+        WITH addressed AS (
+            SELECT person_id, created_at, id
+            FROM persons
+            WHERE value_type = 'email'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+              AND value_id = ?
+        ),
+        bindings AS (
+            SELECT
+                person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_source_id, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE value_type = 'id'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+        )
+        SELECT a.person_id
+        FROM addressed a
+        WHERE a.person_id != ?
+          AND EXISTS (
+              SELECT 1 FROM bindings b
+              WHERE b.rn = 1 AND b.person_id = a.person_id
+          )
+        GROUP BY a.person_id
+        ORDER BY MAX(a.created_at) DESC, MAX(a.id) DESC
+    ";
+
+    let tenant_bytes = tenant_id.as_bytes().to_vec();
+    let source = roster_source_type.trim().to_owned();
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            email.trim().to_owned().into(),
+            tenant_bytes.into(),
+            source.into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
+
+    person_ids_from_rows(db.query_all_raw(stmt).await?)
+}
+
 /// Tenant-AGNOSTIC `(source_type, external_id)` → `person_id` resolution for the
 /// login bootstrap ONLY (the authenticator's service-only
 /// `GET /internal/persons/by-external-id?source_type=...&external_id=...`

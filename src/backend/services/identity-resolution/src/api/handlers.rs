@@ -158,9 +158,13 @@ pub struct InternalByExternalIdQuery {
 /// SERVICE-ONLY any-tenant `person_id` resolution for the LOGIN BOOTSTRAP
 /// ONLY: scoped to the configured `IdP`'s `source_type` (e.g. `ms-entra`) +
 /// its source-native external user id (e.g. the Entra `oid` claim). NEVER
-/// resolves by email — that is a SEPARATE route
-/// ([`internal_person_by_email_override`]), so a login that somehow carries
-/// no external id has no path that silently falls through to email.
+/// resolves by email — the two address-matching routes are SEPARATE
+/// ([`internal_person_by_roster_email`] for an install configured to resolve
+/// logins by address, [`internal_person_by_email_override`] for view-as), so a
+/// login that somehow carries no external id has no path that silently falls
+/// through to either. Which route the authenticator calls is decided by its
+/// `idp.resolve_by` config, once, at the top of the login — never by what a
+/// given token happens to carry.
 ///
 /// Deliberately bypasses the tenant + visibility gates the public
 /// `/v1/profiles` enforces: at login neither a tenant nor a caller identity
@@ -428,6 +432,139 @@ pub async fn internal_person_by_email_override(
         value: email.to_owned(),
         insight_source_type: "person",
         insight_source_id: person_id,
+    }))
+}
+
+/// Query params for `GET /internal/persons/by-roster-email`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalByRosterEmailQuery {
+    email: String,
+}
+
+/// `GET /internal/persons/by-roster-email?email=...` — SERVICE-ONLY
+/// `person_id` resolution for the login bootstrap of an install that resolves
+/// logins by address (`idp.resolve_by = email` on the authenticator). For
+/// installs whose IdP has no directory connector of its own: nothing ever seeds
+/// a `value_type='id'` row for the provider, so
+/// [`internal_person_by_external_id`] can match nobody and every sign-in is
+/// refused.
+///
+/// A THIRD route rather than a parameter on one of the other two, because the
+/// separation between them is a security boundary and not a naming choice: each
+/// route answers exactly one question, so no absent or empty field can make a
+/// login take a resolution path other than the one the install configured.
+/// `by-email-override` in particular stays override-only — it matches an address
+/// stated by ANY source in ANY tenant, which is the right latitude for an
+/// operator typing a name into view-as and far too much for a sign-in.
+///
+/// Unlike the two any-tenant lookups this one is tenant-SCOPED. The tenant is
+/// known by the time a login reaches here: the authenticator refuses a login
+/// whose `id_token` named no tenant, and mints the service JWT with that tenant,
+/// so it arrives in the `SecurityContext` like any other caller's. An address
+/// does not carry the cross-tenant uniqueness a directory id does, so spending
+/// the tenant we already have is what keeps one customer's roster from
+/// resolving another customer's login.
+///
+/// Fails closed on every shape it cannot answer: no roster declared, no tenant
+/// on the JWT, an empty address, or an address the roster does not state for
+/// anyone who still holds a live account under it.
+pub async fn internal_person_by_roster_email(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Query(query): Query<InternalByRosterEmailQuery>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_service(&ctx)?;
+
+    let email = query.email.trim();
+    if email.is_empty() {
+        // The authenticator calls this route only in email mode, so an empty
+        // address means a token reached it without the claim it was configured
+        // to resolve by. It fails closed on its own side and logs there; this is
+        // the same event seen from the identity side of the hop, and it is the
+        // one that survives if the two are read separately.
+        tracing::warn!(
+            "by-roster-email called with an empty address — the caller resolved no email claim"
+        );
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("email", "email must not be empty", "REQUIRED")
+            .create());
+    }
+
+    let roster_source_type = state.config.roster_source_type.trim();
+    if roster_source_type.is_empty() {
+        tracing::warn!(
+            "by-roster-email called with no roster_source_type configured — refusing to \
+             match a login address against every source"
+        );
+        return Err(ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "roster_source_type",
+                "resolving a login by address needs the roster source to be configured",
+                "roster_source_type_unconfigured",
+            )
+            .create());
+    }
+
+    // The caller's own tenant, off the service JWT. Nil would widen the lookup
+    // to every tenant sharing this database, which is the one thing an address
+    // key cannot survive.
+    let tenant_id = ctx.subject_tenant_id();
+    if tenant_id.is_nil() {
+        tracing::warn!(
+            "by-roster-email called with no tenant on the caller's token — refusing to \
+             match a login address across tenants"
+        );
+        return Err(ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "tenant_id",
+                "resolving a login by address needs the caller's tenant",
+                "tenant_unresolved",
+            )
+            .create());
+    }
+
+    let candidates = persons_repo::resolve_person_ids_by_roster_email(
+        &state.db,
+        tenant_id,
+        roster_source_type,
+        email,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "internal by-roster-email lookup failed");
+        CanonicalError::internal("lookup failed").create()
+    })?;
+
+    let Some((person_id, rest)) = candidates.split_first() else {
+        return Err(ProfileError::not_found(format!(
+            "no person holding a live {roster_source_type} account states email '{email}'"
+        ))
+        .with_resource(email.to_owned())
+        .create());
+    };
+
+    if !rest.is_empty() {
+        // The roster states one address for several people. The seed refuses to
+        // auto-link that shape, and an operator may have split them on purpose;
+        // admitting the newest observation silently would override that decision
+        // at the door with nothing to read afterwards. Answering is still the
+        // install's chosen behaviour — this is the line that makes it auditable.
+        tracing::warn!(
+            target: "audit",
+            event = "login_roster_email_ambiguous",
+            tenant_id = %tenant_id,
+            source_type = %roster_source_type,
+            candidates = candidates.len(),
+            resolved_person_id = %person_id,
+            "several persons state this roster address; resolving to the newest observation"
+        );
+    }
+
+    Ok(Json(InternalPersonResponse {
+        value_type: "email".to_owned(),
+        value: email.to_owned(),
+        insight_source_type: "person",
+        insight_source_id: *person_id,
     }))
 }
 
