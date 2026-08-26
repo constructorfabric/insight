@@ -167,8 +167,8 @@ actually read, so a role granted only visibility — and not data access — see
 for those relations. A "metadata only" grant that would let the reader size bronze without
 reading it is therefore not expressible. Storage facts reach the page the way every other
 fact does: recorded into the ledger by a writer that already owns bronze. The migration in
-§3.6 is the reproducible statement of the grant surface, and the stand asserts the reader
-holds no INSERT.
+§3.6 is the reproducible statement of the grant surface, and a static test over that
+migration asserts the reader is granted `SELECT` there and nothing that writes.
 
 #### No compose-stand behaviour beyond degradation
 
@@ -648,8 +648,12 @@ Numbered migration, alongside the table DDL:
 | read-only query-path role | `SELECT ON ingestion_runs.*` | everything the read surface needs |
 
 The writers take no grant here at all. They authenticate as the ingestion user, which owns
-these databases along with bronze, and the read-only query-path role must not be given
-INSERT: it is read-only by construction and has an adversarial test saying so.
+these databases along with bronze.
+
+The query-path role must not be given INSERT on the ledger. It is not a read-only role in
+general — `presentation` and `product_usage` are create/insert-only for it, which the
+role's own adversarial test pins — but on the ledger it reads and nothing more, and a static
+test over this migration fails the moment that changes.
 
 That is the whole grant surface. No bronze grant is issued to the reader, in data or in
 metadata. Neither `SHOW` on a `bronze_*` pattern nor a `bronze_*` wildcard `SELECT` makes

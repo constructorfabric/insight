@@ -30,8 +30,13 @@ const CLAIM_RANK: &str = "multiIf(claim = 'claimed', 3, claim = 'out_of_band', 2
 /// half a picture. Resolving it per query would let a sweep landing between two
 /// of them mix ticks — the configured set from the newer, storage from the
 /// older — and answer with a state that never existed.
+/// INVARIANT: no aggregate here is aliased to `ts`. An alias shadows the
+/// column it names, so `max(ts) AS ts` puts an aggregate inside the sibling
+/// `argMax(run_id, ts)` and the statement is rejected outright
+/// (`ILLEGAL_AGGREGATION`) — a 500 on every installation, invisible to any test
+/// that does not execute SQL.
 const SEALED_TICK_SQL: &str = "\
-    SELECT argMax(run_id, ts) AS run_id, max(ts) AS ts
+    SELECT argMax(run_id, ts) AS run_id, max(ts) AS sealed_at
     FROM {LEDGER}
     WHERE event = 'sweep.completed'";
 
@@ -224,7 +229,7 @@ struct ConfiguredRow {
 struct SealedTickRow {
     run_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
-    ts: DateTime<Utc>,
+    sealed_at: DateTime<Utc>,
 }
 
 /// The one tick a whole response is read against.
@@ -356,7 +361,7 @@ pub(crate) async fn read_sealed_tick(
     // epoch is a sentinel here and never a sweep that happened in 1970.
     let Some(row) = rows
         .into_iter()
-        .find(|row| row.ts != DateTime::<Utc>::UNIX_EPOCH)
+        .find(|row| row.sealed_at != DateTime::<Utc>::UNIX_EPOCH)
     else {
         return Ok(SealedTick {
             run_id: String::new(),
@@ -366,7 +371,7 @@ pub(crate) async fn read_sealed_tick(
 
     Ok(SealedTick {
         run_id: row.run_id,
-        swept_at: Some(row.ts),
+        swept_at: Some(row.sealed_at),
     })
 }
 
@@ -515,6 +520,35 @@ mod tests {
             connector: connector.to_owned(),
             run_id: run_id.to_owned(),
             status: status.to_owned(),
+        }
+    }
+
+    #[test]
+    fn no_aggregate_is_aliased_to_a_column_another_aggregate_reads() {
+        // An alias shadows the column it names. Alias an aggregate to `ts` and
+        // the sibling `argMax(x, ts)` receives an aggregate as its argument,
+        // which ClickHouse rejects outright — a 500 on every installation, and
+        // invisible to every test that does not execute the statement.
+        for template in [
+            SEALED_TICK_SQL,
+            RUNS_SQL,
+            TRANSFORMS_SQL,
+            SYNCS_SQL,
+            STORAGE_SQL,
+            STREAMS_SQL,
+            CONFIGURED_SQL,
+            HISTORY_SQL,
+        ] {
+            let rendered = sql(template);
+
+            // `ts` is the ordering column every aggregate here reads, and no
+            // statement has a reason to emit a column called `ts` — so any
+            // alias to it is the shadowing bug rather than a naming choice.
+            assert!(
+                !rendered.contains("AS ts"),
+                "aliasing to `ts` shadows the column the sibling aggregates \
+                 order by: {rendered}"
+            );
         }
     }
 
