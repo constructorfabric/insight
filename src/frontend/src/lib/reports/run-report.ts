@@ -2,8 +2,12 @@ import {
   queryMetricResults,
   type MetricResult,
 } from "@/api/metric-results-client";
-import { planRequests } from "@/lib/reports/batching";
+import {
+  ASSUMED_GROUPS_PER_ENTITY,
+  planRequests,
+} from "@/lib/reports/batching";
 import { requestBucket, type ReportGranularity } from "@/lib/reports/rollup";
+import { rowDimension, type ReportRows } from "@/lib/reports/rows";
 
 export interface ReportRun {
   metricKeys: readonly string[];
@@ -11,6 +15,8 @@ export interface ReportRun {
   range: { from: string; to: string };
   granularity: ReportGranularity;
   bucketCount: number;
+  /** Defaults to the person-per-bucket shape the report started as. */
+  rows?: ReportRows;
   onProgress?: (done: number, total: number) => void;
   signal?: AbortSignal;
 }
@@ -28,7 +34,13 @@ export interface ReportRun {
 export async function runReport(
   run: ReportRun,
 ): Promise<Map<string, MetricResult>> {
-  const batches = planRequests(run.metricKeys, run.entityIds, run.bucketCount);
+  const dimension = rowDimension(run.rows ?? "people");
+  const batches = planRequests(
+    run.metricKeys,
+    run.entityIds,
+    run.bucketCount,
+    dimension ? ASSUMED_GROUPS_PER_ENTITY : 1,
+  );
   const merged = new Map<string, MetricResult>();
   let done = 0;
   run.onProgress?.(0, batches.length);
@@ -40,7 +52,16 @@ export async function runReport(
         period: run.range,
         metrics: batch.metricKeys.map((metric_key) => ({
           metric_key,
-          views: [{ view: "timeseries", bucket: requestBucket(run.granularity) }],
+          views: [
+            {
+              view: "timeseries",
+              bucket: requestBucket(run.granularity),
+              // No group limit: repositories are few enough to name them all,
+              // and a capped request would fold the tail into a remainder row
+              // that a per-repository table cannot label.
+              ...(dimension ? { dimensions: [dimension] } : {}),
+            },
+          ],
         })),
       },
       run.signal,

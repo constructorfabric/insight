@@ -104,4 +104,35 @@ describe("runReport", () => {
       { view: "timeseries", bucket },
     ]);
   });
+
+  it("groups by repository only when rows are repositories", async () => {
+    await runReport({
+      metricKeys: ["a"],
+      entityIds: people(1),
+      range: { from: "2026-01-01", to: "2026-12-31" },
+      granularity: "month",
+      bucketCount: 4,
+      rows: "repositories",
+    });
+    expect(mocks.query.mock.calls[0]?.[0].metrics[0].views).toEqual([
+      { view: "timeseries", bucket: "month", dimensions: ["repository"] },
+    ]);
+  });
+
+  it("budgets grouped requests for several groups per person", async () => {
+    // A grouped series answers once per repository a person touched, so the
+    // same roster has to be split into more requests than it would ungrouped.
+    const run = {
+      metricKeys: ["a"],
+      entityIds: people(300),
+      range: { from: "2026-01-01", to: "2026-12-31" },
+      granularity: "month" as const,
+      bucketCount: 12,
+    };
+    await runReport(run);
+    const ungrouped = mocks.query.mock.calls.length;
+    mocks.query.mockClear();
+    await runReport({ ...run, rows: "repositories" });
+    expect(mocks.query.mock.calls.length).toBeGreaterThan(ungrouped);
+  });
 });
