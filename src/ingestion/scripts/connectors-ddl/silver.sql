@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_invoice
     `chain_status` Nullable(String),
     `category` Nullable(String),
     `tier_label` Nullable(String),
+    `tier_ref` Nullable(String),
     `is_proration` UInt8,
     `currency` String,
     `period_month` Date,
