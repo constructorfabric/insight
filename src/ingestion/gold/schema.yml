@@ -75,6 +75,29 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_authored_commits
+    description: >
+      One row per authored commit that reaches a git measure: the surviving row
+      of the commit-hash collapse, with branch scope, repository, project and
+      source dimensions already resolved. Materialized so the commit class read
+      and the collapse run once per build in their own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier; one row per tenant, data source and hash"
+        tests:
+          - not_null
+
+  - name: git_commit_file_changes
+    description: >
+      File changes attached to the commit row that survived the hash collapse,
+      one row per commit, path, change type and object id pair. Materialized so
+      the file-change class read runs in its own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit the change is attached to"
+        tests:
+          - not_null
+
   - name: git_default_branch_commits
     description: >
       Commits that reached a repository's default branch through a merged pull
