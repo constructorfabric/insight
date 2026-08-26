@@ -88,7 +88,7 @@ async fn cleanup(db: &DatabaseConnection, keys: &[&str]) {
     ] {
         for key in keys {
             let _ = db
-                .execute(Statement::from_sql_and_values(
+                .execute_raw(Statement::from_sql_and_values(
                     db.get_database_backend(),
                     format!("DELETE FROM {table} WHERE {column} = ?"),
                     [Value::from(*key)],
@@ -100,7 +100,7 @@ async fn cleanup(db: &DatabaseConnection, keys: &[&str]) {
 
 async fn stored_version(db: &DatabaseConnection, table: &str, column: &str, key: &str) -> i32 {
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             format!("SELECT definition_version FROM {table} WHERE {column} = ?"),
             [Value::from(key)],
@@ -114,7 +114,7 @@ async fn stored_version(db: &DatabaseConnection, table: &str, column: &str, key:
 
 async fn revision_versions(db: &DatabaseConnection, key: &str) -> Vec<i32> {
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "SELECT version FROM semantic_definition_revisions \
              WHERE definition_key = ? ORDER BY version",
@@ -206,7 +206,7 @@ async fn a_write_against_a_superseded_version_touches_nothing() {
         .expect("first write");
 
     // Another writer bumps the row after this one read version 1.
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE semantic_measures SET definition_version = definition_version + 1 \
          WHERE measure_key = ?",
@@ -351,7 +351,7 @@ async fn probe_state_moves_without_a_version_bump() {
     reconcile_dataset(&db, &dataset(key), Origin::Product, ACTOR)
         .await
         .expect("first write");
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE semantic_datasets \
          SET availability = 'unavailable', availability_reason = 'relation absent' \

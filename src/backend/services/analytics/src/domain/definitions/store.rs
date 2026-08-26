@@ -298,13 +298,13 @@ async fn fetch_dataset<C: ConnectionTrait>(
     conn: &C,
     key: &str,
 ) -> Result<Option<semantic_datasets::Model>, DbErr> {
+    use sea_orm::ColumnTrait;
     use sea_orm::EntityTrait;
     use sea_orm::QueryFilter;
-    use sea_orm::prelude::Expr;
 
     semantic_datasets::Entity::find()
-        .filter(Expr::col(semantic_datasets::Column::DatasetKey).eq(key))
-        .filter(Expr::col(semantic_datasets::Column::TenantId).is_null())
+        .filter(semantic_datasets::Column::DatasetKey.eq(key))
+        .filter(semantic_datasets::Column::TenantId.is_null())
         .one(conn)
         .await
 }
@@ -314,7 +314,7 @@ async fn insert_dataset<C: ConnectionTrait>(
     dataset: &DatasetDefinition,
     origin: Origin,
 ) -> Result<(), DbErr> {
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO semantic_datasets \
             (id, tenant_id, dataset_key, database_relation, read_discipline, \
@@ -339,7 +339,7 @@ pub(super) async fn update_dataset<C: ConnectionTrait>(
     from_version: i32,
 ) -> Result<u64, DbErr> {
     let result = conn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "UPDATE semantic_datasets SET \
                 database_relation = ?, read_discipline = ?, retention_horizon = ?, \
@@ -361,13 +361,13 @@ async fn fetch_measure<C: ConnectionTrait>(
     conn: &C,
     key: &str,
 ) -> Result<Option<semantic_measures::Model>, DbErr> {
+    use sea_orm::ColumnTrait;
     use sea_orm::EntityTrait;
     use sea_orm::QueryFilter;
-    use sea_orm::prelude::Expr;
 
     semantic_measures::Entity::find()
-        .filter(Expr::col(semantic_measures::Column::MeasureKey).eq(key))
-        .filter(Expr::col(semantic_measures::Column::TenantId).is_null())
+        .filter(semantic_measures::Column::MeasureKey.eq(key))
+        .filter(semantic_measures::Column::TenantId.is_null())
         .one(conn)
         .await
 }
@@ -376,13 +376,13 @@ async fn fetch_metric<C: ConnectionTrait>(
     conn: &C,
     key: &str,
 ) -> Result<Option<semantic_metrics::Model>, DbErr> {
+    use sea_orm::ColumnTrait;
     use sea_orm::EntityTrait;
     use sea_orm::QueryFilter;
-    use sea_orm::prelude::Expr;
 
     semantic_metrics::Entity::find()
-        .filter(Expr::col(semantic_metrics::Column::MetricKey).eq(key))
-        .filter(Expr::col(semantic_metrics::Column::TenantId).is_null())
+        .filter(semantic_metrics::Column::MetricKey.eq(key))
+        .filter(semantic_metrics::Column::TenantId.is_null())
         .one(conn)
         .await
 }
@@ -392,7 +392,7 @@ async fn insert_measure<C: ConnectionTrait>(
     measure: &MeasureDefinition,
     origin: Origin,
 ) -> Result<(), DbErr> {
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO semantic_measures \
             (id, tenant_id, measure_key, dataset_ref, filter, aggregation, value_expr, \
@@ -422,7 +422,7 @@ pub(super) async fn update_measure<C: ConnectionTrait>(
     from_version: i32,
 ) -> Result<u64, DbErr> {
     let result = conn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "UPDATE semantic_measures SET \
                 dataset_ref = ?, filter = ?, aggregation = ?, value_expr = ?, subject_expr = ?, \
@@ -450,7 +450,7 @@ async fn insert_metric<C: ConnectionTrait>(
     metric: &MetricDefinition,
     origin: Origin,
 ) -> Result<(), DbErr> {
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO semantic_metrics \
             (id, tenant_id, metric_key, computation, transform, format, direction, \
@@ -478,7 +478,7 @@ async fn update_metric<C: ConnectionTrait>(
     from_version: i32,
 ) -> Result<u64, DbErr> {
     let result = conn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "UPDATE semantic_metrics SET \
                 computation = ?, transform = ?, format = ?, direction = ?, \
@@ -505,7 +505,7 @@ async fn update_metric_display<C: ConnectionTrait>(
     conn: &C,
     metric: &MetricDefinition,
 ) -> Result<(), DbErr> {
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "UPDATE semantic_metrics SET format = ?, direction = ? \
          WHERE metric_key = ? AND tenant_id IS NULL",
@@ -527,7 +527,7 @@ async fn append_revision<C: ConnectionTrait>(
     actor: &str,
     body: &serde_json::Value,
 ) -> Result<(), DbErr> {
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO semantic_definition_revisions \
             (id, kind, definition_key, version, actor, body) \
@@ -546,7 +546,7 @@ async fn append_revision<C: ConnectionTrait>(
 }
 
 fn uuid_value(id: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))
+    Value::Bytes(Some(id.as_bytes().to_vec()))
 }
 
 fn optional_str(value: Option<&str>) -> Value {
