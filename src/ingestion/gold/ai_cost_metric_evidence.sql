@@ -111,15 +111,29 @@ seat_month_source AS (
       AND email != ''
       AND collected_at IS NOT NULL
 ),
+-- How many seat populations the tenant holds for this vendor in this month. An
+-- unscoped price may only be taken when there is exactly one, because with two
+-- nothing says which of them the invoice billed — not even when only one of them
+-- produced an invoice at all.
+month_seat_populations AS (
+    SELECT
+        tenant_id,
+        source,
+        period_month,
+        uniqExact(source_id)                    AS seat_sources
+    FROM seat_month_source
+    GROUP BY tenant_id, source, period_month
+),
 -- The prices that can reach this seat: those the operator bound to the seat's
--- own connector instance, plus the unscoped ones when a single invoice instance
--- priced anything that month. A tenant running two instances therefore never
--- lends one instance's price to the other's seats.
+-- own connector instance, plus the unscoped ones when the tenant runs a single
+-- instance on both sides. A tenant running two therefore never lends one
+-- instance's price to the other's seats, whichever of them the invoice came from.
 seat_month_offers AS (
     SELECT
         seat.*,
         arrayFilter(
-            p -> p.1 = seat.source_id OR (p.1 = '' AND prices.invoice_sources = 1),
+            p -> p.1 = seat.source_id
+                 OR (p.1 = '' AND prices.invoice_sources = 1 AND populations.seat_sources = 1),
             prices.scoped_prices
         )                                       AS offers
     FROM seat_month_source AS seat
@@ -127,6 +141,10 @@ seat_month_offers AS (
         ON  prices.tenant_id = seat.tenant_id
         AND prices.source = seat.source
         AND prices.period_month = seat.period_month
+    LEFT JOIN month_seat_populations AS populations
+        ON  populations.tenant_id = seat.tenant_id
+        AND populations.source = seat.source
+        AND populations.period_month = seat.period_month
 ),
 -- The price this seat was billed at. One priced tier among the offers prices
 -- every seat billed in it, which is the common shape and the only one the vendor

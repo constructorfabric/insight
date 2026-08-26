@@ -19,8 +19,10 @@
   The invoice and the seats arrive through separate connector instances whose
   `insight_source_id` never matches, so nothing in the data says which seats an
   invoice billed; a tenant running two instances of one vendor needs that said
-  out loud. Left empty it means the tenant's only seat instance, which is why a
-  single-install tenant needs no row at all to keep its seats priced.
+  out loud. Left empty a row reaches seats only where the tenant runs one
+  instance on each side, which is why a single-install tenant needs no row at all
+  to keep its seats priced, and why a tenant with two gets no price from an
+  unbound row even in a month when only one of them invoiced.
 
   Called from `on-run-start` so the table exists before any model reads it.
 -#}
