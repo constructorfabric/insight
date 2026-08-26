@@ -1,41 +1,20 @@
-//! Renders one measure-level aggregate read over its dataset.
-//!
-//! Field names, expressions, and operators come from a definition that already
-//! passed catalog validation and are written into the statement; every value —
-//! request-supplied or carried by the stored filter — is bound. That split is
-//! the whole safety story, and the tests hold it.
+//! Renders one measure-level aggregate read over its dataset: the fold the
+//! measure declares, at the grain the request asks for, over the rows both of
+//! them scope to.
 
 use std::fmt::Write;
 
-use crate::domain::definitions::definition::{
-    Aggregation, DimensionBinding, MeasureDefinition, Operand,
-};
-use crate::domain::definitions::filter::{
-    AllNode, AnyNode, FilterError, FilterLeaf, FilterOp, FilterTree, FilterValue, NotNode, Scalar,
-};
-use crate::domain::field_catalog::model::{CatalogDataset, FieldRole, ReadDiscipline};
+use crate::domain::definitions::definition::{DimensionBinding, MeasureDefinition};
+use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::error::CompileError;
-use super::request::{Bucket, EntityScope, MeasureQuery};
+use super::request::MeasureQuery;
+use super::sql::{
+    ReadScope, aggregate_expr, bucket_expr, dimension_binding, from_clause, label_field,
+    read_predicates,
+};
 
-/// A bound value in the spelling ClickHouse receives it in. Every value a
-/// statement carries is one of these, and none of them is ever written into
-/// the SQL text.
-#[derive(Debug, Clone, PartialEq)]
-pub enum QueryParam {
-    Text(String),
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-    /// ClickHouse spells a boolean as `UInt8`.
-    Bool(u8),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CompiledMeasureQuery {
-    pub sql: String,
-    pub params: Vec<QueryParam>,
-}
+pub use super::sql::{CompiledMeasureQuery, QueryParam};
 
 pub fn compile_measure_query(
     dataset: &CatalogDataset,
@@ -50,7 +29,13 @@ pub fn compile_measure_query(
     let aggregate = aggregate_expr(measure)?;
 
     let mut params = Vec::new();
-    let predicates = where_predicates(dataset, measure, query, &mut params)?;
+    let predicates = read_predicates(
+        dataset,
+        measure,
+        measure.filter.as_ref(),
+        &ReadScope::of_measure(query),
+        &mut params,
+    )?;
     params.push(QueryParam::UInt(query.row_limit));
 
     let mut sql = String::from("SELECT\n");
@@ -73,275 +58,6 @@ pub fn compile_measure_query(
     Ok(CompiledMeasureQuery { sql, params })
 }
 
-fn from_clause(dataset: &CatalogDataset) -> String {
-    let relation = format!("{}.{}", dataset.database, dataset.relation);
-    match dataset.read_discipline {
-        ReadDiscipline::Collapsing => format!("{relation} FINAL"),
-        ReadDiscipline::Direct => relation,
-    }
-}
-
-// INVARIANT: `value_expr` and `subject_expr` are written into the statement
-// verbatim. Both are admitted only by the scalar-expression allowlist and are
-// bound to catalogued columns before a definition can be stored, so the
-// compiler never re-parses them.
-fn aggregate_expr(measure: &MeasureDefinition) -> Result<String, CompileError> {
-    let function = aggregate_function(measure.aggregation);
-    match measure.aggregation.operand() {
-        Operand::None => Ok(format!("{function}()")),
-        Operand::Value => Ok(format!(
-            "{function}({})",
-            require_operand(measure, measure.value_expr.as_deref(), "value")?
-        )),
-        Operand::Subject => Ok(format!(
-            "{function}({})",
-            require_operand(measure, measure.subject_expr.as_deref(), "subject")?
-        )),
-    }
-}
-
-fn aggregate_function(aggregation: Aggregation) -> &'static str {
-    match aggregation {
-        Aggregation::Count => "count",
-        Aggregation::Sum => "sum",
-        Aggregation::Avg => "avg",
-        Aggregation::Min => "min",
-        Aggregation::Max => "max",
-        Aggregation::CountDistinct => "uniqExact",
-    }
-}
-
-fn require_operand<'a>(
-    measure: &MeasureDefinition,
-    expression: Option<&'a str>,
-    operand: &'static str,
-) -> Result<&'a str, CompileError> {
-    expression.ok_or_else(|| CompileError::MissingOperand {
-        measure: measure.key.clone(),
-        aggregation: measure.aggregation.as_db(),
-        operand,
-    })
-}
-
-fn bucket_expr(event_time: &str, bucket: Bucket) -> String {
-    match bucket {
-        Bucket::Day => format!("toDate({event_time})"),
-        Bucket::Week => format!("toStartOfWeek(toDate({event_time}), 1)"),
-        Bucket::Month => format!("toStartOfMonth(toDate({event_time}))"),
-    }
-}
-
-fn where_predicates(
-    dataset: &CatalogDataset,
-    measure: &MeasureDefinition,
-    query: &MeasureQuery,
-    params: &mut Vec<QueryParam>,
-) -> Result<Vec<String>, CompileError> {
-    // INVARIANT: tenancy leads every read and is always enforced. The value is
-    // bound from the request's resolved tenant, never written into the SQL.
-    let tenant_field = dataset
-        .fields_with_role(FieldRole::Tenant)
-        .next()
-        .ok_or_else(|| CompileError::NoTenantField {
-            dataset: dataset.key.clone(),
-        })?;
-    let mut predicates = vec![format!("{} = ?", tenant_field.name)];
-    params.push(QueryParam::Text(query.tenant_id.clone()));
-
-    match &query.entity_scope {
-        EntityScope::Tenant => {}
-        EntityScope::Identities(identities) => {
-            if identities.is_empty() {
-                return Err(CompileError::EmptySelection {
-                    selection: "the entity scope".to_owned(),
-                });
-            }
-            predicates.push(format!(
-                "{} IN ({})",
-                measure.entity,
-                placeholders(identities.len())
-            ));
-            params.extend(identities.iter().cloned().map(QueryParam::Text));
-        }
-    }
-
-    let event_date = format!("toDate({})", measure.event_time);
-    predicates.push(format!("{event_date} >= toDate(?)"));
-    params.push(QueryParam::Text(query.from.to_string()));
-    predicates.push(format!("{event_date} <= toDate(?)"));
-    params.push(QueryParam::Text(query.to.to_string()));
-
-    if let Some(filter) = &measure.filter {
-        predicates.push(render_filter(measure, filter, params)?);
-    }
-
-    for filter in &query.dimension_filters {
-        let binding = dimension_binding(measure, &filter.key)?;
-        if filter.values.is_empty() {
-            return Err(CompileError::EmptySelection {
-                selection: format!("dimension filter `{}`", filter.key),
-            });
-        }
-        predicates.push(format!(
-            "{} IN ({})",
-            binding.value_field,
-            placeholders(filter.values.len())
-        ));
-        params.extend(filter.values.iter().cloned().map(QueryParam::Text));
-    }
-
-    Ok(predicates)
-}
-
-fn render_filter(
-    measure: &MeasureDefinition,
-    tree: &FilterTree,
-    params: &mut Vec<QueryParam>,
-) -> Result<String, CompileError> {
-    match tree {
-        FilterTree::All(AllNode { all }) => render_combinator(measure, all, "AND", "1", params),
-        FilterTree::Any(AnyNode { any }) => render_combinator(measure, any, "OR", "0", params),
-        FilterTree::Not(NotNode { not }) => {
-            Ok(format!("NOT ({})", render_filter(measure, not, params)?))
-        }
-        FilterTree::Leaf(leaf) => render_leaf(measure, leaf, params),
-    }
-}
-
-// INVARIANT: `FilterTree::validate` rejects an empty combinator at write time.
-// Rendering its identity keeps this function total without inventing a
-// predicate the definition never expressed.
-fn render_combinator(
-    measure: &MeasureDefinition,
-    children: &[FilterTree],
-    operator: &str,
-    identity: &str,
-    params: &mut Vec<QueryParam>,
-) -> Result<String, CompileError> {
-    if children.is_empty() {
-        return Ok(identity.to_owned());
-    }
-
-    let mut rendered = Vec::with_capacity(children.len());
-    for child in children {
-        rendered.push(render_filter(measure, child, params)?);
-    }
-
-    Ok(format!("({})", rendered.join(&format!(" {operator} "))))
-}
-
-/// The three shapes a leaf takes in SQL, each with the value arity it accepts.
-enum LeafForm {
-    Comparison(&'static str),
-    Membership(&'static str),
-    NullCheck(&'static str),
-}
-
-fn leaf_form(op: FilterOp) -> LeafForm {
-    match op {
-        FilterOp::Eq => LeafForm::Comparison("="),
-        FilterOp::Neq => LeafForm::Comparison("!="),
-        FilterOp::Gt => LeafForm::Comparison(">"),
-        FilterOp::Gte => LeafForm::Comparison(">="),
-        FilterOp::Lt => LeafForm::Comparison("<"),
-        FilterOp::Lte => LeafForm::Comparison("<="),
-        FilterOp::In => LeafForm::Membership("IN"),
-        FilterOp::NotIn => LeafForm::Membership("NOT IN"),
-        FilterOp::IsNull => LeafForm::NullCheck("IS NULL"),
-        FilterOp::NotNull => LeafForm::NullCheck("IS NOT NULL"),
-    }
-}
-
-fn render_leaf(
-    measure: &MeasureDefinition,
-    leaf: &FilterLeaf,
-    params: &mut Vec<QueryParam>,
-) -> Result<String, CompileError> {
-    let malformed = |source: FilterError| CompileError::MalformedFilter {
-        measure: measure.key.clone(),
-        field: leaf.field.clone(),
-        source,
-    };
-
-    match leaf_form(leaf.op) {
-        LeafForm::Comparison(operator) => match &leaf.value {
-            Some(FilterValue::Scalar(scalar)) => {
-                params.push(scalar_param(measure, &leaf.field, scalar)?);
-                Ok(format!("{} {operator} ?", leaf.field))
-            }
-            Some(FilterValue::List(_)) | None => Err(malformed(FilterError::ScalarValueRequired)),
-        },
-        LeafForm::Membership(operator) => match &leaf.value {
-            Some(FilterValue::List(items)) if !items.is_empty() => {
-                for item in items {
-                    params.push(scalar_param(measure, &leaf.field, item)?);
-                }
-                Ok(format!(
-                    "{} {operator} ({})",
-                    leaf.field,
-                    placeholders(items.len())
-                ))
-            }
-            Some(FilterValue::List(_) | FilterValue::Scalar(_)) | None => {
-                Err(malformed(FilterError::ListValueRequired))
-            }
-        },
-        LeafForm::NullCheck(operator) => match &leaf.value {
-            None => Ok(format!("{} {operator}", leaf.field)),
-            Some(FilterValue::Scalar(_) | FilterValue::List(_)) => {
-                Err(malformed(FilterError::ValueNotAllowed))
-            }
-        },
-    }
-}
-
-fn scalar_param(
-    measure: &MeasureDefinition,
-    field: &str,
-    scalar: &Scalar,
-) -> Result<QueryParam, CompileError> {
-    match scalar {
-        Scalar::Bool(value) => Ok(QueryParam::Bool(u8::from(*value))),
-        Scalar::String(value) => Ok(QueryParam::Text(value.clone())),
-        Scalar::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Ok(QueryParam::Int(value))
-            } else if let Some(value) = number.as_u64() {
-                Ok(QueryParam::UInt(value))
-            } else if let Some(value) = number.as_f64() {
-                Ok(QueryParam::Float(value))
-            } else {
-                Err(CompileError::UnbindableNumber {
-                    measure: measure.key.clone(),
-                    field: field.to_owned(),
-                    value: number.to_string(),
-                })
-            }
-        }
-    }
-}
-
-fn dimension_binding<'a>(
-    measure: &'a MeasureDefinition,
-    key: &str,
-) -> Result<&'a DimensionBinding, CompileError> {
-    measure
-        .dimensions
-        .iter()
-        .find(|binding| binding.key == key)
-        .ok_or_else(|| CompileError::UnknownDimension {
-            measure: measure.key.clone(),
-            key: key.to_owned(),
-        })
-}
-
-fn label_field(binding: &DimensionBinding) -> &str {
-    binding
-        .label_field
-        .as_deref()
-        .unwrap_or(&binding.value_field)
-}
-
 fn group_columns(group_by: Option<&DimensionBinding>) -> Vec<&'static str> {
     match group_by {
         Some(_) => vec![
@@ -354,89 +70,19 @@ fn group_columns(group_by: Option<&DimensionBinding>) -> Vec<&'static str> {
     }
 }
 
-fn placeholders(count: usize) -> String {
-    vec!["?"; count].join(", ")
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use chrono::NaiveDate;
 
     use super::*;
-    use crate::domain::compiler::request::DimensionFilter;
+    use crate::domain::compiler::request::{Bucket, DimensionFilter, EntityScope};
+    use crate::domain::compiler::test_catalog::dataset;
     use crate::domain::definitions::definition::Aggregation;
-    use crate::domain::field_catalog::loader;
-    use crate::domain::field_catalog::model::{CatalogField, FieldCatalog, FieldType};
-
-    const SNAPSHOT: &str = r#"[
-      {
-        "database": "silver",
-        "relation": "class_git_pull_requests",
-        "engine": "ReplacingMergeTree",
-        "sorting_key": "unique_key",
-        "columns": [
-          {"name": "tenant_id", "type": "Nullable(String)"},
-          {"name": "author_email", "type": "String"},
-          {"name": "closed_on", "type": "Nullable(DateTime)"},
-          {"name": "state", "type": "String"},
-          {"name": "repo_slug", "type": "String"},
-          {"name": "data_source", "type": "String"},
-          {"name": "data_source_label", "type": "String"},
-          {"name": "is_draft", "type": "Bool"},
-          {"name": "lines_added", "type": "Nullable(Int64)"},
-          {"name": "pull_request_id", "type": "String"}
-        ]
-      },
-      {
-        "database": "silver",
-        "relation": "class_git_commits",
-        "engine": "MergeTree",
-        "sorting_key": "unique_key",
-        "columns": [
-          {"name": "tenant_id", "type": "Nullable(String)"},
-          {"name": "author_email", "type": "String"},
-          {"name": "committed_on", "type": "Nullable(DateTime)"},
-          {"name": "repo_slug", "type": "String"}
-        ]
-      }
-    ]"#;
-
-    const ROLES: &str = "
-datasets:
-  - key: git_pull_requests
-    database: silver
-    relation: class_git_pull_requests
-    fields:
-      tenant_id: tenant
-      author_email: entity
-      closed_on: event_time
-      state: dimension
-      repo_slug: dimension
-      data_source: dimension
-      is_draft: dimension
-      lines_added: measurable
-      pull_request_id: dimension
-  - key: git_commits
-    database: silver
-    relation: class_git_commits
-    fields:
-      tenant_id: tenant
-      author_email: entity
-      committed_on: event_time
-      repo_slug: dimension
-";
-
-    fn catalog() -> FieldCatalog {
-        loader::load(SNAPSHOT, ROLES).expect("catalog loads")
-    }
-
-    fn dataset(key: &str) -> CatalogDataset {
-        catalog()
-            .dataset(key)
-            .expect("dataset is catalogued")
-            .clone()
-    }
+    use crate::domain::definitions::filter::{
+        FilterError, FilterLeaf, FilterOp, FilterTree, FilterValue, Scalar,
+    };
+    use crate::domain::field_catalog::model::{CatalogField, FieldRole, FieldType, ReadDiscipline};
 
     fn measure() -> MeasureDefinition {
         MeasureDefinition {

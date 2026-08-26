@@ -7,6 +7,8 @@ use crate::domain::definitions::filter::FilterError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompileError {
+    #[error("measure `{measure}` reads dataset `{dataset}`, which the catalog does not have")]
+    UnknownDataset { measure: String, dataset: String },
     #[error("dataset `{dataset}` binds no tenant field")]
     NoTenantField { dataset: String },
     #[error("measure `{measure}` declares no dimension `{key}`")]
@@ -34,4 +36,17 @@ pub enum CompileError {
         field: String,
         value: String,
     },
+    #[error("metric `{metric}` reads measure `{measure}`, which the request did not carry")]
+    MeasureNotFound { metric: String, measure: String },
+    #[error(
+        "metric `{metric}` divides `{numerator}` by `{denominator}`, and they disagree on {aspect}"
+    )]
+    RatioInputsDisagree {
+        metric: String,
+        numerator: String,
+        denominator: String,
+        aspect: &'static str,
+    },
+    #[error("metric `{metric}` takes a percentile of measure `{measure}`, which folds no value")]
+    PercentileWithoutValue { metric: String, measure: String },
 }

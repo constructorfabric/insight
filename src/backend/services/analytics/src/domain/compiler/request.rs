@@ -46,3 +46,30 @@ pub struct MeasureQuery {
     /// Row ceiling for the statement, bound rather than written into the SQL.
     pub row_limit: u64,
 }
+
+/// The row shape a metric read produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewKind {
+    /// One value per entity over the whole window; the bucket is not read.
+    Period,
+    /// One value per entity per bucket, plus the window total per entity.
+    Timeseries,
+}
+
+/// What a caller asks a metric for. A metric owns its own breakdown vocabulary
+/// through the measures it composes, so a metric read is never grouped by a
+/// measure dimension — it narrows by one and folds the rest away.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricQuery {
+    pub tenant_id: String,
+    pub entity_scope: EntityScope,
+    /// Inclusive, compared against the measure's event time taken as a date.
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub bucket: Bucket,
+    pub dimension_filters: Vec<DimensionFilter>,
+    pub view: ViewKind,
+    /// Row ceiling for the statement, bound rather than written into the SQL.
+    pub row_limit: u64,
+}
