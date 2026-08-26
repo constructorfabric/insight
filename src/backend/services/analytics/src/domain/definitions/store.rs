@@ -14,7 +14,9 @@ use sea_orm::{ConnectionTrait, DbErr, Statement, Value};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::definition::{DatasetDefinition, MeasureDefinition, MetricDefinition, Origin};
+use super::definition::{
+    DatasetDefinition, DimensionBinding, MeasureDefinition, MetricDefinition, Origin,
+};
 use crate::infra::db::entities::{semantic_datasets, semantic_measures, semantic_metrics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,8 +93,6 @@ fn stored_dataset_body(model: &semantic_datasets::Model) -> serde_json::Value {
 /// means. Description and enablement are deliberately absent — they are not
 /// semantics, so editing them must not invalidate a cache.
 fn measure_body(measure: &MeasureDefinition) -> serde_json::Value {
-    let mut dimensions = measure.dimensions.clone();
-    dimensions.sort_by(|a, b| a.key.cmp(&b.key));
     json!({
         "dataset": measure.dataset,
         "filter": measure.filter,
@@ -101,8 +101,18 @@ fn measure_body(measure: &MeasureDefinition) -> serde_json::Value {
         "subject_expr": measure.subject_expr,
         "event_time": measure.event_time,
         "entity": measure.entity,
-        "dimensions": dimensions,
+        "dimensions": canonical_dimensions(&measure.dimensions),
     })
+}
+
+/// INVARIANT: the write path stores dimensions through this same ordering, so
+/// the stored JSON compares equal to a canonicalized incoming body byte for
+/// byte. Sorting in only one of the two places makes every reconcile read as a
+/// semantic change and bump versions forever.
+fn canonical_dimensions(dimensions: &[DimensionBinding]) -> Vec<DimensionBinding> {
+    let mut dimensions = dimensions.to_vec();
+    dimensions.sort_by(|a, b| a.key.cmp(&b.key));
+    dimensions
 }
 
 fn stored_measure_body(model: &semantic_measures::Model) -> serde_json::Value {
@@ -398,7 +408,7 @@ async fn insert_measure<C: ConnectionTrait>(
             optional_str(measure.subject_expr.as_deref()),
             Value::from(measure.event_time.as_str()),
             Value::from(measure.entity.as_str()),
-            json_value(Some(&measure.dimensions)),
+            json_value(Some(&canonical_dimensions(&measure.dimensions))),
             Value::from(origin.as_db()),
         ],
     ))
@@ -426,7 +436,7 @@ pub(super) async fn update_measure<C: ConnectionTrait>(
                 optional_str(measure.subject_expr.as_deref()),
                 Value::from(measure.event_time.as_str()),
                 Value::from(measure.entity.as_str()),
-                json_value(Some(&measure.dimensions)),
+                json_value(Some(&canonical_dimensions(&measure.dimensions))),
                 Value::from(measure.key.as_str()),
                 Value::from(from_version),
             ],
