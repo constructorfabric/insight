@@ -13,8 +13,8 @@ spec:
     # INVARIANT: the only entry point callers use. A pod-level failure of the
     # write — an image it cannot pull, an eviction, the deadline — must not
     # reach the run being recorded, and `continueOn` is legal in `steps` while a
-    # `depends` DAG rejects it. Measured on a stand: with a failing inner step
-    # this template still completes, both as a DAG task and as an exit handler.
+    # `depends` DAG rejects it. With a failing inner step this template still
+    # completes, both as a DAG task and as an exit handler.
     - name: write-tolerated
       inputs:
         parameters:

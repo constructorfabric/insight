@@ -81,6 +81,36 @@ def syncs(plan):
     return [row for row in plan.rows if row.event == SYNC_COMPLETED]
 
 
+class TestAJobStillRunning:
+    """A provisional row must not close the job that will get an outcome."""
+
+    def test_a_running_job_is_recorded_again_once_it_finishes(self):
+        # Tick 1 saw it running; tick 2 must record the outcome, or the page
+        # shows this sync in flight for as long as the ledger keeps it.
+        plan = plan_sweep(
+            request(
+                jobs=[job(status="succeeded")],
+                ledger=[ledger_row(status="running", claim=CLAIMED)],
+            )
+        )
+
+        (row,) = syncs(plan)
+        assert row.status == "ok"
+
+    def test_a_running_job_is_recorded_again_when_it_fails(self):
+        plan = plan_sweep(
+            request(jobs=[job(status="failed")], ledger=[ledger_row(status="running", claim=CLAIMED)])
+        )
+
+        (row,) = syncs(plan)
+        assert row.status == "failed"
+
+    def test_a_job_already_recorded_with_an_outcome_is_not_recorded_twice(self):
+        plan = plan_sweep(request(jobs=[job(status="succeeded")], ledger=[ledger_row(status="ok", claim=CLAIMED)]))
+
+        assert syncs(plan) == []
+
+
 class TestCoverage:
     def test_a_job_the_ledger_does_not_hold_is_recorded_from_the_movers_history(self):
         plan = plan_sweep(request(jobs=[job()]))
@@ -130,9 +160,8 @@ class TestCorroboration:
         assert row.claim == OUT_OF_BAND
 
     def test_a_job_older_than_any_retained_record_is_not_called_manual(self):
-        """Found by running the sweep against a real instance: backfilled jobs
-        predate every surviving workflow record, so the records' silence about
-        them is not evidence — it is just deletion."""
+        """A backfilled job can predate every surviving workflow record, so the
+        records' silence about it is not evidence — it is just deletion."""
         plan = plan_sweep(request(jobs=[job(startTimeEpoch=500)], horizon_epoch=1000))
 
         (row,) = syncs(plan)

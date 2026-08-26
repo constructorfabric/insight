@@ -6,9 +6,15 @@ connection map, the ledger's resolved state, the workflow records' claims — in
 the request `sweep_plan.py` consumes. Separate from the planner so the shell
 carries no parsing and neither file carries two concerns.
 
-    sweep_request.py <jobs> <mapping> <ledger> <claims> <tick_run_id> <horizon_epoch>
+    sweep_request.py <tick_run_id> <horizon_epoch>  < envelope.json
 
-Every positional but the last is JSON. Writes the request to stdout.
+The four gathered documents arrive as one JSON envelope on stdin — keyed
+`jobs`, `mapping`, `ledger`, `claims`. They are unbounded (a first sweep reads
+the mover's whole retained history), and an argument vector is not: past the
+kernel's limit `execve` fails with E2BIG before Python starts, which would
+strand the sweep exactly on the installations with the most to record.
+
+Writes the request to stdout.
 """
 
 from __future__ import annotations
@@ -74,13 +80,14 @@ def build(
 
 
 def main() -> int:
-    jobs, mapping, ledger, claims, tick_run_id, horizon_epoch = sys.argv[1:7]
+    tick_run_id, horizon_epoch = sys.argv[1:3]
+    envelope = json.load(sys.stdin)
     json.dump(
         build(
-            json.loads(jobs),
-            json.loads(mapping),
-            json.loads(ledger),
-            json.loads(claims),
+            envelope.get("jobs") or [],
+            envelope.get("mapping") or {},
+            envelope.get("ledger") or [],
+            envelope.get("claims") or {},
             tick_run_id,
             int(horizon_epoch),
         ),

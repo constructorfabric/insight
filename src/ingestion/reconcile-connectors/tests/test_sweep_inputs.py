@@ -48,9 +48,9 @@ class TestWorkflowClaims:
         assert UNREADABLE["readable"] is False
 
     def test_the_reader_does_not_infer_how_far_back_records_reach(self):
-        """Measured on a real instance: retention is uneven, so the oldest
-        surviving record is not a floor under anything. The horizon is a
-        duration the caller supplies, never something read out of the data."""
+        """Retention there may be uneven, so the oldest surviving record is not
+        a floor under anything. The horizon is a duration the caller supplies,
+        never something read out of the data."""
         result = read_claims(
             {
                 "items": [

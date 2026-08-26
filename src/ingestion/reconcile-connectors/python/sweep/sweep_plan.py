@@ -48,6 +48,12 @@ STATUS_FROM_MOVER = {
     "pending": "running",
 }
 
+# A job the mover is still working on has no outcome yet, so the row recording
+# it is provisional. Treating such a row as coverage would close the job
+# forever: the tick that could record its terminal status skips it as already
+# collected, and the page shows the sync running for good.
+NON_TERMINAL_STATUSES = frozenset({"running"})
+
 
 @dataclass(frozen=True)
 class Row:
@@ -223,7 +229,11 @@ def snapshot_rows(request: dict[str, Any], plan: Plan) -> None:
 
 def plan_sweep(request: dict[str, Any]) -> Plan:
     plan = Plan()
-    covered = {str(row.get("job_id", "")) for row in request.get("ledger") or [] if row.get("has_counters")}
+    covered = {
+        str(row.get("job_id", ""))
+        for row in request.get("ledger") or []
+        if row.get("has_counters") and row.get("status") not in NON_TERMINAL_STATUSES
+    }
 
     coverage_rows(request, covered, plan)
     corroboration_rows(request, plan)

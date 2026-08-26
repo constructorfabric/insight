@@ -19,7 +19,7 @@ spec:
       - name: tenant_id
         value: ""
   # INVARIANT: this handler is the only writer that sees a run which died
-  # before its first step produced anything — proven on a stand to fire through
+  # before its first step produced anything. It fires through
   # workflowTemplateRef, including on a failure in the first task. The ledger
   # row it writes is what makes such a run visible at all (spec FR-1).
   onExit: record-run-finished
@@ -70,9 +70,9 @@ spec:
         # INVARIANT: the real work is named alongside the recorders.
         #
         # A DAG's phase comes from its targets, and a target is any task nothing
-        # depends on — leaving the recorders as the only ones. Measured on a
-        # stand: a failed task plus a succeeded recorder reported the DAG
-        # Succeeded, which turned a failed dbt into a green run.
+        # depends on — leaving the recorders as the only ones. A failed task
+        # plus a succeeded recorder then reports the DAG Succeeded, turning a
+        # failed dbt into a green run.
         target: "sync transform record-run-started record-transform"
         tasks:
           # Nothing depends on this task: the ledger observes the run, so the

@@ -26,26 +26,26 @@ STAMP_COLUMN="_airbyte_extracted_at"
 
 # How far back a tick re-reads the mover, so a job that appeared between ticks
 # is never missed. Coverage is deduplicated by job id, making overlap free.
-SWEEP_OVERLAP_SECONDS="${SWEEP_OVERLAP_SECONDS:-1800}"
+SWEEP_OVERLAP_SECONDS="${SWEEP_OVERLAP_SECONDS:-1800}"  # RULE-DEFAULTS-OK: re-read window; coverage is deduplicated by job id, so a larger value costs reads and a smaller one is bounded by the tick cadence
 
 # How far back the workflow layer's records can be trusted to be COMPLETE, and
 # so how far back the absence of a claim is evidence of an out-of-band sync.
 #
-# A duration rather than something observed: measured on a real instance,
-# retention is uneven — a few ancient runs survive while whole recent days are
-# collected — so the oldest surviving record is not a floor under anything.
+# A duration rather than something derived from the records themselves:
+# retention there may be uneven, so the oldest surviving record is not a floor
+# under anything.
 # Beyond this window a job stays `unclaimed`, which is the honest answer: the
 # run that could have claimed it may simply have been deleted. The pipeline's
 # own claim is the primary mechanism; this is the fallback for a lost write, and
 # a lost write is recent.
-SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"
+SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"  # RULE-DEFAULTS-OK: fail-safe by direction — too short only widens `unclaimed`, which is the honest answer; only a value LONGER than the records' real retention could call a job out_of_band on deleted evidence, so the default is deliberately short
 
 # A warehouse that stops answering must not hold the tick until the workflow's
 # own deadline, long after the connector work it observes has finished.
-SWEEP_QUERY_TIMEOUT_SECONDS="${SWEEP_QUERY_TIMEOUT_SECONDS:-60}"
+SWEEP_QUERY_TIMEOUT_SECONDS="${SWEEP_QUERY_TIMEOUT_SECONDS:-60}"  # RULE-DEFAULTS-OK: a transport deadline; expiry aborts the tick without recording, so the value trades a retry against a hang and decides nothing about the data
 
 _sweep_ch_url() {
-  local protocol="${RECONCILE_DEST_CLICKHOUSE_PROTOCOL:-http}"
+  local protocol="${RECONCILE_DEST_CLICKHOUSE_PROTOCOL:-http}"  # RULE-DEFAULTS-OK: matches the scheme the rest of the reconcile loop already assumes for the same host
   printf '%s://%s:%s/' "${protocol}" \
     "${RECONCILE_DEST_CLICKHOUSE_HOST}" "${RECONCILE_DEST_CLICKHOUSE_PORT}"
 }
@@ -265,7 +265,7 @@ sweep_run() {
     tick_run_id="sweep-$(date -u +%s)-$$"
   fi
 
-  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then
+  if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: unset means a normal run; the default is the non-destructive reading of an absent flag
     log_event "sweep.skipped" "dry run; recording nothing" '{"reason":"dry_run"}'
     return 0
   fi
@@ -282,7 +282,14 @@ sweep_run() {
       '{"reason":"workspace_lookup_failed"}'
     return 0
   fi
-  connections_json="$(ab_list_connections "${workspace_id}")" || connections_json='[]'
+  # SAFETY: an empty list here is indistinguishable from "nothing is
+  # configured", and the tick would seal that as the snapshot — every connector
+  # reading as no-longer-configured until the next successful sweep.
+  if ! connections_json="$(ab_list_connections "${workspace_id}")"; then
+    log_event "sweep.skipped" "connection listing failed; recording nothing" \
+      '{"reason":"connection_listing_failed"}'
+    return 0
+  fi
   descriptors_tsv="$(disc_load_descriptors)"
   if ! mapping="$(_sweep_connection_map "${connections_json}" "${descriptors_tsv}")"; then
     log_event "sweep.skipped" "configured set unknown; recording nothing" \
@@ -310,10 +317,20 @@ sweep_run() {
   local horizon_epoch
   horizon_epoch=$(( $(date -u +%s) - SWEEP_CLAIM_HORIZON_SECONDS ))
 
-  plan_json="$(python3 "${_SWEEP_PY}/sweep/sweep_request.py" \
-      "${jobs_json}" "${mapping}" "${ledger_json}" "${claims_json}" "${tick_run_id}" \
-      "${horizon_epoch}" \
-    | python3 "${_SWEEP_PY}/sweep/sweep_plan.py")" || {
+  # SAFETY: the four documents reach Python on stdin, never in argv. A first
+  # sweep carries the mover's whole retained history, and past the kernel's
+  # limit `execve` fails with E2BIG before Python starts. `printf` is a shell
+  # builtin, so assembling the envelope spawns nothing.
+  plan_json="$(
+    {
+      printf '{"jobs":';    printf '%s' "${jobs_json}"
+      printf ',"mapping":'; printf '%s' "${mapping}"
+      printf ',"ledger":';  printf '%s' "${ledger_json}"
+      printf ',"claims":';  printf '%s' "${claims_json}"
+      printf '}'
+    } \
+      | python3 "${_SWEEP_PY}/sweep/sweep_request.py" "${tick_run_id}" "${horizon_epoch}" \
+      | python3 "${_SWEEP_PY}/sweep/sweep_plan.py")" || {
     log_line ERROR "sweep: planning failed; nothing recorded this tick"
     return 0
   }

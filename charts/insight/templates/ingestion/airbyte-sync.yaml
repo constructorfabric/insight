@@ -139,10 +139,10 @@ spec:
         # INVARIANT: `poll` is named a target alongside `record`.
         #
         # A DAG's phase comes from its targets, and a target is any task nothing
-        # depends on — which the recorder alone would be. Measured on a stand: a
-        # failed poll plus a succeeded recorder reported the DAG Succeeded, so
-        # the sync's failure was erased and dbt ran over stale bronze. Naming
-        # both keeps the poll's outcome in the assessment.
+        # depends on — which the recorder alone would be. A failed poll plus a
+        # succeeded recorder then reports the DAG Succeeded, erasing the sync's
+        # failure and letting dbt run over stale bronze. Naming both keeps the
+        # poll's outcome in the assessment.
         target: "poll record"
         tasks:
           - name: trigger

@@ -525,7 +525,9 @@ yet rather than implying anything.
   than ledger retention limits backfill, not steady-state operation. Its listing is paged, so
   the window is the mover's retention rather than one page of it.
 - The workflow layer can execute a step on run termination regardless of which step failed.
-  **Confirmed on a stand during implementation**, including a failure in the first task, so
+  This is a documented property of the workflow layer's exit handler, including for a
+  failure in the first task, and the chart's render contract pins that every submitter
+  reaches the pipeline in a way that carries the handler, so
   FR-1 needs no fallback.
 
 ## 12. Open Decisions

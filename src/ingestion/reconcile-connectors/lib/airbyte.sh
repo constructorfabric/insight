@@ -617,21 +617,27 @@ ab_list_connections() {
 # so everything older became permanently uncoverable — and the same loss hit any
 # window holding more than a page after an outage.
 #
+# ASCENDING, for the same reason one page was not enough. The caller's watermark
+# is the newest job it has recorded, so reading oldest-first makes a truncated
+# listing RESUMABLE: the covered region stays contiguous and the next tick
+# continues from its edge. Newest-first would leave the gap behind the watermark,
+# where nothing ever asks for it again.
+#
 # The PUBLIC api deliberately: the private per-attempt detail carries richer
 # per-stream numbers but is not contract-stable across Airbyte upgrades, and
 # the ledger must not depend on it.
 # ---------------------------------------------------------------------------
-AB_JOBS_PAGE_SIZE="${AB_JOBS_PAGE_SIZE:-100}"
+AB_JOBS_PAGE_SIZE="${AB_JOBS_PAGE_SIZE:-100}"  # RULE-DEFAULTS-OK: page size is transport shape, not policy; it changes how many round trips cover the same jobs, never which jobs are covered
 
 # A backstop, not a budget: a first sweep against years of history must end.
-AB_JOBS_MAX_PAGES="${AB_JOBS_MAX_PAGES:-50}"
+AB_JOBS_MAX_PAGES="${AB_JOBS_MAX_PAGES:-50}"  # RULE-DEFAULTS-OK: a termination backstop; ascending order makes a stop resumable, so the value bounds one tick and never the coverage
 
 ab_list_jobs() {
   local created_at_start="${1:-}"
   local offset=0 page pages=0 all="[]"
   while (( pages < AB_JOBS_MAX_PAGES )); do
     local path="/api/public/v1/jobs?limit=${AB_JOBS_PAGE_SIZE}&offset=${offset}"
-    path="${path}&orderBy=createdAt%7CDESC&jobType=sync"
+    path="${path}&orderBy=createdAt%7CASC&jobType=sync"
     if [[ -n "${created_at_start}" ]]; then
       path="${path}&createdAtStart=${created_at_start}"
     fi
@@ -659,7 +665,9 @@ print(json.dumps(collected))
     pages=$(( pages + 1 ))
   done
   if (( pages >= AB_JOBS_MAX_PAGES )); then
-    printf 'ab_list_jobs: stopped at the %d-page backstop; older jobs are uncovered\n' \
+    # Not a loss: ascending order means what was cut is NEWER than everything
+    # collected, so the next tick resumes at the edge of the covered region.
+    printf 'ab_list_jobs: stopped at the %d-page backstop; the next tick resumes from the newest job covered\n' \
       "${AB_JOBS_MAX_PAGES}" >&2
   fi
   printf '%s' "${all}"

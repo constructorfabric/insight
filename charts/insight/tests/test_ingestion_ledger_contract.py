@@ -186,6 +186,48 @@ class TestRecordingCannotFailTheRun:
                 )
 
 
+#: Every template that submits the pipeline. A submitter reaching it by a
+#: `templateRef` step pulls in that one template and leaves `spec.onExit`
+#: behind, so its run records no outcome — see TestEverySubmitterCarriesTheHandler.
+SUBMITTERS = [
+    "src/ingestion/workflows/onetime/sync.yaml.tpl",
+    "src/ingestion/reconcile-connectors/templates/sync-trigger.yaml.tpl",
+]
+
+REPO = CHART.parents[1]
+
+
+class TestEverySubmitterCarriesTheHandler:
+    """The terminal row is written by `spec.onExit`, which one reference drops."""
+
+    @pytest.mark.parametrize("submitter", SUBMITTERS)
+    def test_the_submitter_references_the_pipeline_at_spec_level(self, submitter: str) -> None:
+        # envsubst placeholders are plain scalars, so these parse as YAML as-is.
+        document = yaml.safe_load((REPO / submitter).read_text())
+        spec = document["spec"]
+
+        assert spec.get("workflowTemplateRef", {}).get("name") == "ingestion-pipeline", (
+            f"{submitter} must reach the pipeline by workflowTemplateRef; a "
+            "templateRef step carries no spec.onExit, so the run records no outcome"
+        )
+        assert "templates" not in spec, (
+            f"{submitter} wraps the pipeline in a local template, which reinstates "
+            "the spec that has no exit handler"
+        )
+
+    @pytest.mark.parametrize("submitter", SUBMITTERS)
+    def test_the_submitter_names_the_ledger_identity(self, submitter: str) -> None:
+        document = yaml.safe_load((REPO / submitter).read_text())
+        supplied = {
+            parameter["name"]
+            for parameter in document["spec"].get("arguments", {}).get("parameters", [])
+        }
+
+        assert {"connector", "tenant_id"} <= supplied, (
+            f"{submitter} submits a run the ledger cannot attribute"
+        )
+
+
 class TestRecordingIsOptional:
     """A submitter that predates the ledger must run, and record nothing."""
 
