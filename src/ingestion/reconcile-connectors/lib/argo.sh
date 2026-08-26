@@ -109,13 +109,13 @@ argo_apply_cronworkflow() {
   fi
   printf '%s\n' "$apply_out"
 
-  # The sweep is idempotent, so a failure here is picked up by the next
-  # reconcile pass; it must not turn a successful apply into a failed one.
+  # INVARIANT: exit 2 means the apply succeeded but the legacy full-tenant
+  # CronWorkflow was not removed — both schedule the sync until it is gone.
   local bounded_name full_tenant_name
   bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return 1
   full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
   if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
-    _argo_delete_cronworkflow_named "${full_tenant_name}" >/dev/null || true
+    _argo_delete_cronworkflow_named "${full_tenant_name}" >/dev/null || return 2
   fi
 }
 
