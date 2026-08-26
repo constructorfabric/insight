@@ -175,10 +175,11 @@ pub async fn resolve_person_id_by_email_any_tenant(
 /// Case handling matches the rest of the resolvers: the input is trimmed only,
 /// and `value_id`'s collation does case-insensitive matching (migration 004).
 ///
-/// NB an address the roster has since replaced still resolves: rows are
-/// append-only and this matches any observation of the address, not only a
-/// person's current one. Deliberate for now — see the `resolve_by = email`
-/// notes in the chart values.
+/// **To the address the roster states now.** `persons` is append-only, so a
+/// person keeps every address they were ever observed under. Matching any of
+/// them would mean a leaver's alias, handed to a new hire, still signs the new
+/// hire in as the leaver. Only the newest address observation per roster
+/// account counts.
 ///
 /// # Errors
 ///
@@ -191,12 +192,30 @@ pub async fn resolve_person_ids_by_roster_email(
 ) -> anyhow::Result<Vec<Uuid>> {
     const SQL: &str = r"
         WITH addressed AS (
-            SELECT person_id, created_at, id
+            SELECT DISTINCT insight_source_id, person_id
             FROM persons
             WHERE value_type = 'email'
               AND insight_tenant_id = ?
               AND insight_source_type = ?
               AND value_id = ?
+        ),
+        current_address AS (
+            SELECT
+                p.person_id,
+                p.value_id,
+                p.created_at,
+                p.id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.insight_source_id, p.person_id
+                    ORDER BY p.created_at DESC, p.id DESC
+                ) AS rn
+            FROM persons p
+            JOIN addressed a
+              ON a.insight_source_id = p.insight_source_id
+             AND a.person_id = p.person_id
+            WHERE p.value_type = 'email'
+              AND p.insight_tenant_id = ?
+              AND p.insight_source_type = ?
         ),
         bindings AS (
             SELECT
@@ -210,28 +229,38 @@ pub async fn resolve_person_ids_by_roster_email(
               AND insight_tenant_id = ?
               AND insight_source_type = ?
         )
-        SELECT a.person_id
-        FROM addressed a
-        WHERE a.person_id != ?
+        SELECT c.person_id
+        FROM current_address c
+        WHERE c.rn = 1
+          AND c.value_id = ?
+          AND c.person_id != ?
           AND EXISTS (
               SELECT 1 FROM bindings b
-              WHERE b.rn = 1 AND b.person_id = a.person_id
+              WHERE b.rn = 1 AND b.person_id = c.person_id
           )
-        GROUP BY a.person_id
-        ORDER BY MAX(a.created_at) DESC, MAX(a.id) DESC
+        GROUP BY c.person_id
+        ORDER BY MAX(c.created_at) DESC, MAX(c.id) DESC
     ";
 
     let tenant_bytes = tenant_id.as_bytes().to_vec();
     let source = roster_source_type.trim().to_owned();
+    let address = email.trim().to_owned();
     let stmt = Statement::from_sql_and_values(
         DbBackend::MySql,
         SQL,
         [
+            // addressed: who ever stated it (index-friendly, narrows the rest)
             tenant_bytes.clone().into(),
             source.clone().into(),
-            email.trim().to_owned().into(),
+            address.clone().into(),
+            // current_address: their newest address, for just those pairs
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            // bindings: accounts the roster currently holds
             tenant_bytes.into(),
             source.into(),
+            // and the newest address must still be the one presented
+            address.into(),
             EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
     );

@@ -200,6 +200,63 @@ async fn two_persons_on_one_roster_address_are_both_returned() -> TestResult {
 }
 
 #[tokio::test]
+async fn an_address_the_roster_has_replaced_no_longer_admits() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // `persons` is append-only, so a person keeps every address they were ever
+    // observed under. Only the newest counts: an alias the roster has moved on
+    // from is not evidence about who is signing in.
+    let old_addr = format!("ivan.old.{}@vz.com", f.tenant.simple());
+    let new_addr = format!("ivan.new.{}@vz.com", f.tenant.simple());
+    let person = f.account_holder(&old_addr).await?;
+    f.observed_at(person, "email", &old_addr, 86_400).await?;
+    f.observed_at(person, "email", &new_addr, 0).await?;
+
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_roster_email(&f.db, f.tenant, SOURCE_TYPE, &new_addr)
+            .await?,
+        vec![person],
+        "the address the roster states now resolves",
+    );
+    assert!(
+        persons_repo::resolve_person_ids_by_roster_email(&f.db, f.tenant, SOURCE_TYPE, &old_addr)
+            .await?
+            .is_empty(),
+        "the address it has replaced does not",
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_reassigned_alias_admits_its_new_owner_and_not_the_leaver() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // The reason the currency rule matters. A leaver's alias is handed to a new
+    // hire: both roster accounts have stated it, and matching any observation
+    // would sign the new hire in as the leaver — whose org position, history and
+    // roles they would inherit.
+    let alias = format!("sales.{}@vz.com", f.tenant.simple());
+    // The leaver holds a live roster account whose CURRENT address is their own
+    // — the alias is something they were observed under earlier.
+    let leaver = f
+        .account_holder(&format!("leaver.{}@vz.com", f.tenant.simple()))
+        .await?;
+    f.observed_at(leaver, "email", &alias, 172_800).await?;
+    // The new hire's roster account states the alias now.
+    let newcomer = f.account_holder(&alias).await?;
+
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_roster_email(&f.db, f.tenant, SOURCE_TYPE, &alias)
+            .await?,
+        vec![newcomer],
+        "only whoever the roster states the alias for NOW",
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_address_nobody_stated_resolves_nobody() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
