@@ -44,8 +44,8 @@ bronze:
 
   # Each binding names the seat instance its organisation's prices reach.
   config.ai_seat_tier_map:
-    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-a, source: claude_team, tier_ref: prod_A, unique_key: bind-a, seat_source_id: claude-team-a, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
-    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-b, source: claude_team, tier_ref: prod_B, unique_key: bind-b, seat_source_id: claude-team-b, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-a, source: claude_team, tier_ref: prod_A, unique_key: bind-a, seat_source_id: claude-team-a, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-b, source: claude_team, tier_ref: prod_B, unique_key: bind-b, seat_source_id: claude-team-b, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
 
 cases:
   # ── A seat of organisation A takes A's price, never B's ──────────────────────
