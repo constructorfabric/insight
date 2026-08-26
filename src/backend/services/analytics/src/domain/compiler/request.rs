@@ -55,7 +55,7 @@ pub enum ViewKind {
     /// One value per entity over the whole window; the bucket is not read.
     Period,
     /// One value per entity per bucket, plus the window total per entity.
-    Timeseries,
+    Timeseries(TimeseriesView),
     /// One value per entity per combination of the named dimensions.
     Breakdown(BreakdownView),
     /// One value per combination of the named dimensions, folded over every
@@ -71,7 +71,7 @@ impl ViewKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Period => "period",
-            Self::Timeseries => "timeseries",
+            Self::Timeseries(_) => "timeseries",
             Self::Breakdown(_) => "breakdown",
             Self::Rollup(_) => "rollup",
             Self::Histogram => "histogram",
@@ -85,6 +85,18 @@ impl ViewKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BreakdownView {
     pub dimensions: Vec<String>,
+}
+
+/// A timeseries is grouped by bucket before anything else, so a broken-down
+/// one reports a series per dimension combination rather than one series. It
+/// carries no dimensions when the whole entity is the series.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimeseriesView {
+    pub dimensions: Vec<String>,
+    /// Keeps only the named groups, with every other group folded into one
+    /// remainder series. Absent means every group is reported. A cap needs a
+    /// dimension to rank groups of.
+    pub group_limit: Option<GroupLimit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

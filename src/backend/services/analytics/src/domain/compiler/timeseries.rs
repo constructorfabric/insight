@@ -1,45 +1,48 @@
-//! Renders a rollup read: one value per combination of the dimensions the
-//! request names, folded over every entity the scope admits.
+//! Renders a timeseries read: one value per entity per bucket, plus the window
+//! total the same pipeline produces.
 //!
-//! The row carries no entity — it carries how many entities contributed to it
-//! — plus the `rank` / `remainder` / `group_label` columns a capped read fills
-//! in. An uncapped read reports every group and answers those three with the
-//! constants the row decoder expects either way.
+//! The total is a second grouping set rather than a second statement, so a
+//! series and its total are folded from the same rows. Naming dimensions
+//! splits each entity into one series per dimension combination, and capping
+//! them keeps the ranked groups and folds the rest into one remainder series.
+//! `rank`, `remainder`, and `group_label` are the constants an uncapped read
+//! reports; the row decoder expects the columns either way.
 
 use std::fmt::Write;
 
-use crate::domain::definitions::definition::MetricDefinition;
+use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
 use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::cap::{
     CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
 };
-use super::dimensions::rollup_dimension_select_group;
+use super::dimensions::dimension_select_group;
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
-use super::request::{MetricQuery, RollupView};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
+use super::request::{Bucket, MetricQuery, TimeseriesView};
+use super::sql::{
+    CompiledMeasureQuery, QueryParam, ReadScope, bucket_expr, from_clause, read_predicates,
+};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
-    view: &RollupView,
+    view: &TimeseriesView,
 ) -> Result<CompiledMeasureQuery, CompileError> {
+    let Some(limit) = &view.group_limit else {
+        return compile_uncapped(dataset, metric, fold, query, &view.dimensions);
+    };
+
     if view.dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
-            selection: "the rollup dimensions".to_owned(),
+            selection: "the capped timeseries dimensions".to_owned(),
         });
     }
 
-    match &view.group_limit {
-        None => compile_uncapped(dataset, metric, fold, query, &view.dimensions),
-        Some(limit) => {
-            let cap = GroupCap::resolve(limit, view.dimensions.len())?;
-            compile_capped(dataset, metric, fold, query, &view.dimensions, &cap)
-        }
-    }
+    let cap = GroupCap::resolve(limit, view.dimensions.len())?;
+    compile_capped(dataset, metric, fold, query, &view.dimensions, &cap)
 }
 
 fn compile_uncapped(
@@ -49,9 +52,9 @@ fn compile_uncapped(
     query: &MetricQuery,
     dimensions: &[String],
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let (select, group) = rollup_dimension_select_group(fold.grain, dimensions)?;
+    let (select, group) = dimension_select_group(fold.grain, dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-    let inner = uncapped_sql(dataset, fold, &read, &select, &group);
+    let inner = uncapped_sql(dataset, fold.grain, &read, query.bucket, (&select, &group));
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -61,34 +64,48 @@ fn compile_uncapped(
     ))
 }
 
+/// `dimensions` is the projection of the requested dimensions and the keys
+/// they group by, which an undimensioned read leaves empty.
 fn uncapped_sql(
     dataset: &CatalogDataset,
-    fold: &Fold<'_>,
+    measure: &MeasureDefinition,
     read: &ScopedRead,
-    select: &str,
-    group: &str,
+    bucket: Bucket,
+    dimensions: (&str, &str),
 ) -> String {
+    let bucket = bucket_expr(&measure.event_time, bucket);
+    let (select, group) = dimensions;
+    let (bucket_set, total_set) = if group.is_empty() {
+        (format!("entity_id, {bucket}"), "entity_id".to_owned())
+    } else {
+        (
+            format!("entity_id, {bucket}, {group}"),
+            format!("entity_id, {group}"),
+        )
+    };
+
     let mut sql = String::from("SELECT\n");
+    let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
+    let _ = writeln!(sql, "    toString({bucket}) AS bucket_start,");
     sql.push_str(select);
     let _ = writeln!(sql, "    {} AS value,", read.value);
-    let _ = writeln!(
-        sql,
-        "    uniqExact({}) AS contributing_entity_count,",
-        fold.grain.entity
-    );
+    let _ = writeln!(sql, "    toUInt8(grouping({bucket})) AS is_total,");
     sql.push_str(UNCAPPED_RANK_COLUMNS);
     let _ = writeln!(sql, "FROM {}", from_clause(dataset));
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
-    let _ = writeln!(sql, "GROUP BY {group}");
-    let _ = writeln!(sql, "ORDER BY {group}");
+    let _ = writeln!(
+        sql,
+        "GROUP BY GROUPING SETS (({bucket_set}), ({total_set}))"
+    );
+    let _ = writeln!(sql, "ORDER BY entity_id, is_total, bucket_start");
     let _ = write!(sql, "LIMIT ?");
     sql
 }
 
 /// A capped read ranks each scanned row before it folds anything, so the scan
-/// is written before the fold and its values bind first. The transform is
-/// projected in the final stage rather than wrapped around it: the cap already
-/// owns that stage.
+/// is written before the fold and its values bind first. The bucket is ranked
+/// alongside the dimensions because both are read per scanned row, and the
+/// total is still the second grouping set the uncapped read takes it from.
 fn compile_capped(
     dataset: &CatalogDataset,
     metric: &MetricDefinition,
@@ -97,7 +114,9 @@ fn compile_capped(
     dimensions: &[String],
     cap: &GroupCap<'_>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
+    let bucket = bucket_expr(&fold.grain.event_time, query.bucket);
     let raw_dimensions = raw_dimension_select(fold.grain, dimensions)?;
+    let projections = format!("        {bucket} AS bucket_start,\n{raw_dimensions}");
 
     let mut params = Vec::new();
     let predicates = read_predicates(
@@ -114,35 +133,40 @@ fn compile_capped(
 
     let mut sql = ranked_scan_ctes(
         dataset,
-        &raw_dimensions,
+        &projections,
         &predicates,
         &rank,
         cap.remainder_predicate(),
     );
     let _ = writeln!(sql, "aggregated AS (");
     let _ = writeln!(sql, "    SELECT");
+    let _ = writeln!(sql, "        {} AS entity_id,", fold.grain.entity);
+    let _ = writeln!(sql, "        bucket_start,");
     let _ = writeln!(sql, "        group_rank,");
     let _ = writeln!(sql, "        {value} AS value,");
-    let _ = writeln!(
-        sql,
-        "        uniqExact({}) AS contributing_entity_count",
-        fold.grain.entity
-    );
+    let _ = writeln!(sql, "        toUInt8(grouping(bucket_start)) AS is_total");
     let _ = writeln!(sql, "    FROM filtered");
-    let _ = writeln!(sql, "    GROUP BY group_rank");
+    let _ = writeln!(sql, "    GROUP BY GROUPING SETS (");
+    let _ = writeln!(sql, "        (entity_id, bucket_start, group_rank),");
+    let _ = writeln!(sql, "        (entity_id, group_rank)");
+    let _ = writeln!(sql, "    )");
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
-    let _ = writeln!(sql, "    group_rank,");
+    let _ = writeln!(sql, "    entity_id,");
+    let _ = writeln!(sql, "    toString(bucket_start) AS bucket_start,");
     sql.push_str(&dimension_select);
     let _ = writeln!(
         sql,
         "    {} AS value,",
         transform_in_place(metric.transform.as_ref(), "value")
     );
-    let _ = writeln!(sql, "    contributing_entity_count,");
+    let _ = writeln!(sql, "    is_total,");
     sql.push_str(CAPPED_RANK_COLUMNS);
     let _ = writeln!(sql, "FROM aggregated");
-    let _ = writeln!(sql, "ORDER BY group_rank = 0, group_rank");
+    let _ = writeln!(
+        sql,
+        "ORDER BY entity_id, group_rank, is_total, bucket_start"
+    );
     let _ = write!(sql, "LIMIT ?");
 
     Ok(CompiledMeasureQuery { sql, params })
@@ -153,16 +177,16 @@ fn compile_capped(
 mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, labelled_measure, lines, measure, metric, percent_of_total,
-        query, ratio, text,
+        compile, compile_err, direct, labelled_measure, lines, metric, percent_of_total,
+        plain_timeseries, query, text,
     };
     use crate::domain::compiler::request::{
-        GroupLimit, RankedDimension, RankedGroup, RollupView, ViewKind,
+        DimensionFilter, GroupLimit, RankedDimension, RankedGroup, TimeseriesView, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
 
     fn view(dimensions: &[&str], group_limit: Option<GroupLimit>) -> ViewKind {
-        ViewKind::Rollup(RollupView {
+        ViewKind::Timeseries(TimeseriesView {
             dimensions: dimensions.iter().map(|key| (*key).to_owned()).collect(),
             group_limit,
         })
@@ -191,21 +215,21 @@ mod tests {
     }
 
     #[test]
-    fn an_uncapped_rollup_reports_every_group_and_who_contributed_to_it() {
+    fn an_undimensioned_timeseries_reports_one_series_per_entity_beside_its_total() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
-            &query(view(&["repository"], None)),
+            &query(plain_timeseries()),
         );
 
         assert_eq!(
             compiled.sql,
             lines(&[
                 "SELECT",
-                "    coalesce(toString(repo_slug), '__unknown__') AS dim_0_value,",
-                "    argMax(coalesce(toString(repo_slug), 'Unknown'), tuple(toDate(closed_on), coalesce(toString(repo_slug), 'Unknown'))) AS dim_0_label,",
+                "    author_email AS entity_id,",
+                "    toString(toDate(closed_on)) AS bucket_start,",
                 "    toFloat64(count()) AS value,",
-                "    uniqExact(author_email) AS contributing_entity_count,",
+                "    toUInt8(grouping(toDate(closed_on))) AS is_total,",
                 "    CAST(NULL AS Nullable(UInt32)) AS rank,",
                 "    toUInt8(0) AS remainder,",
                 "    CAST(NULL AS Nullable(String)) AS group_label",
@@ -213,8 +237,8 @@ mod tests {
                 "WHERE tenant_id = ?",
                 "  AND toDate(closed_on) >= toDate(?)",
                 "  AND toDate(closed_on) <= toDate(?)",
-                "GROUP BY dim_0_value",
-                "ORDER BY dim_0_value",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
+                "ORDER BY entity_id, is_total, bucket_start",
                 "LIMIT ?",
             ])
         );
@@ -230,7 +254,58 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_rollup_ranks_each_scanned_row_before_it_folds_anything() {
+    fn a_dimensioned_timeseries_splits_each_entity_into_one_series_per_group() {
+        let mut request = query(view(&["repository", "source"], None));
+        request.dimension_filters = vec![DimensionFilter {
+            key: "source".to_owned(),
+            values: vec!["github".to_owned()],
+        }];
+
+        let compiled = compile(
+            &metric(direct("prs_merged")),
+            &[labelled_measure("prs_merged")],
+            &request,
+        );
+
+        assert_eq!(
+            compiled.sql,
+            lines(&[
+                "SELECT",
+                "    author_email AS entity_id,",
+                "    toString(toDate(closed_on)) AS bucket_start,",
+                "    coalesce(toString(repo_slug), '__unknown__') AS dim_0_value,",
+                "    coalesce(toString(repo_slug), 'Unknown') AS dim_0_label,",
+                "    coalesce(toString(data_source), '__unknown__') AS dim_1_value,",
+                "    coalesce(toString(data_source_label), 'Unknown') AS dim_1_label,",
+                "    toFloat64(count()) AS value,",
+                "    toUInt8(grouping(toDate(closed_on))) AS is_total,",
+                "    CAST(NULL AS Nullable(UInt32)) AS rank,",
+                "    toUInt8(0) AS remainder,",
+                "    CAST(NULL AS Nullable(String)) AS group_label",
+                "FROM silver.class_git_pull_requests FINAL",
+                "WHERE tenant_id = ?",
+                "  AND toDate(closed_on) >= toDate(?)",
+                "  AND toDate(closed_on) <= toDate(?)",
+                "  AND data_source IN (?)",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on), dim_0_value, dim_0_label, dim_1_value, dim_1_label), (entity_id, dim_0_value, dim_0_label, dim_1_value, dim_1_label))",
+                "ORDER BY entity_id, is_total, bucket_start",
+                "LIMIT ?",
+            ])
+        );
+        assert_eq!(
+            compiled.params,
+            vec![
+                text("acme-tenant"),
+                text("2026-01-01"),
+                text("2026-01-31"),
+                text("github"),
+                QueryParam::UInt(10_001),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_capped_timeseries_ranks_each_scanned_row_before_it_folds_any_bucket() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
@@ -243,6 +318,7 @@ mod tests {
                 "WITH scoped AS (",
                 "    SELECT",
                 "        *,",
+                "        toDate(closed_on) AS bucket_start,",
                 "        coalesce(toString(repo_slug), '__unknown__') AS raw_dim_0",
                 "    FROM silver.class_git_pull_requests FINAL",
                 "    WHERE tenant_id = ?",
@@ -261,23 +337,29 @@ mod tests {
                 "),",
                 "aggregated AS (",
                 "    SELECT",
+                "        author_email AS entity_id,",
+                "        bucket_start,",
                 "        group_rank,",
                 "        toFloat64(count()) AS value,",
-                "        uniqExact(author_email) AS contributing_entity_count",
+                "        toUInt8(grouping(bucket_start)) AS is_total",
                 "    FROM filtered",
-                "    GROUP BY group_rank",
+                "    GROUP BY GROUPING SETS (",
+                "        (entity_id, bucket_start, group_rank),",
+                "        (entity_id, group_rank)",
+                "    )",
                 ")",
                 "SELECT",
-                "    group_rank,",
+                "    entity_id,",
+                "    toString(bucket_start) AS bucket_start,",
                 "    multiIf(group_rank = 1, toNullable(?), group_rank = 2, toNullable(?), CAST(NULL AS Nullable(String))) AS dim_0_value,",
                 "    multiIf(group_rank = 1, toNullable(?), group_rank = 2, CAST(NULL AS Nullable(String)), CAST(NULL AS Nullable(String))) AS dim_0_label,",
                 "    value AS value,",
-                "    contributing_entity_count,",
+                "    is_total,",
                 "    if(group_rank = 0, CAST(NULL AS Nullable(UInt32)), toNullable(group_rank)) AS rank,",
                 "    toUInt8(group_rank = 0) AS remainder,",
                 "    if(group_rank = 0, toNullable('Other'), CAST(NULL AS Nullable(String))) AS group_label",
                 "FROM aggregated",
-                "ORDER BY group_rank = 0, group_rank",
+                "ORDER BY entity_id, group_rank, is_total, bucket_start",
                 "LIMIT ?",
             ])
         );
@@ -298,14 +380,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cap_that_reports_no_remainder_drops_the_rows_outside_its_groups() {
-        let kept = compile(
+    fn a_cap_that_reports_no_remainder_drops_the_series_outside_its_groups() {
+        let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
             &query(view(&["repository"], Some(cap(false)))),
         );
 
-        assert!(kept.sql.contains(&lines(&[
+        assert!(compiled.sql.contains(&lines(&[
             "filtered AS (",
             "    SELECT *",
             "    FROM ranked",
@@ -315,34 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cap_that_kept_no_group_ranks_every_row_into_the_remainder() {
-        let compiled = compile(
-            &metric(direct("prs_merged")),
-            &[labelled_measure("prs_merged")],
-            &query(view(
-                &["repository"],
-                Some(GroupLimit {
-                    groups: Vec::new(),
-                    include_remainder: true,
-                }),
-            )),
-        );
-
-        assert!(compiled.sql.contains("        toUInt32(0) AS group_rank"));
-        assert!(
-            compiled
-                .sql
-                .contains("    CAST(NULL AS Nullable(String)) AS dim_0_value,")
-        );
-        assert!(
-            compiled
-                .sql
-                .contains("    CAST(NULL AS Nullable(String)) AS dim_0_label,")
-        );
-    }
-
-    #[test]
-    fn a_capped_rollup_transforms_the_folded_value_in_its_final_stage() {
+    fn a_capped_timeseries_transforms_the_folded_value_in_its_final_stage() {
         let mut metric = metric(direct("prs_merged"));
         metric.transform = Some(percent_of_total());
 
@@ -356,18 +411,36 @@ mod tests {
         assert!(compiled.sql.contains(
             "    if((100.0 * (value)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (value)))) AS value,"
         ));
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
     }
 
     #[test]
-    fn a_rollup_naming_no_dimension_is_rejected() {
+    fn a_timeseries_by_a_dimension_the_measure_does_not_declare_is_rejected() {
+        for group_limit in [None, Some(cap(true))] {
+            assert_eq!(
+                compile_err(
+                    &metric(direct("prs_merged")),
+                    &[labelled_measure("prs_merged")],
+                    &query(view(&["team"], group_limit))
+                ),
+                CompileError::UnknownDimension {
+                    measure: "prs_merged".to_owned(),
+                    key: "team".to_owned(),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_cap_over_no_dimension_ranks_nothing_and_is_rejected() {
         assert_eq!(
             compile_err(
                 &metric(direct("prs_merged")),
                 &[labelled_measure("prs_merged")],
-                &query(view(&[], None))
+                &query(view(&[], Some(cap(true))))
             ),
             CompileError::EmptySelection {
-                selection: "the rollup dimensions".to_owned(),
+                selection: "the capped timeseries dimensions".to_owned(),
             }
         );
     }
@@ -386,28 +459,5 @@ mod tests {
                 requested: 2,
             }
         );
-    }
-
-    #[test]
-    fn a_ratio_rollup_binds_its_fold_after_the_scan_it_ranks() {
-        let merged = measure(
-            "prs_merged",
-            Some("{ field: state, op: eq, value: merged }"),
-        );
-        let created = measure("prs_created", None);
-
-        let compiled = compile(
-            &metric(ratio("prs_merged", "prs_created")),
-            &[merged, created],
-            &query(view(&["repository"], Some(cap(true)))),
-        );
-
-        assert!(compiled.sql.contains(
-            "        toFloat64(countIfOrNull(state = ?) / nullIf(countIf(1), 0)) AS value,"
-        ));
-        assert_eq!(compiled.params[0], text("acme-tenant"));
-        assert_eq!(compiled.params[3], text("example/app"));
-        assert_eq!(compiled.params[5], text("merged"));
-        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
     }
 }

@@ -16,9 +16,9 @@ use crate::domain::field_catalog::model::{CatalogDataset, FieldCatalog};
 
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query};
-use super::request::{Bucket, MetricQuery, ViewKind};
-use super::sql::{CompiledMeasureQuery, ReadScope, bucket_expr, from_clause};
-use super::{breakdown, histogram, peer, rollup};
+use super::request::{MetricQuery, ViewKind};
+use super::sql::{CompiledMeasureQuery, ReadScope, from_clause};
+use super::{breakdown, histogram, peer, rollup, timeseries};
 
 pub fn compile_metric_query(
     catalog: &FieldCatalog,
@@ -40,16 +40,7 @@ pub fn compile_metric_query(
                 inner,
             ))
         }
-        ViewKind::Timeseries => {
-            let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-            let inner = timeseries_sql(dataset, fold.grain, &read, query.bucket);
-            Ok(bounded_query(
-                metric.transform.as_ref(),
-                read.params,
-                query.row_limit,
-                inner,
-            ))
-        }
+        ViewKind::Timeseries(view) => timeseries::compile(dataset, metric, &fold, query, view),
         ViewKind::Breakdown(view) => {
             breakdown::compile(dataset, metric, &fold, query, &view.dimensions)
         }
@@ -70,45 +61,15 @@ fn period_sql(dataset: &CatalogDataset, measure: &MeasureDefinition, read: &Scop
     sql
 }
 
-/// One row per entity and bucket plus, from the same pipeline, one row per
-/// entity carrying the range total — the row the builders read a series total
-/// from. `rank`, `remainder`, and `group_label` are the constants an uncapped
-/// read reports; the row decoder expects the columns either way.
-fn timeseries_sql(
-    dataset: &CatalogDataset,
-    measure: &MeasureDefinition,
-    read: &ScopedRead,
-    bucket: Bucket,
-) -> String {
-    let bucket = bucket_expr(&measure.event_time, bucket);
-
-    let mut sql = String::from("SELECT\n");
-    let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
-    let _ = writeln!(sql, "    toString({bucket}) AS bucket_start,");
-    let _ = writeln!(sql, "    {} AS value,", read.value);
-    let _ = writeln!(sql, "    toUInt8(grouping({bucket})) AS is_total,");
-    let _ = writeln!(sql, "    CAST(NULL AS Nullable(UInt32)) AS rank,");
-    let _ = writeln!(sql, "    toUInt8(0) AS remainder,");
-    let _ = writeln!(sql, "    CAST(NULL AS Nullable(String)) AS group_label");
-    let _ = writeln!(sql, "FROM {}", from_clause(dataset));
-    let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
-    let _ = writeln!(
-        sql,
-        "GROUP BY GROUPING SETS ((entity_id, {bucket}), (entity_id))"
-    );
-    let _ = writeln!(sql, "ORDER BY entity_id, is_total, bucket_start");
-    let _ = write!(sql, "LIMIT ?");
-    sql
-}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile, query,
-        ratio, sized_measure, text,
+        compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile,
+        plain_timeseries, query, ratio, sized_measure, text,
     };
-    use crate::domain::compiler::request::{DimensionFilter, EntityScope};
+    use crate::domain::compiler::request::{Bucket, DimensionFilter, EntityScope};
     use crate::domain::compiler::sql::QueryParam;
     use crate::domain::definitions::definition::{Aggregation, Transform};
 
@@ -171,7 +132,7 @@ mod tests {
         );
         let mut metric = metric(ratio("prs_merged", "prs_closed"));
         metric.transform = Some(percent_of_total());
-        let mut query = query(ViewKind::Timeseries);
+        let mut query = query(plain_timeseries());
         query.bucket = Bucket::Week;
 
         let compiled = compile(&metric, &[merged, closed], &query);
@@ -280,7 +241,7 @@ mod tests {
         let cases = [
             (ViewKind::Period, "GROUP BY entity_id"),
             (
-                ViewKind::Timeseries,
+                plain_timeseries(),
                 "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
             ),
         ];
@@ -314,7 +275,7 @@ mod tests {
             std::slice::from_ref(&sized),
             &query(ViewKind::Period),
         );
-        let timeseries = compile(&metric, &[sized], &query(ViewKind::Timeseries));
+        let timeseries = compile(&metric, &[sized], &query(plain_timeseries()));
 
         assert!(!period.sql.contains("bucket_start"));
         assert!(!period.sql.contains("is_total"));
@@ -398,7 +359,7 @@ mod tests {
             "prs_closed",
             Some("{ field: state, op: in, value: [merged, closed] }"),
         );
-        let mut query = query(ViewKind::Timeseries);
+        let mut query = query(plain_timeseries());
         query.bucket = Bucket::Month;
         query.entity_scope =
             EntityScope::Identities(vec!["a@example.com".to_owned(), "b@example.com".to_owned()]);
@@ -533,7 +494,7 @@ mod tests {
             "prs_closed",
             Some("{ field: state, op: eq, value: closed }"),
         );
-        let mut query = query(ViewKind::Timeseries);
+        let mut query = query(plain_timeseries());
         query.entity_scope = EntityScope::Identities(vec![injection.to_owned()]);
         query.dimension_filters = vec![DimensionFilter {
             key: "repository".to_owned(),

@@ -32,6 +32,7 @@ mod rollup;
 mod sql;
 #[cfg(test)]
 mod test_catalog;
+mod timeseries;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -52,7 +53,8 @@ mod product_tests {
     use super::ranking::compile_group_ranking_query;
     use super::request::{
         BreakdownView, Bucket, EntityScope, GroupLimit, GroupRankingQuery, MetricQuery, PeerMember,
-        PeerPopulation, PeerView, RankedDimension, RankedGroup, RollupView, ViewKind,
+        PeerPopulation, PeerView, RankedDimension, RankedGroup, RollupView, TimeseriesView,
+        ViewKind,
     };
     use super::sql::CompiledMeasureQuery;
 
@@ -153,13 +155,22 @@ mod product_tests {
         }
     }
 
+    fn timeseries(dimensions: Vec<String>, group_limit: Option<GroupLimit>) -> ViewKind {
+        ViewKind::Timeseries(TimeseriesView {
+            dimensions,
+            group_limit,
+        })
+    }
+
     /// Every view the metric's computation and grain admit, one request each.
     fn supported_views(shipped: &Shipped, metric: &MetricDefinition) -> Vec<ViewKind> {
         let grain = shipped.grain(metric);
-        let mut views = vec![ViewKind::Period, ViewKind::Timeseries];
+        let mut views = vec![ViewKind::Period, timeseries(Vec::new(), None)];
 
         if let Some(binding) = grain.dimensions.first() {
             let dimensions = vec![binding.key.clone()];
+            views.push(timeseries(dimensions.clone(), None));
+            views.push(timeseries(dimensions.clone(), Some(group_cap())));
             views.push(ViewKind::Breakdown(BreakdownView {
                 dimensions: dimensions.clone(),
             }));
@@ -270,6 +281,8 @@ mod product_tests {
 
         for metric in &shipped.metrics {
             for view in [
+                timeseries(dimensions.clone(), None),
+                timeseries(dimensions.clone(), Some(group_cap())),
                 ViewKind::Breakdown(BreakdownView {
                     dimensions: dimensions.clone(),
                 }),

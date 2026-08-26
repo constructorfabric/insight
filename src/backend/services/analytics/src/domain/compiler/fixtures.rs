@@ -17,7 +17,7 @@ use crate::domain::definitions::definition::{
 
 use super::error::CompileError;
 use super::metric::compile_metric_query;
-use super::request::{Bucket, EntityScope, MetricQuery, ViewKind};
+use super::request::{Bucket, EntityScope, MetricQuery, TimeseriesView, ViewKind};
 use super::sql::{CompiledMeasureQuery, QueryParam};
 use super::test_catalog::catalog;
 
@@ -111,6 +111,14 @@ pub fn percent_of_total() -> Transform {
         clamp_min: Some(0.0),
         clamp_max: Some(100.0),
     }
+}
+
+/// A timeseries over no dimensions and no cap: one series per entity.
+pub fn plain_timeseries() -> ViewKind {
+    ViewKind::Timeseries(TimeseriesView {
+        dimensions: Vec::new(),
+        group_limit: None,
+    })
 }
 
 pub fn query(view: ViewKind) -> MetricQuery {

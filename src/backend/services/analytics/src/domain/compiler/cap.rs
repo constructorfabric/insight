@@ -10,13 +10,30 @@
 use std::fmt::Write;
 
 use crate::domain::definitions::definition::MeasureDefinition;
+use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::dimensions::{dimension_aliases, dimension_value_expr};
 use super::error::CompileError;
 use super::request::{GroupLimit, RankedDimension};
-use super::sql::{QueryParam, dimension_binding};
+use super::sql::{QueryParam, dimension_binding, from_clause};
 
 const NULL_TEXT: &str = "CAST(NULL AS Nullable(String))";
+
+/// The `rank` / `remainder` / `group_label` columns a capped read closes its
+/// projection with, read off the rank the cap gave the group.
+pub(super) const CAPPED_RANK_COLUMNS: &str = concat!(
+    "    if(group_rank = 0, CAST(NULL AS Nullable(UInt32)), toNullable(group_rank)) AS rank,\n",
+    "    toUInt8(group_rank = 0) AS remainder,\n",
+    "    if(group_rank = 0, toNullable('Other'), CAST(NULL AS Nullable(String))) AS group_label\n",
+);
+
+/// The same three columns of an uncapped read, which keeps every group and so
+/// ranks none. The row decoder expects them either way.
+pub(super) const UNCAPPED_RANK_COLUMNS: &str = concat!(
+    "    CAST(NULL AS Nullable(UInt32)) AS rank,\n",
+    "    toUInt8(0) AS remainder,\n",
+    "    CAST(NULL AS Nullable(String)) AS group_label\n",
+);
 
 /// A cap whose every group names exactly one value per dimension the read
 /// groups by, transposed into the column each dimension index reports.
@@ -139,6 +156,37 @@ impl<'a> GroupCap<'a> {
             Some("group_rank > 0")
         }
     }
+}
+
+/// The stages every capped read opens with: the scan carrying the columns the
+/// cap ranks by, the rank each scanned row earns, and the rows the cap keeps.
+/// `projections` are the scan's extra columns, already indented and separated.
+pub(super) fn ranked_scan_ctes(
+    dataset: &CatalogDataset,
+    projections: &str,
+    predicates: &[String],
+    rank: &str,
+    remainder_predicate: Option<&'static str>,
+) -> String {
+    let mut sql = String::from("WITH scoped AS (\n    SELECT\n        *,\n");
+    let _ = writeln!(sql, "{projections}");
+    let _ = writeln!(sql, "    FROM {}", from_clause(dataset));
+    let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
+    let _ = writeln!(sql, "),");
+    let _ = writeln!(sql, "ranked AS (");
+    let _ = writeln!(sql, "    SELECT");
+    let _ = writeln!(sql, "        *,");
+    let _ = writeln!(sql, "        {rank} AS group_rank");
+    let _ = writeln!(sql, "    FROM scoped");
+    let _ = writeln!(sql, "),");
+    let _ = writeln!(sql, "filtered AS (");
+    let _ = writeln!(sql, "    SELECT *");
+    let _ = writeln!(sql, "    FROM ranked");
+    if let Some(predicate) = remainder_predicate {
+        let _ = writeln!(sql, "    WHERE {predicate}");
+    }
+    let _ = writeln!(sql, "),");
+    sql
 }
 
 /// The dimension values a scanned row is ranked by, projected beside it.
