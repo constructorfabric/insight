@@ -27,13 +27,33 @@ from collections.abc import Callable
 
 import pytest
 from insight_stand import PersonaSession
-from playwright.sync_api import Page, expect
+from playwright.sync_api import BrowserContext, Page, expect
 
 from .flows import sign_in
 from .pages.portal_shell import PortalShell
 
 # Quality vector of this module's tests.
 pytestmark = pytest.mark.reliability
+
+
+@pytest.fixture
+def context(context: BrowserContext) -> BrowserContext:
+    """These journeys drive the portal, so the legacy-shell hatch is cleared.
+
+    `conftest` writes `insight.legacyShell` for the journeys written against
+    the old dashboard, and `/portal` redirects to `/` for as long as it is set
+    — a lens journey under that key reads the person dashboard instead. Init
+    scripts run in the order they were added, so removing the key here still
+    precedes the first app read. `showPlanned` is pinned off because the claim
+    under test is that these sections are built, not that the nav will show an
+    unbuilt one to a reader who asked for it.
+    """
+    context.add_init_script(
+        "window.localStorage.removeItem('insight.legacyShell');"
+        "window.localStorage.setItem('insight.portal.showPlanned', 'false')"
+    )
+    return context
+
 
 #: The Development lenses this journey opens: the heading each one renders,
 #: and the section labels it may draw. The heading is asserted, the sections
