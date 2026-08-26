@@ -251,17 +251,22 @@ reconciled into the new store; old system untouched and serving.
    next family. Drilldown flips with its family: row-mode output
    reconciles against the evidence path before the flip, under the same
    shadow harness. Shadow runs double as the latency measurement that
-   triggers Decision 1's cache pull-forward. The flag and comparison harness are explicitly temporary
+   settles each measure's cache policy (Decision 1); a family flips only
+   once its p95 holds against the current path.
+   The flag and comparison harness are explicitly temporary
    — weeks per family, deleted at Phase 3, not a permanent dual-execution
    capability.
-3. **Materialization where measured, not assumed.** Cutover requires
-   parity and acceptable latency. Where query-time compute over datasets
-   misses the latency budget for a family, the compiler gains its cache
-   tier early: materialized results keyed by
-   `(definition key, definition_version)`, refreshed by
-   backend-scheduled jobs, reads falling back to compilation on version
-   mismatch or cache miss. This is the target's cache design pulled
-   forward on demand — never the old observation contract kept alive.
+3. **The cache tier ships before the first flip.** Product measures serve
+   from cached rows (Decision 1), so the compiler's cache tier is a
+   Phase 2 deliverable, not a contingency: the shared cache relation
+   keyed by `(measure key, definition_version, time bucket)`, refresh
+   jobs on the backend schedule, coverage watermarks, and the read
+   decision that falls back to live compilation on version mismatch,
+   uncovered range, or disabled policy. Today's gold observation tables
+   are that same materialization hand-authored per family; the cache is
+   what replaces them, generated from definitions and version-keyed.
+   Shadow measurement decides per measure whether its policy stays on,
+   not whether the tier exists.
 
 Exit: every product metric serves through the compiler; observation
 relations receive no reads.
@@ -360,13 +365,17 @@ start once Phase 4 discovery serves metrics.
 
 ## Decisions
 
-1. **Materialization is exception, not default.** Query-time compute is
-   the default for every family. A family gets the cache tier pulled
-   forward only if its shadow-phase p95 on the batch endpoint exceeds the
-   current path's p95 by more than a fixed margin agreed before shadow
-   starts. The shadow harness already runs both executors on live
-   traffic, so the latency evidence arrives for free; no separate
-   measurement project.
+1. **Product measures are materialized by default; tenant measures are
+   not.** Serving latency today comes from pre-computed gold, and the
+   rewrite may not regress it: a product measure ships with its cache
+   policy enabled, and query-time compute is the correctness floor
+   beneath it, never the steady state. A tenant-authored measure starts
+   uncached — correct immediately, promoted to cached when its latency
+   justifies it. Per-measure policy is decided on shadow-phase evidence:
+   the harness runs both executors on live traffic, so a product measure
+   whose live compute is comfortably inside the current path's p95 may
+   ship with the policy off, and any measure that regresses it keeps the
+   policy on. No separate measurement project.
 2. **Reporting time zone is a tenant profile setting**, default UTC, with
    no per-request override. A per-request time zone makes the same
    request mean different things per client, which violates server-owned

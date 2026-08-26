@@ -501,11 +501,15 @@ grow unbounded with tenants × measures.
 **Caching is policy, not semantics.** Whether a measure is materialized
 lives in a cache policy (enabled, refresh schedule, hot window, coverage
 watermarks) separate from the definition; toggling it never changes the
-definition version, because nothing about meaning changed. Product
-definitions may ship a default policy; tenant definitions start uncached
-and are promoted by policy change. Only measures are cached — metric
-composition is cheap re-aggregation at read time, and caching terminal
-results would multiply invalidation surface for no coverage gain.
+definition version, because nothing about meaning changed. **Product
+measures ship with the policy enabled**: the served path is cached rows
+by default, at the read physics a purpose-built serving table gives, and
+query-time compute is the fallback that keeps a degraded state correct
+rather than the steady state. Tenant definitions start uncached — a new
+measure is correct the moment it is written and becomes fast when
+promoted. Only measures are cached — metric composition is cheap
+re-aggregation at read time, and caching terminal results would multiply
+invalidation surface for no coverage gain.
 
 Refresh is scheduled, never triggered by reads: the read path stays
 read-only, and no request ever pays a build or stampedes one. Because
