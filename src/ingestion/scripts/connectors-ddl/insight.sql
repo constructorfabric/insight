@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS insight.ai_cost_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -51,6 +54,9 @@ CREATE TABLE IF NOT EXISTS insight.ai_cost_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -73,6 +79,9 @@ CREATE TABLE IF NOT EXISTS insight.ai_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -100,6 +109,9 @@ CREATE TABLE IF NOT EXISTS insight.ai_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -122,6 +134,9 @@ CREATE TABLE IF NOT EXISTS insight.collab_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -149,6 +164,9 @@ CREATE TABLE IF NOT EXISTS insight.collab_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -251,6 +269,9 @@ CREATE TABLE IF NOT EXISTS insight.git_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -278,6 +299,9 @@ CREATE TABLE IF NOT EXISTS insight.git_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -326,6 +350,9 @@ CREATE TABLE IF NOT EXISTS insight.task_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -353,6 +380,9 @@ CREATE TABLE IF NOT EXISTS insight.task_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -402,6 +432,9 @@ CREATE TABLE IF NOT EXISTS insight.wiki_metric_evidence
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -429,6 +462,9 @@ CREATE TABLE IF NOT EXISTS insight.wiki_metric_observations
     `source_key` String,
     `entity_type` String,
     `entity_id` String,
+    `account_source_type` String,
+    `account_source_id` String,
+    `account_id` String,
     `metric_date` Date,
     `observed_at` Nullable(DateTime64(3)),
     `measure_key` String,
@@ -454,41 +490,62 @@ CREATE OR REPLACE VIEW insight.identity_resolution_coverage
     `match_rate_pct` Float64
 )
 AS WITH
-    source_emails AS
+    source_identities AS
     (
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.git_metric_evidence
         UNION ALL
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.ai_metric_evidence
         UNION ALL
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.collab_metric_evidence
         UNION ALL
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.task_metric_evidence
         UNION ALL
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.wiki_metric_evidence
         UNION ALL
         SELECT
             source_key,
-            entity_id AS email
+            entity_id AS email,
+            account_source_type,
+            account_source_id,
+            account_id
         FROM insight.ai_cost_metric_evidence
         UNION ALL
         SELECT DISTINCT
             'hr_cohorts' AS source_key,
-            lower(trimBoth(assumeNotNull(email))) AS email
+            lower(trimBoth(assumeNotNull(email))) AS email,
+            '' AS account_source_type,
+            '' AS account_source_id,
+            '' AS account_id
         FROM silver.class_people
         FINAL
         WHERE (email IS NOT NULL) AND (email != '')
@@ -496,17 +553,19 @@ AS WITH
     resolution AS
     (
         SELECT
-            source_emails.source_key AS source_key,
-            source_emails.email AS email,
-            coalesce(person_map.email, '') != '' AS resolved
-        FROM source_emails
-        LEFT JOIN identity.person_map AS person_map ON person_map.email = source_emails.email
+            source_identities.source_key AS source_key,
+            source_identities.email AS email,
+            source_identities.account_id AS account_id,
+            (coalesce(account_map.account_id, '') != '') OR (coalesce(person_map.email, '') != '') AS resolved
+        FROM source_identities
+        LEFT JOIN identity.account_assignment AS account_map ON (account_map.source_type = source_identities.account_source_type) AND (account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce(source_identities.account_source_id, ''))))) AND (account_map.account_id = lower(trimBoth(coalesce(source_identities.account_id, ''))))
+        LEFT JOIN identity.person_map AS person_map ON person_map.email = source_identities.email
     )
 SELECT
     source_key,
     count() AS observation_rows,
     countIf(NOT resolved) AS unresolved_rows,
-    uniqExactIf(email, NOT resolved) AS unresolved_people,
+    uniqExactIf(if(email != '', email, coalesce(account_id, '')), NOT resolved) AS unresolved_people,
     round((100 * countIf(resolved)) / count(), 1) AS match_rate_pct
 FROM resolution
 GROUP BY source_key

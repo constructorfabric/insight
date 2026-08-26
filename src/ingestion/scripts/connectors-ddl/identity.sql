@@ -105,7 +105,7 @@ CREATE OR REPLACE VIEW identity.account_assignment
 AS SELECT
     insight_source_type AS source_type,
     insight_source_id AS source_id,
-    trimBoth(value_effective) AS account_id,
+    lower(trimBoth(value_effective)) AS account_id,
     person_id,
     created_at
 FROM identity.identity_persons
@@ -132,7 +132,7 @@ AS WITH account_emails AS
         SELECT DISTINCT
             insight_source_type AS source_type,
             insight_source_id AS source_id,
-            trimBoth(source_account_id) AS account_id,
+            lower(trimBoth(source_account_id)) AS account_id,
             lower(trimBoth(value)) AS email
         FROM identity.identity_inputs
         WHERE (value_type = 'email') AND (operation_type = 'UPSERT') AND (coalesce(value, '') != '') AND (coalesce(source_account_id, '') != '')
