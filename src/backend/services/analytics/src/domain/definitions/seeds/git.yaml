@@ -17,16 +17,523 @@ measures:
       - { key: project, value_field: project, label_field: project_label }
       - { key: source, value_field: source, label_field: source_label }
 
+  - key: default_commits
+    dataset: git_commits
+    description: Commits a person authored that reached the default branch.
+    filter: { field: branch_scope, op: eq, value: default }
+    aggregation: count
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_commits
+    dataset: git_commits
+    description: Commits a person authored that have not reached the default branch.
+    filter: { field: branch_scope, op: eq, value: non_default }
+    aggregation: count
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: active_commit_days
+    dataset: git_commits
+    description: Calendar days on which a person authored at least one commit.
+    aggregation: count_distinct
+    subject_expr: authored_date
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: commit_change_size
+    dataset: git_commits
+    description: >-
+      Diff size of one commit — lines added plus lines removed — for commits
+      whose source reported both.
+    filter:
+      all:
+        - { field: lines_added, op: not_null }
+        - { field: lines_removed, op: not_null }
+    aggregation: avg
+    value_expr: lines_added + lines_removed
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: lines_added
+    dataset: git_file_changes
+    description: Lines a person added, across every file category.
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: default_lines_added
+    dataset: git_file_changes
+    description: Lines a person added in commits that reached the default branch.
+    filter: { field: branch_scope, op: eq, value: default }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_lines_added
+    dataset: git_file_changes
+    description: Lines a person added in commits that have not reached the default branch.
+    filter: { field: branch_scope, op: eq, value: non_default }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: lines_removed
+    dataset: git_file_changes
+    description: Lines a person removed, across every file category.
+    aggregation: sum
+    value_expr: lines_removed
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: default_lines_removed
+    dataset: git_file_changes
+    description: Lines a person removed in commits that reached the default branch.
+    filter: { field: branch_scope, op: eq, value: default }
+    aggregation: sum
+    value_expr: lines_removed
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_lines_removed
+    dataset: git_file_changes
+    description: Lines a person removed in commits that have not reached the default branch.
+    filter: { field: branch_scope, op: eq, value: non_default }
+    aggregation: sum
+    value_expr: lines_removed
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: category, value_field: category, label_field: category_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: code_lines_added
+    dataset: git_file_changes
+    description: >-
+      Lines a person added to code files. Tests, configuration, documentation
+      and vendored content are other categories and do not count here.
+    filter: { field: category, op: eq, value: code }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: default_code_lines_added
+    dataset: git_file_changes
+    description: Lines a person added to code files in commits that reached the default branch.
+    filter:
+      all:
+        - { field: category, op: eq, value: code }
+        - { field: branch_scope, op: eq, value: default }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_code_lines_added
+    dataset: git_file_changes
+    description: >-
+      Lines a person added to code files in commits that have not reached the
+      default branch.
+    filter:
+      all:
+        - { field: category, op: eq, value: code }
+        - { field: branch_scope, op: eq, value: non_default }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: test_lines_added
+    dataset: git_file_changes
+    description: Lines a person added to test files.
+    filter: { field: category, op: eq, value: test }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: test_and_code_lines_added
+    dataset: git_file_changes
+    description: >-
+      Lines a person added to code and test files together — the base the test
+      share is a share of.
+    filter: { field: category, op: in, value: [code, test] }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: change_type, value_field: change_type, label_field: change_type_label }
+      - { key: file_extension, value_field: file_extension, label_field: file_extension_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
   - key: prs_created
     dataset: git_pull_requests
     description: Pull requests a person opened.
     aggregation: count
-    event_time: created_on
+    event_time: created_at
     entity: author_email
     dimensions:
-      - { key: repository, value_field: repo_slug }
-      - { key: project, value_field: project_key }
-      - { key: source, value_field: data_source }
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: default_prs_created
+    dataset: git_pull_requests
+    description: Pull requests a person opened against the default branch.
+    filter: { field: branch_scope, op: eq, value: default }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_prs_created
+    dataset: git_pull_requests
+    description: Pull requests a person opened against a branch other than the default.
+    filter: { field: branch_scope, op: eq, value: non_default }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_created_merged
+    dataset: git_pull_requests
+    description: >-
+      Pull requests a person opened that have since merged, dated by the day
+      they were opened.
+    filter: { field: merged, op: eq, value: 1 }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_abandoned
+    dataset: git_pull_requests
+    description: >-
+      Pull requests a person opened that closed without merging, dated by the
+      day they were opened.
+    filter: { field: abandoned, op: eq, value: 1 }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_reviewed
+    dataset: git_pull_requests
+    description: >-
+      Pull requests a person opened that drew at least one acting reviewer — a
+      submitted review or an approval, not a pending request.
+    filter: { field: reviewer_count, op: gte, value: 1 }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_multi_reviewed
+    dataset: git_pull_requests
+    description: Pull requests a person opened that drew two or more acting reviewers.
+    filter: { field: reviewer_count, op: gte, value: 2 }
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_reviewers
+    dataset: git_pull_requests
+    description: Acting reviewers across the pull requests a person opened.
+    aggregation: sum
+    value_expr: reviewer_count
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_change_size
+    dataset: git_pull_requests
+    description: >-
+      Diff size of one pull request — lines added plus lines removed — for
+      requests whose source reported line counts and whose diff is non-empty.
+    filter:
+      all:
+        - { field: lines_added, op: not_null }
+        - { field: lines_removed, op: not_null }
+        - any:
+            - { field: lines_added, op: gt, value: 0 }
+            - { field: lines_removed, op: gt, value: 0 }
+    aggregation: avg
+    value_expr: lines_added + lines_removed
+    event_time: created_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_merged
+    dataset: git_pull_requests
+    description: Pull requests a person opened that merged, dated by the merge.
+    filter:
+      all:
+        - { field: merged, op: eq, value: 1 }
+        - { field: closed_at, op: not_null }
+    aggregation: count
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: default_prs_merged
+    dataset: git_pull_requests
+    description: Pull requests a person opened that merged into the default branch.
+    filter:
+      all:
+        - { field: merged, op: eq, value: 1 }
+        - { field: closed_at, op: not_null }
+        - { field: branch_scope, op: eq, value: default }
+    aggregation: count
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: non_default_prs_merged
+    dataset: git_pull_requests
+    description: Pull requests a person opened that merged into a branch other than the default.
+    filter:
+      all:
+        - { field: merged, op: eq, value: 1 }
+        - { field: closed_at, op: not_null }
+        - { field: branch_scope, op: eq, value: non_default }
+    aggregation: count
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: prs_merged_without_approval
+    dataset: git_pull_requests
+    description: >-
+      Pull requests a person opened that merged with no approval reported by
+      the connected source.
+    filter: { field: merged_without_approval, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_cycle_hours
+    dataset: git_pull_requests
+    description: Hours from opening one pull request to merging it, dated by the merge.
+    filter: { field: cycle_hours, op: not_null }
+    aggregation: avg
+    value_expr: cycle_hours
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_first_review_hours
+    dataset: git_pull_requests
+    description: >-
+      Hours from opening one pull request to its first submitted review, dated
+      by that review.
+    filter: { field: first_review_hours, op: not_null }
+    aggregation: avg
+    value_expr: first_review_hours
+    event_time: first_reviewed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_review_to_merge_hours
+    dataset: git_pull_requests
+    description: >-
+      Hours from the first submitted review on one pull request to its merge,
+      dated by the merge.
+    filter: { field: review_to_merge_hours, op: not_null }
+    aggregation: avg
+    value_expr: review_to_merge_hours
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_approval_to_merge_hours
+    dataset: git_pull_requests
+    description: >-
+      Hours from the latest timestamped approval on one pull request to its
+      merge, dated by the merge.
+    filter: { field: approval_to_merge_hours, op: not_null }
+    aggregation: avg
+    value_expr: approval_to_merge_hours
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pr_review_wait_share
+    dataset: git_pull_requests
+    description: >-
+      Percentage of one pull request's open-to-merge time that elapsed before
+      its first submitted review, dated by the merge.
+    filter: { field: review_wait_share, op: not_null }
+    aggregation: avg
+    value_expr: review_wait_share
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
 
 metrics:
   - key: git.commits
@@ -34,13 +541,397 @@ metrics:
     format: integer
     direction: higher_is_better
     entity_type: person
+    cohort_key: org_unit
     label: Commits
-    description: How many commits a person authored in the period.
+    description: >-
+      Commits a person authored across connected git sources, excluding merge
+      commits.
+
+  - key: git.default_branch_commits
+    computation: { type: direct, measure: default_commits }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Commits on the default branch
+    description: >-
+      Authored commits reachable from the repository's default branch, or
+      carried onto it by a merged pull request. A commit joins this metric when
+      its branch lands, so a past period's figure rises as work merges.
+
+  - key: git.non_default_branch_commits
+    computation: { type: direct, measure: non_default_commits }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Commits outside the default branch
+    description: >-
+      Authored commits not reachable from the repository's default branch —
+      work in flight, or abandoned. A commit leaves this metric when its branch
+      lands. A source that does not report branch membership counts here.
+
+  - key: git.code_lines
+    computation: { type: direct, measure: code_lines_added }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Code lines added
+    description: >-
+      Lines added to files classified as code — tests, configuration,
+      documentation and vendored content excluded. Content that reaches a
+      repository in more than one commit counts once, for the commit that
+      introduced it first.
+
+  - key: git.default_branch_code_lines
+    computation: { type: direct, measure: default_code_lines_added }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Code lines added on the default branch
+    description: >-
+      Code lines whose commit reached the repository's default branch. Lines
+      follow their commit, so this rises as work merges.
+
+  - key: git.non_default_branch_code_lines
+    computation: { type: direct, measure: non_default_code_lines_added }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Code lines added outside the default branch
+    description: >-
+      Code lines whose commit has not reached the repository's default branch.
+      Lines follow their commit, so this falls as work merges.
+
+  - key: git.lines_added
+    computation: { type: direct, measure: lines_added }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines added
+    description: >-
+      Lines added across all files, split by file category. Content
+      that reaches a repository in more than one commit counts once, for the
+      commit that introduced it first.
+
+  - key: git.default_branch_lines_added
+    computation: { type: direct, measure: default_lines_added }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines added on the default branch
+    description: >-
+      Lines added whose commit reached the repository's default branch. Lines
+      follow their commit, so this rises as work merges.
+
+  - key: git.non_default_branch_lines_added
+    computation: { type: direct, measure: non_default_lines_added }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines added outside the default branch
+    description: >-
+      Lines added whose commit has not reached the repository's default branch.
+      Lines follow their commit, so this falls as work merges.
+
+  - key: git.test_change_share
+    computation: { type: ratio, numerator: test_lines_added, denominator: test_and_code_lines_added }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Test change share
+    description: >-
+      Lines added to test files divided by lines added to code and test files.
+      Documentation, configuration and vendored files do not affect it. Expected
+      levels vary by repository and change type.
+
+  - key: git.lines_removed
+    computation: { type: direct, measure: lines_removed }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines removed
+    description: >-
+      Lines removed across all reported file changes, split by file category.
+      A removal that reaches a repository in more than one commit
+      counts once, for the commit that made it first.
+
+  - key: git.default_branch_lines_removed
+    computation: { type: direct, measure: default_lines_removed }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines removed on the default branch
+    description: >-
+      Lines removed whose commit reached the repository's default branch. Lines
+      follow their commit, so this rises as work merges.
+
+  - key: git.non_default_branch_lines_removed
+    computation: { type: direct, measure: non_default_lines_removed }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Lines removed outside the default branch
+    description: >-
+      Lines removed whose commit has not reached the repository's default
+      branch. Lines follow their commit, so this falls as work merges.
 
   - key: git.prs_created
     computation: { type: direct, measure: prs_created }
     format: integer
     direction: higher_is_better
     entity_type: person
-    label: PRs created
-    description: How many pull requests a person opened in the period.
+    cohort_key: org_unit
+    label: Pull requests created
+    description: Pull requests a person opened, dated by creation.
+
+  - key: git.default_branch_prs_created
+    computation: { type: direct, measure: default_prs_created }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pull requests created into the default branch
+    description: >-
+      Pull requests opened against the repository's default branch, dated by
+      creation. Unlike the commit and line splits this one is settled when the
+      request is opened and does not move afterwards.
+
+  - key: git.non_default_branch_prs_created
+    computation: { type: direct, measure: non_default_prs_created }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Pull requests created into another branch
+    description: >-
+      Pull requests opened against something other than the repository's
+      default branch — a release branch, a stacked request, an integration
+      branch. A request whose destination the source does not report counts
+      here.
+
+  - key: git.prs_merged
+    computation: { type: direct, measure: prs_merged }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pull requests merged
+    description: Pull requests a person opened that merged, dated by the merge.
+
+  - key: git.default_branch_prs_merged
+    computation: { type: direct, measure: default_prs_merged }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pull requests merged into the default branch
+    description: >-
+      Pull requests that merged into the repository's default branch, dated by
+      the merge. This is the surface that also promotes a branch's commits and
+      lines into their default-branch metrics.
+
+  - key: git.non_default_branch_prs_merged
+    computation: { type: direct, measure: non_default_prs_merged }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Pull requests merged into another branch
+    description: >-
+      Pull requests that merged into something other than the repository's
+      default branch, dated by the merge. Their commits do not count as having
+      reached the default branch on this evidence alone.
+
+  - key: git.merge_rate
+    computation: { type: ratio, numerator: prs_created_merged, denominator: prs_created }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PR merge rate
+    description: >-
+      Of the pull requests created in the period, the share that have merged.
+      Requests opened near the end of the period may not have merged yet, which
+      lowers the rate at period edges.
+
+  - key: git.pr_abandonment_rate
+    computation: { type: ratio, numerator: prs_abandoned, denominator: prs_created }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PR abandonment rate
+    description: >-
+      Of the pull requests created in the period, the share now closed without
+      merging. Open requests are not abandoned, and a request created near the
+      period end can still change outcome later.
+
+  - key: git.review_coverage
+    computation: { type: ratio, numerator: prs_reviewed, denominator: prs_created }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Review coverage
+    description: >-
+      Of the pull requests created in the period, the share with at least one
+      submitted review or approval. Assigned reviewers who never act do not
+      count.
+
+  - key: git.reviewers_per_pr
+    computation: { type: ratio, numerator: pr_reviewers, denominator: prs_created }
+    format: decimal
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Reviewers per PR
+    description: >-
+      Distinct reviewers who submitted a review or approval, divided by pull
+      requests created in the period. Requests without review contribute zero,
+      so read this with review coverage to separate breadth from coverage.
+
+  - key: git.multi_reviewer_rate
+    computation: { type: ratio, numerator: prs_multi_reviewed, denominator: prs_reviewed }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Multi-reviewer rate
+    description: >-
+      Of the pull requests with at least one submitted review or approval, the
+      share with two or more distinct acting reviewers. This measures review
+      breadth without conflating it with unreviewed requests.
+
+  - key: git.merges_without_approval_rate
+    computation: { type: ratio, numerator: prs_merged_without_approval, denominator: prs_merged }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Merges without approval
+    description: >-
+      Of the pull requests merged in the period, the share with no approval
+      reported by the connected source. Source configuration and incomplete
+      review history also affect it.
+
+  - key: git.active_days
+    computation: { type: direct, measure: active_commit_days }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Active commit days
+    description: >-
+      Distinct calendar days with authored, non-merge commits. Repository
+      breakdowns count active days independently; the total still counts each
+      calendar day once across repositories.
+
+  - key: git.commits_per_active_day
+    computation: { type: ratio, numerator: commits, denominator: active_commit_days }
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Commits per active day
+    description: Commits divided by the number of days with at least one commit.
+
+  - key: git.commit_size
+    computation: { type: percentile, measure: commit_change_size, quantile: 0.5 }
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Commit size
+    description: >-
+      Median diff size of authored commits — lines added plus removed —
+      counting only content a commit is the first to introduce, so a commit
+      that repeats existing content has a size of zero. Smaller commits are
+      easier to review.
+
+  - key: git.pr_size
+    computation: { type: percentile, measure: pr_change_size, quantile: 0.5 }
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PR size
+    description: >-
+      Median diff size of authored pull requests — lines added plus removed.
+      Smaller requests are easier to review. Sources that do not report line
+      counts contribute no values.
+
+  - key: git.pr_cycle_time_h
+    computation: { type: percentile, measure: pr_cycle_hours, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PR cycle time
+    description: >-
+      Median hours from opening a pull request to merging it, over requests
+      merged in the period.
+
+  - key: git.first_review_time_h
+    computation: { type: percentile, measure: pr_first_review_hours, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Time to first review
+    description: >-
+      Median hours from opening a pull request to its first submitted review,
+      over first reviews recorded in the period. Requests without a review, and
+      sources without review timestamps, contribute no duration.
+
+  - key: git.review_wait_share
+    computation: { type: percentile, measure: pr_review_wait_share, quantile: 0.5 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Review wait share
+    description: >-
+      Median percentage of open-to-merge time that elapsed before the first
+      submitted review, over pull requests merged in the period. High values
+      suggest first review is the main cycle-time constraint.
+
+  - key: git.review_to_merge_time_h
+    computation: { type: percentile, measure: pr_review_to_merge_hours, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Review-to-merge time
+    description: >-
+      Median hours from first submitted review to merge, over pull requests
+      merged in the period. Read with time to first review to locate delay
+      before or after review starts.
+
+  - key: git.approval_to_merge_time_h
+    computation: { type: percentile, measure: pr_approval_to_merge_hours, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Approval-to-merge time
+    description: >-
+      Median hours from the latest reported approval with a timestamp to merge,
+      over pull requests merged in the period. Sources that expose approvals
+      without per-approval timestamps contribute no value.
