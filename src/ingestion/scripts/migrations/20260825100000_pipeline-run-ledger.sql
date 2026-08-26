@@ -48,4 +48,13 @@ TTL toDateTime(ts) + INTERVAL 6 MONTH
 -- system.parts follows real data access, so "metadata only" is not a reachable
 -- state, and storage facts reach the page as recorded `storage.observed` rows
 -- instead (spec §2.2, §3.7).
+-- `CREATE TABLE IF NOT EXISTS` never widens a table that already exists, and
+-- this file has no ledger of its own: a tree that applied an earlier revision
+-- keeps whatever shape that revision created. Stated explicitly so the column
+-- means the same thing everywhere — on a non-nullable column the read path's
+-- `duration_ms IS NOT NULL` is always true, and absence would read as a
+-- measured zero. Idempotent: re-stating the current type is a no-op.
+ALTER TABLE ingestion_runs.pipeline_events
+    MODIFY COLUMN IF EXISTS duration_ms Nullable(UInt64);
+
 GRANT SELECT ON ingestion_runs.* TO presentation_ro;
