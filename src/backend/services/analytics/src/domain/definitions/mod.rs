@@ -1,12 +1,20 @@
-//! Semantic-layer definition grammars: the closed, typed shapes a measure is
-//! authored in (filter tree, scalar expressions). This module owns structural
-//! validity — a value that parses here is well-formed in isolation. Binding to
-//! a dataset's field catalog (does the field exist, does its type admit the
-//! operator) is the seed pipeline's second validation stage.
+//! The semantic layer's definition format and its one write path: the typed
+//! shapes a measure and a metric are authored in, the closed grammars they
+//! compose from (filter trees, scalar expressions), and the store that versions
+//! and audits every write.
+//!
+//! The grammars own structural validity — a value that parses is well-formed in
+//! isolation. Binding to a dataset's field catalog (does the field exist, does
+//! its type admit the operator) is the seed pipeline's second validation stage.
 
-// dead_code: the grammars land ahead of the seed pipeline that consumes them,
-// so they can be reviewed and tested in isolation; the allow leaves with it.
-#[allow(dead_code)]
+#![allow(dead_code)]
+// dead_code: the format, grammars, and store land ahead of the seed pipeline
+// that drives them; the allow leaves with the first caller.
+
+pub mod definition;
 pub mod expr;
-#[allow(dead_code)]
 pub mod filter;
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod live_tests;
+pub mod store;
