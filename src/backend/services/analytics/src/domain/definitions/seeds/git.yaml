@@ -5,6 +5,18 @@
 # are a projection of the field catalog, which already declares each relation
 # and how it must be read.
 measures:
+  - key: commits
+    dataset: git_commits
+    description: Commits a person authored, counted once per commit.
+    aggregation: count
+    event_time: authored_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
   - key: prs_created
     dataset: git_pull_requests
     description: Pull requests a person opened.
@@ -17,6 +29,14 @@ measures:
       - { key: source, value_field: data_source }
 
 metrics:
+  - key: git.commits
+    computation: { type: direct, measure: commits }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    label: Commits
+    description: How many commits a person authored in the period.
+
   - key: git.prs_created
     computation: { type: direct, measure: prs_created }
     format: integer

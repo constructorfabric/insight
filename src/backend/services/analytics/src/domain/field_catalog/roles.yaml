@@ -9,25 +9,73 @@
 # `key` is how a definition names the dataset; `relation` is where it lives.
 datasets:
   - key: git_commits
-    database: silver
-    relation: class_git_commits
+    database: insight
+    relation: git_commits
     fields:
       tenant_id: tenant
       author_email: entity
-      date: event_time
+      authored_at: event_time
       lines_added: measurable
       lines_removed: measurable
-      files_changed: measurable
-      branch: dimension
-      data_source: dimension
-      repo_slug: dimension
-      project_key: dimension
+      branch_scope:
+        role: dimension
+        label_field: branch_scope_label
+      repository:
+        role: dimension
+        label_field: repository_label
+      project:
+        role: dimension
+        label_field: project_label
+      source:
+        role: dimension
+        label_field: source_label
       commit_hash:
         display: [reference]
       message:
         display: [title]
       author_name:
         display: [actor]
+      repository_label:
+        display: [location]
+
+  - key: git_file_changes
+    database: insight
+    relation: git_file_changes
+    fields:
+      tenant_id: tenant
+      author_email: entity
+      authored_at: event_time
+      lines_added: measurable
+      lines_removed: measurable
+      category:
+        role: dimension
+        label_field: category_label
+      file_extension:
+        role: dimension
+        label_field: file_extension_label
+      change_type:
+        role: dimension
+        label_field: change_type_label
+      branch_scope:
+        role: dimension
+        label_field: branch_scope_label
+      repository:
+        role: dimension
+        label_field: repository_label
+      project:
+        role: dimension
+        label_field: project_label
+      source:
+        role: dimension
+        label_field: source_label
+      file_path:
+        display: [title]
+      commit_hash:
+        display: [reference]
+      author_name:
+        display: [actor]
+      repository_label:
+        display: [location]
 
   - key: git_pull_requests
     database: silver

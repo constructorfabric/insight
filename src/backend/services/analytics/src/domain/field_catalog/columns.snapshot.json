@@ -428,12 +428,212 @@
       {
         "name": "commit_hash",
         "type": "String"
+      },
+      {
+        "name": "author_email",
+        "type": "String"
+      },
+      {
+        "name": "author_name",
+        "type": "String"
+      },
+      {
+        "name": "message",
+        "type": "String"
+      },
+      {
+        "name": "authored_at",
+        "type": "DateTime"
+      },
+      {
+        "name": "authored_date",
+        "type": "Date"
+      },
+      {
+        "name": "branch_scope",
+        "type": "String"
+      },
+      {
+        "name": "branch_scope_label",
+        "type": "String"
+      },
+      {
+        "name": "repository",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "project",
+        "type": "String"
+      },
+      {
+        "name": "project_label",
+        "type": "String"
+      },
+      {
+        "name": "source",
+        "type": "String"
+      },
+      {
+        "name": "source_label",
+        "type": "String"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_commits",
+    "sorting_key": "tenant_id, author_email, authored_at"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
       }
     ],
     "database": "insight",
     "engine": "MergeTree",
     "relation": "git_default_branch_commits",
     "sorting_key": "tenant_id, source_id, project_key, repo_slug, commit_hash"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "file_path",
+        "type": "String"
+      },
+      {
+        "name": "author_email",
+        "type": "String"
+      },
+      {
+        "name": "author_name",
+        "type": "String"
+      },
+      {
+        "name": "authored_at",
+        "type": "DateTime"
+      },
+      {
+        "name": "authored_date",
+        "type": "Date"
+      },
+      {
+        "name": "category",
+        "type": "String"
+      },
+      {
+        "name": "category_label",
+        "type": "String"
+      },
+      {
+        "name": "file_extension",
+        "type": "String"
+      },
+      {
+        "name": "file_extension_label",
+        "type": "String"
+      },
+      {
+        "name": "change_type",
+        "type": "String"
+      },
+      {
+        "name": "change_type_label",
+        "type": "String"
+      },
+      {
+        "name": "branch_scope",
+        "type": "String"
+      },
+      {
+        "name": "branch_scope_label",
+        "type": "String"
+      },
+      {
+        "name": "repository",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "project",
+        "type": "String"
+      },
+      {
+        "name": "project_label",
+        "type": "String"
+      },
+      {
+        "name": "source",
+        "type": "String"
+      },
+      {
+        "name": "source_label",
+        "type": "String"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(Int64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "git_file_changes",
+    "sorting_key": "tenant_id, author_email, authored_at"
   },
   {
     "columns": [
