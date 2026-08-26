@@ -74,6 +74,7 @@ pub struct CustomMetric {
     /// Percentile quantile — an integer in (0, 100), e.g. 75 for p75.
     /// Required iff `computation` is `percentile`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(minimum = 1, maximum = 99)]
     pub p: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_cohort_key: Option<String>,

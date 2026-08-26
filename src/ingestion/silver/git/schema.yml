@@ -162,6 +162,16 @@ models:
         tests:
           - not_null
           - unique
+      - name: source_id
+        description: "The connector instance the event was collected through"
+      - name: project_key
+        description: "Repository owner or Bitbucket workspace"
+      - name: repo_slug
+        description: "Repository name within the project"
+      - name: pr_id
+        description: "The provider's own id for the pull request the event is on"
+      - name: pr_number
+        description: "The number the request is known by in its repository, as a reader sees it"
       - name: event_kind
         description: "'review' for a submitted review verdict, 'comment' for a conversation or review-thread comment"
         tests:
@@ -182,6 +192,14 @@ models:
         description: "The stable account key identity claims are keyed on: GitHub's numeric account id as a string ('0' when unknown), Bitbucket's account_id ('' when unknown)"
       - name: actor_email
         description: "An address observed for the actor's account via the connector's account-emails mapping, '' when none is known"
+      - name: created_at
+        description: "When the review was submitted or the comment posted"
+      - name: data_source
+        description: "The connector family the row came from (github, bitbucket_cloud)"
+      - name: _version
+        description: "ReplacingMergeTree version — the newest read of a row wins"
+      - name: _airbyte_extracted_at
+        description: "When the connector read the row, the incremental watermark"
 
   - name: fct_git_pr
     description: "PR-row facts: adds person_key, state_norm, cycle_time_h"
