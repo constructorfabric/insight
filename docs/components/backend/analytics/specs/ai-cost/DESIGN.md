@@ -160,7 +160,8 @@ share it. Seat and token measures therefore live in one `ai_cost` family rather 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-constraint-monthly-facts`
 
 A seat's month is a fact about that month, not a rate to be sliced. Nothing is pro-rated; a
-partial window returns the month in full.
+window holding the month's first day returns it in full, and a window inside the month
+returns nothing.
 
 #### Silver cost rows require `_version`
 
@@ -445,17 +446,19 @@ Per-event usage with `chargedCents` and `isChargeable`, keyed by user email.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-seq-serve-seat-window`
 
-1. Each `(person, month)` snapshot is emitted once, dated at the day it was last read — not
-   the first of its billing month. A date pinned to the 1st falls outside short rolling
-   windows, so the current month would silently vanish.
+1. Each `(person, month)` snapshot is emitted once, dated at the first day of its billing
+   month, so the date never moves with the sync schedule. A window inside a month therefore
+   returns nothing, and the per-day distribution is what such a window reads.
 2. A seat that spent nothing extra emits `0`; a seat with no ceiling emits no utilisation
    row, since the ratio has no denominator.
-3. `Sum` over the window adds whole months exactly; a partial window returns the month in
-   full, never a fraction.
+3. `Sum` over the window adds whole months exactly; a window holding a month's first day
+   returns that month in full, never a fraction.
 4. The billing month is derived from the read, never declared by the vendor: the endpoint
    reports period-to-date and resets at the boundary, so a month's value is as complete as
-   its last read before midnight. A fact's month and its read day therefore cannot disagree,
-   which is why the window filters on `metric_date` alone.
+   its last read before midnight. A fact's month and the vendor's period can therefore
+   disagree at a boundary, and nothing detects it: the money is right, the `covers_days` on
+   such a reading is not, and a month whose only reading precedes the rollover keeps a
+   figure belonging to the month before it.
 
 ### 3.7 Database schemas & tables
 
