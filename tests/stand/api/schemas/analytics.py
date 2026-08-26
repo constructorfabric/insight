@@ -122,7 +122,7 @@ class ComputationDto5(BaseModel):
         extra='forbid',
     )
     computation: Computation4
-    p: int = Field(..., ge=0)
+    p: int = Field(..., ge=1, le=99)
 
 
 class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5]):
@@ -454,7 +454,7 @@ class MetricResultDto5(BaseModel):
         extra='forbid',
     )
     computation: Computation9
-    p: int = Field(..., ge=0)
+    p: int = Field(..., ge=1, le=99)
 
 
 class View(StrEnum):
@@ -1186,7 +1186,7 @@ class CustomMetric(BaseModel):
     metric_key: str
     observation_sql: str
     origin: str | None = None
-    p: int | None = Field(None, description='Percentile quantile — an integer in (0, 100), e.g. 75 for p75.\nRequired iff `computation` is `percentile`.', ge=0)
+    p: int | None = Field(None, description='Percentile quantile — an integer in (0, 100), e.g. 75 for p75.\nRequired iff `computation` is `percentile`.', ge=1, le=99)
     peer_cohort_key: str | None = None
     scale: float | None = None
     short_label: str | None = None

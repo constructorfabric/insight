@@ -794,6 +794,28 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
     expect(rows[2]).toHaveTextContent("—");
   });
 
+  it("keeps two repositories that share a label as two rows", () => {
+    // The dimension VALUE identifies a row; a label is what a reader sees.
+    // Two sources whose repositories are both called `org/app` are two
+    // repositories, and keying the rows by label would collapse them in
+    // React's reconciliation.
+    const table = emptyCollection();
+    table.byKey.set(
+      "t.commits",
+      rollup("t.commits", [
+        ["src-a:org/app", "org/app", 40, 2],
+        ["src-b:org/app", "org/app", 10, 1],
+      ]),
+    );
+    mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("40");
+    expect(rows[1]).toHaveTextContent("10");
+  });
+
   it("renders nothing for a single row (empty-shell rule)", () => {
     const table = emptyCollection();
     table.byKey.set("t.commits", rollup("t.commits", [["r1", "org/one", 40, 3]]));
