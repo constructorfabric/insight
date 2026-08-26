@@ -167,7 +167,8 @@
               },
               "p": {
                 "format": "int32",
-                "minimum": 0,
+                "maximum": 99,
+                "minimum": 1,
                 "type": "integer"
               }
             },
@@ -324,7 +325,8 @@
           "p": {
             "description": "Percentile quantile — an integer in (0, 100), e.g. 75 for p75.\nRequired iff `computation` is `percentile`.",
             "format": "int32",
-            "minimum": 0,
+            "maximum": 99,
+            "minimum": 1,
             "type": [
               "integer",
               "null"

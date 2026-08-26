@@ -1749,6 +1749,9 @@ function DimensionTableSection({
   // Rows keyed by the dimension VALUE (the id the response groups by), shown
   // under its label — same rule as composition bars.
   type Row = {
+    // The id the response groups by. Two values that happen to share a label
+    // are two rows, so the id — not the label — is what identifies one.
+    value: string;
     label: string;
     persons: number | null;
     cells: Map<string, number | null>;
@@ -1759,6 +1762,7 @@ function DimensionTableSection({
       const dim = v.dimensions.find((d) => d.key === spec.dimension);
       if (!dim?.value) continue;
       const row: Row = rows.get(dim.value) ?? {
+        value: dim.value,
         label: dim.value,
         persons: null,
         cells: new Map(),
@@ -1825,7 +1829,7 @@ function DimensionTableSection({
             </TableHeader>
             <TableBody>
               {visible.map((row) => (
-                <TableRow key={row.label}>
+                <TableRow key={row.value}>
                   <TableCell
                     className="max-w-64 truncate text-sm font-medium"
                     title={row.label}
@@ -1929,13 +1933,13 @@ function OwnershipSection({
       }
     }
   }
-  const rows = [...byValue.values()]
-    .map((bucket) => {
+  const rows = [...byValue.entries()]
+    .map(([value, bucket]) => {
       const shares = [...bucket.byEntity.values()].sort((a, b) => b - a);
       const top1 = (shares[0] ?? 0) / bucket.total;
       const top3 =
         shares.slice(0, 3).reduce((sum, v) => sum + v, 0) / bucket.total;
-      return { label: bucket.label, total: bucket.total, top1, top3 };
+      return { value, label: bucket.label, total: bucket.total, top1, top3 };
     })
     .sort((a, b) => b.total - a.total);
   if (rows.length < 2) return null;
@@ -1966,7 +1970,7 @@ function OwnershipSection({
             </li>
           </ul>
           {visible.map((row) => (
-            <div key={row.label} className="flex items-center gap-3">
+            <div key={row.value} className="flex items-center gap-3">
               <div
                 className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
                 title={row.label}

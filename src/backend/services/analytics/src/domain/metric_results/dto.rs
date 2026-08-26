@@ -162,6 +162,7 @@ pub enum ComputationDto {
     /// Serialized as `computation: "percentile"` plus the sibling `p` (the
     /// integer quantile, e.g. 75) — mirroring how `ratio` carries `scale`.
     Percentile {
+        #[schema(minimum = 1, maximum = 99)]
         p: u8,
     },
 }
