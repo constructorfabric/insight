@@ -105,6 +105,21 @@ class TestAJobStillRunning:
         (row,) = syncs(plan)
         assert row.status == "failed"
 
+    @pytest.mark.parametrize("provisional", ["running", "queued", "a_word_added_later"])
+    def test_a_job_in_any_non_terminal_state_is_recorded_again(self, provisional):
+        # Fail-closed: only the outcomes that END a job count as coverage. A
+        # status this build does not know must not close it, or the tick that
+        # could record the real outcome skips it forever.
+        plan = plan_sweep(
+            request(
+                jobs=[job(status="succeeded")],
+                ledger=[ledger_row(status=provisional, claim=CLAIMED)],
+            )
+        )
+
+        (row,) = syncs(plan)
+        assert row.status == "ok", f"should re-cover a job left in {provisional!r}"
+
     def test_a_job_already_recorded_with_an_outcome_is_not_recorded_twice(self):
         plan = plan_sweep(request(jobs=[job(status="succeeded")], ledger=[ledger_row(status="ok", claim=CLAIMED)]))
 

@@ -1,8 +1,7 @@
 """Helm render-contract for the ingestion run-ledger writers.
 
 These templates record what an ingestion run did, and their correctness rests on
-two facts a diff does not show, both measured against a live Argo 3.6.10 before
-this file existed:
+two facts a diff does not show, both following from documented Argo semantics:
 
 * A DAG's phase comes from its TARGETS, and a target is any task nothing depends
   on. A recorder that runs after the work it records is therefore the only
@@ -213,6 +212,30 @@ class TestEverySubmitterCarriesTheHandler:
         assert "templates" not in spec, (
             f"{submitter} wraps the pipeline in a local template, which reinstates "
             "the spec that has no exit handler"
+        )
+
+    @pytest.mark.parametrize("submitter", SUBMITTERS)
+    def test_the_submitter_supplies_every_input_without_a_default(
+        self, submitter: str, pipeline: dict
+    ) -> None:
+        # An input with no default and no argument is unresolvable, and the run
+        # dies before its first step — so it records nothing at all, which is
+        # the failure this whole file exists to prevent.
+        template = templates_by_name(pipeline)["pipeline"]
+        required = {
+            parameter["name"]
+            for parameter in template["inputs"]["parameters"]
+            if "default" not in parameter
+        }
+        document = yaml.safe_load((REPO / submitter).read_text())
+        supplied = {
+            parameter["name"]
+            for parameter in document["spec"].get("arguments", {}).get("parameters", [])
+        }
+
+        assert required <= supplied, (
+            f"{submitter} leaves {sorted(required - supplied)} unresolved; the "
+            "workflow fails input resolution before it starts"
         )
 
     @pytest.mark.parametrize("submitter", SUBMITTERS)

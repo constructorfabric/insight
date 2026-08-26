@@ -4,8 +4,9 @@
 # are invisible in a diff. A DAG's phase comes from its targets, so a recorder
 # that runs after the work it records can erase that work's failure — a failed
 # sync reported a green run, and dbt rebuilt from stale bronze. And the inverse:
-# a recorder that cannot run must not fail the run it only observes. Both were
-# measured against a live Argo before these assertions existed.
+# a recorder that cannot run must not fail the run it only observes. Both
+# properties follow from documented Argo semantics, and the assertions below
+# are what hold the templates to them.
 #
 # Pure `helm template` + assertions — no cluster, no images.
 

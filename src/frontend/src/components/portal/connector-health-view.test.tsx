@@ -53,6 +53,7 @@ function row(over: Partial<ConnectorHealthRow> = {}): ConnectorHealthRow {
     },
     last_sync: {
       trigger: "claimed",
+      job_id: "job-1",
       status: "ok",
       started_at: "2026-01-15T09:00:00Z",
       duration_ms: 60_000,

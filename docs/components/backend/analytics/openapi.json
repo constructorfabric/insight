@@ -2145,9 +2145,13 @@
       "RunEventView": {
         "properties": {
           "duration_ms": {
+            "description": "Null on a row no sweep has reached — the same rule as the counters.",
             "format": "int64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "event": {
             "type": "string"

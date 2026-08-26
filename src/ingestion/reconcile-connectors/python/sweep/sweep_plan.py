@@ -48,11 +48,15 @@ STATUS_FROM_MOVER = {
     "pending": "running",
 }
 
-# A job the mover is still working on has no outcome yet, so the row recording
-# it is provisional. Treating such a row as coverage would close the job
-# forever: the tick that could record its terminal status skips it as already
-# collected, and the page shows the sync running for good.
-NON_TERMINAL_STATUSES = frozenset({"running"})
+# The outcomes that END a job. Everything else — `running`, a queue state, or a
+# word this build has never seen — is provisional.
+#
+# INVARIANT: fail-closed. Listing the non-terminal words instead would let any
+# status the mover adds later close a job forever: the tick that could record
+# its real outcome skips it as already collected, and the page shows that sync
+# unfinished for as long as the ledger keeps it. Re-recording a job one extra
+# time costs a row; missing its outcome costs the truth.
+TERMINAL_STATUSES = frozenset({"ok", "failed", "cancelled"})
 
 
 @dataclass(frozen=True)
@@ -232,7 +236,7 @@ def plan_sweep(request: dict[str, Any]) -> Plan:
     covered = {
         str(row.get("job_id", ""))
         for row in request.get("ledger") or []
-        if row.get("has_counters") and row.get("status") not in NON_TERMINAL_STATUSES
+        if row.get("has_counters") and row.get("status") in TERMINAL_STATUSES
     }
 
     coverage_rows(request, covered, plan)

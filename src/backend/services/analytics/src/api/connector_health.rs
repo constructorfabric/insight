@@ -123,7 +123,9 @@ pub(crate) struct RunEventView {
     #[schema(required)]
     pub job_id: Option<String>,
     pub started_at: DateTime<Utc>,
-    pub duration_ms: u64,
+    /// Null on a row no sweep has reached — the same rule as the counters.
+    #[schema(required)]
+    pub duration_ms: Option<u64>,
     /// Null on a row no sweep has reached: counters arrive with the mover's
     /// history, and the column's zero before then means nobody counted.
     #[schema(required)]
@@ -237,7 +239,7 @@ fn run_event_view(row: read::HistoryRow) -> RunEventView {
         origin: row.origin,
         job_id: non_empty(row.job_id),
         started_at: row.started_at,
-        duration_ms: row.duration_ms,
+        duration_ms: row.has_counters.then_some(row.duration_or_zero),
         records_moved: row.has_counters.then_some(row.moved_or_zero),
         rows_landed: row.has_measurement.then_some(row.rows_landed_or_zero),
     }
@@ -385,7 +387,7 @@ mod tests {
             claim: "something-new".to_owned(),
             job_id: "job-1".to_owned(),
             started_at: at(),
-            duration_ms: 1,
+            duration_or_zero: 1,
             moved_or_zero: 0,
             has_counters: true,
             rows_landed_or_zero: 0,
@@ -408,14 +410,16 @@ mod tests {
             claim: String::new(),
             job_id: String::new(),
             started_at: at(),
-            duration_ms: 1,
+            duration_or_zero: 1,
             moved_or_zero: 0,
             has_counters: false,
             rows_landed_or_zero: 0,
             has_measurement: false,
         };
 
-        assert_eq!(run_event_view(row).records_moved, None);
+        let view = run_event_view(row);
+        assert_eq!(view.records_moved, None);
+        assert_eq!(view.duration_ms, None, "duration comes with the sweep too");
     }
 
     #[test]
@@ -428,7 +432,7 @@ mod tests {
             claim: "claimed".to_owned(),
             job_id: "job-1".to_owned(),
             started_at: at(),
-            duration_ms: 1,
+            duration_or_zero: 1,
             moved_or_zero: 0,
             has_counters: true,
             rows_landed_or_zero: 0,

@@ -33,6 +33,7 @@ function run(over: Partial<RunFacts> = {}): RunFacts {
 function sync(over: Partial<SyncFacts> = {}): SyncFacts {
   return {
     trigger: "claimed",
+    job_id: "job-1",
     status: "ok",
     started_at: "2026-01-15T09:00:00Z",
     duration_ms: 60_000,
@@ -208,6 +209,24 @@ describe("connectorState", () => {
     expect(
       connectorState(row({ last_run: null, last_sync: sync({ status: "weird" }) }))
     ).toBe("state_unknown");
+  });
+
+  it("does not read an unrecognised transform outcome as delivering", () => {
+    // The transform's outcome is one of the three states this page reports; a
+    // word we cannot read there is no more evidence than one on the run.
+    const state = connectorState(
+      row({ last_run: run({ transform_status: "partially-done" }) })
+    );
+
+    expect(state).toBe("state_unknown");
+  });
+
+  it("treats an absent transform outcome as absence, not as a mystery", () => {
+    // Null means the run did not get that far. Absence is not a finding — the
+    // same rule the whole page runs on.
+    expect(
+      connectorState(row({ last_run: run({ transform_status: null }) }))
+    ).toBe("delivering");
   });
 
   it("still prefers a known-bad reading over an unrecognised one", () => {

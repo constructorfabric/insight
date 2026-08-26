@@ -48,20 +48,17 @@ const RUNS_SQL: &str = "\
     WHERE event = 'run.finished' AND connector != ''
     GROUP BY connector";
 
-/// Bounded to the runs the page shows.
+/// Bounded to the runs this response actually shows.
 ///
-/// Unbounded this read the whole retention to find one row per connector, and
-/// grew with every run ever recorded.
+/// INVARIANT: the run ids are BOUND, not re-derived. Unbounded, this read the
+/// whole retention to find one row per connector. Re-deriving "the latest run"
+/// here instead would race the statement above: a run finishing between the two
+/// would leave the response reporting the older run beside the newer run's
+/// transform, silently dropping a recorded failure.
 const TRANSFORMS_SQL: &str = "\
     SELECT connector, run_id, argMax(status, ts) AS status
     FROM {LEDGER}
-    WHERE event = 'transform.completed' AND connector != '' AND run_id != ''
-      AND (connector, run_id) IN (
-        SELECT connector, argMax(run_id, ts)
-        FROM {LEDGER}
-        WHERE event = 'run.finished' AND connector != ''
-        GROUP BY connector
-      )
+    WHERE event = 'transform.completed' AND connector != '' AND run_id IN ?
     GROUP BY connector, run_id";
 
 /// One row per connector: the newest sync, resolved by claim precedence.
@@ -141,7 +138,8 @@ const CONFIGURED_SQL: &str = "\
 /// `connector.configured` say what a tick saw, not what a run did, and reading
 /// them here would bury the history under one line per tick.
 const HISTORY_SQL: &str = "\
-    SELECT event, status, step, origin, claim, job_id, started_at, duration_ms,
+    SELECT event, status, step, origin, claim, job_id, started_at,
+           duration_ms AS duration_or_zero,
            records_moved AS moved_or_zero,
            origin = 'sweep' AS has_counters,
            ifNull(rows_landed, 0) AS rows_landed_or_zero,
@@ -253,7 +251,9 @@ pub(crate) struct HistoryRow {
     pub(crate) job_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub(crate) started_at: DateTime<Utc>,
-    pub(crate) duration_ms: u64,
+    /// INVARIANT: only meaningful when `has_counters`, for the same reason as
+    /// the counters — the mover's history is what knows how long a sync ran.
+    pub(crate) duration_or_zero: u64,
     /// INVARIANT: only meaningful when `has_counters`. Counters reach the ledger
     /// with the sweep; a pipeline row stores the column's zero and means
     /// "nobody counted", which is not the same statement.
@@ -312,6 +312,31 @@ where
         })
 }
 
+/// A read bound to an explicit set of ids rather than one it derives itself.
+async fn fetch_for<T>(
+    ch: &insight_clickhouse::Client,
+    statement: &str,
+    ids: &[String],
+) -> Result<Vec<T>, ReadError>
+where
+    T: clickhouse::RowOwned + clickhouse::RowRead,
+{
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    ch.query(statement)
+        .bind(ids)
+        .fetch_all::<T>()
+        .await
+        .map_err(|error| {
+            if absent_ledger(&error) {
+                return ReadError::LedgerAbsent;
+            }
+            ReadError::Clickhouse(error)
+        })
+}
+
 /// The newest sealed tick, read once and used for the whole response.
 pub(crate) async fn read_sealed_tick(
     ch: &insight_clickhouse::Client,
@@ -342,7 +367,11 @@ pub(crate) async fn read_health(
     tick: &SealedTick,
 ) -> Result<Vec<ConnectorHealth>, ReadError> {
     let runs = fetch::<RunRow>(ch, &sql(RUNS_SQL)).await?;
-    let transforms = fetch::<TransformRow>(ch, &sql(TRANSFORMS_SQL)).await?;
+
+    // The ids these runs actually carry, so the transform lookup cannot land on
+    // a different run than the one being reported.
+    let run_ids: Vec<String> = runs.iter().map(|row| row.run_id.clone()).collect();
+    let transforms = fetch_for::<TransformRow>(ch, &sql(TRANSFORMS_SQL), &run_ids).await?;
     let syncs = fetch::<SyncRow>(ch, &sql(SYNCS_SQL)).await?;
     let storage = fetch_at::<StorageRow>(ch, &sql(STORAGE_SQL), &tick.run_id).await?;
     let streams = fetch_at::<StreamRow>(ch, &sql(STREAMS_SQL), &tick.run_id).await?;
@@ -478,6 +507,23 @@ mod tests {
             run_id: run_id.to_owned(),
             status: status.to_owned(),
         }
+    }
+
+    #[test]
+    fn the_transform_lookup_takes_its_runs_rather_than_choosing_them() {
+        // Choosing here as well races the runs statement: a run finishing
+        // between the two leaves the response reporting the older run beside
+        // the newer run's transform, dropping a recorded failure.
+        let rendered = sql(TRANSFORMS_SQL);
+
+        assert!(
+            rendered.contains("run_id IN ?"),
+            "the run ids must be bound: {rendered}"
+        );
+        assert!(
+            !rendered.contains("run.finished"),
+            "must not re-derive which run is latest: {rendered}"
+        );
     }
 
     #[test]

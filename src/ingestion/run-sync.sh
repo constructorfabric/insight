@@ -76,6 +76,19 @@ if [[ "$DATA_SOURCE" == "jira" ]]; then
   DBT_SELECT_STAGING="tag:jira"
 fi
 
+# jira_enrich_image is REQUIRED by the template and has no chart-level default
+# (ADR-0016). Only the jira branch consumes it, so a non-jira submit passes the
+# empty sentinel — an input the run never uses must still resolve, or the
+# workflow fails before its first step.
+JIRA_ENRICH_IMAGE=""
+if [[ "$DATA_SOURCE" == "jira" ]]; then
+  JIRA_ENRICH_IMAGE="$(yq -r '.images.enrich.image // ""' "$DESC")"
+  [[ -n "$JIRA_ENRICH_IMAGE" && "$JIRA_ENRICH_IMAGE" != "null" ]] || {
+    echo "ERROR: $DESC defines no .images.enrich.image, which the jira enrich step requires" >&2
+    exit 1
+  }
+fi
+
 TENANT_DASHED="${TENANT//_/-}"
 
 # Per ADR-0005 / KEY DECISION #1: pass connection_name (not the UUID).
@@ -102,6 +115,7 @@ NAMESPACE="$INSIGHT_NAMESPACE" \
   DATA_SOURCE="$DATA_SOURCE" \
   DBT_SELECT="$DBT_SELECT" \
   DBT_SELECT_STAGING="$DBT_SELECT_STAGING" \
+  JIRA_ENRICH_IMAGE="$JIRA_ENRICH_IMAGE" \
   envsubst < workflows/onetime/sync.yaml.tpl |
   kubectl create -n "$INSIGHT_NAMESPACE" -f -
 

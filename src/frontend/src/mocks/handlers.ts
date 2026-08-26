@@ -512,6 +512,7 @@ export const handlers = [
             transform_status: "ok",
           },
           last_sync: {
+            job_id: "job-1",
             trigger: "claimed",
             status: "ok",
             started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
@@ -542,6 +543,7 @@ export const handlers = [
             transform_status: "failed",
           },
           last_sync: {
+            job_id: "job-2",
             trigger: "claimed",
             status: "ok",
             started_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
@@ -563,6 +565,7 @@ export const handlers = [
           configured: true,
           last_run: null,
           last_sync: {
+            job_id: "job-3",
             trigger: "unclaimed",
             status: "ok",
             started_at: new Date(Date.now() - 40 * 60_000).toISOString(),

@@ -171,8 +171,16 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
 
   if (!run && !sync) return "never_ran";
 
-  // After the known-bad readings, before any reassurance.
-  if (!recognised(run?.status) || !recognised(sync?.status)) return "state_unknown";
+  // After the known-bad readings, before any reassurance. The transform counts:
+  // its outcome is one of the three this page reports, and a word we cannot
+  // read there is no more evidence of delivery than one on the run.
+  if (
+    !recognised(run?.status) ||
+    !recognised(sync?.status) ||
+    !recognised(run?.transform_status)
+  ) {
+    return "state_unknown";
+  }
 
   // A connector whose runs succeed while nothing is ever stored is one of the
   // four states this page exists to separate, and it is not delivering.

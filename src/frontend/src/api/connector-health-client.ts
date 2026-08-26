@@ -25,6 +25,8 @@ export interface RunFacts {
 export interface SyncFacts {
   trigger: SyncTrigger;
   status: string;
+  /** The mover's job this summary resolves to. */
+  job_id: string | null;
   started_at: string;
   /**
    * Null until the mover's history has been swept — only it knows how long a

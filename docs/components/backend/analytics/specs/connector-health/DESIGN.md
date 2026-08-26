@@ -156,9 +156,9 @@ the richer row. This is what makes NFR-3 hold by construction.
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-constraint-metadata-only-grant`
 
 The read-only query-path role gains exactly one thing: SELECT on the ledger database. It
-gets no grant on bronze, in data or in metadata — measured on ClickHouse 25.7, `SHOW` on a
-bronze pattern does not make those relations visible in `system.parts` (row visibility there
-follows actual data access), so "metadata only" is not a reachable permission state. Storage
+gets no grant on bronze, in data or in metadata. Row visibility in `system.parts` follows
+actual data access, so `SHOW` on a bronze pattern does not make those relations visible there
+and "metadata only" is not a reachable permission state. Storage
 facts therefore reach the page the same way every other fact does: recorded into the ledger
 by a writer that already owns bronze.
 
@@ -639,10 +639,9 @@ these databases along with bronze, and the read-only query-path role must not be
 INSERT: it is read-only by construction and has an adversarial test saying so.
 
 That is the whole grant surface. No bronze grant is issued to the reader, in data or in
-metadata — measured on ClickHouse 25.7, neither `SHOW` on a `bronze_*` pattern nor a
-`bronze_*` wildcard `SELECT` makes existing bronze relations visible in `system.parts` for a
-role lacking real access, so the storage-observation route in §3.2 is not a preference but
-the only workable one.
+metadata. Neither `SHOW` on a `bronze_*` pattern nor a `bronze_*` wildcard `SELECT` makes
+existing bronze relations visible in `system.parts` for a role lacking real access, so the
+storage-observation route in §3.2 is not a preference but the only workable one.
 
 ### 3.8 Deployment Topology
 
@@ -692,8 +691,8 @@ the same way: every write goes through a `steps` wrapper carrying `continueOn`, 
 - **Mover reads on the request path** — rejected: it couples page availability to the mover,
   costs orders of magnitude more latency than warehouse reads, and its richer detail is
   available to the sweep in the background instead.
-- **Any bronze access for the reader** — not a preference: measured on ClickHouse 25.7 the
-  reader cannot be given metadata visibility without data access, so storage facts are
+- **Any bronze access for the reader** — not a preference: the reader cannot be given
+  metadata visibility without data access, so storage facts are
   recorded by the sweep instead. Per-stream timestamp or entity aggregates could later join
   the same observation rows without touching the seam.
 - **Expected-connector detection** — deferred to

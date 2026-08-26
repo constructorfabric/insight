@@ -49,3 +49,7 @@ spec:
         value: "${DBT_SELECT}"
       - name: dbt_select_staging
         value: "${DBT_SELECT_STAGING}"
+      # No chart-level default (ADR-0016); empty on every non-jira submit,
+      # where the step that reads it does not run.
+      - name: jira_enrich_image
+        value: "${JIRA_ENRICH_IMAGE}"

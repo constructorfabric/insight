@@ -678,7 +678,7 @@ class RunEventView(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    duration_ms: int = Field(..., ge=0)
+    duration_ms: int | None = Field(..., description='Null on a row no sweep has reached — the same rule as the counters.', ge=0)
     event: str
     job_id: str | None = Field(..., description="The mover's job this event is about, so a reader can line it up against\nthe summary by identity instead of by timestamp.")
     origin: str = Field(..., description='Which writer recorded this row: `pipeline` or `sweep`. Provenance of the\nrecord, never of the sync — see `trigger` for that.')
