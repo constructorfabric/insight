@@ -50,7 +50,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of the last reading inside that month, dated at its first day, so a shorter window returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
+- Notes: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
 
 ## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
 
