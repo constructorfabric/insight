@@ -493,13 +493,18 @@ mod tests {
             bytes_on_disk: 8_192,
         }]);
 
-        let (connector, storage) = facts.into_iter().next().expect("one connector");
+        let [(connector, storage)] = facts.as_slice() else {
+            panic!("expected exactly one connector, got {}", facts.len());
+        };
         assert_eq!(connector, "alpha");
         assert_eq!(storage.streams, 7);
         assert_eq!(storage.streams_with_data, 3);
         assert_eq!(storage.rows_total, 4_096);
         assert_eq!(storage.bytes_on_disk, 8_192);
-        assert_eq!(storage.observed_at, Utc.timestamp_opt(1_700_000_000, 0).unwrap());
+        assert_eq!(
+            storage.observed_at,
+            Utc.timestamp_opt(1_700_000_000, 0).unwrap()
+        );
     }
 
     #[test]
