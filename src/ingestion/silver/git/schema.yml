@@ -38,6 +38,172 @@ models:
         tests:
           - not_null
           - unique
+      - name: default_branch
+        description: >
+          Trunk branch name as the vendor reports it (GitHub/GitLab
+          default_branch, Bitbucket mainbranch). NULL until the repository's
+          next sync after the column landed. Trunk-scoped reads match on this,
+          never on a hardcoded branch name.
+
+  - name: class_git_ci_runs
+    description: >
+      Vendor-neutral CI pipeline runs (GitHub Actions today; GitLab and
+      Bitbucket pipelines are not collected yet). One row per run attempt.
+      The ONLY archive of CI history — source APIs retain a bounded window
+      (GitHub ~90 days), so a --full-refresh irreversibly destroys older
+      history. Gate semantics: is_gate = commit-triggered AND decided outcome
+      (success/failure/timed_out); action_required runs never executed and
+      are not decided. Commit-triggered includes the vendor's fork-safe PR
+      trigger (GitHub pull_request_target — trigger_category maps it to
+      pull_request) and merge-queue runs (GitHub merge_group →
+      merge_queue), and the gate follows the category. Archive caveat: rows
+      classified before merge_queue joined the vocabulary keep
+      trigger_category='other' and is_gate=0. A different gate is a
+      different class, not a flag here.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key (one per run attempt)"
+        tests:
+          - not_null
+          - unique
+      - name: pipeline_key
+        description: >
+          Stable pipeline identity — the workflow file path, not its editable
+          display name.
+      - name: trigger_category
+        description: "Class trigger vocabulary: push | pull_request | merge_queue | schedule | manual | other"
+      - name: outcome
+        description: >
+          Class outcome vocabulary: success | failure | timed_out | cancelled |
+          skipped | action_required | neutral, '' while undecided.
+          startup_failure and stale fold into failure and cancelled.
+      - name: is_gate
+        description: "1 = counts toward pass rates (see table description)"
+      - name: duration_s
+        description: >
+          finished_at - started_at in seconds; NULL while the run is undecided
+          or when a timestamp regressed. Zero is a real instant failure — keep
+          it in counts, exclude it from duration medians/percentiles.
+      - name: created_at
+        description: >
+          First-attempt creation time. On a retry, started_at moves to the
+          last attempt while this stays put — duration must never mix the two.
+      - name: source_id
+        description: "Connector source instance id"
+      - name: repo_full_name
+        description: "Repository the run belongs to, vendor-native full name"
+      - name: pipeline_name
+        description: "Editable display name; pipeline_key is the identity"
+      - name: run_id
+        description: "Vendor-native run id, unique within the repository"
+      - name: run_number
+        description: "Vendor-native monotonically increasing run number"
+      - name: attempt
+        description: "1-based attempt this row describes"
+      - name: is_retry
+        description: "1 when attempt > 1"
+      - name: trigger_raw
+        description: "Vendor event name before category mapping"
+      - name: branch
+        description: "Head branch the run built"
+      - name: commit_sha
+        description: "Head commit the run built"
+      - name: actor_login
+        description: >
+          Vendor login that caused the run — provenance only; the class is
+          tenant-grain and no metric attributes a run to a person (#2803).
+      - name: started_at
+        description: "Last attempt's start"
+      - name: finished_at
+        description: "Last attempt's finish (the vendor's updated_at)"
+      - name: data_source
+        description: "Owning connector (insight_github today)"
+
+  - name: class_git_deployments
+    description: >
+      Vendor-neutral deployments (GitHub today). Carries NO outcome: fold the
+      latest class_git_deployment_events row per deployment_id in; a deployment
+      without an event is pending and stays visible. Accumulates past the
+      source API retention window — never --full-refresh.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: source_id
+        description: "Connector source instance id"
+      - name: repo_full_name
+        description: "Repository the deployment belongs to"
+      - name: deployment_id
+        description: "Vendor-native deployment id; the events class joins on it"
+      - name: environment
+        description: "Environment name as the vendor reports it"
+      - name: is_production
+        description: "1 when the vendor marks the environment production"
+      - name: is_transient
+        description: "1 when the environment is destroyed after use (previews)"
+      - name: ref
+        description: "Ref the deployment was created for"
+      - name: commit_sha
+        description: "Commit the deployment shipped"
+      - name: task
+        description: "Vendor task tag (deploy, deploy:migrations, …)"
+      - name: creator_login
+        description: "Vendor login that created the deployment — provenance only"
+      - name: created_at
+        description: "Deployment creation time; the metric date"
+      - name: data_source
+        description: "Owning connector (insight_github today)"
+
+  - name: class_git_deployment_events
+    description: >
+      Deployment status event log (GitHub today). Latest event per
+      deployment_id is the deployment's outcome; kept as events because a
+      status can land syncs after its deployment. Accumulates past the source
+      API retention window — never --full-refresh.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: source_id
+        description: "Connector source instance id"
+      - name: repo_full_name
+        description: "Repository the deployment belongs to"
+      - name: deployment_id
+        description: "Deployment this event describes (class_git_deployments join key)"
+      - name: event_id
+        description: >
+          Vendor status id — monotonic per deployment; the fold's created_at
+          tiebreaker, so the chosen outcome is deterministic.
+      - name: state
+        description: >
+          Vendor state: success | failure | error | inactive | in_progress |
+          queued | pending. inactive = superseded by a newer deployment, and
+          error is an infrastructure failure of the deploy itself — readers
+          must not fold either into failure of the deployed code.
+      - name: environment
+        description: "Environment the event was recorded against"
+      - name: creator_login
+        description: "Vendor login that recorded the status — provenance only"
+      - name: created_at
+        description: "Event time; the fold takes the latest per deployment_id"
+      - name: data_source
+        description: "Owning connector (insight_github today)"
 
   - name: class_git_repository_branches
     description: "Unified git repository branches from all sources (GitHub, Bitbucket, GitLab)"

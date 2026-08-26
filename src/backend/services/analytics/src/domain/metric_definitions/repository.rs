@@ -545,12 +545,29 @@ fn build_definition(
         MetricComputation::Median => ComputationSpec::Median {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
-        MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
+        MetricComputation::Percentile => {
+            // The `scale` column doubles as the quantile for percentile
+            // metrics (see SeedComputation::scale); the CHECK constraint
+            // pairs it with the computation type.
+            let q = row.scale.ok_or_else(|| {
+                config_error(&format!("missing percentile q for {}", row.metric_key))
+            })?;
+            if !(0.0..=1.0).contains(&q) {
+                return Err(config_error(&format!(
+                    "percentile q must be within [0, 1] for {}",
+                    row.metric_key
+                )));
+            }
+            ComputationSpec::Percentile {
+                value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+                q,
+            }
+        }
+        MetricComputation::Stddev => ComputationSpec::Stddev {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
-        MetricComputation::Percentile => ComputationSpec::Percentile {
+        MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
-            p: percentile_from_scale(row.scale, &row.metric_key)?,
         },
     };
 
@@ -591,28 +608,6 @@ fn build_base(
         peer_cohort_key: row.peer_cohort_key.clone(),
         allowed_dimensions,
     })
-}
-
-/// A percentile definition stores its quantile `p` in the `scale` column (the
-/// definitions table's one numeric computation parameter). Anything but an
-/// integer strictly inside (0, 100) is a corrupt row, not a computable metric.
-pub(crate) fn percentile_from_scale(
-    scale: Option<f64>,
-    metric_key: &str,
-) -> Result<u8, CanonicalError> {
-    let scale = scale
-        .ok_or_else(|| config_error(&format!("missing percentile quantile for {metric_key}")))?;
-    if scale.fract() != 0.0 || !(1.0..=99.0).contains(&scale) {
-        return Err(config_error(&format!(
-            "percentile quantile for {metric_key} must be an integer in (0, 100), got {scale}"
-        )));
-    }
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "bounds-checked to an integral value in 1..=99 just above"
-    )]
-    Ok(scale as u8)
 }
 
 fn one_input(
@@ -1161,6 +1156,52 @@ mod tests {
         assert!(one_input("ai.x", &[], MetricInputRole::Value).is_err());
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
         assert!(one_input("ai.x", &[input.clone(), input], MetricInputRole::Value).is_err());
+    }
+
+    #[test]
+    fn percentile_and_stddev_specs_build_from_the_scale_slot() {
+        let value = MetricInput {
+            role: MetricInputRole::Value,
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ci_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
+            source_key: "ci".to_owned(),
+            measure_key: "run_duration_min".to_owned(),
+        };
+
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        row.scale = Some(0.9);
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a percentile row with q builds"));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
+        match built.spec {
+            ComputationSpec::Percentile { q, .. } => {
+                assert!((q - 0.9).abs() < f64::EPSILON);
+            }
+            other => panic!("expected a percentile spec, got {other:?}"),
+        }
+
+        // The quantile is mandatory and must be a probability.
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+        row.scale = Some(1.5);
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+
+        let mut row = definition_row("ci.run_duration_min_stddev", None, true, "ok");
+        row.computation_type = "stddev".to_owned();
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a stddev row builds"));
+        assert!(matches!(built.spec, ComputationSpec::Stddev { .. }));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
     }
 
     #[test]

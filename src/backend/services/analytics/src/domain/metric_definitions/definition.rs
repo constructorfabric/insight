@@ -28,8 +28,9 @@ pub enum MetricComputation {
     Sum,
     Ratio,
     Median,
-    DistinctCount,
     Percentile,
+    Stddev,
+    DistinctCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -244,6 +245,18 @@ pub enum ComputationSpec {
     Median {
         value: MetricInput,
     },
+    /// Exact q-quantile of per-event observation values — the tail the median
+    /// hides (p90 duration). Same event-grain observation shape as Median;
+    /// `q` is stored in the definition's `scale` column.
+    Percentile {
+        value: MetricInput,
+        q: f64,
+    },
+    /// Sample standard deviation of per-event observation values — the spread
+    /// around the mean. Same event-grain observation shape as Median.
+    Stddev {
+        value: MetricInput,
+    },
     /// Count of distinct `subject_key` values over the entity's observations
     /// (e.g. distinct active dates, distinct tools). The measure emits one row
     /// per subject with the subject stamped on `subject_key`; the aggregate is
@@ -251,13 +264,6 @@ pub enum ComputationSpec {
     /// genuine zero, not unknown.
     DistinctCount {
         value: MetricInput,
-    },
-    /// Exact p-th percentile of per-event observation values — `Median` with
-    /// `quantileExactIf(p/100)` instead of 0.5, honest-null like it. `p` is an
-    /// integer strictly inside (0, 100), enforced at every load boundary.
-    Percentile {
-        value: MetricInput,
-        p: u8,
     },
 }
 
@@ -311,8 +317,9 @@ impl MetricDefinition {
         match &self.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
-            | ComputationSpec::DistinctCount { value }
-            | ComputationSpec::Percentile { value, .. } => &value.observation,
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
+            | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
     }
@@ -453,8 +460,9 @@ impl MetricComputation {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
             Self::Median => "median",
-            Self::DistinctCount => "distinct_count",
             Self::Percentile => "percentile",
+            Self::Stddev => "stddev",
+            Self::DistinctCount => "distinct_count",
         }
     }
 
@@ -463,8 +471,9 @@ impl MetricComputation {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
-            "distinct_count" => Some(Self::DistinctCount),
             "percentile" => Some(Self::Percentile),
+            "stddev" => Some(Self::Stddev),
+            "distinct_count" => Some(Self::DistinctCount),
             _ => None,
         }
     }
@@ -543,8 +552,9 @@ mod tests {
             MetricComputation::Sum,
             MetricComputation::Ratio,
             MetricComputation::Median,
-            MetricComputation::DistinctCount,
             MetricComputation::Percentile,
+            MetricComputation::Stddev,
+            MetricComputation::DistinctCount,
         ] {
             assert_eq!(
                 MetricComputation::from_db(computation.as_db()),

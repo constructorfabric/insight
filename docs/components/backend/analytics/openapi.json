@@ -146,7 +146,29 @@
             "properties": {
               "computation": {
                 "enum": [
-                  "distinct_count"
+                  "percentile"
+                ],
+                "type": "string"
+              },
+              "q": {
+                "description": "The quantile — a probability, matching the definition validation.",
+                "format": "double",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "q",
+              "computation"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "computation": {
+                "enum": [
+                  "stddev"
                 ],
                 "type": "string"
               }
@@ -157,23 +179,15 @@
             "type": "object"
           },
           {
-            "description": "Serialized as `computation: \"percentile\"` plus the sibling `p` (the\ninteger quantile, e.g. 75) — mirroring how `ratio` carries `scale`.",
             "properties": {
               "computation": {
                 "enum": [
-                  "percentile"
+                  "distinct_count"
                 ],
                 "type": "string"
-              },
-              "p": {
-                "format": "int32",
-                "maximum": 99,
-                "minimum": 1,
-                "type": "integer"
               }
             },
             "required": [
-              "p",
               "computation"
             ],
             "type": "object"
@@ -319,16 +333,6 @@
           "origin": {
             "type": [
               "string",
-              "null"
-            ]
-          },
-          "p": {
-            "description": "Percentile quantile — an integer in (0, 100), e.g. 75 for p75.\nRequired iff `computation` is `percentile`.",
-            "format": "int32",
-            "maximum": 99,
-            "minimum": 1,
-            "type": [
-              "integer",
               "null"
             ]
           },
@@ -693,8 +697,9 @@
           "sum",
           "ratio",
           "median",
-          "distinct_count",
-          "percentile"
+          "percentile",
+          "stddev",
+          "distinct_count"
         ],
         "type": "string"
       },

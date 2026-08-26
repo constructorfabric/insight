@@ -158,13 +158,13 @@ pub enum ComputationDto {
         scale: f64,
     },
     Median,
-    DistinctCount,
-    /// Serialized as `computation: "percentile"` plus the sibling `p` (the
-    /// integer quantile, e.g. 75) — mirroring how `ratio` carries `scale`.
     Percentile {
-        #[schema(minimum = 1, maximum = 99)]
-        p: u8,
+        /// The quantile — a probability, matching the definition validation.
+        #[schema(minimum = 0, maximum = 1)]
+        q: f64,
     },
+    Stddev,
+    DistinctCount,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

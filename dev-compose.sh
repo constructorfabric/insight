@@ -362,6 +362,37 @@ write_watch_override() {
       - --poll
       - --exec
       - run --bin analytics -- -c /app/config/insight.yaml run
+  # The one-shot migrate companion binds the release binary from
+  # deploy/compose/build, which watch mode deliberately does not build. Point it
+  # at the same cargo workspace so it can still apply migrations before the
+  # server starts — without it the server blocks forever on
+  # service_completed_successfully.
+  analytics-migrate:
+    image: insight-rust-watch:dev
+    pull_policy: build
+    build:
+      context: deploy/compose
+      dockerfile: rust-watch.Dockerfile
+    entrypoint: !reset null
+    working_dir: /workspace
+    environment:
+      CARGO_TARGET_DIR: /target
+      CARGO_INCREMENTAL: "1"
+    volumes: !override
+      - ./src/backend:/workspace:ro
+      - rust-target:/target
+      - rust-cargo-registry:/usr/local/cargo/registry
+      - rust-cargo-git:/usr/local/cargo/git
+      - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
+    command:
+      - cargo
+      - run
+      - --bin
+      - analytics
+      - --
+      - -c
+      - /app/config/insight.yaml
+      - migrate
 YML
       ;;
     *)
@@ -559,7 +590,7 @@ cmd_up() {
     platform: linux/amd64
 $(ghcr_volumes_block "$svc")
 YML
-          if [[ "$svc" == "identity-resolution" ]]; then
+          if [[ "$svc" == "analytics" || "$svc" == "identity-resolution" ]]; then
             # The one-shot migrate companion must flip to the ghcr image too:
             # left alone it keeps the build + local-binary bind mount (which
             # was intentionally not built in ghcr mode), never starts, and the
@@ -568,10 +599,10 @@ YML
             # subcommand, so resetting it here would start a SERVER that never
             # completes and the dependents would wait forever.
             cat <<YML
-  identity-resolution-migrate:
+  ${svc}-migrate:
     build: !reset null
     platform: linux/amd64
-$(ghcr_volumes_block identity-resolution-migrate)
+$(ghcr_volumes_block "${svc}-migrate")
 YML
           fi
         elif contains "$watch_list" "$svc"; then

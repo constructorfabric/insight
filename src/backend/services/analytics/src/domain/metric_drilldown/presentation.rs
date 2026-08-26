@@ -211,6 +211,10 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             MetricDrilldownColumnType::String,
         ),
         "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
+        "env_kind" => (
+            "Environment type".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
         _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
     };
     MetricDrilldownColumn {
@@ -225,80 +229,12 @@ pub(super) fn evidence_presentation(
     measure_key: &str,
     granularity: EvidenceGranularity,
 ) -> EvidencePresentation {
+    if source_key == "git"
+        && let Some(found) = git_presentation(measure_key)
+    {
+        return found;
+    }
     match (source_key, measure_key) {
-        // Every git row names where the work went, on every path that opens
-        // the dialog (#2806) — a column that only appeared when the reader
-        // happened to arrive through a grouped table left the same record
-        // looking like a different record. A commit knows only whether it is
-        // reachable from the trunk, so `branch_scope` is the honest column
-        // there; a pull request knows the branch it targeted, so it names it.
-        (
-            "git",
-            "commit_count"
-            | "commit_change_size"
-            | "default_commit_count"
-            | "non_default_commit_count",
-        ) => EvidencePresentation {
-            detail_keys: &[
-                "ref",
-                "title",
-                "repository",
-                "author",
-                "branch_scope",
-                "lines_added",
-                "lines_removed",
-            ],
-            show_value: false,
-        },
-        // Reviewer-perspective events anchor on the reviewed pull request, so
-        // the row reads like the PR measures: the value is always 1 and stays
-        // hidden, `author` names whose request was reviewed or commented on.
-        // They carry no `branch_scope` — a review is not classified by where
-        // the request landed, only the request itself is.
-        ("git", "review_submitted" | "pr_comment") => EvidencePresentation {
-            detail_keys: &["ref", "title", "repository", "author", "destination_branch"],
-            show_value: false,
-        },
-        (
-            "git",
-            "pr_created"
-            | "pr_created_merged"
-            | "pr_merged"
-            | "default_pr_created"
-            | "non_default_pr_created"
-            | "default_pr_merged"
-            | "non_default_pr_merged",
-        ) => EvidencePresentation {
-            detail_keys: &[
-                "ref",
-                "title",
-                "repository",
-                "author",
-                "branch_scope",
-                "destination_branch",
-            ],
-            show_value: false,
-        },
-        (
-            "git",
-            "pr_commit_count"
-            | "pr_cycle_hours"
-            | "pr_change_size"
-            | "pr_first_review_hours"
-            | "pr_review_wait_share"
-            | "pr_review_to_merge_hours"
-            | "pr_approval_to_merge_hours",
-        ) => EvidencePresentation {
-            detail_keys: &[
-                "ref",
-                "title",
-                "repository",
-                "author",
-                "branch_scope",
-                "destination_branch",
-            ],
-            show_value: true,
-        },
         // A counting measure needs no value column — the row IS the one it
         // counted; a duration or a page count is only readable with its number.
         (
@@ -323,11 +259,102 @@ pub(super) fn evidence_presentation(
             detail_keys: &["billing_month", "ceiling_usd"],
             show_value: true,
         },
+        // A counted run needs no value column — the row IS the run; a duration
+        // or an hour figure is only readable with its number.
+        ("ci", "runs" | "runs_matched_commit") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: false,
+        },
+        ("ci", "commits_observed") => EvidencePresentation {
+            detail_keys: &["repository"],
+            show_value: false,
+        },
+        ("ci", "run_duration_min" | "run_hours") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: true,
+        },
+        ("ci", "deployments") => EvidencePresentation {
+            detail_keys: &["repository", "environment", "outcome", "env_kind"],
+            show_value: false,
+        },
         _ => EvidencePresentation {
             detail_keys: &[],
             show_value: granularity != EvidenceGranularity::Event,
         },
     }
+}
+
+/// The git family's column sets, lifted out of `evidence_presentation` so
+/// that function stays inside its line budget as the family grows.
+fn git_presentation(measure_key: &str) -> Option<EvidencePresentation> {
+    let presentation = match measure_key {
+        // Every git row names where the work went, on every path that opens
+        // the dialog (#2806) — a column that only appeared when the reader
+        // happened to arrive through a grouped table left the same record
+        // looking like a different record. A commit knows only whether it is
+        // reachable from the trunk, so `branch_scope` is the honest column
+        // there; a pull request knows the branch it targeted, so it names it.
+        "commit_count"
+        | "commit_change_size"
+        | "default_commit_count"
+        | "non_default_commit_count" => EvidencePresentation {
+            detail_keys: &[
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "branch_scope",
+                "lines_added",
+                "lines_removed",
+            ],
+            show_value: false,
+        },
+        // Reviewer-perspective events anchor on the reviewed pull request, so
+        // the row reads like the PR measures: the value is always 1 and stays
+        // hidden, `author` names whose request was reviewed or commented on.
+        // They carry no `branch_scope` — a review is not classified by where
+        // the request landed, only the request itself is.
+        "review_submitted" | "pr_comment" => EvidencePresentation {
+            detail_keys: &["ref", "title", "repository", "author", "destination_branch"],
+            show_value: false,
+        },
+        "pr_created"
+        | "pr_created_merged"
+        | "pr_merged"
+        | "default_pr_created"
+        | "non_default_pr_created"
+        | "default_pr_merged"
+        | "non_default_pr_merged" => EvidencePresentation {
+            detail_keys: &[
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "branch_scope",
+                "destination_branch",
+            ],
+            show_value: false,
+        },
+        "pr_commit_count"
+        | "pr_cycle_hours"
+        | "pr_change_size"
+        | "pr_first_review_hours"
+        | "pr_review_wait_share"
+        | "pr_review_to_merge_hours"
+        | "pr_approval_to_merge_hours" => EvidencePresentation {
+            detail_keys: &[
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "branch_scope",
+                "destination_branch",
+            ],
+            show_value: true,
+        },
+        _ => return None,
+    };
+    Some(presentation)
 }
 
 fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
@@ -422,6 +449,41 @@ mod tests {
             unnamed.is_empty(),
             "event measures with no detail columns — their drilldown shows only a date: {unnamed:?}"
         );
+    }
+
+    #[test]
+    fn ci_measures_declare_run_columns_and_the_env_kind_label_reads_as_prose() {
+        let runs = evidence_presentation("ci", "runs", EvidenceGranularity::Event);
+        assert_eq!(
+            runs.detail_keys,
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure in ["run_duration_min", "run_hours"] {
+            let p = evidence_presentation("ci", measure, EvidenceGranularity::Event);
+            assert!(p.show_value, "{measure} is unreadable without its number");
+        }
+
+        let deployments = evidence_presentation("ci", "deployments", EvidenceGranularity::Event);
+        assert_eq!(
+            deployments.detail_keys,
+            ["repository", "environment", "outcome", "env_kind"]
+        );
+
+        let value = input(MetricInputRole::Value, "deployments");
+        let deployments_plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: deployments,
+            }],
+        );
+        let column = presentation_column("env_kind", &deployments_plan);
+        assert_eq!(column.label, "Environment type");
     }
 
     #[test]

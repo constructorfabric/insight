@@ -375,8 +375,9 @@ pub fn build_metric_result(
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
         ComputationSpec::Median { .. } => ComputationDto::Median,
+        ComputationSpec::Percentile { q, .. } => ComputationDto::Percentile { q: *q },
+        ComputationSpec::Stddev { .. } => ComputationDto::Stddev,
         ComputationSpec::DistinctCount { .. } => ComputationDto::DistinctCount,
-        ComputationSpec::Percentile { p, .. } => ComputationDto::Percentile { p: *p },
     };
     MetricResultDto {
         metric_key: def.base.key.clone(),
@@ -549,7 +550,7 @@ mod tests {
             base: base(),
             spec: ComputationSpec::Percentile {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
-                p: 75,
+                q: 0.75,
             },
         }
     }
@@ -1133,7 +1134,7 @@ mod tests {
             build_metric_result(&percentile_metric(), Vec::new(), selection("ai.percentile"));
         let percentile_json = serde_json::to_value(&percentile).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(percentile_json["computation"], "percentile");
-        assert_eq!(percentile_json["p"], 75);
+        assert_eq!(percentile_json["q"], 0.75);
         assert!(percentile_json.get("scale").is_none());
     }
 

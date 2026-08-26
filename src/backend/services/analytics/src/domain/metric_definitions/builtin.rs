@@ -55,10 +55,11 @@ pub enum SeedComputation {
         denominator_aggregation: RatioDenominatorAggregation,
     },
     Median,
-    DistinctCount,
     Percentile {
-        p: u8,
+        q: f64,
     },
+    Stddev,
+    DistinctCount,
 }
 
 impl SeedComputation {
@@ -67,19 +68,20 @@ impl SeedComputation {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
-            Self::DistinctCount => MetricComputation::DistinctCount,
             Self::Percentile { .. } => MetricComputation::Percentile,
+            Self::Stddev => MetricComputation::Stddev,
+            Self::DistinctCount => MetricComputation::DistinctCount,
         }
     }
 
-    /// Value for the `metric_definitions.scale` column — the definition's one
-    /// numeric computation parameter: the ratio multiplier, or the percentile
-    /// quantile `p`.
+    /// The definition's `scale` storage column: the ratio's scale factor, or
+    /// the percentile's quantile `q` — one numeric slot, meaning keyed by
+    /// `computation_type` (the table's CHECK constraint enforces the pairing).
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum | Self::Median | Self::DistinctCount => None,
+            Self::Sum | Self::Median | Self::Stddev | Self::DistinctCount => None,
             Self::Ratio { scale, .. } => Some(scale),
-            Self::Percentile { p } => Some(f64::from(p)),
+            Self::Percentile { q } => Some(q),
         }
     }
 
@@ -89,9 +91,11 @@ impl SeedComputation {
                 denominator_aggregation,
                 ..
             } => denominator_aggregation,
-            Self::Sum | Self::Median | Self::DistinctCount | Self::Percentile { .. } => {
-                RatioDenominatorAggregation::Sum
-            }
+            Self::Sum
+            | Self::Median
+            | Self::Percentile { .. }
+            | Self::Stddev
+            | Self::DistinctCount => RatioDenominatorAggregation::Sum,
         }
     }
 }
@@ -245,8 +249,8 @@ mod tests {
 
     #[test]
     fn registry_declares_the_expected_counts() {
-        assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 94, "builtin metric count");
+        assert_eq!(builtin_sources().len(), 7, "builtin source count");
+        assert_eq!(builtin_metrics().len(), 105, "builtin metric count");
     }
 
     #[test]
@@ -476,13 +480,13 @@ mod tests {
     fn percentile_metrics_have_single_value_role_and_an_inside_quantile() {
         let mut seen = 0;
         for metric in builtin_metrics() {
-            let SeedComputation::Percentile { p } = metric.computation else {
+            let SeedComputation::Percentile { q } = metric.computation else {
                 continue;
             };
             seen += 1;
             assert!(
-                (1..=99).contains(&p),
-                "{} declares p={p}, outside (0, 100)",
+                (0.0..=1.0).contains(&q),
+                "{} declares q={q}, outside [0, 1]",
                 metric.metric_key
             );
             assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);

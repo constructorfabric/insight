@@ -439,16 +439,18 @@ fn validate_view_with_context(
             })
         }
         MetricViewRequest::Histogram { dimensions } => {
-            // Histograms bin per-event observation values; only median and
-            // percentile metrics have event-grain observations to bin.
+            // Histograms bin per-event observation values; only the
+            // event-grain computations (median family) have observations to bin.
             if !matches!(
                 def.spec,
-                ComputationSpec::Median { .. } | ComputationSpec::Percentile { .. }
+                ComputationSpec::Median { .. }
+                    | ComputationSpec::Percentile { .. }
+                    | ComputationSpec::Stddev { .. }
             ) {
                 return invalid(
                     "metrics.views",
                     format!(
-                        "metric {} does not support the histogram view; it requires a median or percentile computation",
+                        "metric {} does not support the histogram view; it requires an event-grain computation (median, percentile, or stddev)",
                         def.key()
                     ),
                 );
@@ -857,7 +859,7 @@ mod tests {
         let mut def = sum_definition(vec![]);
         def.spec = ComputationSpec::Percentile {
             value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
-            p: 75,
+            q: 0.75,
         };
         def
     }

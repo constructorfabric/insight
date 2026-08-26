@@ -1,0 +1,107 @@
+description: >
+  Metric: ci.deployments — deployments created, outcome folded from the latest
+  status event (tenant-grain, issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: deployment records (no outcome) and deployment status events
+      arrive as two streams
+    • silver: both accumulate as-is; the status stream is an event log
+    • gold:   each deployment takes its LATEST status event as outcome; one
+      with no event yet is 'pending' and stays visible, never rounded away
+
+  Seeded: one straight success to production, one transient environment with
+  no status yet (pending → env_kind preview), one non-production
+  non-transient environment whose failure was later superseded by success
+  (latest wins; env_kind static) → success 2, pending 1.
+  Cases: period total 3, breakdown by outcome proves the fold and the visible
+  pending; breakdown by env_kind proves the production/preview/static split.
+bronze:
+  bronze_github.deployments:
+    - $ref: templates/github_ci.yaml#/templates/deployment
+      unique_key: gh-dep-1
+      id: 1
+    - $ref: templates/github_ci.yaml#/templates/deployment
+      unique_key: gh-dep-2
+      id: 2
+      environment: preview-42
+      original_environment: preview-42
+      is_transient_environment: true
+      is_production_environment: false
+      created_at: "2026-03-02T12:00:00Z"
+    - $ref: templates/github_ci.yaml#/templates/deployment
+      unique_key: gh-dep-3
+      id: 3
+      environment: staging
+      original_environment: staging
+      is_transient_environment: false
+      is_production_environment: false
+      created_at: "2026-03-03T12:00:00Z"
+  bronze_github.deployment_statuses:
+    - $ref: templates/github_ci.yaml#/templates/deployment_status
+      unique_key: gh-depst-1
+      id: 1
+      deployment_id: 1
+    # Deployment 3: failure first, success later — the LATEST event is the
+    # outcome.
+    - $ref: templates/github_ci.yaml#/templates/deployment_status
+      unique_key: gh-depst-2
+      id: 2
+      deployment_id: 3
+      state: failure
+      created_at: "2026-03-03T12:05:00Z"
+    - $ref: templates/github_ci.yaml#/templates/deployment_status
+      unique_key: gh-depst-3
+      id: 3
+      deployment_id: 3
+      state: success
+      created_at: "2026-03-03T12:30:00Z"
+cases:
+  - name: deployments fold the latest status and keep pending visible
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.deployments
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [outcome] }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.deployments
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 3.0"
+      - metric: ci.deployments
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'outcome' && d.value == 'success') && double(v.value) == 2.0)"
+      - metric: ci.deployments
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'outcome' && d.value == 'pending') && double(v.value) == 1.0)"
+      - metric: ci.deployments
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-01' && double(p.value) == 1.0))"
+  - name: env_kind splits production, transient preview and static environments
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.deployments
+            views:
+              - { view: breakdown, dimensions: [env_kind] }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.deployments
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'env_kind' && d.value == 'production') && double(v.value) == 1.0)"
+      - metric: ci.deployments
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'env_kind' && d.value == 'preview') && double(v.value) == 1.0)"
+      - metric: ci.deployments
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'env_kind' && d.value == 'static') && double(v.value) == 1.0)"

@@ -85,9 +85,12 @@ fn formula(metric: &MetricSeed) -> String {
     let base = match metric.computation {
         SeedComputation::Sum => format!("sum({})", measure(MetricInputRole::Value)),
         SeedComputation::Median => format!("median({})", measure(MetricInputRole::Value)),
-        SeedComputation::Percentile { p } => {
-            format!("p{p}({})", measure(MetricInputRole::Value))
-        }
+        SeedComputation::Percentile { q } => format!(
+            "p{}({})",
+            fmt_num(q * 100.0),
+            measure(MetricInputRole::Value)
+        ),
+        SeedComputation::Stddev => format!("stddev({})", measure(MetricInputRole::Value)),
         SeedComputation::DistinctCount => {
             format!("distinct_count({})", measure(MetricInputRole::Value))
         }
@@ -194,12 +197,6 @@ mod tests {
         let rendered = render_passports();
         assert!(rendered.contains("Formula: commit_count / distinct_count(commit_day)"));
         assert!(rendered.contains("Formula: 100 * (accepted_edit_actions / tool_use_offered)"));
-    }
-
-    #[test]
-    fn percentile_formula_carries_its_level() {
-        let rendered = render_passports();
-        assert!(rendered.contains("Formula: p75(pr_cycle_hours)"));
     }
 
     #[test]

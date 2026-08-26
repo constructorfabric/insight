@@ -371,6 +371,7 @@
       "direction_label": "Direction",
       "computation_label": "Computation",
       "scale_label": "Scale",
+      "quantile_label": "Quantile (0\u20131)",
       "peer_cohort_key_label": "Peer cohort key",
       "source_key_label": "Source key",
       "observation_sql_label": "Observation SQL",

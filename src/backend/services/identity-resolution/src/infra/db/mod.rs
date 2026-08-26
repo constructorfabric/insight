@@ -46,6 +46,8 @@ pub(crate) mod test_fixture;
 #[cfg(test)]
 mod visible_set_live_tests;
 
+use std::time::Duration;
+
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 /// Connect to `MariaDB` and return a connection pool.
@@ -64,11 +66,12 @@ pub async fn connect(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     Ok(db)
 }
 
-/// Connect with a SINGLE pooled connection — for the `migrate` subcommand.
+/// Connect with a SINGLE pooled connection, for callers that hold a
+/// session-scoped `GET_LOCK` advisory lock.
 ///
-/// The migration run is guarded by a `GET_LOCK` advisory lock, which is
-/// session-scoped: lock, DDL, and release must all execute on the same
-/// connection, so the pool is capped at one.
+/// `GET_LOCK` binds to the session, so the lock, the work it guards, and the
+/// release must all execute on the same connection — hence the pool of one. See
+/// [`SeedLockGuard`], which owns such a session for the length of a seed run.
 ///
 /// # Errors
 ///
@@ -80,8 +83,29 @@ pub async fn connect_single(database_url: &str) -> anyhow::Result<DatabaseConnec
         .sqlx_logging(false);
 
     let db = Database::connect(opts).await?;
-    tracing::info!("connected to MariaDB (single-connection migrate session)");
+    tracing::info!("connected to MariaDB (single-connection session)");
     Ok(db)
+}
+
+/// Name of the cross-process advisory lock serializing schema migration runs.
+pub const MIGRATION_LOCK: &str = "identity_resolution_migrations";
+/// How long a second migrator waits for the lock before giving up.
+pub const MIGRATION_LOCK_TIMEOUT: Duration = Duration::from_mins(5);
+
+/// Refuse to serve unless the live schema carries every migration this build
+/// embeds.
+///
+/// The server never applies migrations — the `migrate` entrypoint does. Rows
+/// applied by a newer release are tolerated so an application image can be
+/// rolled back over a forward-only schema. Without this gate an older image
+/// starts and then fails per-query on columns it does not know about.
+///
+/// # Errors
+///
+/// Returns error if the ledger cannot be read or the schema is behind this
+/// build.
+pub async fn assert_schema_compatible(db: &DatabaseConnection) -> anyhow::Result<()> {
+    Ok(insight_migration::assert_compatible::<crate::migration::Migrator>(db).await?)
 }
 
 /// Prefix of the per-tenant advisory lock serializing persons-seed runs.
@@ -130,17 +154,20 @@ impl SeedLockGuard {
     ) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
-        let acquired: Option<i8> = conn
+        // SAFETY: CAST so the column type is deterministic — the lock builtins
+        // are typed per expression by the server, and an uncast result can
+        // arrive as INT, BIGINT, or BIGINT UNSIGNED and fail decoding.
+        let acquired: Option<i64> = conn
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, ?)",
+                "SELECT CAST(GET_LOCK(?, ?) AS SIGNED)",
                 [
                     format!("{SEED_LOCK_PREFIX}{tenant_id}").into(),
                     wait_secs.into(),
                 ],
             ))
             .await?
-            .map(|r| r.try_get_by_index::<Option<i8>>(0))
+            .map(|r| r.try_get_by_index::<Option<i64>>(0))
             .transpose()?
             .flatten();
         if acquired == Some(1) {
@@ -195,14 +222,16 @@ impl SyncLockGuard {
     pub async fn acquire(database_url: &str, wait_secs: u32) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
-        let acquired: Option<i8> = conn
+        // SAFETY: CAST for the same deterministic-decode reason as
+        // `SeedLockGuard::acquire`.
+        let acquired: Option<i64> = conn
             .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, ?)",
+                "SELECT CAST(GET_LOCK(?, ?) AS SIGNED)",
                 [SYNC_LOCK.into(), wait_secs.into()],
             ))
             .await?
-            .map(|r| r.try_get_by_index::<Option<i8>>(0))
+            .map(|r| r.try_get_by_index::<Option<i64>>(0))
             .transpose()?
             .flatten();
         if acquired == Some(1) {
@@ -227,82 +256,53 @@ impl SyncLockGuard {
     }
 }
 
-/// Name of the cross-process advisory lock serializing schema migration runs.
-const MIGRATION_LOCK: &str = "identity_resolution_migrations";
-/// How long a second migrator waits for the lock before giving up (seconds).
-const MIGRATION_LOCK_TIMEOUT_SECS: i32 = 300;
-
-/// Run pending migrations AND the first-admin bootstrap under one `GET_LOCK`
-/// advisory lock.
+/// Run pending migrations AND the first-admin bootstrap under one advisory lock.
 ///
-/// The lock serializes concurrent RUST migrators (two initContainers of two
-/// replicas) — MariaDB DDL is not transactional, so without it two racers
-/// could double-apply a pending script. It does NOT serialize against the
-/// frozen .NET service: its `DbUp`/`BootstrapAdminRunner` startup pass takes
-/// no advisory lock (there, safety rests on every script being idempotent,
-/// and on single bootstrap OWNERSHIP — the umbrella render fails when both
-/// services configure a bootstrap admin). The bootstrap runs INSIDE the same
-/// critical section: its
+/// The lock serializes concurrent migrators — MariaDB DDL is not
+/// transactional, so without it two racers could double-apply a pending script.
+/// The bootstrap runs INSIDE the same critical section: its
 /// `INSERT … WHERE NOT EXISTS` has no unique constraint backing the active
 /// `(tenant, person, role)` triple, so two replicas racing after the lock was
-/// released could insert two active bootstrap assignments. Call with a
-/// [`connect_single`] connection: `GET_LOCK` is session-scoped and must share
-/// the session with the DDL.
+/// released could insert two active bootstrap assignments.
 ///
 /// # Errors
 ///
-/// Returns an error if the lock cannot be acquired within the timeout, a
-/// migration fails, or the bootstrap fails.
+/// Returns an error if the connection cannot be established, the lock cannot be
+/// acquired within the timeout, a migration fails, or the bootstrap fails.
 pub async fn run_migrations(
-    db: &DatabaseConnection,
+    database_url: &str,
     config: &crate::config::GearConfig,
 ) -> anyhow::Result<()> {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
-
-    let acquired: Option<i8> = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT GET_LOCK(?, ?)",
-            [MIGRATION_LOCK.into(), MIGRATION_LOCK_TIMEOUT_SECS.into()],
-        ))
-        .await?
-        .map(|r| r.try_get_by_index::<Option<i8>>(0))
-        .transpose()?
-        .flatten();
-    anyhow::ensure!(
-        acquired == Some(1),
-        "could not acquire the `{MIGRATION_LOCK}` advisory lock within \
-         {MIGRATION_LOCK_TIMEOUT_SECS}s — is another migrate run stuck?"
-    );
-
-    let result = async {
-        crate::migration::Migrator::up(db, None).await?;
-        bootstrap::bootstrap_admin(db, config).await
-    }
-    .await;
-
-    // Best-effort release either way; the lock also dies with the session.
-    let _ = db
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT RELEASE_LOCK(?)",
-            [MIGRATION_LOCK.into()],
-        ))
-        .await;
-
-    result?;
+    insight_migration::with_migration_session(
+        database_url,
+        MIGRATION_LOCK,
+        MIGRATION_LOCK_TIMEOUT,
+        |db| async move {
+            use sea_orm_migration::MigratorTrait;
+            crate::migration::Migrator::up(&db, None).await?;
+            bootstrap::bootstrap_admin(&db, config).await
+        },
+    )
+    .await?;
     tracing::info!("migrations + bootstrap applied");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use sea_orm_migration::MigratorTrait;
 
     use super::*;
     use crate::config::GearConfig;
+
+    /// Serializes the tests in this module: each mutates `seaql_migrations`
+    /// transiently, and one test's in-flight ledger state would fail another's
+    /// compatibility assertion under the harness's default parallelism.
+    static LEDGER_MUTEX: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     async fn count(db: &DatabaseConnection, sql: &str) -> anyhow::Result<i64> {
         count_with(db, sql, []).await
@@ -334,21 +334,26 @@ mod tests {
             eprintln!("skip: set INTEGRATION_TESTS_MARIADB_URL to run");
             return Ok(());
         };
-        let db = connect_single(&url).await?;
+        let _serialized = LEDGER_MUTEX.lock().await;
+        let db = connect(&url).await?;
         let cfg = GearConfig {
             tenant_default_id: "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab".to_owned(),
             bootstrap_admin_person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9".to_owned(),
             ..GearConfig::default()
         };
 
-        run_migrations(&db, &cfg).await?;
-        run_migrations(&db, &cfg).await?;
+        run_migrations(&url, &cfg).await?;
+        run_migrations(&url, &cfg).await?;
 
+        // `embedded ⊆ applied`, not equality: the shared DB may already carry
+        // migrations from a newer build, and tolerating them is the contract
+        // that makes an application rollback possible.
+        assert_schema_compatible(&db).await?;
         let applied = count(&db, "SELECT COUNT(*) FROM seaql_migrations").await?;
         let embedded = i64::try_from(crate::migration::Migrator::migrations().len())?;
-        assert_eq!(
-            applied, embedded,
-            "ledger must hold exactly the embedded set"
+        assert!(
+            applied >= embedded,
+            "ledger must hold at least the embedded set (applied {applied} < embedded {embedded})"
         );
 
         // Crash-recovery regression (012): a migrator killed between the DROP
@@ -364,7 +369,16 @@ mod tests {
             "DELETE FROM seaql_migrations WHERE version = 'm20260724_000012_org_chart_nullable_parent'",
         ))
         .await?;
-        run_migrations(&db, &cfg).await?;
+
+        // With an embedded migration missing from the ledger, the schema is
+        // behind this build and the server must refuse to boot.
+        assert!(
+            assert_schema_compatible(&db).await.is_err(),
+            "a missing embedded migration must fail the boot gate"
+        );
+
+        run_migrations(&url, &cfg).await?;
+        assert_schema_compatible(&db).await?;
         let checks = count(
             &db,
             "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS \
@@ -393,6 +407,46 @@ mod tests {
         )
         .await?;
         assert_eq!(admins, 1, "bootstrap must be idempotent");
+        Ok(())
+    }
+
+    /// The rollback case: a ledger carrying a migration this build does not
+    /// embed must still boot. Without this the forward-only contract has no
+    /// escape hatch and an application image can never be rolled back.
+    #[tokio::test]
+    async fn newer_ledger_rows_do_not_block_boot() -> anyhow::Result<()> {
+        const FUTURE: &str = "m99999999_000001_from_a_newer_release";
+
+        let Ok(url) = std::env::var("INTEGRATION_TESTS_MARIADB_URL") else {
+            eprintln!("skip: set INTEGRATION_TESTS_MARIADB_URL to run");
+            return Ok(());
+        };
+        let _serialized = LEDGER_MUTEX.lock().await;
+        let db = connect(&url).await?;
+        let cfg = GearConfig {
+            tenant_default_id: "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab".to_owned(),
+            bootstrap_admin_person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9".to_owned(),
+            ..GearConfig::default()
+        };
+        run_migrations(&url, &cfg).await?;
+
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "INSERT INTO seaql_migrations (version, applied_at) VALUES (?, 0)",
+            [FUTURE.into()],
+        ))
+        .await?;
+
+        let tolerated = assert_schema_compatible(&db).await;
+
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "DELETE FROM seaql_migrations WHERE version = ?",
+            [FUTURE.into()],
+        ))
+        .await?;
+
+        tolerated?;
         Ok(())
     }
 }

@@ -283,6 +283,25 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_pr_author_account "${_git_source}__pull_requests"
 done
 
+echo "=== Healing git repository default-branch column ==="
+# class_git_repositories gained `default_branch` at the projection tail; the
+# silver side heals in migrations/*.sql, the staging members heal here because
+# those tables exist only after their connector has run. Existing rows heal to
+# NULL and carry a branch from the next repositories sync. Idempotent.
+heal_git_repository_default_branch() {
+  local db="$1" table="$2"
+  ch_table_is_real "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS default_branch Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN default_branch Nullable(String) AFTER _airbyte_extracted_at;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_repository_default_branch staging "${_git_source}__repositories"
+done
+
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)
 # from raw bronze Decimal(38,9) to toString(...), but pre-existing

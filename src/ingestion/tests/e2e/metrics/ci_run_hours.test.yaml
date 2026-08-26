@@ -1,0 +1,53 @@
+description: >
+  Metric: ci.run_hours — wall-clock hours spent running CI (tenant-grain,
+  issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow run attempts with start and finish timestamps
+    • silver: duration = finish − start of the LAST attempt
+    • gold:   sum of hours over ALL decided runs, any trigger; outcome rides
+      as a dimension so red hours are a filter, not another metric
+
+  Seeded: a 30-minute success and a 90-minute failure → 2.0 hours total, 1.5
+  of them red.
+  Cases: period 2.0, daily point, breakdown by outcome isolates the red hours.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-h1
+      id: 1
+      run_number: 1
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:30:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-h2
+      id: 2
+      run_number: 2
+      conclusion: failure
+      run_started_at: "2026-03-02T11:00:00Z"
+      updated_at: "2026-03-02T12:30:00Z"
+cases:
+  - name: CI hours sum wall clock and split red by outcome
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.run_hours
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [outcome] }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.run_hours
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 2.0"
+      - metric: ci.run_hours
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-02' && double(p.value) == 2.0))"
+      - metric: ci.run_hours
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'outcome' && d.value == 'failure') && double(v.value) == 1.5)"

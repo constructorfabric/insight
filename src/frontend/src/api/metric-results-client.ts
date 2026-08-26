@@ -22,6 +22,7 @@ export type MetricComputation =
   | "ratio"
   | "median"
   | "percentile"
+  | "stddev"
   | "distinct_count";
 export type MetricEntityType = "person" | "tenant";
 export type MetricResultsEntity =
@@ -93,6 +94,7 @@ export type MetricResult =
   | RatioMetricResult
   | MedianMetricResult
   | PercentileMetricResult
+  | StddevMetricResult
   | DistinctCountMetricResult;
 
 interface MetricResultBase {
@@ -125,8 +127,12 @@ export interface MedianMetricResult extends MetricResultBase {
 
 export interface PercentileMetricResult extends MetricResultBase {
   computation: "percentile";
-  /** The quantile as an integer, e.g. 75 — rides beside `computation` like ratio's `scale`. */
-  p: number;
+  /** The quantile as a probability, e.g. 0.75 — stored in the definition's scale. */
+  q: number;
+}
+
+export interface StddevMetricResult extends MetricResultBase {
+  computation: "stddev";
 }
 
 interface DistinctCountMetricResult extends MetricResultBase {

@@ -50,14 +50,11 @@ impl Gear for AnalyticsApiGear {
         // Connect to MariaDB (self-managed pool — LOCKED DECISION).
         let db = infra::db::connect(&cfg.database_url).await?;
 
-        // Run pending migrations.
-        infra::db::run_migrations(&db).await?;
-
-        // Converge builtin metric definitions to the code registry before
-        // serving traffic. MySQL-only, so it does not violate the
-        // post-readiness ClickHouse rule; failure aborts startup because the
-        // registry state must be consistent before the first request.
-        crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
+        // INVARIANT: server boot stays read-only — migrations and the
+        // builtin-definition converge belong to the `migrate` entrypoint, so
+        // N replicas cannot race and an older image can be redeployed over a
+        // newer forward-only schema.
+        infra::db::assert_schema_compatible(&db).await?;
 
         // Refuse to start if any required CHECK constraint is missing. See
         // `infra/db/check_probe` and DESIGN §2.2
@@ -143,29 +140,45 @@ impl RestApiCapability for AnalyticsApiGear {
     }
 }
 
-/// `analytics migrate`: run migrations + the startup probe, then exit. Mirrors
-/// the old `main.rs::run_migrate`, reading the gear config out of the loaded
-/// `AppConfig` (toolkit owns config layering; the figment loader is gone).
+/// `analytics migrate`: run migrations + the builtin-definition converge + the
+/// startup probe, then exit.
+///
+/// This is the only path that writes schema or builtin registry rows. Both run
+/// inside one advisory-locked, single-connection session so that concurrent
+/// migrators cannot double-apply non-transactional DDL, and so the converge's
+/// read-then-write sequences cannot interleave.
 ///
 /// # Errors
 ///
-/// Returns an error if config extraction, DB connect, migrations, or the probe
-/// fails.
+/// Returns an error if config extraction, DB connect, the migration lock,
+/// migrations, the converge, or the probe fails.
 pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
 
     let cfg = extract_gear_config(app)?;
 
-    let db = infra::db::connect(&cfg.database_url).await?;
-    infra::db::run_migrations(&db).await?;
+    insight_migration::with_migration_session(
+        &cfg.database_url,
+        infra::db::MIGRATION_LOCK,
+        infra::db::MIGRATION_LOCK_TIMEOUT,
+        |db| async move {
+            use sea_orm_migration::MigratorTrait;
+            crate::migration::Migrator::up(&db, None).await?;
+            tracing::info!("migrations applied");
 
-    // Same convergence as `init`: `migrate` run as a standalone step must
-    // leave builtin metric definitions matching the code registry.
-    crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
+            // The converge owns builtin metric definitions: it upserts the code
+            // registry and disables rows the registry no longer carries. It
+            // must not run on a server boot — an older image would disable the
+            // definitions a newer release introduced.
+            crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
-    // Same probe as `init`. An operator running `migrate` standalone wants
-    // the integrity signal too (DESIGN §2.2).
-    infra::db::check_probe::assert_required_checks(&db).await?;
+            // Same probe as `init`. An operator running `migrate` standalone
+            // wants the integrity signal too (DESIGN §2.2).
+            infra::db::check_probe::assert_required_checks(&db).await?;
+            Ok(())
+        },
+    )
+    .await?;
 
     tracing::info!("migrations complete");
     Ok(())

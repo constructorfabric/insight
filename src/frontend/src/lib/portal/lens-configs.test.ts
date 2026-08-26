@@ -8,6 +8,7 @@ import {
   directionMetricKeys,
   lensEntry,
   sectionMetricKeys,
+  tenantSectionMetricKeys,
   visibleSections,
   type LensConfig,
   type SectionSpec,
@@ -29,9 +30,25 @@ describe("DIRECTION_LENSES registry", () => {
   it("references only metric keys that exist in the groups registry", () => {
     for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
       for (const [lens, entry] of Object.entries(lenses)) {
-        if ("comingSoon" in entry) continue;
+        if ("comingSoon" in entry || "entity" in entry) continue;
         for (const key of sectionMetricKeys(entry)) {
           expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps tenant lens keys out of every person surface", () => {
+    for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
+      const gridKeys = new Set(directionMetricKeys(dir));
+      for (const [lens, entry] of Object.entries(lenses)) {
+        if (!("entity" in entry)) continue;
+        for (const key of tenantSectionMetricKeys(entry)) {
+          // A tenant-entity key inside a person-entity request fails the whole
+          // batch, and GROUPS drive person surfaces — both must stay clean.
+          expect(gridKeys.has(key), `${dir}/${lens}: ${key} in grid`).toBe(false);
+          expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key} in GROUPS`).toBe(false);
+          expect(key, `${dir}/${lens}: ${key} shape`).toMatch(/^[a-z_]+\.[a-z0-9_]+$/);
         }
       }
     }
@@ -85,7 +102,11 @@ describe("DIRECTION_LENSES registry", () => {
     for (const lenses of Object.values(DIRECTION_LENSES)) {
       for (const entry of Object.values(lenses)) {
         if ("comingSoon" in entry) continue;
-        expect(sectionMetricKeys(entry).length).toBeLessThanOrEqual(50);
+        const keys =
+          "entity" in entry
+            ? tenantSectionMetricKeys(entry)
+            : sectionMetricKeys(entry);
+        expect(keys.length).toBeLessThanOrEqual(50);
       }
     }
   });

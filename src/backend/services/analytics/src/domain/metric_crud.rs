@@ -71,11 +71,6 @@ pub struct CustomMetric {
     pub computation: MetricComputation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
-    /// Percentile quantile — an integer in (0, 100), e.g. 75 for p75.
-    /// Required iff `computation` is `percentile`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(minimum = 1, maximum = 99)]
-    pub p: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_cohort_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -308,18 +303,21 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
 
     let roles: Vec<MetricInputRole> = graph.inputs.iter().map(|input| input.role).collect();
     match graph.computation {
-        MetricComputation::Sum | MetricComputation::Median | MetricComputation::DistinctCount => {
+        MetricComputation::Sum
+        | MetricComputation::Median
+        | MetricComputation::Stddev
+        | MetricComputation::DistinctCount => {
             if roles != [MetricInputRole::Value] {
                 return Err(violation(
                     "inputs",
-                    "sum/median/distinct_count take exactly one value input",
+                    "sum/median/stddev/distinct_count take exactly one value input",
                 ));
             }
             if graph.scale.is_some() {
-                return Err(violation("scale", "only ratio metrics carry a scale"));
-            }
-            if graph.p.is_some() {
-                return Err(violation("p", "only percentile metrics carry a quantile"));
+                return Err(violation(
+                    "scale",
+                    "only ratio and percentile metrics carry a scale",
+                ));
             }
         }
         MetricComputation::Percentile => {
@@ -329,17 +327,21 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
                     "percentile takes exactly one value input",
                 ));
             }
-            if graph.scale.is_some() {
-                return Err(violation("scale", "only ratio metrics carry a scale"));
-            }
-            match graph.p {
-                Some(p) if (1..=99).contains(&p) => {}
-                Some(_) => {
-                    return Err(violation("p", "must be an integer in (0, 100)"));
-                }
+            // `scale` doubles as the quantile for percentile metrics.
+            match graph.scale {
                 None => {
-                    return Err(violation("p", "percentile metrics require a quantile p"));
+                    return Err(violation(
+                        "scale",
+                        "percentile metrics require the quantile in scale",
+                    ));
                 }
+                Some(q) if !(0.0..=1.0).contains(&q) => {
+                    return Err(violation(
+                        "scale",
+                        "percentile quantile must be within [0, 1]",
+                    ));
+                }
+                Some(_) => {}
             }
         }
         MetricComputation::Ratio => {
@@ -353,9 +355,6 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
             }
             if graph.scale.is_none() {
                 return Err(violation("scale", "ratio metrics require a scale"));
-            }
-            if graph.p.is_some() {
-                return Err(violation("p", "only percentile metrics carry a quantile"));
             }
         }
     }
@@ -577,10 +576,7 @@ async fn insert_graph<C: ConnectionTrait>(
             Value::from(graph.computation.as_db()),
             // The scale column is the definition's one numeric computation
             // parameter: the ratio multiplier, or the percentile quantile.
-            nullable_f64(match graph.computation {
-                MetricComputation::Percentile => graph.p.map(f64::from),
-                _ => graph.scale,
-            }),
+            nullable_f64(graph.scale),
             nullable_f64(graph.transform.and_then(|t| t.multiplier)),
             nullable_f64(graph.transform.and_then(|t| t.offset)),
             nullable_f64(graph.transform.and_then(|t| t.clamp_min)),
@@ -842,20 +838,6 @@ impl DefinitionRow {
         let observation_sql = source
             .observation_sql
             .ok_or_else(|| corrupt_value("observation_sql", "NULL"))?;
-        // The stored scale column doubles as the percentile quantile; split it
-        // back into the two wire fields so a percentile graph round-trips with
-        // `p` set and `scale` absent.
-        let (scale, p) = match computation {
-            MetricComputation::Percentile => {
-                let p = crate::domain::metric_definitions::percentile_from_scale(
-                    self.scale,
-                    &self.metric_key,
-                )
-                .map_err(|_| corrupt_value("scale", &format!("{:?}", self.scale)))?;
-                (None, Some(p))
-            }
-            _ => (self.scale, None),
-        };
 
         Ok(CustomMetric {
             metric_key: self.metric_key,
@@ -869,8 +851,7 @@ impl DefinitionRow {
             format,
             direction,
             computation,
-            scale,
-            p,
+            scale: self.scale,
             peer_cohort_key: self.peer_cohort_key,
             transform: (!transform.is_identity()).then_some(transform),
             source_key: source.source_key,
@@ -1108,7 +1089,6 @@ mod tests {
             direction: MetricDirection::HigherIsBetter,
             computation: MetricComputation::Sum,
             scale: None,
-            p: None,
             peer_cohort_key: None,
             transform: None,
             source_key: "custom_example".to_owned(),
@@ -1161,47 +1141,10 @@ mod tests {
         assert_eq!(normalize_observation_sql("SELECT 1"), "SELECT 1");
     }
 
-    fn percentile_graph() -> CustomMetric {
-        let mut graph = sum_graph();
-        graph.computation = MetricComputation::Percentile;
-        graph.p = Some(75);
-        graph
-    }
-
     #[test]
     fn valid_sum_and_ratio_graphs_pass() {
         assert!(validate_graph(&sum_graph()).is_ok());
         assert!(validate_graph(&ratio_graph()).is_ok());
-    }
-
-    #[test]
-    fn percentile_graph_requires_a_bounded_quantile_and_no_scale() {
-        assert!(validate_graph(&percentile_graph()).is_ok());
-
-        let mut graph = percentile_graph();
-        graph.p = None;
-        assert_eq!(rejected_field(&graph), "p");
-
-        let mut graph = percentile_graph();
-        graph.p = Some(0);
-        assert_eq!(rejected_field(&graph), "p");
-
-        let mut graph = percentile_graph();
-        graph.p = Some(100);
-        assert_eq!(rejected_field(&graph), "p");
-
-        let mut graph = percentile_graph();
-        graph.scale = Some(100.0);
-        assert_eq!(rejected_field(&graph), "scale");
-
-        // A quantile on any other computation is a mistake, not ignorable.
-        let mut graph = sum_graph();
-        graph.p = Some(75);
-        assert_eq!(rejected_field(&graph), "p");
-
-        let mut graph = ratio_graph();
-        graph.p = Some(75);
-        assert_eq!(rejected_field(&graph), "p");
     }
 
     #[test]
@@ -1271,6 +1214,45 @@ mod tests {
             measure_key: "num".to_owned(),
         }];
         assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn percentile_requires_a_probability_quantile_in_scale() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = None;
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(1.5);
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        graph.inputs.push(CustomMetricInput {
+            role: MetricInputRole::Numerator,
+            measure_key: "events".to_owned(),
+        });
+        assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn stddev_rejects_a_scale_like_every_single_value_computation() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        graph.scale = Some(0.9);
+        assert_eq!(rejected_field(&graph), "scale");
     }
 
     #[test]
@@ -1356,34 +1338,5 @@ mod tests {
                 .is_err(),
             "a NULL observation_sql on a custom source is corrupt"
         );
-    }
-
-    #[test]
-    fn into_graph_splits_the_percentile_quantile_out_of_scale() {
-        let mut row = definition_row();
-        row.computation_type = "percentile".to_owned();
-        row.scale = Some(75.0);
-        let graph = row
-            .into_graph(
-                source_row(),
-                vec!["events".to_owned()],
-                vec![],
-                vec![],
-                vec![],
-            )
-            .unwrap_or_else(|error| panic!("valid percentile row must rebuild: {error}"));
-        assert_eq!(graph.p, Some(75));
-        assert_eq!(graph.scale, None);
-
-        for corrupt_scale in [None, Some(0.0), Some(100.0), Some(75.5)] {
-            let mut row = definition_row();
-            row.computation_type = "percentile".to_owned();
-            row.scale = corrupt_scale;
-            assert!(
-                row.into_graph(source_row(), vec![], vec![], vec![], vec![])
-                    .is_err(),
-                "a percentile row with scale {corrupt_scale:?} is corrupt"
-            );
-        }
     }
 }

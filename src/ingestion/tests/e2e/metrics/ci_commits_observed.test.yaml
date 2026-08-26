@@ -1,0 +1,55 @@
+description: >
+  Metric: ci.commits_observed — commits the git connector collected, dated at
+  their commit time (tenant-grain, issue #2803). The denominator of the
+  run-to-commit join-coverage panel.
+  How it's computed (bronze → silver → gold):
+    • bronze: the commits stream
+    • silver: the commit class accumulates
+    • gold:   one event row per collected commit, dated at commit time
+
+  Seeded: two commits on different days → period 2, one daily point each.
+  Cases: period total, per-day points.
+bronze:
+  bronze_github.commits:
+    - $ref: templates/git_activity.yaml#/templates/commit
+      unique_key: gh-commit-co1
+      tenant_id: "11111111-1111-1111-1111-111111111111"
+      source_id: github-test
+      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1"
+      author_email: dev1@example.com
+      author_name: Dev One
+      committer_name: Dev One
+      committer_email: dev1@example.com
+      committed_date: "2026-03-02T09:00:00Z"
+    - $ref: templates/git_activity.yaml#/templates/commit
+      unique_key: gh-commit-co2
+      tenant_id: "11111111-1111-1111-1111-111111111111"
+      source_id: github-test
+      sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"
+      author_email: dev1@example.com
+      author_name: Dev One
+      committer_name: Dev One
+      committer_email: dev1@example.com
+      committed_date: "2026-03-03T09:00:00Z"
+cases:
+  - name: every collected commit counts once at its commit date
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.commits_observed
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.commits_observed
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 2.0"
+      - metric: ci.commits_observed
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-02' && double(p.value) == 1.0) && s.points.exists(p, p.bucket_start == '2026-03-03' && double(p.value) == 1.0))"

@@ -115,6 +115,9 @@ pub async fn run(
     // reader filter returns, this becomes a loop over tenants — the runner is
     // already per-tenant everywhere below (lock name, journal row, writes).
     let db = db::connect(&config.database_url).await?;
+    // Same boot gate as the server: a seed against a schema behind this build
+    // would fail per-query mid-run instead of upfront.
+    db::assert_schema_compatible(&db).await?;
 
     // Tenant resolution: the configured tenant_default_id wins; when it is
     // EMPTY (existing installs whose pre-created config Secret predates the

@@ -590,22 +590,14 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
-        ComputationSpec::Percentile { p, .. } => {
-            format!(
-                "quantileExactIf({})(value, value IS NOT NULL)",
-                quantile_level(*p)
-            )
+        ComputationSpec::Percentile { q, .. } => {
+            format!("quantileExactIf({q})(value, value IS NOT NULL)")
         }
+        ComputationSpec::Stddev { .. } => "stddevSampIf(value, value IS NOT NULL)".to_owned(),
         ComputationSpec::DistinctCount { .. } => {
             "toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL))".to_owned()
         }
     }
-}
-
-/// The quantile level literal for a percentile `p`, e.g. 75 -> "0.75". `p/100`
-/// with two decimal digits is always exact in text, so the SQL is stable.
-fn quantile_level(p: u8) -> String {
-    format!("{:.2}", f64::from(p) / 100.0)
 }
 
 // Deterministic fixed-width binning over each entity's exact [min, max]:
@@ -1063,14 +1055,22 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
                 .to_owned()
         }
-        ComputationSpec::Percentile { value, p } => {
-            // Same honest-null OrNull contract as Median, at level p/100.
+        ComputationSpec::Percentile { value, q } => {
+            // Honest-null like Median — same event-grain shape, different point
+            // on the distribution.
             params.push(value.source_key.clone());
             params.push(value.measure_key.clone());
             format!(
-                "quantileExactIfOrNull({})(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)",
-                quantile_level(*p)
+                "quantileExactIfOrNull({q})(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
             )
+        }
+        ComputationSpec::Stddev { value } => {
+            // Honest-null like Median; sample stddev, so a single observation
+            // reads NULL (no spread is measurable), never a fabricated 0.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            "stddevSampIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+                .to_owned()
         }
         ComputationSpec::DistinctCount { value } => {
             // OrNull like sum: an entity present via another measure but with
@@ -1214,8 +1214,9 @@ fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
         .flat_map(|def| match &def.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
-            | ComputationSpec::DistinctCount { value }
-            | ComputationSpec::Percentile { value, .. } => {
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
+            | ComputationSpec::DistinctCount { value } => {
                 vec![(value.source_key.clone(), value.measure_key.clone())]
             }
             ComputationSpec::Ratio {
@@ -1265,8 +1266,9 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
-        | ComputationSpec::DistinctCount { .. }
-        | ComputationSpec::Percentile { .. } => {
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
+        | ComputationSpec::DistinctCount { .. } => {
             format!(
                 "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
             )
@@ -1297,8 +1299,9 @@ fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
         ],
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
-        | ComputationSpec::DistinctCount { .. }
-        | ComputationSpec::Percentile { .. } => Vec::new(),
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
+        | ComputationSpec::DistinctCount { .. } => Vec::new(),
     }
 }
 
@@ -1306,8 +1309,9 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
-        | ComputationSpec::DistinctCount { value }
-        | ComputationSpec::Percentile { value, .. } => vec![
+        | ComputationSpec::Percentile { value, .. }
+        | ComputationSpec::Stddev { value }
+        | ComputationSpec::DistinctCount { value } => vec![
             req.tenant_id.to_string(),
             value.source_key.clone(),
             req.entity.entity_type().to_owned(),
@@ -1526,7 +1530,7 @@ mod tests {
             base: base(vec!["source"]),
             spec: ComputationSpec::Percentile {
                 value: input(MetricInputRole::Value, "pr_cycle_hours"),
-                p: 75,
+                q: 0.75,
             },
         }
     }
@@ -2312,13 +2316,6 @@ mod tests {
         // query must still compile with the single-measure predicate shape.
         let hist = compile_histogram_query(&percentile_metric(), &request(), &[]);
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
-    }
-
-    #[test]
-    fn quantile_levels_render_exactly() {
-        assert_eq!(quantile_level(75), "0.75");
-        assert_eq!(quantile_level(5), "0.05");
-        assert_eq!(quantile_level(99), "0.99");
     }
 
     #[test]

@@ -259,7 +259,282 @@ sources:
     dimensions:
       - tool
       - seat_tier
+  - source:
+      key: ci
+      kind: managed_observation
+      source_ref: ci_metric_observations
+      evidence_ref: ci_metric_evidence
+    measures:
+      - key: runs
+        evidence_granularity: event
+      - key: gate_runs
+        evidence_granularity: event
+      - key: gate_passed
+        evidence_granularity: event
+      - key: gate_first_try_passed
+        evidence_granularity: event
+      - key: gate_retried
+        evidence_granularity: event
+      - key: run_duration_min
+        evidence_granularity: event
+      - key: run_hours
+        evidence_granularity: event
+      - key: deployments
+        evidence_granularity: event
+      - key: runs_matched_commit
+        evidence_granularity: event
+      - key: commits_observed
+        evidence_granularity: event
+    dimensions:
+      - repository
+      - pipeline
+      - trigger
+      - outcome
+      - environment
+      - env_kind
+      - hour_block
 metrics:
+  - metric_key: ci.runs
+    source_key: ci
+    subject: pipelines
+    tags:
+      - ci
+      - volume
+    label: CI runs
+    short_label: Runs
+    description: Pipeline runs with a decided outcome
+    explanation: Every CI pipeline run with a decided outcome, dated by the day the run started, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: runs
+    dimensions:
+      - repository
+      - pipeline
+      - trigger
+      - outcome
+      - hour_block
+  - metric_key: ci.gate_pass_rate
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: Gate pass rate
+    short_label: Pass rate
+    description: Share of commit-triggered runs that passed
+    explanation: Success share of gate runs — runs triggered by a push, a pull request, or the merge queue that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_passed
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+      - hour_block
+  - metric_key: ci.gate_first_try_pass_rate
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: First-try pass rate
+    short_label: First try
+    description: Share of gate runs green without a retry
+    explanation: Gate runs that passed on their first attempt, as a share of all gate runs. The gap to the plain pass rate is the retry tax — green that had to be bought with a re-run.
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_first_try_passed
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.gate_retry_share
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: Retried gate runs
+    short_label: Retried
+    description: Share of gate runs that were re-run
+    explanation: Gate runs whose final state came from a re-run, as a share of all gate runs. A retried run counts once, at its last attempt.
+    format: percent
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_retried
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_duration_min
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration
+    short_label: Duration
+    description: Typical minutes a gate run takes
+    explanation: Median wall-clock minutes from a gate run's start to its decision, over decided runs dated by the day they started. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: median
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+      - outcome
+  - metric_key: ci.run_duration_min_p90
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration p90
+    short_label: Duration p90
+    description: Minutes the slowest tenth of gate runs exceed
+    explanation: The 90th percentile of gate run duration — nine in ten runs finish faster. The gap to the median is the bad-day penalty a developer actually waits for.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !percentile
+      q: 0.9
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_duration_min_stddev
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration spread
+    short_label: Duration spread
+    description: How unevenly gate run durations vary
+    explanation: Sample standard deviation of gate run durations, in minutes. A pipeline whose duration swings wildly is harder to plan around than a slow but steady one.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !stddev
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_hours
+    source_key: ci
+    subject: compute
+    tags:
+      - ci
+      - volume
+    label: CI hours
+    short_label: CI hours
+    description: Wall-clock hours spent running CI
+    explanation: Wall-clock hours all decided runs spent executing, whatever the trigger. Not billable compute minutes — parallel jobs inside one run count as the run's elapsed time, not their sum. Filter by outcome to see hours burned on red runs.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: run_hours
+    dimensions:
+      - repository
+      - pipeline
+      - outcome
+  - metric_key: ci.runs_matched_commit
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Runs matching a collected commit
+    short_label: Runs matched
+    description: Decided runs whose head commit was collected
+    explanation: Decided runs whose head commit exists among the collected git commits. PR runs build synthetic merge refs and fork commits the commit stream never sees, so the gap between this and total runs is the honest ceiling for ANY analysis that joins CI to git history — chart it next to runs and collected commits to see how far the two streams can be trusted to join.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: runs_matched_commit
+    dimensions: []
+  - metric_key: ci.commits_observed
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Commits collected
+    short_label: Commits
+    description: Git commits collected, by commit date
+    explanation: Commits the git connector collected, dated at their commit time — the other side of the run-to-commit join. Where runs far outnumber matched runs while commits stay high, CI is running on refs the commit stream does not see (PR merge refs, forks), not on missing history.
+    format: integer
+    direction: neutral
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: commits_observed
+    dimensions: []
+  - metric_key: ci.deployments
+    source_key: ci
+    subject: deployments
+    tags:
+      - ci
+      - delivery
+    label: Deployments
+    short_label: Deploys
+    description: Deployments created, by outcome
+    explanation: Deployments recorded in the period. The outcome is the latest status the deployment reached; one with no status yet shows as pending rather than being rounded away.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: deployments
+    dimensions:
+      - repository
+      - environment
+      - outcome
+      - env_kind
   - metric_key: ai.accepted_lines
     source_key: ai_usage
     subject: code
@@ -1347,7 +1622,7 @@ metrics:
     direction: lower_is_better
     entity_type: person
     computation: !percentile
-      p: 75
+      q: 0.75
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
@@ -1399,7 +1674,7 @@ metrics:
     direction: lower_is_better
     entity_type: person
     computation: !percentile
-      p: 75
+      q: 0.75
     peer_cohort_key: org_unit
     inputs:
       - input_role: value

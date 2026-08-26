@@ -1,0 +1,151 @@
+description: >
+  Metric: ci.gate_pass_rate — share of commit-triggered CI runs that passed
+  (tenant-grain, issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: GitHub Actions workflow runs, one row per run attempt, re-sync
+      duplicates possible
+    • silver: attempts dedup on unique_key; the gate is stamped once — a run
+      triggered by push, pull_request or merge_group (merge queue) whose
+      outcome decided (success, failure, or timeout); approval-walled,
+      cancelled and skipped runs are not decided
+    • gold:   a retried run counts once at its LAST attempt; pass rate =
+      passed gate runs / gate runs, org-wide (entity is the tenant)
+
+  Seeded runs: push success ×2 (one an exact re-sync duplicate), push failure,
+  pull_request success, retried run whose last attempt failed, merge-queue
+  success, merge-queue failure and merge-queue timeout → gate 8, passed 4 →
+  50%. A schedule success, a cancelled push, an approval-walled pull_request
+  and a still-running push are all seeded and must not move either side.
+  Cases: dedup + gate definition (incl. merge queue on both sides and in the
+  timeout arm) + retry-at-last-attempt (50%), empty window.
+bronze:
+  bronze_github.workflow_runs:
+    # Two decided push successes; the second row is an exact re-sync duplicate
+    # of the first and must not double the numerator.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-1-1
+      id: 1
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-1-1
+      id: 1
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-2-1
+      id: 2
+      run_number: 2
+    # Push failure — decided, in the gate, not passed.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-3-1
+      id: 3
+      run_number: 3
+      conclusion: failure
+    # Pull-request success — the other gate trigger.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-4-1
+      id: 4
+      run_number: 4
+      event: pull_request
+    # Retried run: attempt 1 passed, attempt 2 failed — the run counts once,
+    # at its LAST attempt, as a failure.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-5-1
+      id: 5
+      run_number: 5
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-5-2
+      id: 5
+      run_number: 5
+      run_attempt: 2
+      conclusion: failure
+      run_started_at: "2026-03-01T11:00:00Z"
+      updated_at: "2026-03-01T11:04:00Z"
+    # Schedule success — decided but not commit-triggered: outside the gate.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-6-1
+      id: 6
+      run_number: 6
+      event: schedule
+    # Cancelled push — not a decided outcome: outside the gate.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-7-1
+      id: 7
+      run_number: 7
+      conclusion: cancelled
+    # Approval-walled pull_request — never executed (zero duration): outside
+    # the gate.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-8-1
+      id: 8
+      run_number: 8
+      event: pull_request
+      conclusion: action_required
+      updated_at: "2026-03-01T10:00:00Z"
+    # Merge-queue runs are commit-triggered gate runs: one success, one
+    # failure, one timeout — all three sit in the gate, only one passes.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-10-1
+      id: 10
+      run_number: 10
+      event: merge_group
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-11-1
+      id: 11
+      run_number: 11
+      event: merge_group
+      conclusion: failure
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-12-1
+      id: 12
+      run_number: 12
+      event: merge_group
+      conclusion: timed_out
+    # Still running — undecided, excluded from everything until it decides.
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-9-1
+      id: 9
+      run_number: 9
+      status: in_progress
+      conclusion: null
+      updated_at: "2026-03-01T10:01:00Z"
+cases:
+  - name: gate pass rate dedups, gates, and counts merge-queue and retried runs in the gate
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.gate_pass_rate
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [repository] }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.gate_pass_rate
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 50.0"
+      - metric: ci.gate_pass_rate
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-01' && double(p.value) == 50.0))"
+      - metric: ci.gate_pass_rate
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'acme/app') && double(v.value) == 50.0)"
+  - name: gate pass rate empty window is null, not zero
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-05-01", to: "2026-05-07" }
+        metrics:
+          - metric_key: ci.gate_pass_rate
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.gate_pass_rate
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        equal: { value: null }

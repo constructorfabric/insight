@@ -16,6 +16,6 @@ pub use definition::{
     MetricDirection, MetricFormat, ObservationSource, RatioDenominatorAggregation,
 };
 pub use repository::load_definitions;
-pub(crate) use repository::{load_definitions_with_ids, percentile_from_scale};
+pub(crate) use repository::load_definitions_with_ids;
 pub use seeds::reconcile_builtin_definitions;
 pub use validator::MetricDefinitionValidator;
