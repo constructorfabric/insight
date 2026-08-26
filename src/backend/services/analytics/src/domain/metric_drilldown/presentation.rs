@@ -196,6 +196,11 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             input_label(plan, MetricInputRole::Denominator),
             MetricDrilldownColumnType::Number,
         ),
+        "branch_scope" => ("Branch scope".to_owned(), MetricDrilldownColumnType::String),
+        "destination_branch" => (
+            "Target branch".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
         "lines_added" => ("Lines added".to_owned(), MetricDrilldownColumnType::Number),
         "lines_removed" => (
             "Lines removed".to_owned(),
@@ -221,12 +226,19 @@ pub(super) fn evidence_presentation(
     granularity: EvidenceGranularity,
 ) -> EvidencePresentation {
     match (source_key, measure_key) {
+        // Every git row names where the work went, on every path that opens
+        // the dialog (#2806) — a column that only appeared when the reader
+        // happened to arrive through a grouped table left the same record
+        // looking like a different record. A commit knows only whether it is
+        // reachable from the trunk, so `branch_scope` is the honest column
+        // there; a pull request knows the branch it targeted, so it names it.
         ("git", "commit_count" | "commit_change_size") => EvidencePresentation {
             detail_keys: &[
                 "ref",
                 "title",
                 "repository",
                 "author",
+                "branch_scope",
                 "lines_added",
                 "lines_removed",
             ],
@@ -235,11 +247,21 @@ pub(super) fn evidence_presentation(
         // Reviewer-perspective events anchor on the reviewed pull request, so
         // the row reads like the PR measures: the value is always 1 and stays
         // hidden, `author` names whose request was reviewed or commented on.
-        (
-            "git",
-            "pr_created" | "pr_created_merged" | "pr_merged" | "review_submitted" | "pr_comment",
-        ) => EvidencePresentation {
-            detail_keys: &["ref", "title", "repository", "author"],
+        // They carry no `branch_scope` — a review is not classified by where
+        // the request landed, only the request itself is.
+        ("git", "review_submitted" | "pr_comment") => EvidencePresentation {
+            detail_keys: &["ref", "title", "repository", "author", "destination_branch"],
+            show_value: false,
+        },
+        ("git", "pr_created" | "pr_created_merged" | "pr_merged") => EvidencePresentation {
+            detail_keys: &[
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "branch_scope",
+                "destination_branch",
+            ],
             show_value: false,
         },
         (
@@ -252,7 +274,14 @@ pub(super) fn evidence_presentation(
             | "pr_review_to_merge_hours"
             | "pr_approval_to_merge_hours",
         ) => EvidencePresentation {
-            detail_keys: &["ref", "title", "repository", "author"],
+            detail_keys: &[
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "branch_scope",
+                "destination_branch",
+            ],
             show_value: true,
         },
         // A counting measure needs no value column — the row IS the one it
@@ -366,6 +395,7 @@ mod tests {
                 "title",
                 "repository",
                 "author",
+                "branch_scope",
                 "category",
                 "lines_added",
                 "lines_removed",
@@ -520,9 +550,12 @@ mod tests {
         for measure_key in ["review_submitted", "pr_comment"] {
             let event = evidence_presentation("git", measure_key, EvidenceGranularity::Event);
             assert!(!event.show_value, "{measure_key}");
+            // A review event carries the request's target branch but no branch
+            // scope: only the request itself is classified as landing on the
+            // trunk or not.
             assert_eq!(
                 event.detail_keys,
-                &["ref", "title", "repository", "author"],
+                &["ref", "title", "repository", "author", "destination_branch"],
                 "{measure_key}"
             );
         }
@@ -562,7 +595,14 @@ mod tests {
             assert!(presentation.show_value, "{measure_key}");
             assert_eq!(
                 presentation.detail_keys,
-                &["ref", "title", "repository", "author"],
+                &[
+                    "ref",
+                    "title",
+                    "repository",
+                    "author",
+                    "branch_scope",
+                    "destination_branch"
+                ],
                 "{measure_key}"
             );
         }
