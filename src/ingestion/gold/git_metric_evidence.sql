@@ -156,6 +156,17 @@ authored_commits AS (
         commits.source_value AS source_value,
         commits.branch_scope_value AS branch_scope_value,
         commits.source_dimensions AS source_dimensions,
+        -- No file change was ever COLLECTED for this commit, so its size
+        -- reaches no size measure while the commit itself still counts. The
+        -- test is the reported set, not the deduplicated one: a commit whose
+        -- changes were collected and then all lost the content dedup already
+        -- reports the zero it earned, and must not have its size restored.
+        -- Semi-join by tuple for the same reason as the membership tests in
+        -- git_authored_commits.
+        (commits.tenant_id, commits.source_id, commits.project_key, commits.repo_slug, commits.commit_hash) NOT IN (
+            SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
+            FROM reported_commit_file_lines
+        ) AS has_no_file_changes,
         -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
         -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
         -- commit whose source reported no line stats. `greatest` floors the
@@ -264,6 +275,62 @@ file_changes_source AS (
         AND commits.project_key = file_changes.project_key
         AND commits.repo_slug = file_changes.repo_slug
         AND commits.commit_hash = file_changes.commit_hash
+),
+-- The size a commit reported when its file changes never arrived. Those lines
+-- are in the class contract but reach no file-change row, so without this they
+-- are absent from every size measure while the commit still counts — Commits
+-- and Lines then describe different work on the same side of the branch split,
+-- and a commit that genuinely changed nothing is indistinguishable from one
+-- whose diff was never collected. Emitting the reported size separates them:
+-- zero means zero, and absent means the source reported no size at all.
+--
+-- Only the totals: the file grain is genuinely unknown here, so the drilldown
+-- dimensions say `__unknown__` rather than inventing a category, and the
+-- category-scoped measures (code / test lines) stay out.
+unattributed_line_measures AS (
+    SELECT
+        tenant_id,
+        entity_id,
+        metric_date,
+        line_measure.1 AS measure_key,
+        line_measure.2 AS value,
+        arrayConcat(
+            [source_dimensions[1]],
+            CAST(
+                [
+                    tuple('category', '__unknown__', 'Unknown'),
+                    tuple('file_extension', '__unknown__', 'Unknown'),
+                    tuple('change_type', '__unknown__', 'Unknown')
+                ] AS Array(Tuple(key String, value String, label Nullable(String)))
+            ),
+            arraySlice(source_dimensions, 2)
+        ) AS dimensions
+    FROM authored_commits
+    ARRAY JOIN CAST(arrayConcat(
+        if(
+            lines_added IS NOT NULL,
+            [
+                tuple('lines_added', toFloat64(assumeNotNull(lines_added))),
+                tuple(
+                    if(branch_scope_value = 'default', 'default_lines_added', 'non_default_lines_added'),
+                    toFloat64(assumeNotNull(lines_added))
+                )
+            ],
+            []
+        ),
+        if(
+            lines_removed IS NOT NULL,
+            [
+                tuple('lines_removed', toFloat64(assumeNotNull(lines_removed))),
+                tuple(
+                    if(branch_scope_value = 'default', 'default_lines_removed', 'non_default_lines_removed'),
+                    toFloat64(assumeNotNull(lines_removed))
+                )
+            ],
+            []
+        )
+    ) AS Array(Tuple(measure_key String, value Float64))) AS line_measure
+    WHERE has_no_file_changes
 ),
 pr_commit_emails AS (
     SELECT
@@ -634,7 +701,13 @@ measure_observations AS (
         measure_key,
         toNullable(sum(value)) AS value,
         dimensions
-    FROM file_change_measures
+    FROM (
+        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions
+        FROM file_change_measures
+        UNION ALL
+        SELECT tenant_id, entity_id, metric_date, measure_key, value, dimensions
+        FROM unattributed_line_measures
+    )
     GROUP BY tenant_id, entity_id, metric_date, measure_key, dimensions
 )
 SELECT
