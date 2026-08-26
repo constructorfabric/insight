@@ -124,27 +124,38 @@ month_seat_populations AS (
     FROM seat_month_source
     GROUP BY tenant_id, source, period_month
 ),
+-- How many populations the seat's own month holds, carried onto the seat.
+--
+-- INVARIANT: one join per level. Two joins in one SELECT beside `seat.*`, where
+-- both joined relations carry a `tenant_id` of their own, leave the unqualified
+-- name unresolvable and the model fails to build.
+seat_month_scoped AS (
+    SELECT
+        seat.*,
+        populations.seat_sources                AS seat_sources
+    FROM seat_month_source AS seat
+    LEFT JOIN month_seat_populations AS populations
+        ON  populations.tenant_id = seat.tenant_id
+        AND populations.source = seat.source
+        AND populations.period_month = seat.period_month
+),
 -- The prices that can reach this seat: those the operator bound to the seat's
 -- own connector instance, plus the unscoped ones when the tenant runs a single
 -- instance on both sides. A tenant running two therefore never lends one
 -- instance's price to the other's seats, whichever of them the invoice came from.
 seat_month_offers AS (
     SELECT
-        seat.*,
+        scoped.* EXCEPT (seat_sources),
         arrayFilter(
-            p -> p.1 = seat.source_id
-                 OR (p.1 = '' AND prices.invoice_sources = 1 AND populations.seat_sources = 1),
+            p -> p.1 = scoped.source_id
+                 OR (p.1 = '' AND prices.invoice_sources = 1 AND scoped.seat_sources = 1),
             prices.scoped_prices
         )                                       AS offers
-    FROM seat_month_source AS seat
+    FROM seat_month_scoped AS scoped
     LEFT JOIN month_seat_prices AS prices
-        ON  prices.tenant_id = seat.tenant_id
-        AND prices.source = seat.source
-        AND prices.period_month = seat.period_month
-    LEFT JOIN month_seat_populations AS populations
-        ON  populations.tenant_id = seat.tenant_id
-        AND populations.source = seat.source
-        AND populations.period_month = seat.period_month
+        ON  prices.tenant_id = scoped.tenant_id
+        AND prices.source = scoped.source
+        AND prices.period_month = scoped.period_month
 ),
 -- The price this seat was billed at. One priced tier among the offers prices
 -- every seat billed in it, which is the common shape and the only one the vendor
