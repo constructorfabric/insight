@@ -277,6 +277,7 @@ describe("connector health · expansion", () => {
           step: null,
           origin: "sweep",
           trigger: "out_of_band",
+          job_id: "job-1",
           started_at: "2026-01-15T09:00:00Z",
           duration_ms: 60_000,
           records_moved: 12_400,
