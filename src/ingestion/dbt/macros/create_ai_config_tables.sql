@@ -15,6 +15,13 @@
   does not. Empty is the correct initial state — with no binding, gold prices a
   seat only where a month leaves no ambiguity to resolve.
 
+  A row also names the seat population its prices reach, in `seat_source_id`.
+  The invoice and the seats arrive through separate connector instances whose
+  `insight_source_id` never matches, so nothing in the data says which seats an
+  invoice billed; a tenant running two instances of one vendor needs that said
+  out loud. Left empty it means the tenant's only seat instance, which is why a
+  single-install tenant needs no row at all to keep its seats priced.
+
   Called from `on-run-start` so the table exists before any model reads it.
 -#}
 
@@ -32,6 +39,7 @@
             tier_ref          String,
             unique_key        String DEFAULT concat(tenant_id, ':', insight_source_id, ':',
                                                     source, ':', tier_ref),
+            seat_source_id    String DEFAULT '',
             seat_tier         String,
             is_deleted        UInt8   DEFAULT 0,
             note              String  DEFAULT '',

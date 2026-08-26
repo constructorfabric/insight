@@ -33,17 +33,29 @@ WITH
 -- seat and every proration together, and `num_seats` reports one line's quantity
 -- while an invoice can price several tiers. Collected per tier so a month with
 -- more than one priced tier stays distinguishable from an unambiguous one.
+--
+-- Each price carries the seat population it may reach. One tenant can hold
+-- several instances of a vendor's connector, and the invoice instance and the
+-- seat instance are separate connectors whose source_id never matches — so the
+-- only thing that can say which seats an invoice billed is the operator's
+-- binding. `invoice_sources` counts the instances that priced anything, which is
+-- what tells an unscoped price whether it is the tenant's only one.
 month_seat_prices AS (
     SELECT
         tenant_id,
         source,
         period_month,
-        groupUniqArray(tuple(tier, price))      AS tier_prices
+        groupUniqArray(tuple(seat_source_id, tier, price)) AS scoped_prices,
+        uniqExact(invoice_source_id)            AS invoice_sources
     FROM (
         SELECT
             invoice.insight_tenant_id           AS tenant_id,
             invoice.source                      AS source,
             invoice.period_month                AS period_month,
+            invoice.source_id                   AS invoice_source_id,
+            -- The seat connector instance this price applies to. Empty when the
+            -- binding names none, which only a single-instance tenant can use.
+            coalesce(binding.seat_source_id, '') AS seat_source_id,
             -- What a seat would call this line's tier, per the operator's
             -- binding. Unbound leaves it empty, and no seat tier is empty, so an
             -- unrecognised plan prices nothing rather than pricing a guess.
@@ -56,6 +68,7 @@ month_seat_prices AS (
                 insight_source_id,
                 source,
                 tier_ref,
+                seat_source_id,
                 seat_tier
             FROM {{ source('config', 'ai_seat_tier_map') }} FINAL
             WHERE is_deleted = 0
@@ -68,7 +81,7 @@ month_seat_prices AS (
           AND invoice.category = 'subscriptions'
           AND invoice.is_proration = 0
           AND invoice.seat_unit_cents IS NOT NULL
-        GROUP BY tenant_id, source, period_month, tier, price
+        GROUP BY tenant_id, source, period_month, invoice_source_id, seat_source_id, tier, price
     )
     GROUP BY tenant_id, source, period_month
 ),
@@ -98,27 +111,40 @@ seat_month_source AS (
       AND email != ''
       AND collected_at IS NOT NULL
 ),
--- The price this seat was billed at. One priced tier in the month prices every
--- seat billed in it, which is the common shape and the only one the vendor
+-- The prices that can reach this seat: those the operator bound to the seat's
+-- own connector instance, plus the unscoped ones when a single invoice instance
+-- priced anything that month. A tenant running two instances therefore never
+-- lends one instance's price to the other's seats.
+seat_month_offers AS (
+    SELECT
+        seat.*,
+        arrayFilter(
+            p -> p.1 = seat.source_id OR (p.1 = '' AND prices.invoice_sources = 1),
+            prices.scoped_prices
+        )                                       AS offers
+    FROM seat_month_source AS seat
+    LEFT JOIN month_seat_prices AS prices
+        ON  prices.tenant_id = seat.tenant_id
+        AND prices.source = seat.source
+        AND prices.period_month = seat.period_month
+),
+-- The price this seat was billed at. One priced tier among the offers prices
+-- every seat billed in it, which is the common shape and the only one the vendor
 -- states unambiguously. With several, the seat's own tier has to name one of
 -- them, which needs the operator's binding above: no vendor states that an
 -- invoice line's tier and a seat's tier are the same tier. A seat that names
 -- none is left without a price rather than given a share of the invoice total.
 seat_month_priced AS (
     SELECT
-        seat.*,
+        * EXCEPT (offers),
         multiIf(
-            length(prices.tier_prices) = 1,
-            prices.tier_prices[1].2,
-            length(arrayFilter(p -> p.1 = coalesce(seat.seat_tier, ''), prices.tier_prices)) = 1,
-            arrayFilter(p -> p.1 = coalesce(seat.seat_tier, ''), prices.tier_prices)[1].2,
+            length(offers) = 1,
+            offers[1].3,
+            length(arrayFilter(p -> p.2 = coalesce(seat_tier, ''), offers)) = 1,
+            arrayFilter(p -> p.2 = coalesce(seat_tier, ''), offers)[1].3,
             CAST(NULL AS Nullable(Int64))
         )                                       AS seat_price_cents
-    FROM seat_month_source AS seat
-    LEFT JOIN month_seat_prices AS prices
-        ON  prices.tenant_id = seat.tenant_id
-        AND prices.source = seat.source
-        AND prices.period_month = seat.period_month
+    FROM seat_month_offers
 ),
 -- Every reading of a seat inside its billing month. The vendor reports a
 -- cumulative month-to-date figure, so a day's spend is the step between two

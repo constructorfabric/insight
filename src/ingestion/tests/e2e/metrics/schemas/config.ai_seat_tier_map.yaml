@@ -11,6 +11,7 @@ schemas:
       source: *id001
       tier_ref: *id001
       unique_key: *id001
+      seat_source_id: *id001
       seat_tier: *id001
       is_deleted:
         type: integer

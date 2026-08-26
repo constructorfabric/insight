@@ -82,8 +82,8 @@ bronze:
 
   # ── The operator's binding: two tiers bound, team_legacy deliberately absent ──
   config.ai_seat_tier_map:
-    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_STD,  unique_key: tier-std,  seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
-    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_PREM, unique_key: tier-prem, seat_tier: team_tier_1,   is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_STD,  unique_key: tier-std,  seat_source_id: claude-team-test, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_PREM, unique_key: tier-prem, seat_source_id: claude-team-test, seat_tier: team_tier_1,   is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01 00:00:00.000" }
 
 cases:
   # ── A Standard seat, and the peer spread across both tiers ───────────────────
