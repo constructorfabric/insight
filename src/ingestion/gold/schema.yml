@@ -169,7 +169,10 @@ models:
       Materialized MergeTree evidence serving table for AI cost measures, all
       at source_summary granularity. A month-grain row is one seat-month, dated
       at the first day of the month it bills for; a day-grain row is one reading
-      of a seat, dated at the day it was read. A separate family from
+      of a seat, dated at the day it was read. A day-grain row carries
+      covers_days, the span from the previous reading in the same billing month
+      or from the 1st for the first one: a reading attributed to the wrong month
+      at a boundary keeps its money and loses that span. A separate family from
       ai_metric_evidence because one evidence relation is bound per source.
     columns: *metric_evidence_columns
 
@@ -189,7 +192,8 @@ models:
       never lower it: the endpoint names no billing period, so a drop there
       cannot be told apart from its counter having already rolled over. A
       reading taken before that rollover overstates the month it lands in, and
-      the same rewriting rule erases it once the month's real readings arrive.
+      the same rewriting rule erases it once the month's real readings arrive —
+      a month whose only reading is that one keeps it.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
