@@ -251,3 +251,40 @@ class TestPlacingAJobInTime:
         )
 
         assert request["jobs"][0]["createdAtEpoch"] == 0
+
+
+class TestReadingOnePlan:
+    """One parse, and a shape the shell can split without another process."""
+
+    @staticmethod
+    def read(plan):
+        import subprocess
+        import sys as _sys
+
+        script = SWEEP_SH.parent.parent / "python" / "sweep" / "sweep_read_plan.py"
+        done = subprocess.run(
+            [_sys.executable, str(script)], input=json.dumps(plan), capture_output=True, text=True
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout.rstrip("\n").split("\x1f")
+
+    def test_every_field_the_shell_records_with_comes_from_one_read(self):
+        rows, unmappable, undatable, seal, recorded = self.read(
+            {
+                "rows": [{"a": 1}, {"b": 2}],
+                "unmappable_jobs": ["j1"],
+                "undatable_jobs": ["j2", "j3"],
+                "seal": {"event": "sweep.completed"},
+            }
+        )
+
+        assert json.loads(rows) == [{"a": 1}, {"b": 2}]
+        assert (unmappable, undatable, recorded) == ("1", "2", "2")
+        assert json.loads(seal) == [{"event": "sweep.completed"}]
+
+    def test_an_unsealed_plan_yields_an_empty_seal_rather_than_a_null(self):
+        # The shell hands this straight to the inserter, which must see "no
+        # rows" rather than a row that is None.
+        *_, seal, _ = self.read({"rows": [], "seal": None})
+
+        assert json.loads(seal) == []

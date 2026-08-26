@@ -48,6 +48,9 @@ def ledger_row(raw: dict[str, str]) -> dict[str, Any]:
         "claim": raw["claim"],
         "status": raw["status"],
         "has_counters": raw["has_counters"] == "1",
+        # A sweep row that already carries a terminal outcome. Separate from
+        # `has_counters`, which only says some sweep row exists.
+        "collected": raw.get("collected") == "1",
         # "0" is the warehouse saying NULL: a job the mover had not started.
         "started_at_epoch": int(raw["started_at_epoch"] or 0),
         # Empty means the warehouse held NULL: nobody timed this one.

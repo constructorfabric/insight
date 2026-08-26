@@ -131,6 +131,13 @@ _sweep_ledger_state() {
                'connector', argMax(connector, (prec, ts)),
                'claim', argMax(claim, (prec, ts)),
                'status', argMax(status, (prec, ts)),
+               -- INVARIANT: one row decides both halves. `has_counters` asked
+               -- "does ANY sweep row exist" while `status` came from whichever
+               -- row won precedence — usually the pipeline's. A job the sweep
+               -- saw mid-flight and the pipeline later finished then read as
+               -- covered-and-terminal, and the mover's final counters were
+               -- never collected.
+               'collected', toString(max(origin = 'sweep' AND status IN ('ok', 'failed', 'cancelled'))),
                'has_counters', toString(max(origin = 'sweep')),
                'started_at_epoch', ifNull(toString(toUnixTimestamp(argMax(started_at, (prec, ts)))), '0'),
                'duration_ms', ifNull(toString(argMax(duration_ms, (prec, ts))), ''),
@@ -303,7 +310,15 @@ sweep_run() {
       '{"reason":"connection_listing_failed"}'
     return 0
   fi
-  descriptors_tsv="$(disc_load_descriptors)"
+  # SAFETY: same hazard as the connection listing above. An unreadable
+  # descriptor tree — a missing mount, a wrong root — yields an empty list, and
+  # an empty list is indistinguishable from "nothing is configured". Sealing
+  # that reads as every connector having been removed.
+  if ! descriptors_tsv="$(disc_load_descriptors)" || [[ -z "${descriptors_tsv}" ]]; then
+    log_event "sweep.skipped" "no connector descriptors readable; recording nothing" \
+      '{"reason":"descriptor_listing_failed"}'
+    return 0
+  fi
   if ! mapping="$(_sweep_connection_map "${connections_json}" "${descriptors_tsv}")"; then
     log_event "sweep.skipped" "configured set unknown; recording nothing" \
       '{"reason":"secret_listing_failed"}'
@@ -348,10 +363,18 @@ sweep_run() {
     return 0
   }
 
-  local rows unmappable
-  rows="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(json.dumps(json.load(sys.stdin)["rows"]))')"
-  unmappable="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["unmappable_jobs"]))')"
-  undatable="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("undatable_jobs", [])))')"
+  # SAFETY: one guarded extraction, not five bare command substitutions. This
+  # function runs under the caller's `set -e` and must never abort the reconcile
+  # tick around it (see the INVARIANT at the top of this file) — an unguarded
+  # assignment here would take the whole run down with it, and a sweep hiccup
+  # would be reported as a failed reconcile.
+  local extracted rows unmappable undatable seal recorded
+  if ! extracted="$(printf '%s' "${plan_json}" | python3 "${_SWEEP_PY}/sweep/sweep_read_plan.py")"; then
+    log_line ERROR "sweep: could not read the plan; nothing recorded this tick"
+    return 0
+  fi
+  IFS=$'\037' read -r rows unmappable undatable seal recorded <<<"${extracted}"
+
   if (( undatable > 0 )); then
     log_line WARN "sweep: ${undatable} job(s) carried an unreadable start time and were left uncovered"
   fi
@@ -370,15 +393,11 @@ sweep_run() {
 
   # INVARIANT: the seal lands last. Everything a snapshot read keys on must
   # already be in place when the marker names this tick.
-  local seal
-  seal="$(printf '%s' "${plan_json}" | python3 -c 'import sys,json;s=json.load(sys.stdin)["seal"];print(json.dumps([s] if s else []))')"
   if ! _sweep_insert_rows "${seal}"; then
     log_line ERROR "sweep: could not seal the tick"
     return 0
   fi
 
-  local recorded
-  recorded="$(printf '%s' "${rows}" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')"
   log_event "sweep.completed" "run ledger swept" \
     "$(printf '{"rows":%s,"unmappable_jobs":%s,"backfill":%s}' \
         "${recorded}" "${unmappable}" "$([[ -z "${watermark}" ]] && echo true || echo false)")"

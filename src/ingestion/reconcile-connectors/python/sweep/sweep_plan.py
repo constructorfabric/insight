@@ -165,7 +165,15 @@ def claim_for(
         return CLAIMED, run_id
     if not records_readable:
         return UNCLAIMED, ""
-    if horizon_epoch and started_at_epoch and started_at_epoch < horizon_epoch:
+
+    # No start time is no evidence. Without it there is nothing to test against
+    # the horizon, so the records' silence cannot be read either way — and
+    # falling through to OUT_OF_BAND would report a job the mover has not even
+    # started as one a person started outside the pipeline.
+    if not started_at_epoch:
+        return UNCLAIMED, ""
+
+    if horizon_epoch and started_at_epoch < horizon_epoch:
         return UNCLAIMED, ""
     return OUT_OF_BAND, ""
 
@@ -273,11 +281,10 @@ def snapshot_rows(request: dict[str, Any], plan: Plan) -> None:
 
 def plan_sweep(request: dict[str, Any]) -> Plan:
     plan = Plan()
-    covered = {
-        str(row.get("job_id", ""))
-        for row in request.get("ledger") or []
-        if row.get("has_counters") and row.get("status") in TERMINAL_STATUSES
-    }
+    # One row, both halves: the sweep's own row must itself be terminal. Asking
+    # "some sweep row exists" and "the winning row is terminal" separately let a
+    # pipeline row's outcome close a job the sweep had only seen running.
+    covered = {str(row.get("job_id", "")) for row in request.get("ledger") or [] if row.get("collected")}
 
     coverage_rows(request, covered, plan)
     corroboration_rows(request, plan)

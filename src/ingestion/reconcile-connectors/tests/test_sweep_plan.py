@@ -22,6 +22,7 @@ from sweep.sweep_plan import (
     OUT_OF_BAND,
     SWEEP_COMPLETED,
     SYNC_COMPLETED,
+    TERMINAL_STATUSES,
     UNCLAIMED,
     duration_ms,
     ledger_status,
@@ -69,6 +70,9 @@ def ledger_row(job_id="77", claim=UNCLAIMED, has_counters=True, **overrides):
         "connector": CONNECTOR,
         "claim": claim,
         "has_counters": has_counters,
+        # A sweep row that is itself terminal. Defaults to mirroring the status
+        # the fixture asks for, which is what the warehouse computes.
+        "collected": has_counters and overrides.get("status", "ok") in TERMINAL_STATUSES,
         "started_at_epoch": 2000,
         "status": "ok",
         "duration_ms": 97000,
@@ -93,6 +97,15 @@ class TestAJobWithNoReadableStartTime:
         (row,) = syncs(plan)
         assert row.started_at_epoch == 0
         assert row.created_at_epoch > 0, "it still sits on the frontier axis"
+
+    def test_a_job_with_no_start_time_is_never_called_out_of_band(self):
+        # The horizon test needs a stamp. Without one the records' silence
+        # proves nothing, and OUT_OF_BAND would say a person started a job the
+        # mover has not started at all.
+        plan = plan_sweep(request(jobs=[job(startTimeEpoch=0)], records_readable=True))
+
+        (row,) = syncs(plan)
+        assert row.claim == UNCLAIMED
 
     def test_a_job_the_listing_cannot_place_is_skipped_and_counted(self):
         # Without the ordering stamp there is no way to advance past it safely.
@@ -140,6 +153,27 @@ class TestAJobStillRunning:
 
         (row,) = syncs(plan)
         assert row.status == "ok", f"should re-cover a job left in {provisional!r}"
+
+    def test_the_pipelines_outcome_does_not_close_a_job_the_sweep_saw_running(self):
+        # The two halves must come from ONE row. Tick 1 records the job running
+        # (a sweep row with counters); the pipeline then writes its own terminal
+        # row. Reading "some sweep row exists" beside "the winning row is
+        # terminal" closes the job, and the mover's final counters — the only
+        # place they exist — are never collected.
+        plan = plan_sweep(
+            request(
+                jobs=[job(status="succeeded")],
+                # What the warehouse actually returns for this shape: the
+                # winning row is the PIPELINE's, so `status` reads terminal,
+                # while the only sweep row is the one that saw it running.
+                ledger=[
+                    ledger_row(status="ok", claim=CLAIMED, has_counters=True, collected=False)
+                ],
+            )
+        )
+
+        (row,) = syncs(plan)
+        assert row.status == "ok", "the sweep must still collect the mover's outcome"
 
     def test_a_job_already_recorded_with_an_outcome_is_not_recorded_twice(self):
         plan = plan_sweep(request(jobs=[job(status="succeeded")], ledger=[ledger_row(status="ok", claim=CLAIMED)]))
