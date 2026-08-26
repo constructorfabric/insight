@@ -6,6 +6,7 @@ pub(crate) mod date_window;
 pub mod definitions;
 pub mod external_links;
 pub mod field_catalog;
+pub mod identity_binding;
 pub(crate) mod metric_access;
 pub mod metric_crud;
 pub mod metric_definitions;
