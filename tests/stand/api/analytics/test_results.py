@@ -286,21 +286,39 @@ def test_one_hidden_person_refuses_the_whole_request(
     )
 
 
-def _git_metric_keys(api: ApiClient) -> dict[str, str]:
-    """Every git metric the installation offers, keyed by metric_key → computation.
+def _git_definitions(api: ApiClient) -> dict[str, list[str]]:
+    """Every git metric the installation offers, keyed by metric_key → dimensions.
 
-    A rollup asserts different things about a sum than about a median, and the
+    The listing carries no `computation`, so what a rollup can be asserted
+    against is read from the dimension list instead — which is the property
+    that actually decides whether a metric can be grouped by repository. The
     keys this file cares about are recent enough that a stand pinned to an
-    older image simply will not have them — so the catalogue decides, not a
-    hardcoded list.
+    older image simply will not have them, so the catalogue decides rather
+    than a hardcoded list.
     """
     response = api.get(analytics_path("/v1/metric-definitions"))
     assert response.status_code == 200, f"definitions: {response.status_code}"
     return {
-        metric.metric_key: metric.computation.root.computation.value
+        metric.metric_key: list(metric.dimensions)
         for metric in response.parse(MetricDefinitionListResponse).metrics
         if metric.metric_key.startswith("git.")
     }
+
+
+#: Summed git metrics, most preferred first. Every one of them counts whole
+#: records, so a rollup's rows add up to the same period total — which is what
+#: the reconciliation below asserts. Hardcoded because the listing does not say
+#: which computation a metric uses, and a median would need a different oracle.
+_SUMMED_GIT_METRICS = ("git.prs_merged", "git.commits", "git.code_lines")
+
+
+def _a_summed_git_metric(api: ApiClient) -> str | None:
+    """A summed git metric this install offers that groups by repository."""
+    dimensions = _git_definitions(api)
+    return next(
+        (key for key in _SUMMED_GIT_METRICS if "repository" in dimensions.get(key, [])),
+        None,
+    )
 
 
 def _rollup_view(response: ApiResponse, metric_key: str) -> RollupView:
@@ -340,11 +358,7 @@ def test_rollup_answers_per_dimension_without_an_entity_grain(
     a `repository` dimension — a stand seeded without a git connector has
     nothing to roll up, which is not this test's news to report.
     """
-    computations = _git_metric_keys(api)
-    metric_key = next(
-        (key for key, computation in computations.items() if computation == "sum"),
-        None,
-    )
+    metric_key = _a_summed_git_metric(api)
     if metric_key is None:
         pytest.skip("this installation offers no summed git metric to roll up")
 
@@ -395,11 +409,7 @@ def test_a_rollup_totals_the_same_work_the_period_view_reports(
     A rollup that returns nothing is a skip, not a pass: a metric the stand has
     no git rows for would otherwise let 0 == 0 through as agreement.
     """
-    computations = _git_metric_keys(api)
-    metric_key = next(
-        (key for key, computation in computations.items() if computation == "sum"),
-        None,
-    )
+    metric_key = _a_summed_git_metric(api)
     if metric_key is None:
         pytest.skip("this installation offers no summed git metric to roll up")
 
@@ -443,8 +453,7 @@ def test_a_rollup_refuses_a_person_out_of_scope(api: ApiClient, stand_manifest: 
     unattributed total, which no reader could trace back to a person and no
     other assertion in this module would catch.
     """
-    computations = _git_metric_keys(api)
-    metric_key = next(iter(computations), None)
+    metric_key = next(iter(_git_definitions(api)), None)
     if metric_key is None:
         pytest.skip("this installation offers no git metric")
 
@@ -484,7 +493,7 @@ def test_pr_comments_split_into_own_and_others(api: ApiClient, stand_manifest: M
     Skipped where the installation predates the metric: a stand pinned to an
     older analytics image has no such key, which the catalogue answers for.
     """
-    if "git.pr_comments" not in _git_metric_keys(api):
+    if "git.pr_comments" not in _git_definitions(api):
         pytest.skip("this installation does not offer git.pr_comments")
 
     person = stand_manifest.fixture("dev_lead")

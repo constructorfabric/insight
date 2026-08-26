@@ -73,7 +73,6 @@ cases:
               - {view: peer}
               - {view: timeseries, bucket: day}
               - {view: breakdown, dimensions: [comment_target]}
-              - {view: breakdown, dimensions: [source]}
     expect:
       - assert: "status == 200"
       - {metric: git.pr_comments, view: period, find: {entity_id: alice@example.com}, equal: {value: 3}}
@@ -82,6 +81,22 @@ cases:
       # own 2 + others 1 = the period total of 3.
       - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: comment_target, value: own}}, equal: {value: 2}}
       - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: comment_target, value: others}}, equal: {value: 1}}
+
+  - name: Every comment came from the one connected forge
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_comments
+            views:
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # A request carries at most ONE view of a kind, so the source split is
+      # its own case rather than a second breakdown beside comment_target.
       - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}, equal: {value: 3}}
 
   - name: A comment on a request whose author is unknown counts under others

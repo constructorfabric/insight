@@ -61,12 +61,12 @@ cases:
       - assert: "status == 200"
       # acme/api pools alice's [10, 30] with bob's [20, 40]: the distribution
       # starts at 10 and closes at 40. A per-entity shape closes at 30.
-      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: acme/api}}, contains: {bins: {lo: 10, count: 1}}}
-      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: acme/api}}, contains: {bins: {hi: 40, count: 1}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/api"}}, contains: {bins: {lo: 10, count: 1}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/api"}}, contains: {bins: {hi: 40, count: 1}}}
       # Identical values collapse to one bin, and its count is BOTH people's.
-      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: acme/web}}, contains: {bins: {lo: 5, hi: 5, count: 2}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/web"}}, contains: {bins: {lo: 5, hi: 5, count: 2}}}
       # Pooled rows carry no entity grain, exactly like rollup rows.
-      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: acme/web}}, assert: "!has(it.entity_id)"}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/web"}}, assert: "!has(it.entity_id)"}
 
   - name: The dimensionless request still bins per entity
     request:
