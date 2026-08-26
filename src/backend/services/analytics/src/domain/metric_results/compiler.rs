@@ -755,9 +755,14 @@ fn compile_tenant_peer_batch_query(
     let limit = query_row_limit();
 
     let carried = peer_carried_selects(defs);
-    let stats_selects = per_target_aggregate_selects(defs);
-    let result_selects = per_target_result_selects(defs);
+    let captured_tuple = captured_target_tuple(defs);
+    let population_stat_selects = population_stat_selects(defs);
+    let result_selects = tenant_result_selects(defs);
 
+    // INVARIANT: population stats aggregate once over the whole pool and the
+    // requested targets' own values are captured in that same pass (bounded
+    // by MAX_PERSON_IDS tuples), so cost stays one scan and one aggregation
+    // regardless of how many targets the request carries.
     let sql = format!(
         r"
         WITH
@@ -776,18 +781,15 @@ fn compile_tenant_peer_batch_query(
                 entity_id{carried}
             FROM metric_values
         ),
-        per_target AS (
+        population_stats AS (
             SELECT
-                targets.entity_id AS entity_id{stats_selects}
-            FROM targets
-            CROSS JOIN entity_values AS peer
-            GROUP BY targets.entity_id
+                groupArrayIf({captured_tuple}, peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows{population_stat_selects}
+            FROM entity_values AS peer
         )
         SELECT
             targets.entity_id AS entity_id{result_selects}
         FROM targets
-        LEFT JOIN per_target
-            ON per_target.entity_id = targets.entity_id
+        CROSS JOIN population_stats
         LIMIT {limit}
         SETTINGS join_use_nulls = 1
         "
@@ -830,22 +832,42 @@ fn peer_carried_selects(defs: &[&MetricDefinition]) -> String {
     carried
 }
 
-fn per_target_result_selects(defs: &[&MetricDefinition]) -> String {
+fn captured_target_tuple(defs: &[&MetricDefinition]) -> String {
+    let mut tuple = "tuple(peer.entity_id".to_owned();
+    for item_index in 0..defs.len() {
+        let value = period_alias(item_index);
+        let _ = write!(tuple, ", peer.{value}");
+    }
+    tuple.push(')');
+    tuple
+}
+
+fn population_stat_selects(defs: &[&MetricDefinition]) -> String {
+    let mut selects = String::new();
+    for item_index in 0..defs.len() {
+        push_peer_stat_selects(&mut selects, item_index);
+    }
+    selects
+}
+
+fn tenant_result_selects(defs: &[&MetricDefinition]) -> String {
     let mut result_selects = String::new();
     for item_index in 0..defs.len() {
         let aliases = peer_aliases(item_index);
-        // SAFETY: an empty observation window leaves per_target without rows;
-        // the pool size must read 0 through the outer join, not NULL.
+        // SAFETY: arrayFirst yields the default tuple when the target was not
+        // captured; its Nullable elements read NULL, so an unmeasured target
+        // stays NULL. Element 1 is the entity id, values start at 2.
         let _ = write!(
             result_selects,
             ",
-            per_target.{target} AS {target},
-            per_target.{p25} AS {p25},
-            per_target.{median} AS {median},
-            per_target.{p75} AS {p75},
-            per_target.{min} AS {min},
-            per_target.{max} AS {max},
-            ifNull(per_target.{n}, 0) AS {n}",
+            tupleElement(arrayFirst(t -> t.1 = targets.entity_id, population_stats.target_rows), {position}) AS {target},
+            population_stats.{p25} AS {p25},
+            population_stats.{median} AS {median},
+            population_stats.{p75} AS {p75},
+            population_stats.{min} AS {min},
+            population_stats.{max} AS {max},
+            population_stats.{n} AS {n}",
+            position = item_index + 2,
             target = aliases.target,
             p25 = aliases.p25,
             median = aliases.median,
@@ -1890,17 +1912,29 @@ mod tests {
 
         assert!(!query.sql.contains("metric_entity_cohorts_current"));
         assert!(query.sql.contains("arrayJoin([?, ?]) AS entity_id"));
-        assert!(query.sql.contains("CROSS JOIN entity_values AS peer"));
+        assert!(query.sql.contains("CROSS JOIN population_stats"));
         assert!(!query.sql.contains("ON 1 = 1"));
+        // Stats aggregate once over the pool; the targets' own values ride the
+        // same pass as captured tuples, so target count never multiplies the
+        // aggregation state.
+        assert!(query.sql.contains(
+            "groupArrayIf(tuple(peer.entity_id, peer.m0), \
+             peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows"
+        ));
+        assert!(query.sql.contains(
+            "tupleElement(arrayFirst(t -> t.1 = targets.entity_id, \
+             population_stats.target_rows), 2) AS m0_target"
+        ));
         assert!(
             query
                 .sql
-                .contains("maxIf(peer.m0, peer.entity_id = targets.entity_id) AS m0_target")
+                .contains("population_stats.m0_median AS m0_median")
         );
-        assert!(query.sql.contains("per_target.m0_median AS m0_median"));
         assert!(
-            query.sql.contains("ifNull(per_target.m0_n, 0) AS m0_n"),
-            "an empty observation window must report a pool of 0, not NULL"
+            query
+                .sql
+                .contains("toUInt64(uniqExactIf(peer.entity_id, peer.m0 IS NOT NULL)) AS m0_n"),
+            "an empty observation window still yields the one aggregate row, so n reads 0"
         );
         assert_eq!(query.sql.matches("tenant_id = ?").count(), 1);
         assert_eq!(
@@ -1938,12 +1972,7 @@ mod tests {
             );
             assert!(
                 !query.sql.contains("AS target_values"),
-                "the target join re-scans the window; extract via conditional aggregate"
-            );
-            assert!(
-                query
-                    .sql
-                    .contains("maxIf(peer.m0, peer.entity_id = targets.entity_id) AS m0_target")
+                "the target join re-scans the window; extract from the single peer reference"
             );
         }
     }
