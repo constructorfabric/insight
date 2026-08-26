@@ -218,7 +218,7 @@ async fn a_real_missing_relation_error_classifies_as_source_relation_missing() -
     };
 
     let error = match ch
-        .query("SELECT * FROM insight.relation_absent_for_this_test")
+        .query("SELECT * FROM relation_absent_for_this_test")
         .fetch_bytes("JSONEachRow")
     {
         Err(e) => e.to_string(),

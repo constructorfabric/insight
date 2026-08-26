@@ -346,6 +346,7 @@ export function mergeNormalizedResults(
       } else if (result.peer) {
         existing.peer = { ...result.peer, values: [...result.peer.values] };
       }
+      existing.error ??= result.error;
     }
   }
   return out;

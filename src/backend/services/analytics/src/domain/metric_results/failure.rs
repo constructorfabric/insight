@@ -20,16 +20,16 @@ const RESOURCE_LIMIT_MARKERS: [&str; 9] = [
     "TOO_MANY_SIMULTANEOUS_QUERIES",
     "TIMEOUT_EXCEEDED",
     "QUOTA_EXCEEDED",
-    "Code: 241",
-    "Code: 159",
-    "Code: 202",
-    "Code: 201",
+    "Code: 241.",
+    "Code: 159.",
+    "Code: 202.",
+    "Code: 201.",
 ];
 
 impl ViewFailure {
     /// Classify a ClickHouse error message (submit or fetch failure).
     pub fn from_query_error(message: &str) -> Self {
-        if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60") {
+        if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60.") {
             return Self {
                 code: MetricViewErrorCode::SourceRelationMissing,
                 detail: message.to_owned(),
@@ -140,6 +140,21 @@ mod tests {
     fn everything_else_is_a_plain_query_failure() {
         let failure = ViewFailure::from_query_error("Code: 999. DB::Exception: novel");
         assert_eq!(failure.code, MetricViewErrorCode::QueryFailed);
+    }
+
+    #[test]
+    fn a_longer_code_sharing_a_prefix_does_not_misclassify() {
+        for message in [
+            "Code: 600. DB::Exception: x",
+            "Code: 2410. DB::Exception: y",
+        ] {
+            let failure = ViewFailure::from_query_error(message);
+            assert_eq!(
+                failure.code,
+                MetricViewErrorCode::QueryFailed,
+                "should not match a shorter code's marker: {message}"
+            );
+        }
     }
 
     #[test]

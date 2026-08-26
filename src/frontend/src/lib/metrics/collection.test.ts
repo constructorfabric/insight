@@ -241,6 +241,26 @@ describe("row-limit chunking", () => {
     expect(metric.period?.values.length).toBeGreaterThan(0);
     expect(metric.peer?.values.length ?? 0).toBeGreaterThan(1);
   });
+
+  it("keeps a later chunk's error when the accumulator has none", () => {
+    const healthy = normalizeMetricResults([SUM_METRIC_FIXTURE]);
+    const failed = structuredClone(SUM_METRIC_FIXTURE);
+    failed.views = [
+      buildMetricErrorView({ code: "QUERY_FAILED", message: "chunk two failed" }),
+    ];
+
+    const merged = mergeNormalizedResults([
+      healthy,
+      normalizeMetricResults([failed]),
+    ]);
+    const metric = merged.get("ai.accepted_lines")!;
+    expect(metric.error).toEqual({
+      code: "QUERY_FAILED",
+      message: "chunk two failed",
+    });
+    // The healthy chunk's data still merges alongside the error.
+    expect(metric.period?.values.length).toBeGreaterThan(0);
+  });
 });
 
 describe("histogram view", () => {
