@@ -14,8 +14,8 @@ use sea_orm::{ConnectionTrait, DbErr, Statement, Value};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::definition::{MeasureDefinition, MetricDefinition, Origin};
-use crate::infra::db::entities::{semantic_measures, semantic_metrics};
+use super::definition::{DatasetDefinition, MeasureDefinition, MetricDefinition, Origin};
+use crate::infra::db::entities::{semantic_datasets, semantic_measures, semantic_metrics};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefinitionKind {
@@ -71,6 +71,24 @@ fn plan(stored: Option<(i32, &serde_json::Value)>, incoming: &serde_json::Value)
     }
 }
 
+/// The semantic body of a dataset: which rows a measure over it will see.
+/// Availability is the probe's state, not definition, and never appears here.
+fn dataset_body(dataset: &DatasetDefinition) -> serde_json::Value {
+    json!({
+        "relation": dataset.relation,
+        "read_discipline": dataset.read_discipline,
+        "retention_horizon": dataset.retention_horizon,
+    })
+}
+
+fn stored_dataset_body(model: &semantic_datasets::Model) -> serde_json::Value {
+    json!({
+        "relation": model.database_relation,
+        "read_discipline": model.read_discipline,
+        "retention_horizon": model.retention_horizon,
+    })
+}
+
 /// The semantic body of a measure: everything that changes what the number
 /// means. Description and enablement are deliberately absent — they are not
 /// semantics, so editing them must not invalidate a cache.
@@ -120,6 +138,51 @@ fn stored_metric_body(model: &semantic_metrics::Model) -> serde_json::Value {
         "entity_type": model.entity_type,
         "cohort_key": model.cohort_key,
     })
+}
+
+pub async fn reconcile_dataset<C: ConnectionTrait>(
+    conn: &C,
+    dataset: &DatasetDefinition,
+    origin: Origin,
+    actor: &str,
+) -> Result<WriteOutcome, StoreError> {
+    let incoming = dataset_body(dataset);
+    let stored = fetch_dataset(conn, &dataset.key).await?;
+    let stored_body = stored.as_ref().map(stored_dataset_body);
+    let outcome = match plan(
+        stored
+            .as_ref()
+            .map(|model| model.definition_version)
+            .zip(stored_body.as_ref()),
+        &incoming,
+    ) {
+        WritePlan::Unchanged { at } => return Ok(WriteOutcome::Unchanged(at)),
+        WritePlan::Insert => {
+            insert_dataset(conn, dataset, origin).await?;
+            WriteOutcome::Created
+        }
+        WritePlan::Bump { from } => {
+            let next = from + 1;
+            let updated = update_dataset(conn, dataset, from).await?;
+            if updated != 1 {
+                return Err(StoreError::Conflict {
+                    key: dataset.key.clone(),
+                    version: from,
+                });
+            }
+            WriteOutcome::Bumped(next)
+        }
+    };
+    append_revision(
+        conn,
+        DefinitionKind::Dataset,
+        &dataset.key,
+        version_of(outcome),
+        actor,
+        &incoming,
+    )
+    .await?;
+    Ok(outcome)
 }
 
 pub async fn reconcile_measure<C: ConnectionTrait>(
@@ -221,6 +284,69 @@ fn version_of(outcome: WriteOutcome) -> i32 {
         WriteOutcome::Created => 1,
         WriteOutcome::Bumped(version) | WriteOutcome::Unchanged(version) => version,
     }
+}
+
+async fn fetch_dataset<C: ConnectionTrait>(
+    conn: &C,
+    key: &str,
+) -> Result<Option<semantic_datasets::Model>, DbErr> {
+    use sea_orm::EntityTrait;
+    use sea_orm::QueryFilter;
+    use sea_orm::prelude::Expr;
+
+    semantic_datasets::Entity::find()
+        .filter(Expr::col(semantic_datasets::Column::DatasetKey).eq(key))
+        .filter(Expr::col(semantic_datasets::Column::TenantId).is_null())
+        .one(conn)
+        .await
+}
+
+async fn insert_dataset<C: ConnectionTrait>(
+    conn: &C,
+    dataset: &DatasetDefinition,
+    origin: Origin,
+) -> Result<(), DbErr> {
+    conn.execute(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "INSERT INTO semantic_datasets \
+            (id, tenant_id, dataset_key, database_relation, read_discipline, \
+             retention_horizon, origin, definition_version, is_enabled) \
+         VALUES (?, NULL, ?, ?, ?, ?, ?, 1, TRUE)",
+        [
+            uuid_value(Uuid::now_v7()),
+            Value::from(dataset.key.as_str()),
+            Value::from(dataset.relation.as_str()),
+            Value::from(dataset.read_discipline.as_db()),
+            optional_str(dataset.retention_horizon.as_deref()),
+            Value::from(origin.as_db()),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn update_dataset<C: ConnectionTrait>(
+    conn: &C,
+    dataset: &DatasetDefinition,
+    from_version: i32,
+) -> Result<u64, DbErr> {
+    let result = conn
+        .execute(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "UPDATE semantic_datasets SET \
+                database_relation = ?, read_discipline = ?, retention_horizon = ?, \
+                definition_version = definition_version + 1 \
+             WHERE dataset_key = ? AND tenant_id IS NULL AND definition_version = ?",
+            [
+                Value::from(dataset.relation.as_str()),
+                Value::from(dataset.read_discipline.as_db()),
+                optional_str(dataset.retention_horizon.as_deref()),
+                Value::from(dataset.key.as_str()),
+                Value::from(from_version),
+            ],
+        ))
+        .await?;
+    Ok(result.rows_affected())
 }
 
 async fn fetch_measure<C: ConnectionTrait>(
@@ -437,8 +563,18 @@ fn json_value<T: serde::Serialize>(value: Option<&T>) -> Value {
 mod tests {
     use super::*;
     use crate::domain::definitions::definition::{
-        Aggregation, Computation, DimensionBinding, Direction, Format, Transform,
+        Aggregation, Computation, DimensionBinding, Direction, Format, ReadDiscipline, Transform,
     };
+
+    fn dataset() -> DatasetDefinition {
+        DatasetDefinition {
+            key: "git_pull_requests".to_owned(),
+            relation: "silver.class_git_pull_requests".to_owned(),
+            read_discipline: ReadDiscipline::Final,
+            description: None,
+            retention_horizon: None,
+        }
+    }
 
     fn measure() -> MeasureDefinition {
         serde_yaml::from_str(
@@ -468,6 +604,37 @@ dimensions:
             cohort_key: None,
             label: None,
             description: None,
+        }
+    }
+
+    #[test]
+    fn dataset_semantics_bump_but_its_description_does_not() {
+        let base = dataset_body(&dataset());
+
+        let mut described = dataset();
+        described.description = Some("Pull requests, deduplicated.".to_owned());
+        assert_eq!(
+            plan(Some((1, &base)), &dataset_body(&described)),
+            WritePlan::Unchanged { at: 1 }
+        );
+
+        let mut moved = dataset();
+        moved.relation = "insight.git_pull_requests".to_owned();
+        let mut reread = dataset();
+        reread.read_discipline = ReadDiscipline::None;
+        let mut retained = dataset();
+        retained.retention_horizon = Some("P2Y".to_owned());
+
+        for (field, mutated) in [
+            ("relation", moved),
+            ("read_discipline", reread),
+            ("retention_horizon", retained),
+        ] {
+            assert_eq!(
+                plan(Some((1, &base)), &dataset_body(&mutated)),
+                WritePlan::Bump { from: 1 },
+                "{field} must be semantic"
+            );
         }
     }
 

@@ -66,6 +66,7 @@ pub mod m20260822_000002_ai_assist;
 mod m20260823_000001_ratio_denominator_aggregation;
 mod m20260824_000001_metric_percentile_stddev_computation;
 mod m20260825_000001_metric_evidence_presentation;
+mod m20260826_000001_semantic_dataset_version;
 pub(crate) use m20260822_000001_feedback::feedback_schema;
 pub(crate) use m20260822_000002_ai_assist::ai_assist_schema;
 
@@ -143,6 +144,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260823_000001_ratio_denominator_aggregation::Migration),
             Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
             Box::new(m20260825_000001_metric_evidence_presentation::Migration),
+            Box::new(m20260826_000001_semantic_dataset_version::Migration),
         ]
     }
 }
@@ -192,6 +194,10 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
     (
         "semantic_datasets",
         m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
+    ),
+    (
+        "semantic_datasets",
+        m20260826_000001_semantic_dataset_version::REQUIRED_CHECKS,
     ),
     (
         "semantic_measures",
@@ -270,6 +276,10 @@ mod tests {
                 m20260805_000001_semantic_definition_core::REQUIRED_DATASET_CHECKS,
             ),
             (
+                "semantic_datasets",
+                m20260826_000001_semantic_dataset_version::REQUIRED_CHECKS,
+            ),
+            (
                 "semantic_measures",
                 m20260805_000001_semantic_definition_core::REQUIRED_MEASURE_CHECKS,
             ),
@@ -283,22 +293,16 @@ mod tests {
             ),
         ];
 
+        // A table appears once per migration that adds CHECKs to it, so the
+        // pairing is what must be registered, not the table name.
         for &(table, checks) in expected {
-            let Some(&(_, registered)) =
-                REQUIRED_CHECKS_BY_TABLE.iter().find(|&&(t, _)| t == table)
-            else {
-                panic!(
-                    "catalog table `{table}` is not registered in \
-                     REQUIRED_CHECKS_BY_TABLE — the startup probe will \
-                     silently skip its CHECKs"
-                );
-            };
-            assert_eq!(
-                registered.as_ptr(),
-                checks.as_ptr(),
-                "REQUIRED_CHECKS_BY_TABLE entry for `{table}` points at a \
-                 different REQUIRED_CHECKS slice than the migration module \
-                 exports — keep them in sync"
+            assert!(
+                REQUIRED_CHECKS_BY_TABLE
+                    .iter()
+                    .any(|&(t, registered)| t == table && registered.as_ptr() == checks.as_ptr()),
+                "the CHECKs a migration exports for `{table}` are not \
+                 registered in REQUIRED_CHECKS_BY_TABLE — the startup probe \
+                 will silently skip them"
             );
         }
     }

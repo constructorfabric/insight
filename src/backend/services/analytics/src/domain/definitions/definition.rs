@@ -35,6 +35,34 @@ pub struct DimensionBinding {
     pub label_field: Option<String>,
 }
 
+/// How a relation must be read for its rows to be the deduplicated truth. A
+/// replacing engine keeps superseded rows until a merge that may never come,
+/// so every read of one must collapse them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadDiscipline {
+    /// Collapse duplicates at read time.
+    Final,
+    /// Rows are already unique; read them directly.
+    None,
+}
+
+/// A queryable relation with guaranteed semantics — deduplicated,
+/// tenant-scoped, stable columns — that measures aggregate over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetDefinition {
+    pub key: String,
+    /// Where the rows live, as `database.relation`.
+    pub relation: String,
+    pub read_discipline: ReadDiscipline,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// How far back the dataset's history reaches, as a served contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_horizon: Option<String>,
+}
+
 /// A declarative aggregation of one dataset — the lowest editable layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,6 +184,15 @@ pub enum Operand {
     None,
     Value,
     Subject,
+}
+
+impl ReadDiscipline {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Final => "final",
+            Self::None => "none",
+        }
+    }
 }
 
 impl Origin {

@@ -10,10 +10,12 @@
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
 
 use super::definition::{
-    Aggregation, Computation, Direction, Format, MeasureDefinition, MetricDefinition, Origin,
-    Transform,
+    Aggregation, Computation, DatasetDefinition, Direction, Format, MeasureDefinition,
+    MetricDefinition, Origin, ReadDiscipline, Transform,
 };
-use super::store::{WriteOutcome, reconcile_measure, reconcile_metric, update_measure};
+use super::store::{
+    WriteOutcome, reconcile_dataset, reconcile_measure, reconcile_metric, update_measure,
+};
 
 const ENV_VAR: &str = "INTEGRATION_TESTS_MARIADB_URL";
 const ACTOR: &str = "live-tests";
@@ -67,8 +69,19 @@ fn metric(key: &str, measure_key: &str) -> MetricDefinition {
     }
 }
 
+fn dataset(key: &str) -> DatasetDefinition {
+    DatasetDefinition {
+        key: key.to_owned(),
+        relation: "silver.class_git_pull_requests".to_owned(),
+        read_discipline: ReadDiscipline::Final,
+        description: None,
+        retention_horizon: None,
+    }
+}
+
 async fn cleanup(db: &DatabaseConnection, keys: &[&str]) {
     for (table, column) in [
+        ("semantic_datasets", "dataset_key"),
         ("semantic_measures", "measure_key"),
         ("semantic_metrics", "metric_key"),
         ("semantic_definition_revisions", "definition_key"),
@@ -284,6 +297,76 @@ async fn the_store_rejects_an_aggregation_without_its_operand() {
         reconcile_measure(&db, &invalid, Origin::Product, ACTOR)
             .await
             .is_err()
+    );
+    cleanup(&db, &[key]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires INTEGRATION_TESTS_MARIADB_URL"]
+async fn a_dataset_versions_like_every_other_definition() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let key = "live_store_dataset";
+    cleanup(&db, &[key]).await;
+
+    assert_eq!(
+        reconcile_dataset(&db, &dataset(key), Origin::Product, ACTOR)
+            .await
+            .expect("first write"),
+        WriteOutcome::Created
+    );
+    assert_eq!(
+        reconcile_dataset(&db, &dataset(key), Origin::Product, ACTOR)
+            .await
+            .expect("second write"),
+        WriteOutcome::Unchanged(1)
+    );
+
+    let mut reread = dataset(key);
+    reread.read_discipline = ReadDiscipline::None;
+    assert_eq!(
+        reconcile_dataset(&db, &reread, Origin::Product, ACTOR)
+            .await
+            .expect("read-discipline write"),
+        WriteOutcome::Bumped(2)
+    );
+    assert_eq!(
+        stored_version(&db, "semantic_datasets", "dataset_key", key).await,
+        2
+    );
+    assert_eq!(revision_versions(&db, key).await, [1, 2]);
+    cleanup(&db, &[key]).await;
+}
+
+#[tokio::test]
+#[ignore = "requires INTEGRATION_TESTS_MARIADB_URL"]
+async fn probe_state_moves_without_a_version_bump() {
+    let Some(db) = connect_or_skip().await else {
+        return;
+    };
+    let key = "live_store_availability";
+    cleanup(&db, &[key]).await;
+
+    reconcile_dataset(&db, &dataset(key), Origin::Product, ACTOR)
+        .await
+        .expect("first write");
+    db.execute(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "UPDATE semantic_datasets \
+         SET availability = 'unavailable', availability_reason = 'relation absent' \
+         WHERE dataset_key = ?",
+        [Value::from(key)],
+    ))
+    .await
+    .expect("probe writes state");
+
+    assert_eq!(
+        reconcile_dataset(&db, &dataset(key), Origin::Product, ACTOR)
+            .await
+            .expect("reconcile after the probe"),
+        WriteOutcome::Unchanged(1),
+        "availability is state, not definition"
     );
     cleanup(&db, &[key]).await;
 }

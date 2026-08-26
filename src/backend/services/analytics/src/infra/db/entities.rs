@@ -122,6 +122,43 @@ pub mod feedback {
 }
 
 #[allow(dead_code)] // the store writes through SQL statements; the entity types the read side
+pub mod semantic_datasets {
+    //! `semantic_datasets` entity — a queryable relation measures aggregate
+    //! over, with the read discipline its rows demand.
+    //!
+    //! INVARIANT: `availability` is state written by the structural probe, not
+    //! definition: it moves without touching `definition_version`.
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "semantic_datasets")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Option<Uuid>,
+        pub dataset_key: String,
+        pub database_relation: String,
+        pub read_discipline: String,
+        pub retention_horizon: Option<String>,
+        pub origin: String,
+        pub custom_sql: Option<String>,
+        pub custom_schema: Option<Json>,
+        pub definition_version: i32,
+        pub availability: String,
+        pub availability_checked_at: Option<ChronoDateTimeUtc>,
+        pub availability_reason: Option<String>,
+        pub is_enabled: bool,
+        pub created_at: ChronoDateTimeUtc,
+        pub updated_at: ChronoDateTimeUtc,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+#[allow(dead_code)] // the store writes through SQL statements; the entity types the read side
 pub mod semantic_measures {
     //! `semantic_measures` entity — one declarative aggregation of one dataset.
     //!
