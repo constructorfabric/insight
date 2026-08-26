@@ -12,6 +12,15 @@ export const MAX_METRICS_PER_REQUEST = 50;
  */
 export const MAX_VALUES_PER_REQUEST = 4500;
 
+/**
+ * How many dimension groups one entity is budgeted for when the request asks
+ * for a grouped series. The real count is data (how many repositories a person
+ * touched) and cannot be known before asking, so this is a budget, not a
+ * bound: it keeps grouped requests roughly as heavy as ungrouped ones, and
+ * the server's own row limit is what actually refuses an oversized answer.
+ */
+export const ASSUMED_GROUPS_PER_ENTITY = 8;
+
 export interface RequestBatch {
   metricKeys: string[];
   entityIds: string[];
@@ -33,11 +42,15 @@ export function planRequests(
   metricKeys: readonly string[],
   entityIds: readonly string[],
   bucketCount: number,
+  groupsPerEntity = 1,
 ): RequestBatch[] {
   if (metricKeys.length === 0 || entityIds.length === 0) return [];
   const metricBatches = chunk([...metricKeys], MAX_METRICS_PER_REQUEST);
   return metricBatches.flatMap((keys) => {
-    const perEntity = Math.max(1, keys.length * (bucketCount + 1));
+    const perEntity = Math.max(
+      1,
+      keys.length * (bucketCount + 1) * Math.max(1, groupsPerEntity),
+    );
     const entitiesPerRequest = Math.max(
       1,
       Math.floor(MAX_VALUES_PER_REQUEST / perEntity),
