@@ -179,7 +179,7 @@ models:
   - name: ai_cost_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, AI cost
-      family. One row per (tenant, entity, read day, measure, dimension tuple).
+      family. One row per (tenant, entity, metric date, measure, dimension tuple).
       seat_cost_usd is the invoiced price of the seat itself, from the per-seat
       amount on the invoice's subscription lines; extra_usage_usd is the money
       the vendor billed once that seat exhausted the usage included in its fee;
