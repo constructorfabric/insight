@@ -380,12 +380,44 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # How a login finds its person. Two modes, declared — never a fallback
+    # chain, so a token that cannot answer the configured question is refused
+    # rather than quietly answered a different way:
+    #
+    #   external_id (default) — by the IdP's own stable user id under
+    #     `sourceType`. Right whenever a connector observes the provider's
+    #     accounts: the id is immutable and belongs to the directory the
+    #     person authenticated against.
+    #   email — by the token's standard `email` claim, matched against the
+    #     addresses the ROSTER states (identityResolution.rosterSourceType).
+    #     For installs whose IdP has no directory connector of its own:
+    #     nothing seeds an id binding for the provider, so external_id matches
+    #     nobody and EVERY sign-in is refused. Needs no claim mapping — the
+    #     `email` claim rides the standard `email` scope — and reads neither
+    #     `sourceType` nor `externalIdClaim`. Requires rosterSourceType to be
+    #     set; identity refuses the lookup without one rather than matching an
+    #     address any source at all happened to state.
+    #
+    # What `email` mode additionally requires, all enforced at render:
+    #   - `email` among `scopes` (below) — it is the mode's only input;
+    #   - `provisionOnLogin: false` — minting needs a source-native id, so no
+    #     login provisions in this mode;
+    #   - identityResolution.rosterSourceType set.
+    # It also refuses a token whose `email_verified` is explicitly false: in
+    # this mode the address IS the credential. An IdP that lets a user edit
+    # their own address unverified must be fixed at the IdP.
+    # ROLLING BACK to a chart that predates this key: put `sourceType` back in
+    # the same commit — the older chart requires it unconditionally and will
+    # refuse to render without it.
+    resolveBy: external_id
     # The identity-resolution source_type this IdP is seeded under (e.g.
-    # "ms-entra") — required; the login-bootstrap person lookup is scoped to
-    # it. No default: an empty value fails config validation at boot.
+    # "ms-entra") — the login-bootstrap person lookup is scoped to it. Required
+    # when resolveBy is external_id (an empty value fails config validation at
+    # boot); unread when resolveBy is email.
     sourceType: ""
     # id_token claim carrying the IdP's stable external user id for
-    # sourceType (e.g. Entra's "oid"). Defaults to "sub".
+    # sourceType (e.g. Entra's "oid"). Defaults to "sub". Unread when
+    # resolveBy is email.
     externalIdClaim: "sub"
     # Provision a person on first successful login instead of refusing one the
     # journal has no binding for yet.
