@@ -662,7 +662,8 @@ economics is the more urgent gap; the DECOMPOSITION takes that order.
   `claude-admin` connector along with `class_ai_api_usage`, and the `openai` connector whose
   model was the other feeder named for `class_ai_cost`. The sections that specify them are kept
   as written — they are the input to whoever revives the branch — but nothing in this release
-  builds them, and `ai.token_cost` is served by Cursor alone until then.
+  builds them. Cursor's existing cost data remains served through `ai.cost`; a separate
+  `ai.token_cost` path is future work.
 
 One adjacent defect is recorded rather than fixed here: the 3-day incremental window against
 ~30-day vendor revisions.
