@@ -224,10 +224,11 @@ export function ReportBuilderView() {
     }
   }
 
-  // The granularity is in the name too: two files for the same period that
-  // differ only in their buckets would otherwise overwrite each other in a
+  // What the rows ARE and the granularity are both in the name: two files for
+  // the same period that differ only in their buckets — or in whether a row is
+  // a person or a repository — would otherwise overwrite each other in a
   // downloads folder.
-  const filename = `insight-report_${granularity}_${dateRange.from}_${dateRange.to}`;
+  const filename = `insight-report_${rows}_${granularity}_${dateRange.from}_${dateRange.to}`;
 
   if (computations.isError || definitions.isError) {
     return (

@@ -14,10 +14,14 @@ export const MAX_VALUES_PER_REQUEST = 4500;
 
 /**
  * How many dimension groups one entity is budgeted for when the request asks
- * for a grouped series. The real count is data (how many repositories a person
- * touched) and cannot be known before asking, so this is a budget, not a
- * bound: it keeps grouped requests roughly as heavy as ungrouped ones, and
- * the server's own row limit is what actually refuses an oversized answer.
+ * for a grouped series.
+ *
+ * A guess, and only a guess: how many repositories a person touched is data,
+ * unknowable before asking. It decides how many round trips the ordinary case
+ * takes, nothing more. The bound that HOLDS is the server's row limit, which
+ * `runReport` enforces by halving a batch the service refused and asking
+ * again — so a person busier than this number costs an extra request rather
+ * than a failed report.
  */
 export const ASSUMED_GROUPS_PER_ENTITY = 8;
 

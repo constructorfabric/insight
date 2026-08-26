@@ -66,6 +66,10 @@ LENSES: dict[str, tuple[str, tuple[re.Pattern[str], ...]]] = {
 #: journey, but it has to be the HONEST one rather than an empty frame.
 NOT_INGESTED = re.compile(r"not connected yet", re.IGNORECASE)
 
+#: A section the Repositories lens draws whenever it has any git data at all,
+#: whether or not enough repositories exist for the table to be worth drawing.
+HISTOGRAM_LABEL = re.compile(r"how long pull requests stayed open", re.IGNORECASE)
+
 
 def open_lens(portal: PortalShell, lens: str) -> None:
     """Open one Development lens by its own URL.
@@ -111,6 +115,20 @@ def test_the_development_lenses_compose_their_sections(
             f"the roadmap placeholder",
         ).to_be_visible()
 
+        # Wait for an OUTCOME before reading counts. A heading renders while the
+        # metric request is still in flight, so a bare `count()` here would read
+        # a lens mid-load and call it empty. Either a section or the
+        # not-connected note is the settled state; anything else times out with
+        # the lens named.
+        settled = content.get_by_text(NOT_INGESTED)
+        for label in labels:
+            settled = settled.or_(content.get_by_text(label))
+        expect(
+            settled.first,
+            f"the {lens} lens drew its heading but never resolved into either a "
+            f"section or an explanation — a reader is left on an empty screen",
+        ).to_be_visible()
+
         if content.get_by_text(NOT_INGESTED).count():
             # Honest absence: the family is unmeasured here, and the lens says
             # so instead of drawing empty sections.
@@ -146,7 +164,17 @@ def test_the_repository_table_names_repositories_or_stays_absent(
     portal = PortalShell(page)
     open_lens(portal, "Repositories")
 
-    table = portal.content().get_by_role("table").first
+    content = portal.content()
+    # Same rule as above: settle on an outcome before reading a count, or a
+    # slow rollup reads as a stand with no git data and the case skips itself
+    # into uselessness.
+    table = content.get_by_role("table").first
+    expect(
+        table.or_(content.get_by_text(NOT_INGESTED))
+        .or_(content.get_by_text(HISTOGRAM_LABEL))
+        .first,
+        "the Repositories lens never resolved into a table, a histogram or a not-connected note",
+    ).to_be_visible()
     if not table.count():
         pytest.skip("no repository table on this stand — the lens drew no rows to check")
 
