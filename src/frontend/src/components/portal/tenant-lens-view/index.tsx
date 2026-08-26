@@ -143,8 +143,15 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
       </div>
     );
   }
-  // Observed = any lens view returned a period value or any rows at all;
-  // "no data yet" and "not collected" must not both render as zeros.
+  // Observed = any lens view returned an actual reading; "no data yet" and
+  // "not collected" must not both render as zeros — or, worse, as a bare
+  // title over a page of self-suppressed sections.
+  //
+  // A view's PRESENCE proves nothing: the period view zero-fills the
+  // requested entity with a null value, and a non-dimensioned timeseries is
+  // seeded with one all-null series per entity, so a tenant with no rows at
+  // all still gets both back (`metric_results/builder.rs`). Only a non-null
+  // value inside them is evidence.
   const observed = config.sections
     .flatMap((section) => sectionNeeds(section, bucket))
     .some((need) => {
@@ -153,9 +160,9 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
       const e = tenantData(r);
       return (
         e.value != null ||
-        e.series.length > 0 ||
-        e.breakdown.length > 0 ||
-        e.histogram.length > 0
+        e.series.some((s) => s.points.some((p) => p.value != null)) ||
+        e.breakdown.some((v) => v.value != null) ||
+        e.histogram.some((h) => h.bins.length > 0)
       );
     });
   if (!observed) return <Pending label={config.notIngested} />;

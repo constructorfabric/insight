@@ -293,6 +293,59 @@ describe("TenantLensView", () => {
     expect(screen.getByText("No CI runs collected yet.")).toBeTruthy();
   });
 
+  it("collapses to the not-ingested state on the views a data-less tenant gets", () => {
+    // Exactly what the backend answers for an installation with the flag ON
+    // and no CI rows at all: the period view zero-fills the requested entity
+    // with a null value, and a non-dimensioned timeseries is SEEDED with one
+    // all-null series per entity. Treating either as "observed" leaves the
+    // reader a bare title over sections that all self-suppress.
+    const dataless = (key: string) =>
+      metric(key, {
+        period: { view: "period", values: [{ entity_id: TENANT, value: null }] },
+        timeseries: {
+          view: "timeseries",
+          bucket: "day",
+          series: [
+            {
+              entity_id: TENANT,
+              dimensions: [],
+              points: [
+                { bucket_start: "2026-03-01", value: null },
+                { bucket_start: "2026-03-02", value: null },
+              ],
+            },
+          ],
+        },
+      });
+    mocks.result.byKey = new Map([
+      ["ci.gate_pass_rate", dataless("ci.gate_pass_rate")],
+      ["ci.runs", dataless("ci.runs")],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.getByText("No CI runs collected yet.")).toBeTruthy();
+    expect(mocks.trends).toHaveLength(0);
+  });
+
+  it("counts a single non-null bucket as observed", () => {
+    // The mirror of the case above: one real reading anywhere in the lens is
+    // enough to render it, even when every other view came back empty.
+    mocks.result.byKey = new Map([
+      [
+        "ci.runs",
+        seriesOf("ci.runs", "day", [
+          {
+            dims: [],
+            points: [["2026-03-01", 4]],
+          },
+        ]),
+      ],
+    ]);
+
+    render(<TenantLensView config={CONFIG} />);
+    expect(screen.queryByText("No CI runs collected yet.")).toBeNull();
+  });
+
   it("renders the org-wide headline value with its previous-period delta", () => {
     mocks.result.byKey = new Map([
       [
