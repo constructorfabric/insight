@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { AttentionList } from "@/components/portal/attention-list";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,7 +60,7 @@ export function TeamStateView() {
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster],
   );

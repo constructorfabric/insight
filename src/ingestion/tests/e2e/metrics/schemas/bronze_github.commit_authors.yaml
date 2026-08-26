@@ -1,0 +1,26 @@
+# Mirrors the bronze_github.commit_authors DDL in scripts/connectors-ddl/github.sql.
+schemas:
+  bronze_github.commit_authors:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: &id001
+        type: string
+      _airbyte_extracted_at:
+        type: string
+        format: date-time
+      _airbyte_meta: *id001
+      _airbyte_generation_id: &id002
+        type: integer
+      unique_key: *id001
+      tenant_id: *id001
+      source_id: *id001
+      data_source: *id001
+      collected_at: *id001
+      repo_full_name: *id001
+      author_email: *id001
+      author_login: *id001
+      author_id: *id002
+      author_type: *id001
+      sample_sha: *id001

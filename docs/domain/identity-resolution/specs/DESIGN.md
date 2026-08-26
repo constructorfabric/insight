@@ -60,7 +60,7 @@ The implemented architecture is a **journal model** with one source of truth and
 - Connectors emit identity observations into ClickHouse `identity_inputs` (evidence; unchanged from v2.0).
 - The **persons-seed** (a subcommand of the Rust `identity-resolution` service, run as a scheduled job) folds new observations into the append-only MariaDB **`persons`** observation log: reuse an account's existing binding; else link the group to the person its e-mail already maps to (`LinkedByEmail`); else mint a new person; accounts without e-mail are skipped. It never merges two existing persons. Known gap: when accounts of one e-mail group are bound to *different* persons, the current seed collapses the group onto the first binding and can thereby silently re-derive a binding — the hardening that makes it respect per-account (in particular operator-authored) bindings ships with the manual-resolution feature.
 - **Operator corrections** (merge, detach/split, bind, exclude — ADR-0003, reviewed design in constructorfabric/insight#2180) are appended to the same `persons` journal as binding observations authored by a real operator UUID — the same currency the seed reads, so durability requires no parallel store; the seed hardening above closes the one path that could overwrite them.
-- The service's **persons-sync** worker republishes the journal into ClickHouse (`identity.identity_persons`) via an atomic table swap; the dbt `resolve_person_id` macro resolves `person_id` at build time from that mirror. The v1 macro resolves **by e-mail only** (latest `value_type='email'` observation per normalized e-mail); the manual-resolution feature upgrades it to **account-first with e-mail fallback** (§4.4) — required for corrections, which are `value_type='id'` bindings, to reach gold.
+- The service's **persons-sync** runner republishes the journal into ClickHouse (`identity.identity_persons`) via an atomic table swap. Nothing schedules it on its own: it runs as the final step of every persons-seed run and after every applied operator correction, and the `sync` subcommand remains as the manual repair tool for a snapshot that has fallen behind; the dbt `resolve_person_id` macro resolves `person_id` at build time from that mirror. The v1 macro resolves **by e-mail only** (latest `value_type='email'` observation per normalized e-mail); the manual-resolution feature upgrades it to **account-first with e-mail fallback** (§4.4) — required for corrections, which are `value_type='id'` bindings, to reach gold.
 - `account_person_map` (MariaDB) is a derived SCD2 cache rebuilt from the journal — never a source of truth.
 
 The v2.0 ClickHouse-native plan — a resolution store in `aliases` plus `match_rules`/`unmapped`/`conflicts`/`merge_audits` tables operated by a BootstrapJob/MatchingEngine/ResolutionService pipeline — **was not built**. Its matching-engine material is retained as future direction (§4.1, §4.2, §3.7 future tables); its snapshot-based merge/split mechanism is superseded by the journal-based operator flow of ADR-0003 (§4.3).
@@ -327,7 +327,7 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 
 ##### Why this component exists
 
-Folds new connector observations from `identity_inputs` into the `persons` journal. Without it, no account is ever bound to a person. Implemented as the `seed` subcommand of the Rust `identity-resolution` service (issue #1690), run as a scheduled job by the umbrella chart; it supersedes the original one-shot Python seed (kept under `seed/` for history).
+Folds new connector observations from `identity_inputs` into the `persons` journal. Without it, no account is ever bound to a person. Implemented as the `seed` subcommand of the Rust `identity-resolution` service (issue #1690), run inside every connector ingestion pipeline (the `identity-seed` step, after the staging dbt build and before gold) and as a 15-minute backstop CronJob by the umbrella chart; every run publishes the refreshed journal to ClickHouse as its own final step. It supersedes the original one-shot Python seed (kept under `seed/` for history).
 
 ##### Responsibility scope
 
@@ -855,7 +855,7 @@ See ADR-0002 for the full decision record (why a derived cache instead of a seco
 
 | Aspect | Value |
 |---|---|
-| Invocation | `identity-resolution seed` — one run, then exit. Scheduled by the umbrella chart; manually runnable for ad-hoc reseeds |
+| Invocation | `identity-resolution seed` — one run (resolve + publish), then exit. Run by every connector ingestion pipeline and by the umbrella chart's 15-minute backstop CronJob; manually runnable for ad-hoc reseeds. `--busy-ok` / `--guard-ok` let the pipeline step and the backstop CronJob tolerate a held lock and an input-guard refusal; refusals surface in the operations journal |
 | Concurrency | A run-lock guarantees a single active run; a concurrent invocation exits with a warning |
 | Guards | Suspicious inputs (empty `identity_inputs`, foreign-tenant universe) are refused unless the operator passes an explicit `--force`; the scheduled job itself never forces |
 | Audit | Every run is journaled in `operations` (queued → running → completed/failed) with summary counters per mode, including `known_binding_conflicts` |
@@ -914,7 +914,7 @@ See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the fu
 3. `./src/ingestion/reconcile-connectors.sh` — registers connectors, creates Airbyte connections + per-connector CronWorkflows. (ClickHouse migrations run via the `clickhouse-migrate` Helm Hook Job on helm install/upgrade in step 2, not from a host script.)
 4. Airbyte sync produces Bronze data (`./run-sync.sh` + wait).
 5. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
-6. Seed run — the `identity-resolution seed` subcommand, scheduled by the umbrella chart (or invoked manually for ad-hoc reseeds).
+6. Seed run — the `identity-resolution seed` subcommand, run by every connector ingestion pipeline and by the umbrella chart's 15-minute backstop CronJob (or invoked manually for ad-hoc reseeds); each run publishes the journal to ClickHouse as its final step.
 
 ---
 

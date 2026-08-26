@@ -36,18 +36,28 @@ vi.mock("@/components/metric-evidence-dialog", () => ({
     onMetricChange,
     onClose,
   }: {
-    state: {
-      activeMetricKey: string;
-      targets: Array<{ selection: { metric_key: string } }>;
-      title?: string;
-    } | null;
+    state:
+      | {
+          kind: "records";
+          activeMetricKey: string;
+          targets: Array<{ selection: { metric_key: string } }>;
+          title?: string;
+        }
+      | { kind: "people"; view: { title: string; rows: unknown[] } }
+      | null;
     onMetricChange: (key: string) => void;
     onClose: () => void;
   }) => (
     <div>
-      <span>{state?.activeMetricKey ?? "closed"}</span>
-      <span>{state?.targets.length ?? 0}</span>
-      <span>{state?.title}</span>
+      <span>
+        {state == null
+          ? "closed"
+          : state.kind === "people"
+            ? `people:${state.view.title}`
+            : state.activeMetricKey}
+      </span>
+      <span>{state?.kind === "records" ? state.targets.length : 0}</span>
+      <span>{state?.kind === "records" ? state.title : undefined}</span>
       <button type="button" onClick={() => onMetricChange("wiki.pages")}>
         select wiki
       </button>
@@ -120,6 +130,43 @@ function Controls() {
       >
         open on a stranger
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          evidence.openEvidencePeople({
+            title: "Commits · 0–50 commits per person",
+            metricKey: "git.commits",
+            valueLabel: "Commits",
+            rows: [
+              {
+                entityId: "person-a",
+                personId: "person-a",
+                name: "Ada Lovelace",
+                value: 12,
+                valueText: "12",
+                target: { selection: git, label: "Commits · Ada Lovelace" },
+              },
+            ],
+            allRecords: { selection: git, label: "Commits · all records" },
+          })
+        }
+      >
+        open people
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          evidence.openEvidencePeople({
+            title: "Commits · nobody",
+            metricKey: "git.commits",
+            valueLabel: "Commits",
+            rows: [],
+            allRecords: null,
+          })
+        }
+      >
+        open nobody
+      </button>
     </>
   );
 }
@@ -182,6 +229,33 @@ describe("MetricEvidenceDialogProvider", () => {
     expect(mocks.removeQueries).toHaveBeenCalledWith({
       queryKey: ["metric-drilldown"],
     });
+  });
+
+  it("opens the people behind a figure, and never an empty list", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricEvidenceDialogProvider>
+        <Controls />
+      </MetricEvidenceDialogProvider>
+    );
+
+    await user.click(screen.getByRole("button", { name: "open nobody" }));
+    // A dialog with nothing in it answers nothing.
+    expect(screen.getByText("closed")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "open people" }));
+    expect(
+      screen.getByText("people:Commits · 0–50 commits per person")
+    ).toBeInTheDocument();
+
+    // A metric switch belongs to the records body; it must not disturb a list.
+    await user.click(screen.getByRole("button", { name: "select wiki" }));
+    expect(
+      screen.getByText("people:Commits · 0–50 commits per person")
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "close" }));
+    expect(screen.getByText("closed")).toBeInTheDocument();
   });
 
   it("opens on the metric the caller asked for, not the first one", async () => {

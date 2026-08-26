@@ -17,7 +17,10 @@ bytes rather than of whoever last ran the generator.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from . import manifest
 
 REGEN_COMMAND = "python3 -m insight_seed.render_profile"
 CHECK_COMMAND = "python3 -m insight_seed.render_profile --check"
@@ -49,7 +52,7 @@ def _cell(value: Any) -> str:
     return str(value)
 
 
-def render_profile(doc: dict[str, Any]) -> str:
+def render_profile(doc: manifest.Manifest) -> str:
     """Render the page. Pure function of `doc`; no clock, no env, no I/O."""
     lines: list[str] = [
         "<!-- GENERATED FILE — do not hand-edit.",
@@ -143,58 +146,6 @@ def render_profile(doc: dict[str, Any]) -> str:
         ],
     )
 
-    catalogue = doc.get("catalogue") or {}
-    lines += [
-        "",
-        "## Catalogue rows",
-        "",
-        "Rows the product provisions by operator or migration, so no endpoint",
-        "creates them and no test fixture can either — the suite holds no",
-        "database connection. Seeded by `insight_seed/analytics.py` and named",
-        "here so a test reads the name rather than hardcoding one.",
-        "",
-    ]
-    override = catalogue.get("definition_override")
-    if override:
-        lines += [
-            f"`metric_definitions` — `{override['metric_key']}` carries the tenant label",
-            f"`{override['label']}`, so a listing that served the product default instead",
-            "is visible on sight.",
-        ]
-    else:
-        lines += [
-            "**No tenant `metric_definitions` override.** Nothing proves the listing",
-            "resolves a tenant's label over the product default.",
-        ]
-
-    lines += ["", "## Populated / golden metrics", ""]
-    if doc["golden_metrics"]:
-        lines += _table(
-            ["metric_key", "scope", "window", "expected", "derivation"],
-            [
-                [
-                    f"`{g['metric_key']}`",
-                    _cell(g.get("scope")),
-                    _cell(g.get("window")),
-                    _cell(g.get("expected")),
-                    _cell(g.get("derivation")),
-                ]
-                for g in doc["golden_metrics"]
-            ],
-        )
-    else:
-        lines += [
-            "**None.** The golden set is empty, and that is a deliberate state",
-            "rather than an oversight.",
-            "",
-            f"> {doc.get('golden_metrics_note', '')}",
-            "",
-            "A test suite consuming this manifest therefore asserts no metric",
-            "values. That is a visible gap; a populated-but-guessed set would be a",
-            "silent wrong answer. See `insight_seed/golden_metrics.py` for the",
-            "criteria an entry must meet before it is added.",
-        ]
-
     lines += [
         "",
         "## Capabilities",
@@ -225,7 +176,7 @@ def render_profile(doc: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_profile(doc: dict[str, Any], path: Path | None = None) -> Path:
+def write_profile(doc: manifest.Manifest, path: Path | None = None) -> Path:
     target = path or profile_path()
     target.write_text(render_profile(doc), encoding="utf-8", newline="\n")
     return target

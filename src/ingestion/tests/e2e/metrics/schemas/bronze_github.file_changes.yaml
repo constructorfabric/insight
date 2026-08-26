@@ -17,3 +17,5 @@ schemas:
       status: {type: string}
       additions: {type: integer}
       deletions: {type: integer}
+      pre_image_oid: {type: [string, "null"]}
+      post_image_oid: {type: [string, "null"]}

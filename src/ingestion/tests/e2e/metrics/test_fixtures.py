@@ -12,8 +12,9 @@ from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.expect_engine import evaluate_case
-from lib.fixture_loader import TestYaml
+from lib.fixture_loader import IdentityAccount, TestYaml
 from lib.identity_stub import IdentityStub, person_id_for
+from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.fixture
@@ -149,6 +150,38 @@ def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> No
     )
 
 
+# The reserved not-a-human person (bots, CI): an account bound to it claims
+# nothing in either resolution map. Mirrors excluded_person_id() in dbt.
+_EXCLUDED_PERSON_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+
+def _seed_identity_accounts(cfg: SessionConfig, accounts: list[IdentityAccount], start_id: int) -> None:
+    """Source-account bindings from the yaml's `identity_accounts` — the rows
+    the account-first map (resolve_person_id_by_account) resolves pull-request
+    authors through. insight_source_id is hashed from the RAW source id with
+    the same expression the connectors' identity_inputs models use, so the
+    seam under test is the real one.
+    """
+    if not accounts:
+        return
+
+    rows = ", ".join(
+        f"({start_id + index}, 'id', '{entry.source_type}', "
+        f"toUUID(UUIDNumToString(sipHash128('{entry.source_id}'))), generateUUIDv4(), "
+        f"'{entry.account_id}', '{entry.account_id}', "
+        f"toUUID('{_EXCLUDED_PERSON_ID if entry.person == 'excluded' else person_id_for(entry.person)}'), "
+        f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
+        for index, entry in enumerate(accounts)
+    )
+    clickhouse.execute(
+        cfg,
+        "INSERT INTO identity.identity_persons "  # noqa: S608 — values derive from fixture yaml
+        "(id, value_type, insight_source_type, insight_source_id, insight_tenant_id,"
+        " value_id, value_effective, person_id, author_person_id, created_at, _synced_at) "
+        "VALUES " + rows,
+    )
+
+
 # One synthetic connector instance for every rig persona: the account triple is
 # what joins evidence to bindings, so both inserts must name the same source.
 _RIG_SOURCE_ID = "e2e0e2e0-0000-4000-8000-000000000001"
@@ -173,6 +206,7 @@ def test_metric_smoke(
     enrich_runner: EnrichRunner,
     analytics: AnalyticsProcess,
     identity_stub: IdentityStub,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
 ) -> None:
     ch_seeder.truncate_touched()
@@ -183,18 +217,7 @@ def test_metric_smoke(
     # 3. Build the dbt models the seeded tables feed: staging first (the `+`
     #    pulls <connector>__bronze_promoted), then the silver class models.
     staging, silver = dbt_runner.derive_selectors(test_yaml.touched_tables)
-    if staging:
-        # Record staging models in the ledger BEFORE building. They live in the
-        # `staging` schema and are read by the silver models via union_by_tag, so a
-        # prior test's staging rows (e.g. dates this test doesn't re-seed) would
-        # survive into the silver rebuild and contaminate later tests' gold-view
-        # aggregates. Recording up front (not after) means a build that raises
-        # partway still leaves the table in the truncate ledger so the next test
-        # cleans it; recording a model that never materialised is harmless
-        # (truncate_touched uses TRUNCATE TABLE IF EXISTS).
-        for st in staging:
-            ch_seeder.ledger.record("staging", st)
-        dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     # 3b. Connector enrich steps (descriptor.images.enrich), between staging and
     #     silver — mirrors prod: dbt(tag:<c>) → <c>-enrich → dbt(silver). Data-driven
     #     from descriptors, so any connector with an enrich step participates (jira
@@ -232,20 +255,10 @@ def test_metric_smoke(
         silver_set.update(dbt_runner.ephemeral_silver_targets(step.name))
     run_only_silver = silver_set & {"class_hr_working_hours"}
     tested_silver = silver_set - run_only_silver
-    if tested_silver:
-        # Record before building (same rationale as staging above): a build that
-        # raises partway still leaves the targets in the truncate ledger for the
-        # next test to clean.
-        for cls in tested_silver:
-            ch_seeder.ledger.record("silver", cls)
-        dbt_runner.build(" ".join(sorted(tested_silver)), worker_ctx=worker_ctx)
-    if run_only_silver:
-        for cls in run_only_silver:
-            ch_seeder.ledger.record("silver", cls)
-        dbt_runner.run(" ".join(sorted(run_only_silver)), worker_ctx=worker_ctx)
+    tracked_models.build(sorted(tested_silver), worker_ctx=worker_ctx)
+    tracked_models.run(sorted(run_only_silver), worker_ctx=worker_ctx)
     if "class_collab_meeting_activity" in silver_set:
-        ch_seeder.ledger.record("silver", "class_focus_metrics")
-        dbt_runner.run("class_focus_metrics", worker_ctx=worker_ctx, full_refresh=True)
+        tracked_models.run(["class_focus_metrics"], worker_ctx=worker_ctx, full_refresh=True)
 
     # 4. Identity bindings for the personas the cases address (the rig plays the
     #    persons-sync role). Read per request, so only the map relation has to
@@ -258,6 +271,7 @@ def test_metric_smoke(
     # a new persona could fall outside of (that reads as an authz bug).
     identity_stub.allow_visible(persona_emails)
     _seed_identity_persons(ch_seeder.cfg, all_person_ids)
+    _seed_identity_accounts(ch_seeder.cfg, test_yaml.identity_accounts, start_id=len(all_person_ids) + 1)
 
     # Selected without upstream: `identity_inputs` is hand-created above and
     # excluded from the silver selection.

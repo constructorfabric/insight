@@ -1,0 +1,167 @@
+spec_version: 1
+description: >
+  Task Delivery - issues closed, split by issue type - GITHUB, a
+  department-of-3 distribution in a single custom window.
+
+  bronze -> silver -> gold, with no enrich binary in between: bronze_github
+  issues + issue_timeline_events (ClosedEvent = the close date / metric_date) +
+  issue_types, and the configuration rows that say what `closed:completed`
+  means. GitHub states no lifecycle category anywhere, so an unbound value
+  yields no status at all — the bindings are as much a part of this fixture as
+  the issues.
+
+  Department: 3 Engineering members alice..carol of rank r in 1..3, each closing
+  r issues on the same close date (2026-03-25). The custom window
+  2026-03-20..12-31 captures them all -> per-person sums {1,2,3}; the case
+  requests carol (3). Carol's three are 2 Task + 1 Bug, so her total splits into
+  two type groups that add back to 3, and every row carries `source: github` as
+  a second dimension so a deployment running two trackers can tell them apart.
+
+  Alice's single issue closed as `not_planned`, which still counts: closure is
+  closure, exactly as a Jira "won't do" resolution still closes an issue. Each
+  issue is seeded twice with a different extraction timestamp — bronze is
+  append-only and the newer row must win, not both.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  config.task_field_roles:
+    - $ref: templates/github_task.yaml#/templates/role_state
+    - $ref: templates/github_task.yaml#/templates/role_assignees
+    - $ref: templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: templates/github_task.yaml#/templates/value_open
+    - $ref: templates/github_task.yaml#/templates/value_closed_completed
+    - $ref: templates/github_task.yaml#/templates/value_closed_not_planned
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
+
+  # Without a (account, e-mail) pair there is no `class_task_users` row, and
+  # gold's inner join drops every issue — a GitHub fixture that seeds only
+  # issues attributes nothing at all.
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1001, _airbyte_raw_id: gh-author-1001, author_id: 1001, author_login: alice, author_email: alice@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1002, _airbyte_raw_id: gh-author-1002, author_id: 1002, author_login: bob, author_email: bob@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1004, _airbyte_raw_id: gh-author-1004, author_id: 1004, author_login: dave, author_email: dave@example.com }
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1005, _airbyte_raw_id: gh-author-1005, author_id: 1005, author_login: erin, author_email: erin@example.com }
+
+  bronze_github.issue_types:
+    - $ref: templates/github_task.yaml#/templates/issue_type_task
+    - $ref: templates/github_task.yaml#/templates/issue_type_bug
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: alice, assignee_ids: "1001", author_id: 1001, state_reason: not_planned }
+    # the same row re-extracted: append-only bronze, newest must win
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: alice, assignee_ids: "1001", author_id: 1001, state_reason: not_planned, _airbyte_raw_id: gh-issue-1b, _airbyte_extracted_at: "2026-03-31T06:00:00Z" }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: bob, assignee_ids: "1002", author_id: 1002 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 3, number: 3, unique_key: gh-issue-3, assignee_logins: bob, assignee_ids: "1002", author_id: 1002 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 4, number: 4, unique_key: gh-issue-4, assignee_logins: carol, assignee_ids: "1003", author_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 5, number: 5, unique_key: gh-issue-5, assignee_logins: carol, assignee_ids: "1003", author_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 6, number: 6, unique_key: gh-issue-6, assignee_logins: carol, assignee_ids: "1003", author_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 7, number: 7, unique_key: gh-issue-7, assignee_logins: dave, assignee_ids: "1004", author_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 8, number: 8, unique_key: gh-issue-8, assignee_logins: dave, assignee_ids: "1004", author_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 9, number: 9, unique_key: gh-issue-9, assignee_logins: dave, assignee_ids: "1004", author_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 10, number: 10, unique_key: gh-issue-10, assignee_logins: dave, assignee_ids: "1004", author_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 11, number: 11, unique_key: gh-issue-11, assignee_logins: erin, assignee_ids: "1005", author_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 12, number: 12, unique_key: gh-issue-12, assignee_logins: erin, assignee_ids: "1005", author_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 13, number: 13, unique_key: gh-issue-13, assignee_logins: erin, assignee_ids: "1005", author_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 14, number: 14, unique_key: gh-issue-14, assignee_logins: erin, assignee_ids: "1005", author_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 15, number: 15, unique_key: gh-issue-15, assignee_logins: erin, assignee_ids: "1005", author_id: 1005, issue_type: Bug, issue_type_id: IT_bug }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1001, state_reason: NOT_PLANNED }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2, event_id: CE_2, item_number: 2, actor_id: 1002 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-3, event_id: CE_3, item_number: 3, actor_id: 1002 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-4, event_id: CE_4, item_number: 4, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-5, event_id: CE_5, item_number: 5, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-6, event_id: CE_6, item_number: 6, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-7, event_id: CE_7, item_number: 7, actor_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-8, event_id: CE_8, item_number: 8, actor_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-9, event_id: CE_9, item_number: 9, actor_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-10, event_id: CE_10, item_number: 10, actor_id: 1004 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-11, event_id: CE_11, item_number: 11, actor_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-12, event_id: CE_12, item_number: 12, actor_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-13, event_id: CE_13, item_number: 13, actor_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-14, event_id: CE_14, item_number: 14, actor_id: 1005 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-15, event_id: CE_15, item_number: 15, actor_id: 1005 }
+
+cases:
+  - name: tasks.closed via github
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - { view: period }
+              - { view: peer }
+              - { view: breakdown, dimensions: [type] }
+          - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
+          - { metric_key: tasks.closed_non_bug, views: [{ view: period }] }
+          - { metric_key: tasks.dev_time, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 5 }
+      # A closure that is not delivery still closes: alice's not-planned issue
+      # keeps her at 1, so the distribution is {1,2,3,4,5}. Five is exactly the
+      # disclosure floor, so the percentiles come back rather than being withheld.
+      - metric: tasks.closed
+        view: peer
+        find: { entity_id: erin@example.com }
+        equal: { target_value: 5, p25: 2, median: 3, p75: 4, min: 1, max: 5, n: 5 }
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Task') && double(v.value) == 4.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Bug') && double(v.value) == 1.0)"
+      - metric: tasks.bugs_fixed
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 1 }
+      - metric: tasks.closed_non_bug
+        view: period
+        find: { entity_id: erin@example.com }
+        equal: { value: 4 }
+      # No in_progress category exists for GitHub, so dev time must be absent
+      # rather than degenerate into the lead time from creation to close.
+      - metric: tasks.dev_time
+        view: period
+        assert: "size(items.filter(v, v.entity_id == 'erin@example.com' && v.value != null)) == 0"
+
+  # The source dimension is what keeps two trackers apart in one figure. It
+  # needs its own request: a metric may carry only one Breakdown view at a time.
+  - name: tasks.closed split by source
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [erin@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - { view: breakdown, dimensions: [source] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'source' && d.value == 'github') && double(v.value) == 5.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'erin@example.com')) == 1"

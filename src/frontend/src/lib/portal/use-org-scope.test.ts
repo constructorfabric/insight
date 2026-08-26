@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { IdentityPerson } from "@/types/insight";
-import { resolveScopeRoster } from "./use-org-scope";
+import { flatOrgScope, resolveScopeRoster } from "./use-org-scope";
 
 // Ids deliberately look nothing like emails: the scope resolver keys on
 // `person_id` since the identity cutover, and an email-shaped fixture would
@@ -51,6 +51,10 @@ describe("resolveScopeRoster", () => {
   it("narrows to direct reports", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-lead1", directOnly: true });
     expect(s.roster?.map((r) => r.person_id).sort()).toEqual(["p-ic1", "p-lead2"]);
+    expect(s.reportPeople?.map((person) => person.entityId).sort()).toEqual([
+      "p-ic1",
+      "p-lead2",
+    ]);
   });
   it("falls back to the viewer when root is outside the tree", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-stranger", directOnly: false });
@@ -95,5 +99,89 @@ describe("resolveScopeRoster", () => {
       "p-l2a",
     ]);
     expect(s.managerNodes.map((m) => m.teamSize)).toEqual([6, 2, 1, 2, 1]);
+  });
+});
+
+describe("flatOrgScope", () => {
+  const roster = [
+    { person_id: "p-me", display_name: "Me" },
+    { person_id: "p-b", display_name: "Bea" },
+    { person_id: "p-c", display_name: "Cyd" },
+  ];
+
+  it("counts everyone the viewer may see, the viewer included", () => {
+    // The scope counts the ORGANISATION: a head-count that changed with who
+    // is looking disagreed with the roster listed right beside it (#2724).
+    const scope = flatOrgScope(roster);
+
+    expect(scope.roster?.map((r) => r.person_id)).toEqual(["p-me", "p-b", "p-c"]);
+    expect(scope.count).toBe(3);
+  });
+
+  it("offers no manager nodes and no direct-only cut", () => {
+    // Nothing to pick and nothing to narrow: one organisation, one cohort.
+    const scope = flatOrgScope(roster);
+
+    expect(scope.managerNodes).toEqual([]);
+    expect(scope.canDirectOnly).toBe(false);
+  });
+
+  it("names the organisation rather than a person", () => {
+    const scope = flatOrgScope(roster);
+
+    expect(scope.label).toBe("Whole organisation");
+  });
+
+  it("carries every naming field a person label reads (#2711)", () => {
+    // The roster entry is what the zones label people by; dropping username
+    // here would blank every person the org chart never named.
+    const scope = flatOrgScope([
+      { person_id: "p-h", display_name: "", username: "handle", email: "" },
+    ]);
+
+    expect(scope.roster).toEqual([
+      {
+        person_id: "p-h",
+        display_name: "",
+        username: "handle",
+        email: "",
+        supervisor_person_id: null,
+        is_direct: false,
+      },
+    ]);
+  });
+
+  it("carries report people from the visible roster", () => {
+    const scope = flatOrgScope([
+      {
+        person_id: "p-h",
+        display_name: "Handle",
+        email: "handle@example.com",
+        job_title: "Engineer",
+        status: "active",
+      },
+    ]);
+
+    expect(scope.reportPeople).toEqual([
+      {
+        entityId: "p-h",
+        name: "Handle",
+        email: "handle@example.com",
+        division: "",
+        department: "",
+        jobTitle: "Engineer",
+        managerName: "",
+        managerEmail: "",
+        status: "active",
+      },
+    ]);
+  });
+
+
+  it("has no roster before the answer arrives", () => {
+    const scope = flatOrgScope(null);
+
+    expect(scope.roster).toBeNull();
+    expect(scope.count).toBe(0);
   });
 });

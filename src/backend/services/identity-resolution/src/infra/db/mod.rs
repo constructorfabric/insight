@@ -38,6 +38,8 @@ mod binding_reads_live_tests;
 #[cfg(test)]
 mod person_listing_live_tests;
 #[cfg(test)]
+mod roster_email_live_tests;
+#[cfg(test)]
 mod roster_live_tests;
 #[cfg(test)]
 pub(crate) mod test_fixture;
@@ -108,27 +110,34 @@ pub struct SeedLockGuard {
 }
 
 impl SeedLockGuard {
-    /// Try to take the per-tenant lock without waiting (`GET_LOCK` timeout 0
-    /// — a concurrent run fails fast instead of queueing a stale re-run
-    /// behind the active one). Opens its own single-connection session (see
-    /// [`connect_single`]; a pooled connection could be swapped mid-run,
-    /// silently dropping the session-scoped lock). Returns `None` when
-    /// another run holds the lock.
+    /// Take the per-tenant lock, waiting up to `wait_secs` for the holder to
+    /// finish (`GET_LOCK` waits server-side). A seed that lost this lock has
+    /// NO covered-by-the-holder guarantee — the holder read `identity_inputs`
+    /// at its own start, possibly before this caller's rows landed — so a
+    /// waiter must run its own seed rather than treat busy as done. Opens its
+    /// own single-connection session (see [`connect_single`]; a pooled
+    /// connection could be swapped mid-run, silently dropping the
+    /// session-scoped lock). Returns `None` when the lock is still held
+    /// after the wait.
     ///
     /// # Errors
     ///
     /// Returns an error if the connection or the query fails.
-    pub async fn try_acquire(
+    pub async fn acquire(
         database_url: &str,
         tenant_id: uuid::Uuid,
+        wait_secs: u32,
     ) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, 0)",
-                [format!("{SEED_LOCK_PREFIX}{tenant_id}").into()],
+                "SELECT GET_LOCK(?, ?)",
+                [
+                    format!("{SEED_LOCK_PREFIX}{tenant_id}").into(),
+                    wait_secs.into(),
+                ],
             ))
             .await?
             .map(|r| r.try_get_by_index::<Option<i8>>(0))
@@ -149,7 +158,7 @@ impl SeedLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
             .conn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT RELEASE_LOCK(?)",
                 [format!("{SEED_LOCK_PREFIX}{}", self.tenant_id).into()],
@@ -173,21 +182,24 @@ pub struct SyncLockGuard {
 }
 
 impl SyncLockGuard {
-    /// Try to take the global sync lock without waiting (`GET_LOCK` timeout 0
-    /// — a concurrent run fails fast instead of publishing a stale snapshot
-    /// after the active one). Returns `None` when another run holds it.
+    /// Take the global sync lock, waiting up to `wait_secs` for the holder to
+    /// finish (`GET_LOCK` waits server-side). Waiting is safe where failing
+    /// fast was not: the holder's quiescence re-check means its snapshot
+    /// covers every row committed before it released, so a waiter that then
+    /// acquires publishes at-least-as-fresh — never a regression. Returns
+    /// `None` when the lock is still held after the wait.
     ///
     /// # Errors
     ///
     /// Returns an error if the connection or the query fails.
-    pub async fn try_acquire(database_url: &str) -> anyhow::Result<Option<Self>> {
+    pub async fn acquire(database_url: &str, wait_secs: u32) -> anyhow::Result<Option<Self>> {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let conn = connect_single(database_url).await?;
         let acquired: Option<i8> = conn
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
-                "SELECT GET_LOCK(?, 0)",
-                [SYNC_LOCK.into()],
+                "SELECT GET_LOCK(?, ?)",
+                [SYNC_LOCK.into(), wait_secs.into()],
             ))
             .await?
             .map(|r| r.try_get_by_index::<Option<i8>>(0))
@@ -206,7 +218,7 @@ impl SyncLockGuard {
         use sea_orm::{ConnectionTrait, DbBackend, Statement};
         let _ = self
             .conn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "SELECT RELEASE_LOCK(?)",
                 [SYNC_LOCK.into()],
@@ -249,7 +261,7 @@ pub async fn run_migrations(
     use sea_orm_migration::MigratorTrait;
 
     let acquired: Option<i8> = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "SELECT GET_LOCK(?, ?)",
             [MIGRATION_LOCK.into(), MIGRATION_LOCK_TIMEOUT_SECS.into()],
@@ -272,7 +284,7 @@ pub async fn run_migrations(
 
     // Best-effort release either way; the lock also dies with the session.
     let _ = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "SELECT RELEASE_LOCK(?)",
             [MIGRATION_LOCK.into()],
@@ -302,7 +314,7 @@ mod tests {
         values: impl IntoIterator<Item = sea_orm::Value>,
     ) -> anyhow::Result<i64> {
         let row = db
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 sql,
                 values,
@@ -342,12 +354,12 @@ mod tests {
         // Crash-recovery regression (012): a migrator killed between the DROP
         // and ADD CONSTRAINT statements leaves the constraint absent — a
         // re-run must converge, not fail on the unconditional DROP.
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             DbBackend::MySql,
             "ALTER TABLE org_chart DROP CONSTRAINT IF EXISTS chk_no_self_loop",
         ))
         .await?;
-        db.execute(Statement::from_string(
+        db.execute_raw(Statement::from_string(
             DbBackend::MySql,
             "DELETE FROM seaql_migrations WHERE version = 'm20260724_000012_org_chart_nullable_parent'",
         ))

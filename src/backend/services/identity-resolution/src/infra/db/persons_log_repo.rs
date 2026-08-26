@@ -35,6 +35,14 @@ impl PersonsLogReader for MariaDbPersonsLogReader<'_> {
             .await?;
         models.into_iter().map(map_row).collect()
     }
+
+    async fn latest_id(&self) -> anyhow::Result<Option<u64>> {
+        let latest = persons::Entity::find()
+            .order_by_desc(persons::Column::Id)
+            .one(self.db)
+            .await?;
+        Ok(latest.map(|m| m.id))
+    }
 }
 
 fn map_row(m: persons::Model) -> anyhow::Result<PersonsLogRow> {

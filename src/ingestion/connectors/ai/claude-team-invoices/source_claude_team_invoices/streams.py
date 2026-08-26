@@ -36,13 +36,22 @@ from datetime import UTC, datetime
 from typing import Any
 
 import requests
-from airbyte_cdk.sources.streams import Stream
+from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 
-from source_claude_team_invoices.stripe_chain import StripeChainError, build_records, read_bootstrap, unique_key_parts
+from source_claude_team_invoices.stripe_chain import (
+    CHAIN_OK,
+    StripeChainError,
+    build_records,
+    read_bootstrap,
+    unique_key_parts,
+)
 
 STRIPE_VERSION = "2026-06-24.dahlia"
 BOOTSTRAP_HOST = "https://invoicedata.stripe.com"
 STRIPE_API = "https://api.stripe.com/v1"
+
+# The one key in the stream's state blob.
+STATE_ENRICHED = "enriched"
 
 PER_PAGE = 12
 # Bounds on the two cursor walks, far above any real history. They guard
@@ -59,10 +68,16 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class InvoiceLines(Stream):
+class InvoiceLines(Stream, CheckpointMixin):
     """`claude_team_invoice_lines` — one record per invoice, plus one per line."""
 
     primary_key = "unique_key"
+    # What survives between syncs is not a field of a record but the set of
+    # invoices already chained, so the cursor is source-defined. Declaring one at
+    # all is what makes the platform give this connection `syncMode: incremental`
+    # and therefore keep that set (reconcile-connectors' catalogue normaliser);
+    # `destinationSyncMode` stays `append`, so bronze is written as before.
+    cursor_field = "collected_at"
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         self._proxy_url = str(config["proxy_url"]).rstrip("/")
@@ -72,6 +87,11 @@ class InvoiceLines(Stream):
         self._source_id = config["insight_source_id"]
         self._session = requests.Session()
         self._chained = False
+        # INVARIANT: `_known` is the map as of the start of the run and is never
+        # written to during one. What a run learns goes to `_learned`, so which
+        # invoices it chains cannot depend on the order of its own records.
+        self._known: dict[str, dict[str, Any]] = {}
+        self._learned: dict[str, dict[str, Any]] = {}
 
     @property
     def name(self) -> str:
@@ -141,6 +161,44 @@ class InvoiceLines(Stream):
         record["unique_key"] = "-".join([self._tenant_id, self._source_id, *(str(p) for p in unique_key_parts(record))])
         return record
 
+    @property
+    def state(self) -> MutableMapping[str, Any]:
+        """An index into bronze: identity -> the keys its rows are already under.
+
+        `invoice_id` is what bronze stores this invoice's own row and its
+        `(invoice_id, line_id)` lines under, so every entry names the rows it
+        stands for. The period rides along because it is the one thing on the
+        invoice's row that the listing cannot supply — it comes from the lines.
+        Nothing here is a credential: the ephemeral key and the hosted URL that
+        carries it are never written to state.
+        """
+        return {STATE_ENRICHED: {**self._known, **self._learned}}
+
+    @state.setter
+    def state(self, value: Mapping[str, Any]) -> None:
+        stored = value.get(STATE_ENRICHED) if isinstance(value, Mapping) else None
+        self._known = dict(stored) if isinstance(stored, Mapping) else {}
+        self._learned = {}
+
+    def _remember(self, record: Mapping[str, Any]) -> None:
+        """Record what a completed chain found, so the next sync can skip it.
+
+        Only an invoice's own row, and only on `ok`: a chain that failed one way
+        is not remembered and is tried again, which is what makes a transient
+        failure clear itself.
+        """
+        if record.get("line_id") or record.get("chain_status") != CHAIN_OK:
+            return
+        identity, invoice_id = record.get("invoice_ref"), record.get("invoice_id")
+        if not identity or not invoice_id:
+            return
+        self._learned[str(identity)] = {
+            "invoice_id": invoice_id,
+            "period_start_ts": record.get("period_start_ts"),
+            "period_end_ts": record.get("period_end_ts"),
+        }
+
     def read_records(self, sync_mode: Any, **kwargs: Any) -> Iterable[MutableMapping[str, Any]]:
-        for record in build_records(self._walk_invoices(), self._fetch_lines):
+        for record in build_records(self._walk_invoices(), self._fetch_lines, enriched=self._known):
+            self._remember(record)
             yield self._envelope(record)

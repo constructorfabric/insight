@@ -8,7 +8,13 @@ name: claude-enterprise
 #   analytics API reports no seat lifecycle state. MINOR per ADR-0015: a full
 #   refresh would reproduce the same NULLs, so there is nothing to
 #   re-materialize.
-version: "3.1.0"
+# 3.2.0: every daily stream reads up to today instead of stopping three days
+#   short, and re-reads the last three days via lookback_window. The vendor
+#   revises a day after it closes; the old end bound waited for that instead of
+#   re-asking, so the newest days never arrived at all. MINOR per ADR-0015 —
+#   no schema or dbt output change, so nothing re-materializes; the re-read
+#   lands as a newer _version and ReplacingMergeTree keeps it.
+version: "3.2.0"
 schedule: "0 11 * * *"   # daily at 11:00 UTC — accommodates Anthropic's 10:00 UTC aggregation
 workflow: sync
 

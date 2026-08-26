@@ -13,15 +13,15 @@
  * or decided answers 200 with an empty journal, so "not in the queue, no
  * binding, no history" is the stale-link state — it says so instead of
  * offering verbs whose bind would pre-register a typo as a real account.
- * The trail keeps two records in one order: a binding row says what changed,
- * an operator call says who ran it and why. They stay separate rows — one call
- * can move a dozen accounts, and folding it into this account's row would
- * invent a link the journal does not record.
+ *
+ * The trail is one row per event that changed something about THIS account.
+ * Both reads carry rows that changed nothing — a sync re-observing a binding
+ * that never moved, a call returned on every account it named — and
+ * `accountTrail` is where those are dropped.
  */
 import { useTranslation } from "react-i18next";
 
 import type {
-  AccountOperation,
   AttentionItem,
   BindingHistoryEntry,
   PersonSummary,
@@ -34,6 +34,7 @@ import { ComingSoon } from "@/components/widgets/coming-soon";
 import type { AccountRef } from "@/lib/identities/account-key";
 import { isQueueItem } from "@/lib/identities/cases";
 import { personDisplayName } from "@/lib/identities/person-display";
+import { accountTrail } from "@/lib/identities/trail";
 import { formatUtcAge, formatUtcInstant } from "@/lib/format";
 import { useAccountBinding } from "@/queries/identity-resolution";
 
@@ -45,6 +46,7 @@ const VERB_KEYS: Record<string, string> = {
   "operator-exclude": "identities.history.exclude",
   "login-bootstrap": "identities.history.login_bootstrap",
   "roster-mint": "identities.history.roster_mint",
+  "auto-seed-link": "identities.history.auto_seed_link",
 };
 
 export function AccountDetail({
@@ -52,17 +54,16 @@ export function AccountDetail({
   queueItem,
   observed = false,
   holder,
-  bindTo,
   onDecided,
 }: {
   accountRef: AccountRef;
   /** The queue row for this account, when it is still in the queue — the
    *  source of hydrated candidate cards and observed evidence. */
   queueItem: AttentionItem | undefined;
-  /** The caller vouches the account exists (a queue row, a search hit, a
-   *  person's account list). Without a voucher, an account with no binding
-   *  and no history reads as a stale link — offering verbs there would let a
-   *  mistyped `?acct=` pre-register a typo as a real account. */
+  /** The caller vouches the account exists (a queue row, a search hit).
+   *  Without a voucher, an account with no binding and no history reads as a
+   *  stale link — offering verbs there would let a mistyped `?acct=`
+   *  pre-register a typo as a real account. */
   observed?: boolean;
   /**
    * Whoever holds the account, for the surfaces that know it without having any
@@ -71,8 +72,6 @@ export function AccountDetail({
    * queue's candidates.
    */
   holder?: PersonSummary | null;
-  /** Bind straight to the person the surface has open. See `AccountActions`. */
-  bindTo?: PersonSummary | null;
   /** A verb decided every account it named. See `AccountActions`. */
   onDecided?: () => void;
 }) {
@@ -116,6 +115,7 @@ export function AccountDetail({
     holder?.person_id === binding.data.person_id
       ? holder
       : candidates.find((c) => c.person_id === binding.data.person_id);
+  const events = accountTrail(binding.data.history, binding.data.operations);
 
   return (
     // One column, not two: the people are what an operator reads across, and
@@ -129,16 +129,15 @@ export function AccountDetail({
           binding={binding.data}
           candidates={candidates}
           holder={boundCard ?? null}
-          // The accounts and persons modes reuse this window for settled
-          // accounts, and their rows carry a kind of the console's own making.
+          // The accounts mode reuses this window for settled accounts, and its
+          // rows carry a kind of the console's own making.
           queued={queueItem != null && isQueueItem(queueItem.kind)}
-          bindTo={bindTo}
           onDecided={onDecided}
         />
       </div>
       <section className="flex min-h-0 flex-1 flex-col">
         <SectionLabel>{t("identities.detail.history")}</SectionLabel>
-        {binding.data.history.length === 0 ? (
+        {events.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {t("identities.detail.no_history")}
           </p>
@@ -147,17 +146,14 @@ export function AccountDetail({
           // remaining space collapses to a sliver, and a one-line history is
           // unreadable. Below the floor the window itself scrolls.
           <ol className="flex min-h-48 flex-1 flex-col gap-2 overflow-y-auto pe-1">
-            {trail(binding.data.history, binding.data.operations).map((row) =>
-              row.kind === "decision" ? (
-                <HistoryRow
-                  key={row.key}
-                  entry={row.entry}
-                  known={boundCard ? [...candidates, boundCard] : candidates}
-                />
-              ) : (
-                <OperationRow key={row.key} operation={row.operation} />
-              ),
-            )}
+            {events.map((event) => (
+              <HistoryRow
+                key={event.key}
+                entry={event.entry}
+                comment={event.comment}
+                known={boundCard ? [...candidates, boundCard] : candidates}
+              />
+            ))}
           </ol>
         )}
       </section>
@@ -165,99 +161,22 @@ export function AccountDetail({
   );
 }
 
-type TrailRow =
-  | { kind: "decision"; key: string; entry: BindingHistoryEntry }
-  | { kind: "call"; key: string; operation: AccountOperation };
-
-/**
- * The two records an account's past is kept in, in one order.
- *
- * A binding row says what changed; an operator call says who ran it and why.
- * They are deliberately not merged into one another — the call may have moved
- * a dozen other accounts, and claiming otherwise would invent a link the
- * journal does not record. Shown side by side in time, the pair reads itself.
- */
-function trail(
-  history: BindingHistoryEntry[],
-  operations: AccountOperation[] | undefined,
-): TrailRow[] {
-  const rows: TrailRow[] = [
-    ...history.map((entry, index) => ({
-      kind: "decision" as const,
-      key: `d-${entry.recorded_at}-${index}`,
-      entry,
-    })),
-    ...(operations ?? []).map((operation) => ({
-      kind: "call" as const,
-      key: `c-${operation.operation_id}`,
-      operation,
-    })),
-  ];
-  const at = (row: TrailRow) =>
-    row.kind === "decision" ? row.entry.recorded_at : row.operation.recorded_at;
-  return rows.sort((a, b) => at(b).localeCompare(at(a)));
-}
-
-function OperationRow({ operation }: { operation: AccountOperation }) {
-  const { t } = useTranslation();
-  const verbKey = VERB_KEYS[operation.verb];
-  return (
-    <li className="rounded-md border border-dashed p-2">
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-medium">
-          {verbKey ? t(verbKey) : operation.verb}
-        </span>
-        <Badge variant="outline" className="font-normal">
-          {t("identities.history.call")}
-        </Badge>
-        {operation.accounts_touched > 1 ? (
-          <Badge variant="outline" className="font-normal">
-            {t("identities.history.accounts_touched", {
-              count: operation.accounts_touched,
-            })}
-          </Badge>
-        ) : null}
-        <span className="ms-auto text-xs text-muted-foreground">
-          {formatUtcInstant(operation.recorded_at, "d MMM yyyy, HH:mm")}
-          <span className="opacity-70">
-            {` (${formatUtcAge(operation.recorded_at)})`}
-          </span>
-        </span>
-      </div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-        <span>{t("identities.history.by")}</span>
-        {operation.author ? (
-          <span className="font-medium text-foreground">
-            {personDisplayName(operation.author)}
-          </span>
-        ) : null}
-        <PersonId id={operation.author_person_id} />
-        {operation.outcome ? (
-          <span className="ms-auto font-mono">{operation.outcome}</span>
-        ) : null}
-      </div>
-      {/* The one thing no other record holds: why a human did this. */}
-      {operation.comment ? (
-        <p className="mt-1.5 border-s-2 ps-2 text-xs text-foreground italic select-text">
-          {operation.comment}
-        </p>
-      ) : null}
-    </li>
-  );
-}
-
 function HistoryRow({
   entry,
+  comment,
   known,
 }: {
   entry: BindingHistoryEntry;
+  /** Why a human did this, when the call that did it could be named. */
+  comment?: string;
   /** Cards the surface already holds, to name a row the service left as an id. */
   known: PersonSummary[];
 }) {
   const { t } = useTranslation();
   // The resolver stores no reason for its own rows — as an empty string, not
-  // as null, so a nullish fallback leaves the badge blank on every automatic
-  // entry, which is most of them.
+  // as null, so a nullish fallback leaves the label blank on every row the seed
+  // wrote, which is most of them. It says what happened, not who did it: who is
+  // on the other end of the row.
   const reason = entry.reason?.trim() || undefined;
   const verbKey = reason ? VERB_KEYS[reason] : undefined;
   // The card the service resolved wins; whatever cards the surface already has
@@ -267,8 +186,13 @@ function HistoryRow({
   return (
     <li className="rounded-md border p-2">
       <div className="flex items-center gap-2">
-        <Badge variant={entry.by_operator ? "secondary" : "outline"}>
-          {verbKey ? t(verbKey) : (reason ?? t("identities.history.automatic"))}
+        {/* A line, not a plaque. Who decided it is already on the row in
+            words — an operator's name, or nothing — so a filled shape carried
+            nothing the reader could not already read, while the automatic rows
+            beside it rendered as bare text and the pair read as two different
+            kinds of thing. */}
+        <Badge variant="outline">
+          {verbKey ? t(verbKey) : (reason ?? t("identities.history.linked"))}
         </Badge>
         {/* The instant is what an operator compares between entries and pastes
             into a ticket; the age answers the question the trail is usually
@@ -288,16 +212,25 @@ function HistoryRow({
           </span>
         ) : null}
         <PersonId id={entry.person_id} />
-        {entry.by_operator ? (
-          <span className="ms-auto">
-            {entry.author
+        {/* Always answered. A blank here read as "unknown", and the one thing
+            an operator needs from a trail is whether a human or the resolver
+            put the account where it is. */}
+        <span className="ms-auto">
+          {!entry.by_operator
+            ? t("identities.history.by_automation")
+            : entry.author
               ? t("identities.history.by_name", {
                   name: personDisplayName(entry.author),
                 })
               : t("identities.history.by_operator")}
-          </span>
-        ) : null}
+        </span>
       </div>
+      {/* The one thing no binding row holds: why a human did this. */}
+      {comment ? (
+        <p className="mt-1.5 border-s-2 ps-2 text-xs text-foreground italic select-text">
+          {comment}
+        </p>
+      ) : null}
     </li>
   );
 }

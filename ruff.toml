@@ -13,3 +13,9 @@ strict = true
 
 [lint.isort]
 split-on-trailing-comma = false
+
+[lint.per-file-ignores]
+# reconcile-connectors/python/* are stdout-contract CLIs that bash invokes as
+# `python3 <script>`: printing the result IS the interface, and the shebang is
+# documentation — the files are never executed directly.
+"src/ingestion/reconcile-connectors/python/*" = ["T201", "EXE001"]

@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { AttentionItem, AttentionResponse } from "@/api/identity-client";
+import { QUEUE_FIRST_PAGE, QUEUE_MAX_ITEMS } from "@/api/identity-client";
 
 vi.mock("@tanstack/react-router", async () => {
   const { portalRouterMock } = await import("@/test/portal-router");
@@ -21,19 +22,28 @@ vi.mock("@tanstack/react-router", async () => {
 });
 
 const attention = vi.hoisted(() => ({
+  /** The limit the queue last asked the service for. */
+  limit: 0,
   q: {
     data: undefined as AttentionResponse | undefined,
     isLoading: false,
     isError: false,
+    /** A read is in flight — of ANY kind, including a background refetch. */
+    isFetching: false,
+    /** …and this one is showing the previous answer, i.e. a longer read. */
+    isPlaceholderData: false,
     refetch: vi.fn(),
   },
   merge: { mutateAsync: vi.fn() },
   bulkBind: { mutateAsync: vi.fn(), reset: vi.fn() },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/components/ui/sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
-  useAttention: () => attention.q,
+  useAttention: (limit: number) => {
+    attention.limit = limit;
+    return attention.q;
+  },
   useMergePersons: () => attention.merge,
   useBindAccounts: () => attention.bulkBind,
   usePersonAccountsMany: () => ({
@@ -86,7 +96,7 @@ import { portalRouter } from "@/test/portal-router";
 
 import { IdentitiesView } from "./identities-view";
 
-const RATES = { observed: 60, bound: 55, pending: 3, no_evidence: 1, excluded: 1 };
+const RATES = { observed: 60, bound: 55, pending: 3, no_source_id: 1, no_evidence: 1, excluded: 1 };
 
 function item(over: Partial<AttentionItem>): AttentionItem {
   return {
@@ -107,10 +117,31 @@ function strip(): string[] {
   return [...(grid?.children ?? [])].map((tile) => tile.textContent ?? "");
 }
 
+/** Presses for more until the service's own ceiling leaves nothing to ask for.
+ *  Bounded by the presses doubling takes to cross the range, so a step that
+ *  stops doubling shows up here rather than looping. */
+const PRESSES_TO_THE_CEILING = Math.ceil(
+  Math.log2(QUEUE_MAX_ITEMS / QUEUE_FIRST_PAGE),
+);
+
+async function readToTheCeiling(user: ReturnType<typeof userEvent.setup>) {
+  for (let press = 0; press <= PRESSES_TO_THE_CEILING; press += 1) {
+    const more = screen.queryByRole("button", { name: /show more cases/i });
+    if (!more) return;
+    await user.click(more);
+  }
+  throw new Error(
+    `still offering a longer read after ${PRESSES_TO_THE_CEILING + 1} presses, at limit ${attention.limit}`,
+  );
+}
+
 beforeEach(() => {
+  attention.limit = 0;
   attention.q.data = undefined;
   attention.q.isLoading = false;
   attention.q.isError = false;
+  attention.q.isFetching = false;
+  attention.q.isPlaceholderData = false;
   attention.q.refetch.mockClear();
   portalRouter.reset();
   portalRouter.set({ zone: "manage", item: "identities" });
@@ -195,26 +226,110 @@ describe("IdentitiesView", () => {
     expect(screen.getByText(/cover only part of the observed accounts/i)).toBeInTheDocument();
   });
 
-  // Two different facts: the evidence read hit its ceiling (rates are a
-  // prefix) versus the item cap cut the list (rates still whole-tenant).
-  it("says the list was cut when only the item cap was hit", () => {
+  // The item cap is no dead end while the service will still answer a longer
+  // read — and a longer read is what the button asks for, since the queue is
+  // derived per request and has no cursor to resume from.
+  it("asks for a longer queue when the item cap cut the list", async () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    const user = userEvent.setup();
+    render(<IdentitiesView />);
+
+    expect(attention.limit).toBe(QUEUE_FIRST_PAGE);
+    await user.click(screen.getByRole("button", { name: /show more cases/i }));
+
+    // Doubling, exactly: a smaller step turns the button into a treadmill on
+    // the backlogs it exists for.
+    expect(attention.limit).toBe(QUEUE_FIRST_PAGE * 2);
+    // Nothing to warn about while the reader can still ask for the rest.
+    expect(
+      screen.queryByText(/only the first accounts needing review/i),
+    ).not.toBeInTheDocument();
+  });
+
+  // Every decision invalidates this query. A button that greys out on the
+  // background refetch reads as "your press is working" over a read nobody
+  // asked for.
+  it("says it is loading for a longer read and stays put for a background one", () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    attention.q.isFetching = true;
+    attention.q.isPlaceholderData = true;
+    const { rerender } = render(<IdentitiesView />);
+
+    expect(screen.getByRole("button", { name: /loading/i })).toBeDisabled();
+
+    attention.q.isPlaceholderData = false;
+    rerender(<IdentitiesView />);
+
+    expect(screen.getByRole("button", { name: /show more cases/i })).toBeEnabled();
+  });
+
+  // Working the visible page to zero does not empty the tenant: the server is
+  // still saying there is more, and celebrating over a button that asks for it
+  // is two answers to one question.
+  it("does not celebrate an empty page while a longer read is on offer", () => {
     attention.q.data = { items: [], rates: RATES, items_truncated: true };
     render(<IdentitiesView />);
 
+    expect(screen.queryByText(/everything is resolved/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/only the first accounts needing review/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show more cases/i })).toBeInTheDocument();
+  });
+
+  // The rows the operator was working are still cached under the shorter read.
+  // Retrying the read that just failed would only fail again.
+  it("offers the way back to the shorter list when the longer read fails", async () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    const user = userEvent.setup();
+    const view = render(<IdentitiesView />);
+    await user.click(screen.getByRole("button", { name: /show more cases/i }));
+    expect(attention.limit).toBe(QUEUE_FIRST_PAGE * 2);
+
+    attention.q.isError = true;
+    attention.q.data = undefined;
+    view.rerender(<IdentitiesView />);
+    expect(screen.getByText(/the longer read failed/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(attention.limit).toBe(QUEUE_FIRST_PAGE);
+    expect(attention.q.refetch).not.toHaveBeenCalled();
+  });
+
+  it("offers no longer read when the whole queue is listed", () => {
+    attention.q.data = { items: [item({})], rates: RATES };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.queryByRole("button", { name: /show more cases/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Two different facts: the evidence read hit its ceiling (rates are a
+  // prefix) versus the item cap cut the list (rates still whole-tenant).
+  it("says the list was cut once the service will answer nothing longer", async () => {
+    attention.q.data = { items: [item({})], rates: RATES, items_truncated: true };
+    const user = userEvent.setup();
+    render(<IdentitiesView />);
+
+    await readToTheCeiling(user);
+
+    expect(attention.limit).toBe(QUEUE_MAX_ITEMS);
     expect(screen.getByText(/only the first accounts needing review/i)).toBeInTheDocument();
     expect(
       screen.queryByText(/cover only part of the observed accounts/i),
     ).not.toBeInTheDocument();
   });
 
-  it("does not repeat the item-cap notice when the evidence read was truncated too", () => {
+  it("does not repeat the item-cap notice when the evidence read was truncated too", async () => {
     attention.q.data = {
-      items: [],
+      items: [item({})],
       rates: RATES,
       truncated: true,
       items_truncated: true,
     };
+    const user = userEvent.setup();
     render(<IdentitiesView />);
+
+    await readToTheCeiling(user);
 
     expect(screen.getByText(/cover only part of the observed accounts/i)).toBeInTheDocument();
     expect(
@@ -248,6 +363,27 @@ describe("IdentitiesView", () => {
     expect(screen.getByText(/no address to match on/i)).toBeInTheDocument();
     // Unknown kind lands in the catch-all group rather than vanishing.
     expect(screen.getByText("q-1")).toBeInTheDocument();
+  });
+
+  // The whole queue arrives in one read, so a button between the reader and
+  // rows the client already holds buys nothing — the heading collapses the
+  // group for anyone who wants it out of the way.
+  it("lists every case of a group at once", () => {
+    attention.q.data = {
+      items: Array.from({ length: 25 }, (_, n) =>
+        item({ account_id: `a${n}`, email: `dev${n}@example.com` }),
+      ),
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(screen.getAllByRole("button", { name: /@example\.com/i })).toHaveLength(25);
+    // The group's own pager is gone. Matched by the exact copy it used, so a
+    // fixture that later trips the server's cap cannot pass this vacuously on
+    // the list-wide button.
+    expect(
+      screen.queryByRole("button", { name: /show \d+ more cases/i }),
+    ).not.toBeInTheDocument();
   });
 
   // Five rows repeating the same two candidates read as five problems. The
@@ -299,7 +435,7 @@ describe("IdentitiesView", () => {
   // The merge lives on the CASE, not on the account: the case is where the
   // people are listed, and pressing a person's row is what states the
   // direction — that one stays and the rest go into them.
-  it("offers a merge on each person of a disputed case, naming what it absorbs", () => {
+  it("offers a merge on each person of a disputed case, saying which way it goes", () => {
     const candidates = [
       { person_id: "01900000-0000-7000-8000-0000000000a0", display_name: "Ann Lee" },
       { person_id: "01900000-0000-7000-8000-0000000000b0", display_name: "Bob Park" },
@@ -311,15 +447,17 @@ describe("IdentitiesView", () => {
     render(<IdentitiesView />);
 
     expect(
-      screen.getAllByRole("button", { name: /keep this person/i }),
+      screen.getAllByRole("button", { name: /merge into this person/i }),
     ).toHaveLength(2);
-    // Two people, so the caption can name the other one rather than count them.
-    expect(screen.getByText(/Bob Park's accounts move here/i)).toBeInTheDocument();
-    expect(screen.getByText(/Ann Lee's accounts move here/i)).toBeInTheDocument();
+    // The caption states the direction under every candidate, so a reader
+    // never has to work out which way the press goes from the label alone.
+    expect(
+      screen.getAllByText(/everyone else in this case merges into them/i),
+    ).toHaveLength(2);
   });
 
   // The one place a click becomes a merge DIRECTION. Without this, swapping the
-  // survivor and the absorbed here — "Keep Ann Lee" erasing Ann — leaves every
+  // survivor and the absorbed here — "Merge into Ann Lee" erasing Ann — leaves every
   // other test in the repo green, because the dialog is only ever tested with
   // props handed to it directly.
   it("merges the rest into the person whose row was pressed", async () => {
@@ -349,13 +487,13 @@ describe("IdentitiesView", () => {
     };
     render(<IdentitiesView />);
 
-    const rows = screen.getAllByRole("button", { name: /keep this person/i });
+    const rows = screen.getAllByRole("button", { name: /merge into this person/i });
     // Ann is listed first, so her row's button is the first one.
     await userEvent.click(rows[0]);
 
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText(/keep ann lee and merge the rest/i),
+      within(dialog).getByText(/merge the rest into ann lee/i),
     ).toBeInTheDocument();
 
     await userEvent.click(
@@ -392,7 +530,7 @@ describe("IdentitiesView", () => {
     render(<IdentitiesView />);
 
     expect(
-      screen.queryByRole("button", { name: /keep this person/i }),
+      screen.queryByRole("button", { name: /merge into this person/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -485,6 +623,31 @@ describe("IdentitiesView", () => {
     ).toBeInTheDocument();
     // Its own group, not the catch-all: an unknown kind falls into "Needs
     // review", which is exactly what dropping it from KIND_ORDER would do.
+    expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
+  });
+
+  it("gives an account no source states an id for its own group", () => {
+    // It is not waiting on automation — nothing will ever bind it — so it must
+    // read as the operator's work, not fall into the catch-all.
+    attention.q.data = {
+      items: [
+        item({
+          kind: "no_source_id",
+          account_id: "sam@example.com",
+          email: "sam@example.com",
+          username: null,
+          display_name: "Sam Rivera",
+          bound_to: null,
+          candidates: [],
+        }),
+      ],
+      rates: RATES,
+    };
+    render(<IdentitiesView />);
+
+    expect(
+      screen.getByText(/the source names no account of its own/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument();
   });
 
@@ -604,27 +767,10 @@ describe("IdentitiesView", () => {
     expect(row).toHaveFocus();
   });
 
-  it("offers the next account without a trip back to the list", async () => {
-    attention.q.data = {
-      items: [
-        item({ account_id: "a1", email: "ann@example.com" }),
-        item({ account_id: "a2", email: "bob@example.com" }),
-      ],
-      rates: RATES,
-    };
-    render(<IdentitiesView />);
-
-    await userEvent.click(screen.getByRole("button", { name: /ann@example\.com/i }));
-    await userEvent.click(screen.getByRole("button", { name: /next account/i }));
-
-    expect(portalRouter.search.acct).toContain("a2");
-  });
-
-  // A decision prunes its row from the list at once. The window must hold
-  // what it knew — the case and its position — or the operator's own success
-  // kills the outcome they are reading and the Next button they are about to
-  // press.
-  it("keeps the open case and the conveyor when the decided row is pruned", async () => {
+  // A decision prunes its row from the list at once. The window must hold the
+  // row it was opened on, or the operator's own success turns the case they are
+  // reading into a stale-link apology.
+  it("keeps the open case when the decided row is pruned", async () => {
     attention.q.data = {
       items: [
         item({ account_id: "a1", email: "ann@example.com" }),
@@ -646,18 +792,22 @@ describe("IdentitiesView", () => {
     // The case still names what was decided, not a stale-link apology.
     expect(within(dialog).getByText(/ann@example\.com/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/link may be stale/i)).not.toBeInTheDocument();
-    // And the conveyor still moves: the row that shifted into this slot is next.
-    await userEvent.click(within(dialog).getByRole("button", { name: /next account/i }));
-    expect(portalRouter.search.acct).toContain("a2");
   });
 
   // Modes are ways IN to the same decisions; the mode rides in the URL so a
   // link opens the one it was sent from.
-  it("switches modes through the URL, dropping the account selected in the old one", async () => {
+  it("switches modes through the URL, dropping what was open in the old one", async () => {
     attention.q.data = { items: [item({})], rates: RATES };
-    // A selection the window cannot open (a mistyped link) leaves the value in
+    // Selections the window cannot open (mistyped links) leave the values in
     // the URL with no modal over the tabs — the state the switch must clear.
-    portalRouter.set({ zone: "manage", item: "identities", acct: "malformed" });
+    // A person is carried the same way an account is: leaving it behind would
+    // reopen a window over a list that does not contain them.
+    portalRouter.set({
+      zone: "manage",
+      item: "identities",
+      acct: "malformed",
+      person: "not-a-person",
+    });
     render(<IdentitiesView />);
 
     await userEvent.click(screen.getByRole("tab", { name: /a person and their accounts/i }));
@@ -665,6 +815,7 @@ describe("IdentitiesView", () => {
     expect(portalRouter.search.mode).toBe("person");
     // A case picked in the queue means nothing in a list it is not part of.
     expect(portalRouter.search.acct).toBeUndefined();
+    expect(portalRouter.search.person).toBeUndefined();
     // The mode it switched TO is on screen, so the cleared selection is not
     // just an empty URL over the old surface.
     expect(

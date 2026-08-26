@@ -25,6 +25,7 @@
     "parent_count": { "type": ["integer", "null"] },
     "stats_additions": { "type": ["integer", "null"] },
     "stats_deletions": { "type": ["integer", "null"] },
-    "stats_total": { "type": ["integer", "null"] }
+    "stats_total": { "type": ["integer", "null"] },
+    "is_in_default_branch": { "type": ["boolean", "null"] }
   }
 }

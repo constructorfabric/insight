@@ -14,6 +14,7 @@ pub mod validator;
 pub use definition::{
     AliasCollapse, CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation,
     MetricDefinition, MetricDirection, MetricFormat, MetricInput, ObservationSource,
+    RatioDenominatorAggregation,
 };
 pub use repository::load_definitions;
 pub(crate) use repository::load_definitions_with_ids;

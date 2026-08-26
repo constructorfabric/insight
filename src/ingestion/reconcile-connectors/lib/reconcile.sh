@@ -1159,9 +1159,15 @@ reconcile_gc_orphans() {
   sources_json="$(ab_list_sources "${workspace_id}")"
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-orphan
+  # Hand the payloads over as file descriptors, never as argv: Linux caps a
+  # single argv string at MAX_ARG_STRLEN (128 KiB) and `connections/list`
+  # carries a full syncCatalog per connection, so an inline blob fails
+  # execve with E2BIG (`Argument list too long`) once enough streams exist.
   local orphan_lines
   orphan_lines="$(python3 "${_RECONCILE_PY_DIR}/find_orphan_connections.py" \
-    "${known_names}" "${sources_json}" "${connections_json}")"
+    <(printf '%s' "${known_names}") \
+    <(printf '%s' "${sources_json}") \
+    <(printf '%s' "${connections_json}"))"
   # @cpt-end:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-conn-orphan
 
   # @cpt-begin:cpt-insightspec-algo-reconcile-gc-orphans:p2:inst-gc-src-loop

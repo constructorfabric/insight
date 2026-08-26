@@ -11,6 +11,7 @@ schemas:
       id: {type: string}
       source_id: {type: string}
       jira_id: {type: string}
+      tenant_id: {type: [string, "null"]}
       unique_key: {type: string}
       id_readable: {type: string}
       created: {type: string}

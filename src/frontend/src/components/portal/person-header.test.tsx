@@ -72,3 +72,24 @@ describe("PersonHeader", () => {
     expect(screen.getByText("Boss")).toBeInTheDocument();
   });
 });
+
+describe("PersonHeader on an organisation with no reporting lines", () => {
+  it("offers no team or peer affordance rather than one that dead-ends", () => {
+    // Flat shape: no parent to scope to and no manager nodes to resolve, so the
+    // hierarchy affordances have nothing to point at. Pinned because the org
+    // zones are how a flat organisation navigates — a button here that scoped to
+    // an empty org would read as a broken link rather than an absent one.
+    mocks.managerNodes = [];
+    mocks.person = identityPerson("solo", {
+      person_id: pid("solo"),
+      display_name: "Solo",
+      parent_person_id: null,
+    });
+
+    render(<PersonHeader person={pid("solo")} />);
+
+    expect(screen.queryByRole("button", { name: "Team" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Peers" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  });
+});

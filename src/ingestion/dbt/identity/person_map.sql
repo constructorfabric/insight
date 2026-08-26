@@ -23,7 +23,7 @@ WITH account_emails AS (
     SELECT DISTINCT
         insight_source_type                    AS source_type,
         insight_source_id                      AS source_id,
-        trimBoth(source_account_id)            AS account_id,
+        lower(trimBoth(source_account_id))     AS account_id,
         {{ normalized_email('value') }}        AS email
     FROM {{ ref('identity_inputs') }}
     WHERE value_type = 'email'

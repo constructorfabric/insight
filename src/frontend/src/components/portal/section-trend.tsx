@@ -124,7 +124,7 @@ export function SectionTrend({
   );
 
   return (
-    <Card>
+    <Card className="relative">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-semibold">{title}</CardTitle>
         {description ? (

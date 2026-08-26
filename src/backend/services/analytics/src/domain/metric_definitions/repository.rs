@@ -10,7 +10,8 @@ use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, Schem
 use crate::domain::metric_definitions::definition::{
     AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricComputation,
     MetricDefinition, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
-    ObservationRelation, ObservationSource, SourceKind, ValueTransform,
+    ObservationRelation, ObservationSource, RatioDenominatorAggregation, SourceKind,
+    ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -28,6 +29,7 @@ struct DefinitionRow {
     entity_type: String,
     computation_type: String,
     scale: Option<f64>,
+    denominator_aggregation: String,
     transform_multiplier: Option<f64>,
     transform_offset: Option<f64>,
     transform_clamp_min: Option<f64>,
@@ -224,6 +226,7 @@ async fn fetch_definition_rows(
             d.entity_type AS entity_type, \
             d.computation_type AS computation_type, \
             CAST(d.scale AS DOUBLE) AS scale, \
+            d.denominator_aggregation AS denominator_aggregation, \
             CAST(d.transform_multiplier AS DOUBLE) AS transform_multiplier, \
             CAST(d.transform_offset AS DOUBLE) AS transform_offset, \
             CAST(d.transform_clamp_min AS DOUBLE) AS transform_clamp_min, \
@@ -237,7 +240,7 @@ async fn fetch_definition_rows(
     );
 
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
-    values.push(Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec()))));
+    values.push(Value::Bytes(Some(tenant_id.as_bytes().to_vec())));
 
     DefinitionRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -279,7 +282,7 @@ async fn fetch_input_rows(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     InputRow::find_by_statement(Statement::from_sql_and_values(
@@ -445,7 +448,7 @@ pub(super) async fn fetch_dimensions(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     DimensionRow::find_by_statement(Statement::from_sql_and_values(
@@ -485,7 +488,7 @@ pub(super) async fn fetch_tags(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     TagRow::find_by_statement(Statement::from_sql_and_values(
@@ -537,10 +540,20 @@ fn build_definition(
             let scale = row.scale.ok_or_else(|| {
                 config_error(&format!("missing ratio scale for {}", row.metric_key))
             })?;
+            let denominator_aggregation = RatioDenominatorAggregation::from_db(
+                &row.denominator_aggregation,
+            )
+            .ok_or_else(|| {
+                config_error(&format!(
+                    "unknown ratio denominator aggregation for {}",
+                    row.metric_key
+                ))
+            })?;
             ComputationSpec::Ratio {
                 numerator,
                 denominator,
                 scale,
+                denominator_aggregation,
             }
         }
         MetricComputation::Median => ComputationSpec::Median {
@@ -673,7 +686,7 @@ pub async fn update_evidence_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET evidence_schema_status = ?, \
@@ -710,7 +723,7 @@ pub async fn update_source_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET schema_status = ?, \
@@ -745,7 +758,7 @@ pub async fn update_definitions_for_source_status(
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -764,7 +777,7 @@ pub async fn update_definitions_for_source_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
-            Value::Bytes(Some(Box::new(source_id.as_bytes().to_vec()))),
+            Value::Bytes(Some(source_id.as_bytes().to_vec())),
         ],
     ))
     .await?;
@@ -786,7 +799,7 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -815,7 +828,7 @@ pub async fn update_definition_status(
 }
 
 fn uuid_value(value: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(value.as_bytes().to_vec())))
+    Value::Bytes(Some(value.as_bytes().to_vec()))
 }
 
 fn unavailable(metric_key: &str) -> CanonicalError {
@@ -862,6 +875,7 @@ mod tests {
             entity_type: "person".to_owned(),
             computation_type: "sum".to_owned(),
             scale: None,
+            denominator_aggregation: "sum".to_owned(),
             transform_multiplier: None,
             transform_offset: None,
             transform_clamp_min: None,

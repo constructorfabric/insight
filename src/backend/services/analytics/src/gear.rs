@@ -92,10 +92,18 @@ impl Gear for AnalyticsApiGear {
 
         let contract_ch = ch.clone();
 
+        let anthropic = infra::anthropic::AnthropicClient::new(
+            &cfg.ai_assist.api_base,
+            std::time::Duration::from_secs(cfg.ai_assist.request_timeout_secs),
+        )?;
+        let ai_calls = Arc::new(tokio::sync::Semaphore::new(cfg.ai_assist.max_concurrent));
+
         let state = api::AppState {
             db,
             ch,
             identity,
+            anthropic,
+            ai_calls,
             config: cfg,
         };
 
@@ -199,6 +207,30 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
              APP__gears__analytics__config__clickhouse_url)"
         );
     }
+    if cfg.ai_assist.enabled {
+        if cfg.ai_assist.max_concurrent == 0 {
+            anyhow::bail!(
+                "gears.analytics.config.ai_assist.max_concurrent is 0, so no explain call \
+                 could ever run (set \
+                 APP__gears__analytics__config__ai_assist__max_concurrent to at least 1)"
+            );
+        }
+        if cfg.ai_assist.request_timeout_secs == 0 {
+            anyhow::bail!(
+                "gears.analytics.config.ai_assist.request_timeout_secs is 0, so every model \
+                 call would abort before it starts (set \
+                 APP__gears__analytics__config__ai_assist__request_timeout_secs to at least 1)"
+            );
+        }
+        cfg.ai_assist.encryption_key().map_err(|e| {
+            anyhow::anyhow!(
+                "gears.analytics.config.ai_assist is enabled but its \
+                 token_encryption_key is unusable: {e} (set \
+                 APP__gears__analytics__config__ai_assist__token_encryption_key \
+                 to base64 of 32 random bytes)"
+            )
+        })?;
+    }
     Ok(())
 }
 
@@ -227,6 +259,45 @@ mod tests {
         let c = cfg(json!({
             "database_url": "mysql://h:3306/db",
             "clickhouse_url": "http://h:8123",
+        }));
+        assert!(check_config(&c).is_ok());
+    }
+
+    #[test]
+    fn check_config_errs_when_ai_assist_is_on_without_a_usable_key() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+            "ai_assist": { "enabled": true },
+        }));
+        assert!(check_config(&c).is_err());
+    }
+
+    #[test]
+    fn check_config_errs_when_ai_assist_can_never_run_a_call() {
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        for bad in [
+            json!({ "enabled": true, "token_encryption_key": key, "max_concurrent": 0 }),
+            json!({ "enabled": true, "token_encryption_key": key, "request_timeout_secs": 0 }),
+        ] {
+            let c = cfg(json!({
+                "database_url": "mysql://h:3306/db",
+                "clickhouse_url": "http://h:8123",
+                "ai_assist": bad,
+            }));
+            assert!(
+                check_config(&c).is_err(),
+                "a zero must stop boot, not hang requests"
+            );
+        }
+    }
+
+    #[test]
+    fn check_config_ok_when_ai_assist_is_off_without_a_key() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+            "ai_assist": { "enabled": false },
         }));
         assert!(check_config(&c).is_ok());
     }

@@ -26,6 +26,7 @@ import type {
   PersonSummary,
   ResolutionRates,
 } from "@/api/identity-client";
+import { QUEUE_FIRST_PAGE, QUEUE_MAX_ITEMS } from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { AccountSearchView } from "@/components/portal/account-search-view";
@@ -58,6 +59,7 @@ import {
 } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { MODES, resolveMode } from "@/lib/portal/identity-modes";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
@@ -77,17 +79,9 @@ const KIND_ORDER = [
   "binding_conflict",
   "provisioned_at_login",
   "minted_from_roster",
+  "no_source_id",
   "no_evidence",
 ] as const;
-
-/** A click selects the case — unless it pressed a control or ended a selection. */
-function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
-  if (event.target instanceof Element && event.target.closest("button, a")) {
-    return false;
-  }
-  const selection = window.getSelection();
-  return !selection || selection.isCollapsed;
-}
 
 export function IdentitiesView() {
   const { t } = useTranslation();
@@ -108,11 +102,11 @@ export function IdentitiesView() {
       <Tabs
         className="shrink-0"
         value={active}
-        // A mode change drops the open account: a case picked in one mode
-        // means nothing in another, and carrying it would open a window the
-        // list behind it does not contain.
+        // A mode change closes whatever was open: a case or a person picked in
+        // one mode means nothing in another, and carrying either would open a
+        // window over a list that does not contain it.
         onValueChange={(next) =>
-          setSearch({ mode: String(next), acct: undefined })
+          setSearch({ mode: String(next), acct: undefined, person: undefined })
         }
       >
         <TabsList>
@@ -132,7 +126,17 @@ export function IdentitiesView() {
 
 function ReviewQueue() {
   const { t } = useTranslation();
-  const attention = useAttention();
+  // Asking for more is a longer read, not a next page: the service derives the
+  // queue from the whole tenant, so a cursor would cost the same as this and
+  // cut cases in half — the rows of one case are spread across sources.
+  const [limit, setLimit] = useState(QUEUE_FIRST_PAGE);
+  const attention = useAttention(limit);
+
+  // A longer read that fails takes its own answer down with it — the rows the
+  // operator was working are still cached under the shorter one, so the way
+  // out of the error is back to it, not another attempt at the read that just
+  // failed.
+  const askedForMore = limit > QUEUE_FIRST_PAGE;
 
   if (attention.isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
   if (attention.isError || !attention.data) {
@@ -141,8 +145,16 @@ function ReviewQueue() {
         <ComingSoon
           variant="card"
           state="error"
-          label={t("identities.queue.load_failed")}
-          onRetry={() => void attention.refetch()}
+          label={t(
+            askedForMore
+              ? "identities.queue.longer_read_failed"
+              : "identities.queue.load_failed",
+          )}
+          onRetry={() =>
+            askedForMore
+              ? setLimit(QUEUE_FIRST_PAGE)
+              : void attention.refetch()
+          }
         />
       </div>
     );
@@ -150,6 +162,10 @@ function ReviewQueue() {
 
   const { items, rates, truncated, items_truncated: itemsTruncated } =
     attention.data;
+  const loadMore =
+    itemsTruncated && limit < QUEUE_MAX_ITEMS
+      ? () => setLimit((asked) => Math.min(asked * 2, QUEUE_MAX_ITEMS))
+      : null;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6">
       {truncated ? (
@@ -159,9 +175,10 @@ function ReviewQueue() {
         </Alert>
       ) : null}
       {/* The list was cut by the server's item cap while the rates stay
-          whole-tenant — a different fact from `truncated`, and one an
-          operator working to zero has to know. */}
-      {itemsTruncated && !truncated ? (
+          whole-tenant — a different fact from `truncated`. Said only once the
+          reader can do nothing about it: while a longer read is still allowed,
+          the button at the end of the list is the answer. */}
+      {itemsTruncated && !truncated && (!loadMore || items.length === 0) ? (
         <Alert role="status">
           <TriangleAlert />
           <AlertDescription>
@@ -174,7 +191,14 @@ function ReviewQueue() {
         decisions={items.length}
         decisionsCapped={Boolean(itemsTruncated)}
       />
-      <Queue items={items} />
+      <Queue
+        items={items}
+        onLoadMore={loadMore}
+        // The LONGER read specifically, not any fetch: every decision
+        // invalidates this query, and a background refetch that greys the
+        // button out would read as "your press is working".
+        loadingMore={attention.isFetching && attention.isPlaceholderData}
+      />
     </div>
   );
 }
@@ -257,7 +281,17 @@ function AllResolved() {
   );
 }
 
-function Queue({ items }: { items: AttentionItem[] }) {
+function Queue({
+  items,
+  onLoadMore,
+  loadingMore,
+}: {
+  items: AttentionItem[];
+  /** Ask the service for a longer queue; absent when nothing more can come. */
+  onLoadMore: (() => void) | null;
+  loadingMore: boolean;
+}) {
+  const { t } = useTranslation();
   const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const listRef = useRef<HTMLDivElement>(null);
@@ -272,12 +306,6 @@ function Queue({ items }: { items: AttentionItem[] }) {
   const known = new Set<string>(KIND_ORDER);
   const other = items.filter((i) => !known.has(i.kind));
   if (other.length > 0) groups.push({ kind: "other", items: other });
-
-  // The rendered order, flattened: what "the next case" means to someone
-  // working down the queue, and it must not be re-derived differently here.
-  const ordered = groups.flatMap((group) =>
-    groupIntoCases(group.items).flatMap((c) => c.items.map(itemKey)),
-  );
 
   const select = (key: string | null) => {
     if (key) setVisited((seen) => new Set(seen).add(key));
@@ -334,7 +362,10 @@ function Queue({ items }: { items: AttentionItem[] }) {
         onKeyDown={onArrow}
         className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto"
       >
-        {items.length === 0 ? <AllResolved /> : null}
+        {/* The goal state is an empty queue with nothing left to ask for. With
+            a longer read still on offer the emptiness is this page's, not the
+            tenant's, and the notice above says so instead. */}
+        {items.length === 0 && !onLoadMore ? <AllResolved /> : null}
         {groups.map((group) => (
           <QueueGroup
             key={group.kind}
@@ -345,13 +376,29 @@ function Queue({ items }: { items: AttentionItem[] }) {
             onSelect={(key) => select(key === acct ? null : key)}
           />
         ))}
+        {/* Deliberate rather than loaded on scroll, unlike the searches: every
+            press re-derives the tenant's whole queue, and the count it would
+            add is not on the wire to promise. */}
+        {onLoadMore ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {t(
+              loadingMore
+                ? "identities.queue.loading_more"
+                : "identities.queue.load_more",
+            )}
+          </Button>
+        ) : null}
       </div>
       <ScrollToEnds scroller={listRef} rows={items.length} />
       <CaseDialog
         acct={acct}
         items={items}
-        ordered={ordered}
-        onSelect={select}
         onClose={() => {
           const opened = acct;
           setAcct(null);
@@ -361,9 +408,6 @@ function Queue({ items }: { items: AttentionItem[] }) {
     </div>
   );
 }
-
-/** Cases rendered before the group asks to be expanded further. */
-const CASE_PAGE = 10;
 
 function QueueGroup({
   kind,
@@ -379,10 +423,9 @@ function QueueGroup({
   onSelect: (key: string) => void;
 }) {
   const { t } = useTranslation();
-  const [shownCases, setShownCases] = useState(CASE_PAGE);
+  // Every case the group holds, at once: the whole queue is already on the
+  // client, and a reader who does not want this group collapses its heading.
   const cases = useMemo(() => groupIntoCases(items), [items]);
-  const visible = cases.slice(0, shownCases);
-  const hidden = cases.length - visible.length;
 
   return (
     <Card className="overflow-hidden">
@@ -417,7 +460,7 @@ function QueueGroup({
             {groupIsConfirmable(kind, items) ? (
               <ConfirmGroupButton items={items} className="self-start" />
             ) : null}
-            {visible.map((queueCase) => (
+            {cases.map((queueCase) => (
               <CaseBlock
                 key={queueCase.key}
                 queueCase={queueCase}
@@ -426,17 +469,6 @@ function QueueGroup({
                 onSelect={onSelect}
               />
             ))}
-            {hidden > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="self-start"
-                onClick={() => setShownCases((n) => n + CASE_PAGE)}
-              >
-                {t("identities.queue.show_more", { count: hidden })}
-              </Button>
-            ) : null}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -515,41 +547,29 @@ function CaseBlock({
               count: queueCase.items.length,
             })}
           </div>
-          {queueCase.candidates.map((candidate) => {
-            const others = queueCase.candidates.filter(
-              (c) => c.person_id !== candidate.person_id,
-            );
-            return (
-              <div key={candidate.person_id} className="flex items-center gap-2">
-                <PersonCell person={candidate} className="min-w-0 flex-1" />
-                {/* The row's own button, so the choice IS the direction: this
-                    person stays and the rest of the case merges into them.
-                    Keeping rather than removing is deliberate — a mis-click
-                    preserves a person instead of erasing one. */}
-                {mergeable ? (
-                  <div className="flex shrink-0 flex-col items-end gap-0.5">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      onClick={() => setSurvivor(candidate)}
-                    >
-                      {t("identities.actions.keep_person")}
-                    </Button>
-                    <span className="text-xs text-muted-foreground">
-                      {others.length === 1
-                        ? t("identities.queue.absorb_named", {
-                            name: personDisplayName(others[0]),
-                          })
-                        : t("identities.queue.absorb_count", {
-                            count: others.length,
-                          })}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+          {queueCase.candidates.map((candidate) => (
+            <div key={candidate.person_id} className="flex items-center gap-2">
+              <PersonCell person={candidate} className="min-w-0 flex-1" />
+              {/* The row's own button, so the choice IS the direction: this
+                  person is the one that survives, and the rest of the case
+                  merges into them. */}
+              {mergeable ? (
+                <div className="flex shrink-0 flex-col items-end gap-0.5">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setSurvivor(candidate)}
+                  >
+                    {t("identities.actions.merge_into_person")}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {t("identities.queue.absorb_all")}
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ))}
         </div>
       ) : null}
 
@@ -604,11 +624,10 @@ function CaseBlock({
               tabIndex={0}
               data-queue-row={key}
               onClick={(event) => {
-                if (opensTheCase(event)) onSelect(key);
+                if (activatesRow(event)) onSelect(key);
               }}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                if (event.target !== event.currentTarget) return;
+                if (!activatesRowByKey(event)) return;
                 event.preventDefault();
                 onSelect(key);
               }}

@@ -1,0 +1,24 @@
+schemas:
+  bronze_github.pull_request_reviews:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      tenant_id: {type: string}
+      source_id: {type: string}
+      unique_key: {type: string}
+      repo_full_name: {type: string}
+      id: {type: integer}
+      pull_number: {type: integer}
+      author_login: {type: string}
+      author_association: {type: string}
+      state: {type: string}
+      commit_id: {type: string}
+      submitted_at: {type: string}
+      author_id: {type: integer}
+      author_type: {type: string}
+      body: {type: string}

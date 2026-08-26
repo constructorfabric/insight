@@ -19,6 +19,7 @@ import {
   forEntity,
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
+import { breakdownHeading } from "@/lib/metrics/dimension-labels";
 import { seriesColors } from "@/lib/series-colors";
 import { evidenceSelection } from "@/api/metric-drilldown-client";
 import { TEXT_FIGURE } from "@/lib/type-scale";
@@ -72,7 +73,7 @@ export function MetricSummaryCard({
     .sort((a, b) => b.value - a.value);
   const colorsBySeed = seriesColors(rows.map((row) => row.colorSeed));
   const rowsTotal = rows.reduce((sum, row) => sum + row.value, 0) || 1;
-  const breakdownLabel = `By ${(metric.breakdown?.dimensions ?? []).join(" / ")}`;
+  const breakdownLabel = breakdownHeading(metric.breakdown?.dimensions ?? []);
 
   const displayUnit = metricDisplayUnit(metric.format, metric.unit);
 

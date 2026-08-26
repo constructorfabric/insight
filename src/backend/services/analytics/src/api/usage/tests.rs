@@ -197,6 +197,14 @@ fn a_visitor_is_named_from_the_mirrored_identity_rows() {
 }
 
 #[test]
+fn a_visitor_without_a_name_is_still_named_by_its_account_handle() {
+    let sql = people_sql();
+
+    assert!(sql.contains("'username'"), "{sql}");
+    assert!(sql.contains("AS username"), "{sql}");
+}
+
+#[test]
 fn a_malformed_day_is_refused_rather_than_queried() {
     let query = UsageRangeQuery {
         since: Some("2026-99-99".to_owned()),

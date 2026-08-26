@@ -310,3 +310,51 @@ def test_two_gaps_of_one_batch_stay_two_rows() -> None:
 def test_two_lines_of_one_invoice_get_different_keys() -> None:
     lines = [r for r in build_records([invoice()], lines_ok) if r["line_id"]]
     assert unique_key_parts(lines[0]) != unique_key_parts(lines[1])
+
+
+# An invoice the connector has already chained. Bronze holds its lines under the
+# invoice id below, and a settled invoice's lines do not move — so the two hops
+# are what a later run skips, never the row.
+ENRICHED = {"acct_1ABC,_ent1ABC": {"invoice_id": "in_1ABC", "period_start_ts": 1756684800, "period_end_ts": 1759276800}}
+
+
+def lines_never(acct: str, token: str) -> tuple[str, Sequence[Mapping[str, Any]]]:
+    raise AssertionError("the chain ran for an invoice that was already enriched")
+
+
+def test_an_already_enriched_invoice_is_not_chained_again() -> None:
+    rows = list(build_records([invoice()], lines_never, enriched=ENRICHED))
+    assert [r["chain_status"] for r in rows] == ["ok"]
+    assert rows[0]["invoice_id"] == "in_1ABC"
+
+
+def test_it_carries_the_period_the_chain_found_because_the_listing_has_none() -> None:
+    """The period comes from the lines, so skipping the hops would lose it — and a
+    row without it would replace a good row with a worse one."""
+    row = next(iter(build_records([invoice()], lines_never, enriched=ENRICHED)))
+    assert (row["period_start_ts"], row["period_end_ts"]) == (1756684800, 1759276800)
+
+
+def test_the_wrappers_money_is_read_again_rather_than_remembered() -> None:
+    """Only the two hops are skipped. A total the vendor restates still lands."""
+    row = next(iter(build_records([invoice(total=9900, total_excluding_tax=9000)], lines_never, enriched=ENRICHED)))
+    assert (row["invoice_total"], row["invoice_total_excluding_tax"]) == (9900, 9000)
+
+
+def test_an_enriched_invoice_repeats_the_key_it_already_has() -> None:
+    """Same identity, so the row replaces its own rather than standing beside it."""
+    chained = next(iter(build_records([invoice()], lines_ok)))
+    skipped = next(iter(build_records([invoice()], lines_never, enriched=ENRICHED)))
+    assert unique_key_parts(chained) == unique_key_parts(skipped)
+
+
+def test_an_invoice_absent_from_the_map_still_chains() -> None:
+    other = {"acct_1ABC,_someone_else": {"invoice_id": "in_OTHER"}}
+    rows = list(build_records([invoice()], lines_ok, enriched=other))
+    assert [r["chain_status"] for r in rows] == ["ok", "ok", "ok"], "its own row plus one per line"
+
+
+def test_no_map_at_all_chains_everything() -> None:
+    """The first sync after a deploy carries no state and behaves as before."""
+    rows = list(build_records([invoice()], lines_ok, enriched={}))
+    assert len([r for r in rows if r["line_id"]]) == 2

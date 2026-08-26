@@ -11,10 +11,13 @@
     tags=['identity', 'identity:map']
 ) }}
 
+-- INVARIANT: account_id is lower(trimBoth(...)) BEFORE the LIMIT 1 BY, so one
+-- account observed under two casings has exactly one winning binding — the
+-- fact side lowercases too, and two winners would duplicate every joined row.
 SELECT
     insight_source_type                  AS source_type,
     insight_source_id                    AS source_id,
-    trimBoth(value_effective)            AS account_id,
+    lower(trimBoth(value_effective))     AS account_id,
     person_id,
     created_at
 FROM identity.identity_persons

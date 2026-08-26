@@ -4,6 +4,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { PANE_ITEM_COMING_SOON } from "@/lib/portal/aicost-configs";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -121,7 +122,7 @@ export function AiCostView({ item }: { item: string | null }) {
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster],
   );
@@ -372,14 +373,16 @@ export function AiCostView({ item }: { item: string | null }) {
           sub="org total"
         />
         <Tile
-          label="Avg cost / active user"
+          label="Avg potential cost / active user"
           value={formatMetricValue(
             avgCost,
             costR?.format ?? "currency",
             costR?.unit ?? null,
           )}
           note={
-            hasActual ? `actual ${actualMoney(avgActual)} / active user` : null
+            hasActual
+              ? `avg actual ${actualMoney(avgActual)} / active user`
+              : null
           }
           sub="Claude Code"
         />

@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: class_git_item_events
-    description: "Unified issue and pull-request lifecycle events from all sources (GitHub today)"
+    description: "Unified pull-request lifecycle events from all sources (GitHub today). Issue events belong to the task class."
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -14,10 +14,10 @@ models:
           - not_null
           - unique
       - name: item_type
-        description: "Which kind of item the event belongs to"
+        description: "Which kind of item the event belongs to. Pull requests only: an issue's history is a task tracker's, and reaches class_task_field_history instead — this value is the guard that says so."
         tests:
           - accepted_values:
-              values: ['issue', 'pull_request']
+              values: ['pull_request']
       - name: actor_name
         description: "The actor's login; GitHub's Actor exposes no stable id, so no uuid column is claimed"
       - name: delta_action
@@ -64,6 +64,21 @@ models:
         tests:
           - not_null
           - unique
+      - name: is_default_branch
+        description: >
+          Whether the commit is reachable from the repository's default branch:
+          1 yes, 0 no, NULL the source does not report it. Reachability is as of
+          the sync that saw the commit, so a commit merged into the default
+          branch after the connector's lookback window keeps 0.
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: patch_id
+        description: >
+          Content identity of the commit's diff: a rebase copy or a cherry-pick
+          carries a new hash but the same patch id. NULL for a source that does
+          not report it and for rows collected before the source did.
 
   - name: class_git_file_changes
     description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"
@@ -77,6 +92,16 @@ models:
         tests:
           - not_null
           - unique
+      - name: pre_image_oid
+        description: >
+          Object id of the content this change replaced, NULL for an added path
+          and for a source that reports no object id.
+      - name: post_image_oid
+        description: >
+          Object id of the content this change produced, NULL for a deleted path
+          and for a source that reports no object id. With pre_image_oid it is
+          the content identity of the change: the same content entering a
+          repository on two lines of history carries one post_image_oid.
 
   - name: class_git_pull_requests
     description: "Unified git pull requests from all sources (GitHub, Bitbucket, GitLab)"
@@ -90,6 +115,13 @@ models:
         tests:
           - not_null
           - unique
+      - name: author_account_id
+        description: >
+          The author's source account id in the form the connector's identity
+          inputs bind on (GitHub: numeric id as text; Bitbucket: account_id
+          lowercased). '' when the source exposes none — a deleted or suspended
+          author, or a connector without identity inputs — in which case person
+          attribution falls back to author_email.
 
   - name: class_git_pull_requests_reviewers
     description: "Unified git pull request reviewers from all sources (GitHub, Bitbucket, GitLab)"

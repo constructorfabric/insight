@@ -130,6 +130,10 @@ pub struct ResolveOutcome {
     pub minted: usize,
     pub skipped_closed: usize,
     pub skipped_no_email: usize,
+    /// Accounts left unbound because no connector states an id for them. Minting
+    /// a person here would create one no account can ever belong to; the review
+    /// queue surfaces the account instead.
+    pub skipped_no_source_id: usize,
     /// Email groups whose accounts are bound to *more than one* person with no
     /// operator-authored binding explaining it. Each account keeps its own
     /// binding (never collapsed); the group is counted + logged for review.
@@ -296,19 +300,31 @@ pub fn resolve_assignments(
             continue;
         }
 
-        // 3/4. No binding, no email match — mint only if at least one profile is
-        //      active; a wholly-closed group creates no person.
-        if group.profiles.iter().any(|p| !p.is_closed) {
-            out.minted += group.profiles.len();
-            let person_id = mint();
-            out.assignments.push(PersonAssignment {
-                person_id,
-                kind: AssignmentKind::Minted,
-                profiles: group.profiles,
-            });
-        } else {
+        // 3/4. No binding and no email match. A wholly-closed group creates no
+        //      person — tested first, because a closed account never reaches the
+        //      review queue and counting it as unbindable would promise operator
+        //      work that never appears there.
+        if !group.profiles.iter().any(|p| !p.is_closed) {
             out.skipped_closed += group.profiles.len();
+            continue;
         }
+
+        //      Mint only if some account here states an id the seed can bind.
+        //      Without one the person would be a bag of observations no account
+        //      belongs to, and no later run could fix that: the queue surfaces
+        //      the account for an operator instead.
+        if !group.profiles.iter().any(states_a_bindable_id) {
+            out.skipped_no_source_id += group.profiles.len();
+            continue;
+        }
+
+        out.minted += group.profiles.len();
+        let person_id = mint();
+        out.assignments.push(PersonAssignment {
+            person_id,
+            kind: AssignmentKind::Minted,
+            profiles: group.profiles,
+        });
     }
 
     out
@@ -626,6 +642,9 @@ mod tests {
         resolve_assignments(groups, known, email_to_person, None, mint)
     }
 
+    /// A profile as a connector describes one: it states its own account id,
+    /// which is what becomes the binding row. Use [`claim_only`] for an account
+    /// whose connector states none.
     fn prof(source_type: &str, account_id: &str, email: Option<&str>, closed: bool) -> SeedProfile {
         SeedProfile {
             account: SourceAccountKey {
@@ -635,8 +654,30 @@ mod tests {
             },
             latest_email: email.map(str::to_owned),
             is_closed: closed,
-            observations: Vec::new(),
+            observations: vec![input(
+                source_type,
+                account_id,
+                BINDING_VALUE_TYPE,
+                account_id,
+                false,
+                epoch(),
+            )],
         }
+    }
+
+    /// An account a connector only makes claims ABOUT — an address, a name —
+    /// without stating an account id: the shape with no route to a binding.
+    fn claim_only(source_type: &str, account_id: &str, email: &str) -> SeedProfile {
+        let mut profile = prof(source_type, account_id, Some(email), false);
+        profile.observations = vec![input(
+            source_type,
+            account_id,
+            "email",
+            email,
+            false,
+            epoch(),
+        )];
+        profile
     }
 
     /// A minting factory yielding Uuid(1), Uuid(2), … deterministically.
@@ -1130,8 +1171,10 @@ mod tests {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         // Anna across two sources sharing an email; empty persons → mint once.
         let profiles = build_profiles(vec![
+            input("bamboohr", "5001", "id", "5001", false, t),
             input("bamboohr", "5001", "email", "anna@corp.com", false, t),
             input("bamboohr", "5001", "display_name", "Anna P", false, t),
+            input("slack", "U777", "id", "U777", false, t),
             input("slack", "U777", "email", "anna@corp.com", false, t),
         ]);
         let out = resolve_without_roster(
@@ -1161,17 +1204,9 @@ mod tests {
 
     /// An addressless profile whose source states the account's own id — what a
     /// roster emits, and the shape roster minting requires.
+    /// An addressless roster profile: it states its id and nothing else.
     fn rostered(source_type: &str, account_id: &str, closed: bool) -> SeedProfile {
-        let mut profile = prof(source_type, account_id, None, closed);
-        profile.observations = vec![input(
-            source_type,
-            account_id,
-            BINDING_VALUE_TYPE,
-            account_id,
-            false,
-            epoch(),
-        )];
-        profile
+        prof(source_type, account_id, None, closed)
     }
 
     #[test]
@@ -1266,6 +1301,71 @@ mod tests {
         assert_eq!(out.minted_from_roster, 0);
         assert_eq!(out.skipped_closed, 1);
         assert!(out.assignments.is_empty());
+    }
+
+    #[test]
+    fn an_account_that_states_no_id_is_not_minted_on_the_address_path_either() {
+        // The same rule as the roster path below, on the address-matched branch.
+        // An account whose connector states no id has no route to a binding, so
+        // a person minted here is one no account can ever belong to: invisible
+        // to every later run, and left for an operator to repair. The review
+        // queue surfaces the account instead.
+        let out = resolve_without_roster(
+            group_by_email(vec![claim_only(
+                "github-commit-email",
+                "sam@corp.com",
+                "sam@corp.com",
+            )]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.minted, 0, "no person for an account nothing can bind");
+        assert_eq!(out.skipped_no_source_id, 1);
+        assert!(out.assignments.is_empty());
+    }
+
+    #[test]
+    fn a_closed_id_less_group_is_counted_closed_not_unbindable() {
+        // Closed accounts never reach the review queue, so counting one as
+        // unbindable would promise operator work that never shows up there.
+        let mut gone = claim_only("github-commit-email", "gone@corp.com", "gone@corp.com");
+        gone.is_closed = true;
+
+        let out = resolve_without_roster(
+            group_by_email(vec![gone]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.skipped_closed, 1);
+        assert_eq!(
+            out.skipped_no_source_id, 0,
+            "closure is the reason, not the id"
+        );
+        assert_eq!(out.minted, 0);
+    }
+
+    #[test]
+    fn a_group_still_mints_when_any_of_its_accounts_states_an_id() {
+        // The person is anchored by the account that CAN be bound; the
+        // claim-only account rides along on the shared address rather than
+        // holding the group back.
+        let out = resolve_without_roster(
+            group_by_email(vec![
+                prof("bamboohr", "1", Some("anna@corp.com"), false),
+                claim_only("github-commit-email", "anna@corp.com", "anna@corp.com"),
+            ]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.minted, 2, "both accounts join the minted person");
+        assert_eq!(out.skipped_no_source_id, 0);
+        assert_eq!(out.assignments.len(), 1, "one person for the address");
     }
 
     #[test]

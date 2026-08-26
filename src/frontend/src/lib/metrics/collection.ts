@@ -6,7 +6,6 @@ import type {
   MetricComputation,
   MetricDirection,
   MetricDimensionFilter,
-  MetricEntityType,
   MetricFormat,
   MetricGroupLimit,
   MetricResult,
@@ -75,12 +74,23 @@ export function filterCollectionToAvailable(
   available: ReadonlySet<string> | null,
 ): MetricCollectionConfig {
   if (!available) return collection;
-  const kept = collection.metrics.filter((m) => available.has(m.key));
+  return filterCollectionByKey(collection, (key) => available.has(key));
+}
+
+/**
+ * Drop every metric the predicate rejects, keeping the config object identical
+ * when nothing is dropped so query keys stay stable.
+ */
+export function filterCollectionByKey(
+  collection: MetricCollectionConfig,
+  keep: (metricKey: string) => boolean,
+): MetricCollectionConfig {
+  const kept = collection.metrics.filter((m) => keep(m.key));
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
 export interface MetricCollectionEntity {
-  type: MetricEntityType;
+  type: "person";
   ids: string[];
 }
 

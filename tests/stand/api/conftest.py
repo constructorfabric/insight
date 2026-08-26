@@ -67,8 +67,9 @@ def api(lead_session: PersonaSession) -> ApiClient:
     """An authenticated client, for cases that are not about who is calling.
 
     A lead rather than an admin on purpose: every analytics operation but
-    `/v1/usage/summary` is open to any authenticated caller, so an ordinary
-    persona is what those endpoints actually face. The usage summary takes
+    `/v1/usage/summary`, and every saved query but one reading an admin-only
+    database, is open to any authenticated caller — so an ordinary persona is
+    what those endpoints actually face. The usage summary takes
     `admin_operator_session` directly, and uses this client for its refusal case.
     """
     return lead_session.client

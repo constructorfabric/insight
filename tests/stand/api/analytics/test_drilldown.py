@@ -64,6 +64,8 @@ from ..schemas import (
 from ..schemas.analytics import (
     MetricDrilldownCapability,
     MetricDrilldownColumnType,
+    MetricDrilldownEntity,
+    MetricDrilldownEntity1,
     MetricDrilldownResponse,
 )
 from . import query_window
@@ -83,6 +85,9 @@ _PAGE_LIMIT = 250
 #: row, so a metric that exceeds this budget is reported as unreconciled rather
 #: than reconciled against a prefix.
 _PAGE_BUDGET = 40
+
+#: At limit=1 the walk costs one round trip per evidence row, so this stays small.
+_SINGLE_ROW_PAGE_BUDGET = 4
 
 #: Aggregation order differs between the service (vectorized `sumIf` over
 #: `Float64`) and this suite (row-ordered `sum`), and that is the only error
@@ -476,10 +481,16 @@ def _close(actual: float, expected: float) -> bool:
     return math.isclose(actual, expected, rel_tol=_REL_TOL, abs_tol=_ABS_TOL)
 
 
+def _person_entity_id(entity: MetricDrilldownEntity) -> str:
+    person = entity.root
+    assert isinstance(person, MetricDrilldownEntity1), f"expected person entity, got {person.type}"
+    return person.id
+
+
 def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None:
     selection = walk.first.selection
     assert selection.metric_key == expectation.metric_key
-    assert selection.entity.id == person_id
+    assert _person_entity_id(selection.entity) == person_id
     assert selection.filters == []
     assert selection.display_dimensions == []
 
@@ -884,14 +895,14 @@ def test_git_commit_drilldown_pages_and_reconciles(
         api,
         stand_manifest,
         GIT_COMMITS,
-        limit=1,
+        limit=_PAGE_LIMIT,
         filters=[{"dimension": "source", "values": ["github"]}],
         display_dimensions=["repository"],
     )
     person_id = stand_manifest.fixture("dev_lead").uuid
 
     assert walk.first.selection.metric_key == GIT_COMMITS
-    assert walk.first.selection.entity.id == person_id
+    assert _person_entity_id(walk.first.selection.entity) == person_id
     assert walk.first.selection.display_dimensions == ["repository"]
     assert [(item.dimension, item.values) for item in walk.first.selection.filters] == [
         ("source", ["github"])
@@ -911,12 +922,48 @@ def test_git_commit_drilldown_pages_and_reconciles(
 
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.reliability
+def test_git_commit_drilldown_pages_a_row_at_a_time(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """Consecutive one-row pages neither repeat nor skip a row.
+
+    Compared against the prefix of the bulk walk: `_walk` on its own catches a
+    repeated cursor, never a dropped or duplicated row.
+    """
+    filters: Sequence[JsonValue] = [{"dimension": "source", "values": ["github"]}]
+    single = _walk(
+        api,
+        stand_manifest,
+        GIT_COMMITS,
+        limit=1,
+        filters=filters,
+        display_dimensions=["repository"],
+        page_budget=_SINGLE_ROW_PAGE_BUDGET,
+    )
+    bulk = _walk(
+        api,
+        stand_manifest,
+        GIT_COMMITS,
+        limit=_PAGE_LIMIT,
+        filters=filters,
+        display_dimensions=["repository"],
+    )
+
+    assert len(single.rows) == _SINGLE_ROW_PAGE_BUDGET, (
+        "the seeded evidence set is shorter than the budget, so this walk never "
+        "paginated and proves nothing about the cursor"
+    )
+    assert single.rows == bulk.rows[:_SINGLE_ROW_PAGE_BUDGET]
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
 def test_git_commit_drilldown_exports_all_rows(api: ApiClient, stand_manifest: Manifest) -> None:
     walk = _walk(
         api,
         stand_manifest,
         GIT_COMMITS,
-        limit=1,
+        limit=_PAGE_LIMIT,
         filters=[{"dimension": "source", "values": ["github"]}],
         display_dimensions=["repository"],
     )

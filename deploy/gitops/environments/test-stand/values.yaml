@@ -699,10 +699,9 @@ identityResolution:
   # matters is the one seed-stand.sh forces right after each seed.
   seed:
     enabled: true
-    schedule: "30 6 * * *" # chart default; the CI seed forces a run, not the cron
-    # Trimmed from the chart's 100m/128Mi request: these are transient Jobs
-    # and two of them fire within fifteen minutes of each other. Limits stay
-    # at the chart's ceiling so a real run can burst.
+    schedule: "*/15 * * * *" # chart default; the CI seed forces a run, not the cron
+    # Trimmed from the chart's 100m/128Mi request: these are transient Jobs.
+    # Limits stay at the chart's ceiling so a real run can burst.
     resources:
       requests: {cpu: 50m, memory: 128Mi}
       limits: {cpu: 500m, memory: 512Mi}
@@ -712,22 +711,13 @@ identityResolution:
       # the same UUID that can drift; the key exists for standalone installs
       # whose Secret does not carry one.
 
-  # Publishes that MariaDB persons log into ClickHouse, where the metrics
-  # models resolve email -> person_id against it. Deliberately 15 minutes
-  # after the seed: the seed rewrites the log, the sync publishes it. Each
-  # run is a full snapshot plus an atomic swap, so the ordering is a
-  # freshness concern, never a correctness one.
-  sync:
-    enabled: true
-    schedule: "45 6 * * *" # chart default; 15 min after seed
-    resources:
-      requests: {cpu: 50m, memory: 128Mi}
-      limits: {cpu: 500m, memory: 512Mi}
-
-  # Both Jobs guard their input and exit non-zero rather than publishing an
-  # empty projection: seed aborts on an empty observation read or a tenant
-  # mismatch, sync on an empty persons log. A failing Job is the guard working,
-  # not a broken install. seed-stand.sh forces both after each seed; run one by
-  # hand with:
+  # The seed publishes the refreshed persons log into ClickHouse as its own
+  # final step (full snapshot plus an atomic swap), so no separate sync
+  # schedule exists.
+  #
+  # The Job guards its input rather than publishing an empty projection: it
+  # refuses an empty observation read or a tenant mismatch. The scheduled runs
+  # tolerate a refusal (exit 0 + journal row) so the backstop stays green on
+  # healthy stands; read refusals over GET /v1/persons-seed?status=failed.
+  # seed-stand.sh forces one after each seed; run one by hand with:
   #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-seed seed-manual
-  #   kubectl -n insight create job --from=cronjob/insight-identity-resolution-sync sync-manual

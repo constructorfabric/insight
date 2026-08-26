@@ -9,6 +9,7 @@ import {
   formatUtcClock,
   formatUtcInstant,
   metricDisplayUnit,
+  roundMetricValue,
 } from "@/lib/format";
 
 describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
@@ -20,6 +21,11 @@ describe("formatMetricNumber / formatMetricValue / metricDisplayUnit", () => {
   it("rounds decimal format to one decimal and integers to whole", () => {
     expect(formatMetricNumber(1.24, "decimal")).toBe("1.2");
     expect(formatMetricNumber(1234.6, "integer")).toBe("1,235");
+  });
+
+  it("rounds numeric values with the metric's display precision", () => {
+    expect(roundMetricValue(1.24, "decimal")).toBe(1.2);
+    expect(roundMetricValue(1234.6, "integer")).toBe(1235);
   });
 
   it("suffixes percent and unit forms", () => {
@@ -83,4 +89,3 @@ describe("small formatters", () => {
     expect(formatUtcAge("2026-08-01T10:15:00Z", now)).toBe("7 days ago");
   });
 });
-

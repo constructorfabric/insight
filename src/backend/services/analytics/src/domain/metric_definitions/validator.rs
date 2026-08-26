@@ -255,10 +255,24 @@ impl MetricDefinitionValidator {
         }
 
         match self.has_columns(PERSON_MAP_TABLE, PERSON_MAP_COLUMNS).await {
+            Ok(ColumnCheck::Present) => {}
+            Ok(missing) => {
+                return ProbeOutcome::Definitive(ValidationState::Error(missing.error_code()));
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "identity map validation failed");
+                return ProbeOutcome::Inconclusive;
+            }
+        }
+
+        match self
+            .has_columns(ACCOUNT_ASSIGNMENT_TABLE, ACCOUNT_ASSIGNMENT_COLUMNS)
+            .await
+        {
             Ok(ColumnCheck::Present) => ProbeOutcome::Definitive(ValidationState::Ok),
             Ok(missing) => ProbeOutcome::Definitive(ValidationState::Error(missing.error_code())),
             Err(error) => {
-                tracing::warn!(error = %error, "identity map validation failed");
+                tracing::warn!(error = %error, "identity account map validation failed");
                 ProbeOutcome::Inconclusive
             }
         }
@@ -606,6 +620,9 @@ const OBSERVATION_COLUMNS: &[&str] = &[
     "source_key",
     "entity_type",
     "entity_id",
+    "account_source_type",
+    "account_source_id",
+    "account_id",
     "metric_date",
     "observed_at",
     "measure_key",
@@ -619,6 +636,9 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
     ("source_key", "String"),
     ("entity_type", "String"),
     ("entity_id", "String"),
+    ("account_source_type", "String"),
+    ("account_source_id", "Nullable(String)"),
+    ("account_id", "String"),
     ("metric_date", "Date"),
     ("observed_at", "Nullable(DateTime64(3))"),
     ("measure_key", "String"),
@@ -640,6 +660,12 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
 const PERSON_MAP_TABLE: (&str, &str) = ("identity", "person_map");
 
 const PERSON_MAP_COLUMNS: &[&str] = &["email", "person_id"];
+
+/// The live account → person binding consulted before the email map.
+const ACCOUNT_ASSIGNMENT_TABLE: (&str, &str) = ("identity", "account_assignment");
+
+const ACCOUNT_ASSIGNMENT_COLUMNS: &[&str] =
+    &["source_type", "source_id", "account_id", "person_id"];
 
 const COHORT_COLUMNS: &[&str] = &[
     "tenant_id",
@@ -1245,7 +1271,7 @@ mod tests {
     #[tokio::test]
     async fn custom_observation_sql_sources_are_never_probed() {
         let validator = MetricDefinitionValidator::new(
-            sea_orm::DatabaseConnection::Disconnected,
+            sea_orm::DatabaseConnection::default(),
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                 "http://unused",
                 "silver",
@@ -1277,7 +1303,7 @@ mod tests {
         }]));
 
         let validator = MetricDefinitionValidator::new(
-            sea_orm::DatabaseConnection::Disconnected,
+            sea_orm::DatabaseConnection::default(),
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(mock.url(), "silver")),
         );
         let evidence = EvidenceRelation::parse("git_metric_evidence")

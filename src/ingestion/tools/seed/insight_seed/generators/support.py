@@ -14,15 +14,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..profiles import TEAM_PROFILES, Person
-from .base import (
-    bulk_insert,
-    days_window,
-    persona_multiplier,
-    poisson,
-    seeded_rng,
-    truncate,
-    weekday_multiplier,
-)
+from .base import days_window, persona_multiplier, poisson, seeded_rng, weekday_multiplier
+from .insert import bulk_insert, truncate
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client

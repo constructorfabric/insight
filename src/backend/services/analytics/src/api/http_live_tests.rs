@@ -69,12 +69,28 @@ fn dead_ch() -> insight_clickhouse::Client {
     ))
 }
 
+/// An Anthropic client no test reaches: the AI routes under test refuse before
+/// any upstream call.
+fn dead_anthropic() -> crate::infra::anthropic::AnthropicClient {
+    #[expect(
+        clippy::expect_used,
+        reason = "a client with no proxy config cannot fail to build"
+    )]
+    crate::infra::anthropic::AnthropicClient::new(
+        "http://127.0.0.1:1",
+        std::time::Duration::from_secs(1),
+    )
+    .expect("client builds")
+}
+
 /// Build a full `AppState` against the live DB.
 fn build_state(db: DatabaseConnection, identity: IdentityClient) -> AppState {
     AppState {
         db,
         ch: dead_ch(),
         identity,
+        anthropic: dead_anthropic(),
+        ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
         config: GearConfig::default(),
     }
 }
@@ -769,6 +785,8 @@ fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router
         db,
         ch: dead_ch(),
         identity,
+        anthropic: dead_anthropic(),
+        ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
     });
     let api = super::build_operations(Router::new(), &openapi)

@@ -395,7 +395,7 @@ print(json.dumps({
 # only flips an existing version pointer; for content updates Airbyte 1.7+
 # routes everything through declarative_source_definitions/create_manifest.
 # Caller passes the source_definition_id (NOT the builder_project_id);
-# function reads current activeDeclarativeManifestVersion to compute the
+# function reads the highest existing manifest version to compute the
 # next integer.
 # ---------------------------------------------------------------------------
 ab_builder_update_active_manifest() {
@@ -410,20 +410,29 @@ ab_builder_update_active_manifest() {
   local manifest_json
   manifest_json="$(python3 "${_AIRBYTE_PY_DIR}/load_connector_manifest.py" "${manifest_path}")" || return 1
 
-  # Look up current active version → next = current + 1.
-  local current_version
-  current_version="$(ab__curl POST /api/v1/connector_builder_projects/list \
-        "$(printf '{"workspaceId":"%s"}' "${workspace_id}")" \
+  # Next version must clear EVERY existing manifest, not just the active one.
+  # A published-but-not-activated manifest (rollback, or an activation that
+  # failed after the create) leaves versions above
+  # activeDeclarativeManifestVersion, and create_manifest answers 409 on a
+  # duplicate version — permanently, because the active pointer never
+  # advances on its own.
+  # Callers wrap this function in `if ! ...`, which disables errexit for the
+  # whole call, so a failed lookup must be caught here: an empty max_version
+  # arithmetic-expands to 0 and would ask for version 1, turning any lookup
+  # failure into a misleading 409 on an existing definition.
+  local max_version
+  max_version="$(ab__curl POST /api/v1/declarative_source_definitions/list_manifests \
+        "$(printf '{"workspaceId":"%s","sourceDefinitionId":"%s"}' \
+             "${workspace_id}" "${source_definition_id}")" \
       | python3 -c '
 import sys, json
-target = sys.argv[1]
-for p in json.load(sys.stdin).get("projects", []):
-    if p.get("sourceDefinitionId") == target:
-        print(int(p.get("activeDeclarativeManifestVersion") or 0)); break
-else:
-    print(0)
-' "${source_definition_id}")"
-  local next_version=$((current_version + 1))
+versions = [
+    int(v.get("version") or 0)
+    for v in json.load(sys.stdin).get("manifestVersions", [])
+]
+print(max(versions) if versions else 0)
+')" || return 1
+  local next_version=$((max_version + 1))
 
   local body
   # The manifest arrives on stdin, not as an argument — see the note on

@@ -7,6 +7,11 @@ import {
   planRequests,
 } from "@/lib/reports/batching";
 import { unavailableReason } from "@/lib/reports/availability";
+import {
+  clampGranularity,
+  granularityFitsPeriod,
+  periodTooShortReason,
+} from "@/lib/reports/granularity-for-period";
 import { byFamily } from "@/lib/reports/families";
 import { buildReportTable } from "@/lib/reports/report-table";
 import {
@@ -19,7 +24,7 @@ import {
 import {
   collectReportPeople,
   type ReportPerson,
-} from "@/lib/reports/roster-columns";
+} from "@/lib/identities/report-person";
 import type { MetricResult } from "@/api/metric-results-client";
 
 const months = (...pairs: Array<[string, number | null]>) =>
@@ -232,6 +237,111 @@ describe("buildReportTable", () => {
     ]);
   });
 
+  it("reads a weekly value into the week the server bucketed it by", () => {
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map([
+        [
+          "git.commits",
+          seriesResult("git.commits", "p1", [
+            ["2026-07-20", 3],
+            ["2026-07-27", 2],
+            ["2026-08-03", 1],
+            ["2026-08-10", 4],
+            ["2026-08-17", 2],
+          ]),
+        ],
+      ]),
+      range: { from: "2026-07-24", to: "2026-08-23" },
+      granularity: "week",
+    });
+
+    expect(table.rows.map((row) => row.slice(-4))).toEqual([
+      ["2026-07-20", "2026-07-24", "2026-07-26", 3],
+      ["2026-07-27", "2026-07-27", "2026-08-02", 2],
+      ["2026-08-03", "2026-08-03", "2026-08-09", 1],
+      ["2026-08-10", "2026-08-10", "2026-08-16", 4],
+      ["2026-08-17", "2026-08-17", "2026-08-23", 2],
+    ]);
+  });
+
+  it("omits person columns absent from the selected roster", () => {
+    const table = buildReportTable({
+      people: [
+        person({
+          email: "",
+          division: "",
+          department: "",
+          jobTitle: "Engineer",
+          managerName: "",
+          managerEmail: "",
+          status: "",
+        }),
+      ],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map(),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.columns).toEqual([
+      "Person",
+      "Job title",
+      "Period",
+      "From",
+      "To",
+      "Commits",
+    ]);
+    expect(table.rows[0]).toEqual([
+      "Jane Doe",
+      "Engineer",
+      "2026-01",
+      "2026-01-01",
+      "2026-01-31",
+      null,
+    ]);
+  });
+
+  it("rounds metric cells with the metric's declared format", () => {
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.cycle_time", label: "Cycle time" }],
+      results: new Map([
+        [
+          "git.cycle_time",
+          {
+            metric_key: "git.cycle_time",
+            label: "Cycle time",
+            format: "decimal",
+            views: [
+              {
+                view: "timeseries",
+                bucket: "month",
+                series: [
+                  {
+                    entity_id: "p1",
+                    dimensions: [],
+                    points: [
+                      {
+                        bucket_start: "2026-01-01",
+                        value: 1082.1594444444445,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          } as unknown as MetricResult,
+        ],
+      ]),
+      range: { from: "2026-01-01", to: "2026-01-31" },
+      granularity: "month",
+    });
+
+    expect(table.rows[0]?.at(-1)).toBe(1082.2);
+  });
+
   it("leaves a cell empty where the metric said nothing", () => {
     const table = buildReportTable({
       people: [person()],
@@ -332,6 +442,12 @@ describe("bucketSpan", () => {
       from: "2026-06-01",
       to: "2026-06-01",
     });
+  });
+
+  it("clips a week that opened before the period", () => {
+    expect(
+      bucketSpan("2026-07-20", "week", { from: "2026-07-24", to: "2026-08-23" }),
+    ).toEqual({ from: "2026-07-24", to: "2026-07-26" });
   });
 });
 
@@ -457,6 +573,51 @@ describe("bucketsInRange", () => {
     ]);
   });
 
+  it("starts every week on the Monday the server bucketed it by", () => {
+    expect(bucketsInRange("2026-07-24", "2026-08-23", "week")).toEqual([
+      "2026-07-20",
+      "2026-07-27",
+      "2026-08-03",
+      "2026-08-10",
+      "2026-08-17",
+    ]);
+  });
+
+  it("takes the week containing the last day, and no week beyond it", () => {
+    expect(bucketsInRange("2026-08-16", "2026-08-16", "week")).toEqual([
+      "2026-08-10",
+    ]);
+    expect(bucketsInRange("2026-08-16", "2026-08-17", "week")).toEqual([
+      "2026-08-10",
+      "2026-08-17",
+    ]);
+  });
+
+  it("keys a week the same way whatever weekday the period starts on", () => {
+    for (const from of [
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-08",
+      "2026-08-09",
+    ]) {
+      expect(bucketsInRange(from, "2026-08-23", "week"), from).toEqual([
+        "2026-08-03",
+        "2026-08-10",
+        "2026-08-17",
+      ]);
+    }
+  });
+
+  it("keys a week that crosses a year boundary to its own Monday", () => {
+    expect(bucketsInRange("2026-12-30", "2027-01-10", "week")).toEqual([
+      "2026-12-28",
+      "2027-01-04",
+    ]);
+  });
+
   it("gives every month of a year its own bucket", () => {
     expect(bucketsInRange("2026-01-01", "2026-12-31", "year")).toEqual(["2026"]);
     expect(bucketsInRange("2026-01-01", "2026-03-31", "month")).toEqual([
@@ -464,5 +625,57 @@ describe("bucketsInRange", () => {
       "2026-02",
       "2026-03",
     ]);
+  });
+});
+
+describe("granularityFitsPeriod", () => {
+  const week = { from: "2026-08-17", to: "2026-08-23" };
+  const month = { from: "2026-07-24", to: "2026-08-23" };
+  const quarter = { from: "2026-05-24", to: "2026-08-23" };
+  const year = { from: "2025-08-24", to: "2026-08-23" };
+
+  it("offers a week the grains a week can be split into", () => {
+    expect(granularityFitsPeriod("day", week)).toBe(true);
+    expect(granularityFitsPeriod("week", week)).toBe(true);
+    expect(granularityFitsPeriod("month", week)).toBe(false);
+    expect(granularityFitsPeriod("quarter", week)).toBe(false);
+    expect(granularityFitsPeriod("year", week)).toBe(false);
+  });
+
+  it("admits a grain once the period is at least that long", () => {
+    expect(granularityFitsPeriod("month", month)).toBe(true);
+    expect(granularityFitsPeriod("quarter", month)).toBe(false);
+
+    expect(granularityFitsPeriod("quarter", quarter)).toBe(true);
+    expect(granularityFitsPeriod("year", quarter)).toBe(false);
+
+    expect(granularityFitsPeriod("year", year)).toBe(true);
+  });
+
+  it("measures the shortest calendar span a grain can occupy", () => {
+    expect(granularityFitsPeriod("month", { from: "2026-02-24", to: "2026-03-23" })).toBe(true);
+    expect(granularityFitsPeriod("quarter", { from: "2026-12-24", to: "2027-03-23" })).toBe(true);
+    expect(granularityFitsPeriod("quarter", { from: "2026-06-24", to: "2026-09-19" })).toBe(false);
+  });
+
+  it("states why a grain is refused, and names the grain to pick instead", () => {
+    expect(periodTooShortReason("day", month)).toBeNull();
+    expect(periodTooShortReason("quarter", month)).toBe(
+      "A quarterly split needs a period of at least a quarter — pick monthly or finer",
+    );
+    expect(periodTooShortReason("year", week)).toBe(
+      "A yearly split needs a period of at least a year — pick weekly or finer",
+    );
+  });
+});
+
+describe("clampGranularity", () => {
+  it("leaves a grain the period can carry alone", () => {
+    expect(clampGranularity("week", { from: "2026-07-24", to: "2026-08-23" })).toBe("week");
+  });
+
+  it("falls back to the coarsest grain the period can carry", () => {
+    expect(clampGranularity("year", { from: "2026-07-24", to: "2026-08-23" })).toBe("month");
+    expect(clampGranularity("quarter", { from: "2026-08-17", to: "2026-08-23" })).toBe("week");
   });
 });

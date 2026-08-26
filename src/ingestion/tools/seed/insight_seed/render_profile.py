@@ -30,8 +30,7 @@ from . import manifest, profile_md
 def _rendered() -> str:
     # The canonical stand is one that ran every seed step, so the catalogue
     # section describes what `seed all` writes rather than reporting it absent.
-    # Only the static half — see `manifest.canonical_catalogue`.
-    doc = manifest.build_manifest(manifest.CANONICAL_ENV, catalogue=manifest.canonical_catalogue())
+    doc = manifest.build_manifest(manifest.CANONICAL_ENV)
     manifest.assert_no_credentials(doc)
     return profile_md.render_profile(doc)
 

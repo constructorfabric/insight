@@ -73,7 +73,7 @@ pub async fn resolve_person_ids_by_email(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     person_ids_from_rows(rows)
 }
 
@@ -126,13 +126,146 @@ pub async fn resolve_person_id_by_email_any_tenant(
         ],
     );
 
-    match db.query_one(stmt).await? {
+    match db.query_one_raw(stmt).await? {
         Some(row) => {
             let bytes: Vec<u8> = row.try_get("", "person_id")?;
             Ok(Some(Uuid::from_slice(&bytes)?))
         }
         None => Ok(None),
     }
+}
+
+/// Roster-email → candidate `person_id`s for the login bootstrap of an install
+/// that resolves logins by address (`idp.resolve_by = email`,
+/// `GET /internal/persons/by-roster-email`).
+///
+/// A SEPARATE function from `resolve_person_id_by_email_any_tenant` on purpose,
+/// even though both match on an address: that one serves the admin `__override`
+/// and matches an address stated by ANY source in ANY tenant, which is the right
+/// latitude for an operator typing a name and far too much for a sign-in. This
+/// one is confined three ways.
+///
+/// **To the caller's tenant.** Unlike the two any-tenant resolvers, the tenant
+/// IS known here: the authenticator denies a login whose `id_token` named
+/// no tenant before it ever calls identity, and mints its service JWT with that
+/// tenant, so the handler reads it off the `SecurityContext`. An address cannot
+/// carry the uniqueness a directory id does — every tenant's roster writes into
+/// the same `(source_type, address)` key space, and one customer adding another
+/// customer's address to its own HR system would otherwise resolve that
+/// customer's login to a person of its choosing.
+///
+/// **To the source the install declares as its roster** (`roster_source_type`),
+/// so an address only a chat or an issue tracker ever observed admits nobody.
+///
+/// **To a person the roster still holds a live account for.** Exclusion
+/// (ADR-0003) is recorded only against an ACCOUNT, as a `value_type='id'` row
+/// naming the sentinel, and the seed then stops re-emitting that account's
+/// values — so the address row written before the exclusion stays newest
+/// forever and would keep resolving the person it named. Filtering the sentinel
+/// out of THIS query cannot help: no `email` row ever names it. The live-binding
+/// requirement is what makes an exclusion bite at the door, and it also answers
+/// "may an address observed with no account behind it admit anyone" with no.
+///
+/// Returns every distinct candidate, newest observation first. More than one
+/// means the roster states one address for two people — the seed refuses to
+/// auto-link that shape (`skipped_contested_email`) and an operator may have
+/// split them deliberately, so the caller decides what to do rather than being
+/// handed a silent winner.
+///
+/// Case handling matches the rest of the resolvers: the input is trimmed only,
+/// and `value_id`'s collation does case-insensitive matching (migration 004).
+///
+/// **To the address the roster states now.** `persons` is append-only, so a
+/// person keeps every address they were ever observed under. Matching any of
+/// them would mean a leaver's alias, handed to a new hire, still signs the new
+/// hire in as the leaver. Only the newest address observation per roster
+/// account counts.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_ids_by_roster_email(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    roster_source_type: &str,
+    email: &str,
+) -> anyhow::Result<Vec<Uuid>> {
+    const SQL: &str = r"
+        WITH addressed AS (
+            SELECT DISTINCT insight_source_id, person_id
+            FROM persons
+            WHERE value_type = 'email'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+              AND value_id = ?
+        ),
+        current_address AS (
+            SELECT
+                p.person_id,
+                p.value_id,
+                p.created_at,
+                p.id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.insight_source_id, p.person_id
+                    ORDER BY p.created_at DESC, p.id DESC
+                ) AS rn
+            FROM persons p
+            JOIN addressed a
+              ON a.insight_source_id = p.insight_source_id
+             AND a.person_id = p.person_id
+            WHERE p.value_type = 'email'
+              AND p.insight_tenant_id = ?
+              AND p.insight_source_type = ?
+        ),
+        bindings AS (
+            SELECT
+                person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_source_id, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE value_type = 'id'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+        )
+        SELECT c.person_id
+        FROM current_address c
+        WHERE c.rn = 1
+          AND c.value_id = ?
+          AND c.person_id != ?
+          AND EXISTS (
+              SELECT 1 FROM bindings b
+              WHERE b.rn = 1 AND b.person_id = c.person_id
+          )
+        GROUP BY c.person_id
+        ORDER BY MAX(c.created_at) DESC, MAX(c.id) DESC
+    ";
+
+    let tenant_bytes = tenant_id.as_bytes().to_vec();
+    let source = roster_source_type.trim().to_owned();
+    let address = email.trim().to_owned();
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            // addressed: who ever stated it (index-friendly, narrows the rest)
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            address.clone().into(),
+            // current_address: their newest address, for just those pairs
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            // bindings: accounts the roster currently holds
+            tenant_bytes.into(),
+            source.into(),
+            // and the newest address must still be the one presented
+            address.into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
+
+    person_ids_from_rows(db.query_all_raw(stmt).await?)
 }
 
 /// Tenant-AGNOSTIC `(source_type, external_id)` → `person_id` resolution for the
@@ -201,7 +334,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
         ],
     );
 
-    match db.query_one(stmt).await? {
+    match db.query_one_raw(stmt).await? {
         Some(row) => {
             let bytes: Vec<u8> = row.try_get("", "person_id")?;
             Ok(Some(Uuid::from_slice(&bytes)?))
@@ -260,7 +393,7 @@ pub async fn resolve_person_ids_by_source_id(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     person_ids_from_rows(rows)
 }
 
@@ -365,7 +498,7 @@ pub async fn provisional_persons(
     }
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -510,7 +643,7 @@ pub async fn current_source_ids_for_person(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut ids = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;
@@ -572,7 +705,7 @@ pub async fn current_parents_for_child(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;
@@ -625,7 +758,7 @@ pub async fn current_children_for_parent(
         ],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut edges = Vec::with_capacity(rows.len());
     for row in rows {
         let source_type: String = row.try_get("", "insight_source_type")?;

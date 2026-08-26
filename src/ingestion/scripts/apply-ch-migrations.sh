@@ -25,7 +25,28 @@
 #   CLICKHOUSE_URL       e.g. http://ch-host:8123  (selects the HTTP backend)
 #   CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
 #   CLICKHOUSE_DATABASE  the Insight app database
+#
+# Options:
+#   --full-refresh   rebuild the selected dbt models from source instead of
+#                    appending to them. The deploy Hook never passes it; the
+#                    seed's silver step does, because a seed REPLACES the org
+#                    and the incremental identity feeders would otherwise
+#                    carry the previous roster forward (see below).
 set -euo pipefail
+
+FULL_REFRESH=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --full-refresh) FULL_REFRESH=1; shift ;;
+    -h|--help)
+      awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"
+      exit 0 ;;
+    *)
+      echo "apply-ch-migrations.sh: unknown argument: $1" >&2
+      echo "usage: apply-ch-migrations.sh [--full-refresh]" >&2
+      exit 2 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
@@ -166,6 +187,102 @@ SQL
 
 heal_task_users_table silver class_task_users
 
+# Same positional invariant, one relation further along: class_task_field_history
+# gained `title` after `id_readable` (#2739) so evidence rows can name the work
+# item. The connectors-ddl snapshot only CREATEs IF NOT EXISTS, so a warm
+# installation keeps the old column list, and the gold build fails resolving
+# `fh.title`. Staging needs no heal — github's member is a table rebuilt every
+# run, and jira's is altered by the DDL macro that owns it.
+heal_task_field_history_table() {
+  local db="$1" table="$2"
+  ch_table_is_real "$db" "$table" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS title Nullable(String) AFTER id_readable;
+ALTER TABLE ${db}.${table} MODIFY COLUMN title Nullable(String) AFTER id_readable;
+SQL
+}
+
+heal_task_field_history_table silver class_task_field_history
+
+echo "=== Healing git file-change object id columns ==="
+# The file-change object ids arrive at the tail of every projection that feeds
+# class_git_file_changes. Pre-existing tables lack them and the positional
+# insert misaligns; the silver side heals in migrations/*.sql, the rest heals
+# here because these tables exist only after a connector has run.
+#
+# bronze_github.file_changes is healed for a different reason: the GitHub
+# staging model READS the two columns, and nothing else adds them in time.
+# create-bronze-placeholders.sh is IF NOT EXISTS so a warm bronze table is
+# never altered, and the destination only widens it on the connector's next
+# sync — which lands after this deploy's dbt run, leaving the staging model
+# (and every git model downstream of it) failing on an unknown identifier
+# until then.
+#
+# Existing rows heal to NULL and carry an oid from the first sync that
+# re-collects them. Idempotent.
+heal_git_file_change_oids() {
+  local db="$1" table="$2" anchor="$3"
+  ch_table_is_real "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS post_image_oid Nullable(String) AFTER pre_image_oid;
+ALTER TABLE ${db}.${table} MODIFY COLUMN pre_image_oid Nullable(String) AFTER ${anchor};
+ALTER TABLE ${db}.${table} MODIFY COLUMN post_image_oid Nullable(String) AFTER pre_image_oid;
+SQL
+}
+
+# Bronze's tail is patch_truncated; every staging projection ends with
+# _airbyte_extracted_at.
+heal_git_file_change_oids bronze_github file_changes patch_truncated
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
+done
+
+echo "=== Healing git commit patch id column ==="
+# Same positional invariant: every projection feeding class_git_commits gained
+# patch_id at the tail (commit-content identity for counting an authored
+# change once, #2792). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Existing rows heal to NULL and carry a patch id from the first sync that
+# re-collects them. Idempotent.
+heal_git_commit_patch_id() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS patch_id Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE staging.${table} MODIFY COLUMN patch_id Nullable(String) AFTER _airbyte_extracted_at;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_commit_patch_id "${_git_source}__commits"
+done
+
+echo "=== Healing git pull-request author account column ==="
+# Same positional invariant: every projection feeding class_git_pull_requests
+# gained author_account_id after author_email (account-first person
+# attribution, #2819). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Existing rows heal to '' and carry the account id from the first sync that
+# re-collects them — the rollout's full refresh backfills the rest. Idempotent.
+heal_git_pr_author_account() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS author_account_id String AFTER author_email;
+ALTER TABLE staging.${table} MODIFY COLUMN author_account_id String AFTER author_email;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_pr_author_account "${_git_source}__pull_requests"
+done
+
 echo "=== Healing jira task id column types (#1743) ==="
 # #1892 retyped the jira staging id projections (worklog_id, comment_id)
 # from raw bronze Decimal(38,9) to toString(...), but pre-existing
@@ -246,7 +363,13 @@ echo "=== Quarantining gold identity relations still held as tables ==="
 quarantine_gold_table_for_view insight metric_entity_cohorts_current
 quarantine_gold_table_for_view insight identity_resolution_coverage
 
-echo "=== Building gold models (dbt run --select ${_dbt_select[*]}) ==="
+# INVARIANT: never export DBT_FULL_REFRESH — reconcile-connectors owns that
+# name, and env reaches every child.
+_dbt_flags=()
+if [[ "$FULL_REFRESH" == "1" ]]; then
+  _dbt_flags+=(--full-refresh)
+fi
+echo "=== Building gold models (dbt run --select ${_dbt_select[*]} ${_dbt_flags[*]:-}) ==="
 # Gold views are dbt-owned but must exist at DEPLOY time, not first-sync
 # time: the analytics service marks metric definitions schema-error while
 # an observation view is missing, which blanks those metrics for every
@@ -299,7 +422,7 @@ profile = {
 with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as f:
     yaml.safe_dump(profile, f)
 PY
-(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}")
+(cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
 
 echo "=== Dropping quarantined pre-view tables (gold build succeeded) ==="
 drop_gold_view_quarantine

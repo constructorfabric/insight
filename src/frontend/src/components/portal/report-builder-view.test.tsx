@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   definitions: [] as unknown[],
   computations: new Map<string, string>(),
   scope: {} as Record<string, unknown>,
+  dateRange: { from: "2026-05-13", to: "2026-08-12" },
   run: vi.fn(),
   csv: vi.fn(),
   xlsx: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock("@/lib/portal/use-org-scope", () => ({ useOrgScope: () => mocks.scope })
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "quarter",
-    dateRange: { from: "2026-05-13", to: "2026-08-12" },
+    dateRange: mocks.dateRange,
   }),
 }));
 vi.mock("@/lib/reports/run-report", () => ({ runReport: mocks.run }));
@@ -71,6 +72,41 @@ const person = {
   subordinates: [],
 };
 
+const reportPerson = {
+  entityId: "p1",
+  name: "Jane Doe",
+  email: "jane.doe@example.com",
+  division: "",
+  department: "",
+  jobTitle: "",
+  managerName: "",
+  managerEmail: "",
+  status: "",
+};
+
+const decimalResult = (value: number) =>
+  ({
+    metric_key: "git.commits",
+    label: "Commits",
+    format: "decimal",
+    unit: null,
+    direction: "neutral",
+    computation: "sum",
+    views: [
+      {
+        view: "timeseries",
+        bucket: "month",
+        series: [
+          {
+            entity_id: "p1",
+            dimensions: [],
+            points: [{ bucket_start: "2026-05-01", value }],
+          },
+        ],
+      },
+    ],
+  }) as never;
+
 beforeEach(() => {
   mocks.definitions = [
     definition({}),
@@ -88,10 +124,12 @@ beforeEach(() => {
   mocks.scope = {
     pivot: person,
     roster: [{ person_id: "P1" }],
+    reportPeople: [reportPerson],
     label: "Jane Doe",
     isLoading: false,
     isError: false,
   };
+  mocks.dateRange = { from: "2026-05-13", to: "2026-08-12" };
   mocks.run.mockReset().mockResolvedValue(new Map());
   mocks.csv.mockReset();
   mocks.xlsx.mockReset();
@@ -123,9 +161,27 @@ describe("ReportBuilderView", () => {
     render(<ReportBuilderView />);
     expect(isDisabled("Merge rate")).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Yearly" }));
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
     expect(isDisabled("Merge rate")).toBe(true);
     expect(isDisabled("Commits")).toBe(false);
+  });
+
+  it("refuses a grain longer than the period, and says which to pick", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    const yearly = screen.getByRole("button", { name: "Yearly" });
+    expect(yearly).toBeDisabled();
+    expect(yearly).toHaveAttribute(
+      "title",
+      expect.stringMatching(/at least a year — pick quarterly or finer/),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
+    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("says why it cannot build yet, rather than greying out in silence", async () => {
@@ -142,7 +198,7 @@ describe("ReportBuilderView", () => {
 
   it("says when the scope is what blocks the build, once a metric is picked", async () => {
     const user = userEvent.setup();
-    mocks.scope = { ...mocks.scope, roster: [] };
+    mocks.scope = { ...mocks.scope, roster: [], reportPeople: [] };
     render(<ReportBuilderView />);
 
     await user.click(box("Commits"));
@@ -175,6 +231,40 @@ describe("ReportBuilderView", () => {
 
     await user.click(box("Commits"));
     expect(build).not.toBeDisabled();
+  });
+
+  it("builds from a flat scope without a tree pivot", async () => {
+    const user = userEvent.setup();
+    mocks.scope = {
+      ...mocks.scope,
+      pivot: null,
+      roster: [{ person_id: "P1" }],
+      reportPeople: [reportPerson],
+      label: "Whole organisation",
+    };
+    render(<ReportBuilderView />);
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+
+    await waitFor(() =>
+      expect(mocks.run).toHaveBeenCalledWith(
+        expect.objectContaining({ entityIds: ["p1"] }),
+      ),
+    );
+  });
+
+  it("formats rounded metric values in the preview", async () => {
+    const user = userEvent.setup();
+    mocks.run.mockResolvedValueOnce(
+      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
+    );
+    render(<ReportBuilderView />);
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+
+    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
   });
 
   it("offers the file once the run has finished, stamped with what made it", async () => {
@@ -226,6 +316,7 @@ describe("ReportBuilderView", () => {
       ...mocks.scope,
       pivot: { ...person, person_id: "P2", display_name: "Sam Smith" },
       roster: [{ person_id: "P2" }],
+      reportPeople: [{ ...reportPerson, entityId: "p2", name: "Sam Smith" }],
     };
     rerender(<ReportBuilderView />);
     await waitFor(() =>
@@ -244,5 +335,54 @@ describe("ReportBuilderView", () => {
     expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull();
     expect(mocks.csv).not.toHaveBeenCalled();
     expect(mocks.xlsx).not.toHaveBeenCalled();
+  });
+  it("drops a held grain the shortened period cannot carry, and builds at the finer one", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ReportBuilderView />);
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
+    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    mocks.dateRange = { from: "2026-08-17", to: "2026-08-23" };
+    rerender(<ReportBuilderView />);
+
+    expect(screen.getByRole("button", { name: "Weekly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Quarterly" })).toBeDisabled();
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    await waitFor(() =>
+      expect(mocks.run).toHaveBeenCalledWith(
+        expect.objectContaining({ granularity: "week" }),
+      ),
+    );
+  });
+
+  it("hands both exporters the table the preview showed, without building again", async () => {
+    const user = userEvent.setup();
+    mocks.run.mockResolvedValueOnce(
+      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
+    );
+    render(<ReportBuilderView />);
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
+    await closeDialog(user);
+    await user.click(await screen.findByRole("button", { name: /rows ·/ }));
+
+    await user.click(await screen.findByRole("button", { name: "CSV" }));
+    await user.click(await screen.findByRole("button", { name: "Excel" }));
+
+    const exported = mocks.csv.mock.calls[0][1];
+    expect(
+      exported.rows.some((row: unknown[]) => row.includes(1082.2)),
+    ).toBe(true);
+    expect(mocks.xlsx.mock.calls[0][2]).toBe(exported);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
   });
 });

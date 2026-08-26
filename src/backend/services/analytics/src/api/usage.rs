@@ -4,14 +4,16 @@ use axum::Json;
 use axum::extract::{Extension, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::error::UsageError;
-use super::{AppState, forwarded_authorization};
+use super::person_names::named_persons;
+use super::{ADMIN_ONLY, AppState, clip, require_admin};
+use crate::domain::date_window::{self, Window, WindowError};
 
 /// DDL owned by `scripts/migrations/20260816000000_usage-events.sql`; the
 /// service holds INSERT and SELECT here, never CREATE.
@@ -34,10 +36,7 @@ const SESSION_START: &str = "session_start";
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
-const DEFAULT_WINDOW_DAYS: i64 = 29;
-
-const MAX_WINDOW_DAYS: i64 = 400;
-
+/// Every read is bounded by the tenant and a pair of whole UTC days.
 const WINDOW: &str =
     "tenant_id = toUUID(?) AND toDate(ts) >= toDate(?) AND toDate(ts) <= toDate(?)";
 
@@ -270,9 +269,11 @@ fn people_query(
 /// Names come from the mirrored identity rows; a per-caller profile lookup
 /// answers only for the caller's visible set, and this surface is org-wide.
 fn people_sql() -> String {
+    let named = named_persons();
     format!(
         "SELECT toString(u.person) AS person_id, \
          coalesce(p.display_name, '') AS display_name, \
+         coalesce(p.username, '') AS username, \
          u.visits AS visits, u.page_views AS page_views, u.last_seen AS last_seen \
          FROM (\
            SELECT person_id AS person, {VISITS} AS visits, \
@@ -281,20 +282,7 @@ fn people_sql() -> String {
            FROM {TABLE} WHERE {WINDOW} AND person_id != toUUID('{NIL_UUID}') \
            GROUP BY person ORDER BY visits DESC, page_views DESC \
            LIMIT {BREAKDOWN_LIMIT}) AS u \
-         LEFT JOIN (\
-           SELECT person_id, \
-           coalesce(\
-             nullIf(argMaxIf(value_effective, (created_at, id), value_type = 'display_name'), ''), \
-             nullIf(trimBoth(concat(\
-               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'first_name'), ''), \
-               ' ', \
-               coalesce(argMaxIf(value_effective, (created_at, id), value_type = 'last_name'), '') \
-             )), '') \
-           ) AS display_name \
-           FROM identity.identity_persons \
-           WHERE value_type IN ('display_name', 'first_name', 'last_name') \
-           AND insight_tenant_id = toUUID(?) \
-           GROUP BY person_id) AS p ON p.person_id = u.person \
+         LEFT JOIN {named} AS p ON p.person_id = u.person \
          ORDER BY u.visits DESC, u.page_views DESC"
     )
 }
@@ -315,10 +303,6 @@ fn is_recordable(row: &UsageEventRow) -> bool {
     row.event_name != PAGE_VIEW || !row.path.is_empty()
 }
 
-fn clip(value: &str, max: usize) -> String {
-    value.chars().take(max).collect()
-}
-
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct UsageRangeQuery {
     /// Inclusive `YYYY-MM-DD` lower bound. Defaults to 30 days back.
@@ -327,43 +311,17 @@ pub struct UsageRangeQuery {
     pub until: Option<String>,
 }
 
-struct Window {
-    since: NaiveDate,
-    until: NaiveDate,
-}
-
 impl UsageRangeQuery {
     fn window(&self) -> Result<Window, CanonicalError> {
-        let until =
-            parse_day("until", self.until.as_deref())?.unwrap_or_else(|| Utc::now().date_naive());
-        let since = parse_day("since", self.since.as_deref())?
-            .unwrap_or_else(|| until - Duration::days(DEFAULT_WINDOW_DAYS));
-        if since > until {
-            return Err(range_violation("since", "since must not be after until"));
-        }
-        if (until - since).num_days() >= MAX_WINDOW_DAYS {
-            return Err(range_violation(
-                "since",
-                "the window must not exceed 400 days",
-            ));
-        }
-        Ok(Window { since, until })
+        date_window::parse_window(self.since.as_deref(), self.until.as_deref())
+            .map_err(range_violation)
     }
 }
 
-fn range_violation(field: &str, description: &str) -> CanonicalError {
+fn range_violation(error: WindowError) -> CanonicalError {
     UsageError::invalid_argument()
-        .with_field_violation(field, description, "INVALID")
+        .with_field_violation(error.field(), error.description(), "INVALID")
         .create()
-}
-
-fn parse_day(field: &str, value: Option<&str>) -> Result<Option<NaiveDate>, CanonicalError> {
-    value
-        .map(|day| {
-            NaiveDate::parse_from_str(day, "%Y-%m-%d")
-                .map_err(|_| range_violation(field, "date must use YYYY-MM-DD"))
-        })
-        .transpose()
 }
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row, utoipa::ToSchema)]
@@ -385,6 +343,8 @@ pub struct UsagePerson {
     pub person_id: String,
     /// Empty when the visitor has not been mirrored into the identity rows yet.
     pub display_name: String,
+    /// The account handle, empty when no identity row carries one.
+    pub username: String,
     pub visits: u64,
     pub page_views: u64,
     pub last_seen: String,
@@ -438,7 +398,7 @@ pub async fn get_usage_summary(
     headers: HeaderMap,
     Query(range): Query<UsageRangeQuery>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    require_admin(&state, &headers).await?;
+    require_admin(&state, &headers, admin_only).await?;
 
     let window = range.window()?;
     let tenant = ctx.subject_tenant_id().to_string();
@@ -474,33 +434,16 @@ pub async fn get_usage_summary(
     }))
 }
 
+fn admin_only() -> CanonicalError {
+    UsageError::permission_denied()
+        .with_reason(ADMIN_ONLY)
+        .create()
+}
+
 #[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
 fn read_error(error: clickhouse::error::Error) -> CanonicalError {
     tracing::error!(error = %error, "usage summary query failed");
     CanonicalError::internal("failed to read usage").create()
-}
-
-async fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), CanonicalError> {
-    if !state.identity.is_configured() {
-        tracing::error!("identity service is not configured; admin access cannot be verified");
-        return Err(CanonicalError::internal("failed to verify caller permissions").create());
-    }
-
-    let is_admin = state
-        .identity
-        .is_admin(forwarded_authorization(headers))
-        .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "admin role check failed");
-            CanonicalError::internal("failed to verify caller permissions").create()
-        })?;
-
-    if is_admin {
-        return Ok(());
-    }
-    Err(UsageError::permission_denied()
-        .with_reason("admin role required for this operation")
-        .create())
 }
 
 #[cfg(test)]

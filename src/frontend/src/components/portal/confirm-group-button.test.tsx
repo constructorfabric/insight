@@ -17,7 +17,7 @@ const hooks = vi.hoisted(() => ({
   toast: { success: vi.fn(), error: vi.fn() },
   bind: { mutateAsync: vi.fn(), reset: vi.fn() },
 }));
-vi.mock("sonner", () => ({ toast: hooks.toast }));
+vi.mock("@/components/ui/sonner", () => ({ toast: hooks.toast }));
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   useBindAccounts: () => hooks.bind,

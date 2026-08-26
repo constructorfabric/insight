@@ -36,6 +36,21 @@ class FixtureError(ValueError):
 
 
 @dataclass(frozen=True)
+class IdentityAccount:
+    """One source-account binding from a fixture's `identity_accounts`.
+
+    `person` is a persona email, or the literal 'excluded' for the reserved
+    bot person. `source_id` is the RAW connector source id; the rig hashes it
+    the way the connectors mint insight_source_id.
+    """
+
+    source_type: str
+    source_id: str
+    account_id: str
+    person: str
+
+
+@dataclass(frozen=True)
 class TestYaml:
     __test__ = False  # not a pytest test class despite the `Test` prefix
     name: str
@@ -54,6 +69,11 @@ class TestYaml:
     # double-count if gold does not collapse aliases. Without it every email is
     # its own person and no fixture can reach that path.
     identity_aliases: dict[str, list[str]] = field(default_factory=dict)
+    # Optional `identity_accounts: [{source_type, source_id, account_id, person}]`.
+    # Each entry is a source-account binding (`value_type='id'`) the rig writes
+    # into identity_persons beside the synthetic email bindings — the shape the
+    # account-first resolution map reads.
+    identity_accounts: list[IdentityAccount] = field(default_factory=list)
 
     @property
     def touched_tables(self) -> set[tuple[str, str]]:
@@ -107,6 +127,20 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
             raise FixtureError(f"{path}: identity_aliases.{canonical} must be a list of emails")
         identity_aliases[str(canonical)] = list(aliases)
 
+    accounts_doc = doc.get("identity_accounts") or []
+    if not isinstance(accounts_doc, list):
+        raise FixtureError(f"{path}: `identity_accounts` must be a list of bindings")
+    identity_accounts: list[IdentityAccount] = []
+    for idx, entry in enumerate(accounts_doc):
+        if not isinstance(entry, dict) or set(entry) != {"source_type", "source_id", "account_id", "person"}:
+            raise FixtureError(
+                f"{path}: identity_accounts[{idx}] must be a mapping with exactly "
+                "source_type, source_id, account_id, person"
+            )
+        if not all(isinstance(v, str) and v for v in entry.values()):
+            raise FixtureError(f"{path}: identity_accounts[{idx}] values must be non-empty strings")
+        identity_accounts.append(IdentityAccount(**entry))
+
     if "cases" not in doc:
         raise FixtureError(f"{path}: a test must define `cases`")
 
@@ -152,6 +186,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         cases=cases,
         skip=skip,
         identity_aliases=identity_aliases,
+        identity_accounts=identity_accounts,
     )
 
 

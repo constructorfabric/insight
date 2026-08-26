@@ -8,6 +8,11 @@ SELECT
     src.source_key,
     src.entity_type,
     {{ normalized_email('src.entity_id') }} AS entity_id,
+    -- No account-keyed facts here: '' keeps the read-time account join
+    -- unmatched, so resolution stays on the email path.
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     src.metric_date,
     src.observed_at,
     src.measure_key,

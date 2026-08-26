@@ -78,9 +78,11 @@ pub struct ProfileResponse {
 }
 
 /// A person node in the org tree (subordinate of a profile), matching the .NET
-/// `PersonResponse`. Unlike `ProfileResponse`, the attribute fields are plain
-/// strings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`
-/// fields serialize as `null` rather than being dropped.
+/// `PersonResponse` plus `username`, which the .NET shape never carried — the
+/// UI labels a nameless person by their handle (#2711). Unlike
+/// `ProfileResponse`, the attribute fields are plain strings (empty when
+/// absent, not omitted) and the `supervisor_*`/`parent_*` fields serialize as
+/// `null` rather than being dropped.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonResponse {
     pub person_id: Uuid,
@@ -92,6 +94,7 @@ pub struct PersonResponse {
     pub division: String,
     pub job_title: String,
     pub status: String,
+    pub username: String,
     pub supervisor_email: Option<String>,
     pub supervisor_name: Option<String>,
     pub parent_email: Option<String>,
@@ -250,6 +253,7 @@ pub fn assemble_person(
         division: get("division"),
         job_title: get("job_title"),
         status: get("status"),
+        username: get("username"),
         supervisor_email,
         supervisor_name,
         parent_email,
@@ -590,12 +594,16 @@ mod tests {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let leaf = assemble_person(
             Uuid::from_u128(30),
-            vec![obs("email", "leaf@example.com", t)],
+            vec![
+                obs("email", "leaf@example.com", t),
+                obs("username", "leafhandle", t),
+            ],
             None,
             Vec::new(),
         );
         // Absent attributes are empty strings (not omitted), per .NET PersonResponse.
         assert_eq!(leaf.email, "leaf@example.com");
+        assert_eq!(leaf.username, "leafhandle");
         assert_eq!(leaf.department, "");
         assert_eq!(leaf.first_name, "");
         assert!(leaf.subordinates.is_empty());

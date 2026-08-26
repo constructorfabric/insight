@@ -58,6 +58,12 @@ const SEED_TIMEOUT: Duration = Duration::from_mins(10);
 /// `activeDeadlineSeconds` (900s) stays the final out-of-process backstop.
 const RUN_TIMEOUT: Duration = Duration::from_mins(12);
 
+/// How long a run waits for the per-tenant lock before reporting `LockBusy`.
+/// Unlike the publish lock, a busy seed lock never means "covered": the
+/// holder read `identity_inputs` at its own start, so a pipeline seed that
+/// gave up here would let gold build over identities its sync just landed.
+const LOCK_WAIT_SECS: u32 = 15;
+
 /// How stale a `queued`/`running` operation must be before the pre-run sweep
 /// reclaims it. A killed Job pod leaves its row `running` forever otherwise —
 /// the in-process state is gone, only the next run can clean up.
@@ -133,7 +139,9 @@ pub async fn run(
     }
     // RAII: the guard owns the lock's dedicated session — every exit path
     // (return, cancellation, crash) releases the lock, see `SeedLockGuard`.
-    let Some(lock) = db::SeedLockGuard::try_acquire(&config.database_url, tenant).await? else {
+    let Some(lock) =
+        db::SeedLockGuard::acquire(&config.database_url, tenant, LOCK_WAIT_SECS).await?
+    else {
         return Err(SeedRunError::LockBusy);
     };
 

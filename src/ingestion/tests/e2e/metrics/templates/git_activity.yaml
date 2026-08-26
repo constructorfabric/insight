@@ -58,3 +58,16 @@ templates:
     changed_files: 1
     updated_at: "2026-10-01T13:00:00Z"
     author_email: null
+  pull_request_review:
+    $ref: "#/templates/base"
+    repo_full_name: constructor/insight
+    id: 0
+    pull_number: 0
+    author_login: reviewer
+    author_association: MEMBER
+    state: APPROVED
+    commit_id: commit
+    submitted_at: "2026-10-01T08:30:00Z"
+    author_id: 0
+    author_type: User
+    body: approved

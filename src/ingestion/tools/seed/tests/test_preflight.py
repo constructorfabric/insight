@@ -1,12 +1,13 @@
 """Env-contract and preflight-message tests.
 
-Stdlib `unittest` against the real package: env parsing, the SQL a guard
-issues, and the messages a refusal carries — the half that has to stay true
-for an operator who reads only the error. No database is touched.
+Stdlib `unittest` against the real package: env parsing, what a guard counts,
+and the messages a refusal carries — the half that has to stay true for an
+operator who reads only the error. No server is reached: the one predicate whose
+meaning lives in SQL runs against an in-memory sqlite table.
 
 Run against the installed package (see the README's develop section):
 
-    uv run --extra dev python -m unittest discover -s tests -t .
+    uv run --extra dev pytest tests
 """
 
 from __future__ import annotations
@@ -14,13 +15,18 @@ from __future__ import annotations
 import datetime as _dt
 import pathlib
 import re
+import sqlite3
 import unittest
 import uuid as uuid_mod
+from dataclasses import dataclass
 
-from insight_seed import config, identity, preflight
-from insight_seed.generators import base
+from insight_seed import config, identity, preflight, profiles
+from insight_seed.generators import base, insert
 
 _TENANT = "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
+
+_SEEDED_PERSON = "aaaaaaaa-0000-0000-0000-000000000010"
+_UNSEEDED_PERSON = "bbbbbbbb-0000-0000-0000-000000000001"
 
 
 class _CapturingCursor:
@@ -135,7 +141,7 @@ class _FakeClickHouse:
         if "system.columns" in sql:
             return _FakeResult(list(self._columns))
         if "system.tables" in sql:
-            from insight_seed.generators.base import RESET_TARGETS
+            from insight_seed.generators.insert import RESET_TARGETS
 
             present = list(RESET_TARGETS) if self._tables is None else self._tables
             return _FakeResult([(schema, table) for schema, table in present])
@@ -148,7 +154,7 @@ class SilverResetGuardTests(unittest.TestCase):
     def test_the_scan_covers_exactly_what_the_generators_clear(self) -> None:
         """A name pattern would both miss targets in other databases and refuse
         stands over tables the seed never touches."""
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         columns = [(schema, table, "tenant_id") for schema, table in RESET_TARGETS]
         client = _FakeClickHouse(columns=columns, counts=[])
@@ -163,7 +169,7 @@ class SilverResetGuardTests(unittest.TestCase):
     def test_every_registered_target_is_actually_truncated_by_a_generator(self) -> None:
         """The registry is what preflight scans, so a target that no generator
         clears would refuse a stand over data the seed leaves alone."""
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         called: set[tuple[str, str]] = set()
         for path in sorted(pathlib.Path(base.__file__).parent.glob("*.py")):
@@ -188,7 +194,7 @@ class SilverResetGuardTests(unittest.TestCase):
         self.assertNotIn(("silver", "not_a_target"), found)
 
     def test_targets_without_a_tenant_column_are_reported_as_unjudgeable(self) -> None:
-        from insight_seed.generators.base import RESET_TARGETS
+        from insight_seed.generators.insert import RESET_TARGETS
 
         client = _FakeClickHouse(
             columns=[("silver", "class_people", "tenant_id")],
@@ -235,7 +241,7 @@ class ResetRegistryTests(unittest.TestCase):
     def test_clearing_an_unregistered_relation_is_refused(self) -> None:
         with self.assertRaises(ValueError) as caught:
             # The client is never reached: registration is checked first.
-            base.truncate(object(), "silver", "class_not_registered")  # type: ignore[arg-type]
+            insert.truncate(object(), "silver", "class_not_registered")  # type: ignore[arg-type]
         self.assertIn("RESET_TARGETS", str(caught.exception))
 
 
@@ -365,19 +371,324 @@ class SeedReasonNamespaceTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.assertTrue(reason.startswith(config.SEED_REASON_PREFIX))
 
-    def test_the_foreign_row_query_excludes_exactly_that_prefix(self) -> None:
-        cursor = _CapturingCursor(result=(3,))
-        self.assertEqual(preflight._count_foreign_persons(cursor, _TENANT), 3)  # type: ignore[arg-type]
-
-        sql, params = cursor.executed[-1]
-        self.assertIn("reason NOT LIKE", sql)
-        self.assertEqual(params[0], uuid_mod.UUID(_TENANT).bytes)
-        self.assertEqual(params[1], f"{config.SEED_REASON_PREFIX}%")
-
     def test_a_tenant_with_no_foreign_rows_reads_as_zero(self) -> None:
         self.assertEqual(
             preflight._count_foreign_persons(_CapturingCursor(result=None), _TENANT),  # type: ignore[arg-type]
             0,
+        )
+
+
+@dataclass(frozen=True)
+class _PersonsRow:
+    """One journal row. The defaults are the stand suite's own: its resolution
+    round trip binds a scratch account under its fixed connector instance, in the
+    operator persona's name and about a person outside the demo roster."""
+
+    tenant: str = _TENANT
+    source_type: str = config.STAND_SCRATCH_SOURCE_TYPE
+    source_id: str = config.STAND_SCRATCH_SOURCE_ID
+    value_id: str | None = f"{config.STAND_SCRATCH_PREFIX}-a1b2c3d4-resolution-e5f6a7b8"
+    value_full_text: str | None = None
+    value: str | None = None
+    reason: str = "operator-bind"
+    person_id: str = _UNSEEDED_PERSON
+    author_person_id: str = profiles.ADMIN_OPERATOR_UUID
+
+
+class _SqlitePersons:
+    """`persons` under an engine, over the columns the guard's predicate reads.
+
+    Not a schema replica: the table belongs to the identity service's migrations
+    (`001_persons.sql`), which this package cannot see at test time. What is
+    modelled is what the predicate reads — `value_effective` as the generated
+    column it really is, so a row cannot disagree with its own `value_id`, and
+    the uuid columns as the bytes `BINARY(16)` compares.
+
+    Set semantics only: sqlite compares TEXT case-sensitively where MariaDB's
+    `utf8mb4_unicode_ci` does not, so no case here turns on letter case.
+
+    Every instance starts as a stand this seeder HAS seeded — one roster row about
+    `_SEEDED_PERSON`, without which the projection's exemption cannot be read.
+    """
+
+    def __init__(self) -> None:
+        self._db = sqlite3.connect(":memory:")
+        self._db.execute(
+            "CREATE TABLE persons ("
+            " insight_tenant_id BLOB NOT NULL,"
+            " insight_source_type TEXT NOT NULL,"
+            " insight_source_id BLOB NOT NULL,"
+            " value_id TEXT,"
+            " value_full_text TEXT,"
+            " value TEXT,"
+            " value_effective TEXT GENERATED ALWAYS AS"
+            "  (COALESCE(value_id, value_full_text, value)) STORED,"
+            " person_id BLOB NOT NULL,"
+            " author_person_id BLOB NOT NULL,"
+            " reason TEXT NOT NULL DEFAULT ''"
+            ")"
+        )
+        self._answer: tuple[object, ...] | None = None
+        self.insert(
+            _PersonsRow(
+                source_type=profiles.DEV_SEED_SOURCE_TYPE,
+                source_id=profiles.DEV_SEED_SOURCE_ID,
+                value_id="seeded@company.nonpresent",
+                reason=f"{config.SEED_REASON_PREFIX}demo roster",
+                person_id=_SEEDED_PERSON,
+                author_person_id=config.SYSTEM_AUTHOR_ID,
+            )
+        )
+
+    def insert(self, row: _PersonsRow) -> None:
+        self._db.execute(
+            "INSERT INTO persons (insight_tenant_id, insight_source_type, insight_source_id,"
+            " value_id, value_full_text, value, person_id, author_person_id, reason)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                uuid_mod.UUID(row.tenant).bytes,
+                row.source_type,
+                uuid_mod.UUID(row.source_id).bytes,
+                row.value_id,
+                row.value_full_text,
+                row.value,
+                uuid_mod.UUID(row.person_id).bytes,
+                uuid_mod.UUID(row.author_person_id).bytes,
+                row.reason,
+            ),
+        )
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> None:
+        self._answer = self._db.execute(sql.replace("%s", "?"), params).fetchone()
+
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self._answer
+
+
+#: `(what the row is, the row, whether the guard must count it)`.
+_FOREIGN_ROW_CASES: tuple[tuple[str, _PersonsRow, int], ...] = (
+    ("the suite's bind row", _PersonsRow(), 0),
+    ("the suite's exclude row", _PersonsRow(reason="operator-exclude"), 0),
+    (
+        "the suite's prefix carried in value_full_text rather than value_id",
+        _PersonsRow(value_id=None, value_full_text=f"{config.STAND_SCRATCH_PREFIX}-a1b2-name"),
+        0,
+    ),
+    ("the same prefix from another connector type", _PersonsRow(source_type="gitlab"), 1),
+    (
+        "the same prefix from another instance of the same connector",
+        _PersonsRow(source_id="01900000-0000-7000-8000-0000000000ff"),
+        1,
+    ),
+    (
+        "an operator correction on the suite's own connector instance",
+        _PersonsRow(value_id="someone@example.com"),
+        1,
+    ),
+    (
+        "a foreign row carrying no value at all",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            reason="directory sync",
+        ),
+        1,
+    ),
+    (
+        "the persons-seed's email link",
+        _PersonsRow(value_id="someone@example.com", reason=config.PERSONS_SEED_LINK_REASON),
+        0,
+    ),
+    (
+        "this seeder's own roster row",
+        _PersonsRow(
+            value_id="someone@example.com",
+            reason=f"{config.SEED_REASON_PREFIX}roster",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        0,
+    ),
+    (
+        "another tenant's operator correction",
+        _PersonsRow(tenant="ffffffff-ffff-4fff-8fff-ffffffffffff", value_id="a@example.com"),
+        0,
+    ),
+    (
+        "the projection re-emitting an attribute of a person this seeder created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        0,
+    ),
+    (
+        "the same re-emission about somebody this seeder never created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        1,
+    ),
+    (
+        "the projection minting a person from a roster account with no address",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id="42",
+            reason="roster-mint",
+            person_id=_SEEDED_PERSON,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        ),
+        0,
+    ),
+    (
+        "an operator's own correction about a person this seeder created",
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id="someone@example.com",
+            person_id=_SEEDED_PERSON,
+        ),
+        1,
+    ),
+)
+
+
+class ForeignPersonsPredicateTests(unittest.TestCase):
+    """What the guard counts, run against an engine rather than asserted about
+    the SQL text. The refusal it drives destroys nothing by itself, but it is
+    the only thing standing between the silver step's TRUNCATE and a stand that
+    holds somebody's directory — so both directions are the contract: a writer
+    this seeder accounts for must not refuse, and everything else must."""
+
+    def test_each_row_is_counted_only_when_no_known_writer_accounts_for_it(self) -> None:
+        for description, row, expected in _FOREIGN_ROW_CASES:
+            with self.subTest(row=description):
+                persons = _SqlitePersons()
+                persons.insert(row)
+                self.assertEqual(
+                    preflight._count_foreign_persons(persons, _TENANT),  # type: ignore[arg-type]
+                    expected,
+                    f"should count as foreign: {bool(expected)} — {description}",
+                )
+
+    def test_the_whole_table_at_once_counts_the_same_rows(self) -> None:
+        """Every case above meets the predicate alone; together they also must,
+        or one exemption is subtracting rows another writer owns."""
+        persons = _SqlitePersons()
+        for _, row, _ in _FOREIGN_ROW_CASES:
+            persons.insert(row)
+
+        self.assertEqual(
+            preflight._count_foreign_persons(persons, _TENANT),  # type: ignore[arg-type]
+            sum(expected for _, _, expected in _FOREIGN_ROW_CASES),
+        )
+
+
+def test_a_person_seeded_in_another_tenant_does_not_exempt_this_one() -> None:
+    """The exemption's person set is read within the tenant under test. Read
+    across tenants, one demo roster would exempt the projection's rows in every
+    other tenant on the cluster — including one holding real people."""
+    persons = _SqlitePersons()
+    stranger = "bbbbbbbb-0000-0000-0000-000000000002"
+    elsewhere = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    persons.insert(
+        _PersonsRow(
+            tenant=elsewhere,
+            source_type=profiles.DEV_SEED_SOURCE_TYPE,
+            source_id=profiles.DEV_SEED_SOURCE_ID,
+            value_id="elsewhere@company.nonpresent",
+            reason=f"{config.SEED_REASON_PREFIX}demo roster",
+            person_id=stranger,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        )
+    )
+    persons.insert(
+        _PersonsRow(
+            source_type="bamboohr",
+            source_id="01900000-0000-7000-8000-0000000000aa",
+            value_id=None,
+            value="Support",
+            reason="",
+            person_id=stranger,
+            author_person_id=config.SYSTEM_AUTHOR_ID,
+        )
+    )
+
+    assert preflight._count_foreign_persons(persons, _TENANT) == 1  # type: ignore[arg-type]
+
+
+def _constant_in(path: pathlib.Path, name: str) -> str | None:
+    """The string a `NAME = "value"` assignment binds, annotation or not. The
+    name is anchored on both sides: without the `\\s*(?::...)?=`, `SCRATCH_PREFIX`
+    also matches a `SCRATCH_PREFIX_ANYTHING` declared above the real one."""
+    match = re.search(rf'^{name}\s*(?::[^=]*)?=\s*"([^"]+)"', path.read_text(), re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _find_upwards(*parts: str) -> pathlib.Path | None:
+    """The named file in the nearest ancestor that holds it, searching no
+    further than the repository root — outside a checkout (the seed image runs
+    these tests from the installed package) there is nothing to find, and a
+    same-named file above the root would be somebody else's."""
+    for parent in pathlib.Path(__file__).resolve().parents:
+        candidate = parent.joinpath(*parts)
+        if candidate.is_file():
+            return candidate
+        if (parent / ".git").exists():
+            break
+    return None
+
+
+class WriterNamespaceParityTests(unittest.TestCase):
+    """Each accounted-for writer spells its namespace out on its own side, and a
+    drift brings the refusal back with no test failing anywhere near the change.
+    Read the other trees rather than import them: only one language of the three
+    is importable here, and the seed image ships none of them — which is a skip,
+    not an error."""
+
+    def test_every_scratch_constant_matches_the_stand_suite_s_own(self) -> None:
+        scratch = _find_upwards("tests", "stand", "api", "scratch.py")
+        if scratch is None:
+            self.skipTest("tests/stand/api/scratch.py is not in this tree")
+
+        for mine, theirs in (
+            (config.STAND_SCRATCH_PREFIX, "SCRATCH_PREFIX"),
+            (config.STAND_SCRATCH_SOURCE_TYPE, "SCRATCH_SOURCE_TYPE"),
+            (config.STAND_SCRATCH_SOURCE_ID, "SCRATCH_SOURCE_ID"),
+        ):
+            with self.subTest(constant=theirs):
+                self.assertEqual(_constant_in(scratch, theirs), mine, f"{theirs} drifted")
+
+    def test_the_projection_still_stamps_the_author_this_guard_reads(self) -> None:
+        runner = _find_upwards(
+            "src", "backend", "services", "identity-resolution", "src", "seed_runner.rs"
+        )
+        if runner is None:
+            self.skipTest("the identity-resolution tree is not in this tree")
+
+        source = runner.read_text()
+        self.assertRegex(source, r"SYSTEM_AUTHOR:\s*Uuid\s*=\s*Uuid::nil\(\)")
+        self.assertEqual(uuid_mod.UUID(config.SYSTEM_AUTHOR_ID), uuid_mod.UUID(int=0))
+
+        seeded = re.search(r"seed_from_rows\((?P<args>[^;]*?)\)\s*\.await", source, re.S)
+        self.assertIsNotNone(seeded, "the projection no longer runs through seed_from_rows")
+        self.assertIn(
+            "SYSTEM_AUTHOR",
+            seeded.group("args"),  # type: ignore[union-attr]
+            "the projection must PASS the author this guard reads, not merely declare it: "
+            "a run that stamps a real person leaves every re-seed refused",
         )
 
 

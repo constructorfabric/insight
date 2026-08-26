@@ -3,21 +3,32 @@ use std::fmt::Write;
 
 use serde::Deserialize;
 
-use super::batch::ResolvedGroupLimit;
-use super::batch::{peer_aliases, period_alias};
+use super::batch::{PeerPopulation, ResolvedGroupLimit, peer_aliases, period_alias};
 use super::validation::{
-    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedMetricResultsRequest, query_row_limit,
+    HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedEntitySelection,
+    ValidatedMetricResultsRequest, query_row_limit,
 };
 use super::view::Bucket;
 use crate::domain::metric_definitions::{
     AliasCollapse, CohortSource, ComputationSpec, MetricDefinition, MetricInput, ObservationSource,
+    RatioDenominatorAggregation,
 };
 
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
 pub(crate) const UNKNOWN_DIMENSION_LABEL: &str = "Unknown";
 
 /// The live email → person map every person-entity read resolves through.
-const PERSON_MAP_RELATION: &str = "identity.person_map";
+pub(crate) const PERSON_MAP_RELATION: &str = "identity.person_map";
+
+/// The live account → person binding, consulted BEFORE the email map: the
+/// source's own key for the person, so it survives an empty or private
+/// profile email and an address change.
+pub(crate) const ACCOUNT_ASSIGNMENT_RELATION: &str = "identity.account_assignment";
+
+/// The reserved person meaning "not a human" (bots, CI, service accounts).
+/// An account bound to it TERMINATES resolution: the row attributes to
+/// nobody and never falls through to the email map.
+const EXCLUDED_PERSON_ID: &str = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 /// Columns a resolved observation subquery re-exposes to the query above it.
 /// `entity_id` is absent: the subquery replaces it with the canonical person id,
@@ -81,6 +92,18 @@ pub struct PeerQueryRow {
 pub struct BreakdownQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RollupQueryRow {
+    pub value: Option<f64>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    pub contributing_entity_count: Option<u64>,
+    pub rank: Option<u32>,
+    pub remainder: u8,
+    pub group_label: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -420,6 +443,138 @@ pub(crate) fn compile_breakdown_query(
     CompiledQuery { sql, params }
 }
 
+pub(crate) fn compile_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: Option<&ResolvedGroupLimit>,
+) -> CompiledQuery {
+    match group_limit {
+        Some(group_limit) => {
+            compile_capped_rollup_query(def, req, dimensions, filters, group_limit)
+        }
+        None => compile_uncapped_rollup_query(def, req, dimensions, filters),
+    }
+}
+
+fn compile_uncapped_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = grouped_value_params(def);
+    let read = single_resolved_observation_from(def, req, &mut params);
+    params.extend(metric_where_params(def, req));
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_scope = read.entity_scope(req, &mut params);
+    let observation_table = &read.from;
+    let (dim_select, dim_group, dim_order) = ranking_dimension_select_group(dimensions);
+    let value_expr = grouped_value_expr(def);
+    let limit = query_row_limit();
+    let inner = format!(
+        r"
+        SELECT
+            {dim_select},
+            {value_expr} AS value,
+            uniqExact(entity_id) AS contributing_entity_count,
+            CAST(NULL AS Nullable(UInt32)) AS rank,
+            toUInt8(0) AS remainder,
+            CAST(NULL AS Nullable(String)) AS group_label
+        FROM {observation_table}
+        WHERE {metric_where}
+          {filter_where}{entity_scope}
+        GROUP BY {dim_group}
+        ORDER BY {dim_order}
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+    );
+    let sql = transformed_single(def, inner);
+    CompiledQuery { sql, params }
+}
+
+fn compile_capped_rollup_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+    group_limit: &ResolvedGroupLimit,
+) -> CompiledQuery {
+    let mut params = Vec::new();
+    let read = single_resolved_observation_from(def, req, &mut params);
+    params.extend(metric_where_params(def, req));
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_scope = read.entity_scope(req, &mut params);
+    let raw_dimensions = dimensions.iter().enumerate().fold(
+        String::new(),
+        |mut raw_dimensions, (index, dimension)| {
+            let _ = write!(
+                raw_dimensions,
+                ", {} AS raw_dim_{index}",
+                dimension_value_expr(dimension)
+            );
+            raw_dimensions
+        },
+    );
+    let rank_expr = capped_rank_expr(group_limit, dimensions.len(), &mut params);
+    params.extend(grouped_value_params(def));
+    let dimension_select = capped_dimension_select(group_limit, dimensions, &mut params);
+    let observation_table = &read.from;
+    let value_expr = grouped_value_expr(def);
+    let value = transformed(def, "value".to_owned());
+    let remainder_filter = if group_limit.include_remainder {
+        ""
+    } else {
+        "WHERE group_rank > 0"
+    };
+    let limit = query_row_limit();
+    let sql = format!(
+        r"
+        WITH scoped AS (
+            SELECT
+                *
+                {raw_dimensions}
+            FROM {observation_table}
+            WHERE {metric_where}
+              {filter_where}{entity_scope}
+        ),
+        ranked AS (
+            SELECT
+                *,
+                {rank_expr} AS group_rank
+            FROM scoped
+        ),
+        filtered AS (
+            SELECT *
+            FROM ranked
+            {remainder_filter}
+        ),
+        aggregated AS (
+            SELECT
+                group_rank,
+                {value_expr} AS value,
+                uniqExact(entity_id) AS contributing_entity_count
+            FROM filtered
+            GROUP BY group_rank
+        )
+        SELECT
+            group_rank{dimension_select},
+            {value} AS value,
+            contributing_entity_count,
+            if(group_rank = 0, CAST(NULL AS Nullable(UInt32)), toNullable(group_rank)) AS rank,
+            toUInt8(group_rank = 0) AS remainder,
+            if(group_rank = 0, toNullable('Other'), CAST(NULL AS Nullable(String))) AS group_label
+        FROM aggregated
+        ORDER BY group_rank = 0, group_rank
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+    );
+    CompiledQuery { sql, params }
+}
+
 // The per-group aggregate for single-metric queries (timeseries/breakdown),
 // scoped by metric_where so no source/measure predicates repeat here. The
 // ratio arm keeps its two SELECT placeholders, which metric_params leads
@@ -427,9 +582,20 @@ pub(crate) fn compile_breakdown_query(
 fn grouped_value_expr(def: &MetricDefinition) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. } => "sumIf(value, value IS NOT NULL)".to_owned(),
-        ComputationSpec::Ratio { scale, .. } => format!(
-            "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, measure_key = ? AND value IS NOT NULL), 0)"
-        ),
+        ComputationSpec::Ratio {
+            scale,
+            denominator_aggregation,
+            ..
+        } => {
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "measure_key = ? AND value IS NOT NULL",
+                "measure_key = ? AND subject_key IS NOT NULL",
+            );
+            format!(
+                "{scale} * sumIfOrNull(value, measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
+            )
+        }
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
@@ -507,7 +673,27 @@ pub(crate) fn compile_histogram_query(
 // is canonical-grained and drops a person whose several HR emails claim
 // different org units, so nothing here collapses or tie-breaks. Keep it that
 // way: a pool that repairs its own input hides the input being wrong.
+//
+// WORKAROUND: ClickHouse inlines a WITH body once per reference, so a second
+// reference to entity_values re-scans the whole observation window. Both
+// shapes reference it exactly once and extract the target's own value from
+// the peer rows with a conditional aggregate.
 pub(crate) fn compile_peer_batch_query(
+    defs: &[&MetricDefinition],
+    req: &ValidatedMetricResultsRequest,
+    cohort_key: &str,
+    peer_population: PeerPopulation,
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    match peer_population {
+        PeerPopulation::DeclaredCohort => {
+            compile_declared_cohort_peer_batch_query(defs, req, cohort_key, filters)
+        }
+        PeerPopulation::Tenant => compile_tenant_peer_batch_query(defs, req, filters),
+    }
+}
+
+fn compile_declared_cohort_peer_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     cohort_key: &str,
@@ -534,7 +720,8 @@ pub(crate) fn compile_peer_batch_query(
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
     let limit = query_row_limit();
 
-    let (carried, stats_selects, target_group) = peer_item_selects(defs);
+    let carried = peer_carried_selects(defs);
+    let stats_selects = per_target_aggregate_selects(defs);
 
     // Same switch as every other read (#1967): peer pools staying tenant-scoped
     // while the rest of the query bypasses would answer empty peers, which is
@@ -576,11 +763,9 @@ pub(crate) fn compile_peer_batch_query(
         SELECT
             targets.entity_id AS entity_id{stats_selects}
         FROM targets
-        LEFT JOIN entity_values AS target_values
-            ON target_values.entity_id = targets.entity_id
         LEFT JOIN entity_values AS peer
             ON peer.cohort_id = targets.cohort_id
-        GROUP BY targets.entity_id{target_group}
+        GROUP BY targets.entity_id
         LIMIT {limit}
         SETTINGS join_use_nulls = 1
         "
@@ -588,41 +773,140 @@ pub(crate) fn compile_peer_batch_query(
     CompiledQuery { sql, params }
 }
 
-// Per-item select fragments of the peer query: the carried (transformed)
-// value column, the guarded stats block, and the GROUP BY tail.
-fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
-    let mut carried = String::new();
+fn compile_tenant_peer_batch_query(
+    defs: &[&MetricDefinition],
+    req: &ValidatedMetricResultsRequest,
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = req.entity.entity_ids();
+    let value_selects = item_value_selects(defs, &mut params, period_alias);
+    let collapses = batch_alias_collapses(defs);
+    let observation_table = resolved_observation_from(
+        batch_observation_source(defs),
+        &PersonScope::TenantWide(req),
+        &collapses,
+        &mut params,
+    )
+    .from;
+    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
+
+    let entity_id_params = placeholders(req.entity.len());
+    let limit = query_row_limit();
+
+    let carried = peer_carried_selects(defs);
+    let captured_tuple = captured_target_tuple(defs);
+    let population_stat_selects = population_stat_selects(defs);
+    let result_selects = tenant_result_selects(defs);
+
+    // INVARIANT: population stats aggregate once over the whole pool and the
+    // requested targets' own values are captured in that same pass (bounded
+    // by MAX_PERSON_IDS tuples), so cost stays one scan and one aggregation
+    // regardless of how many targets the request carries.
+    let sql = format!(
+        r"
+        WITH
+        targets AS (
+            SELECT arrayJoin([{entity_id_params}]) AS entity_id
+        ),
+        metric_values AS (
+            SELECT
+                entity_id{value_selects}
+            FROM {observation_table}
+            WHERE {metric_scope}
+            GROUP BY entity_id
+        ),
+        entity_values AS (
+            SELECT
+                entity_id{carried}
+            FROM metric_values
+        ),
+        population_stats AS (
+            SELECT
+                groupArrayIf({captured_tuple}, peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows{population_stat_selects}
+            FROM entity_values AS peer
+        )
+        SELECT
+            targets.entity_id AS entity_id{result_selects}
+        FROM targets
+        CROSS JOIN population_stats
+        LIMIT {limit}
+        SETTINGS join_use_nulls = 1
+        "
+    );
+    CompiledQuery { sql, params }
+}
+
+// Per-item aggregate selects over the single `peer` reference, grouped by
+// target: the target's own value plus the guarded stats block.
+fn per_target_aggregate_selects(defs: &[&MetricDefinition]) -> String {
     let mut stats_selects = String::new();
-    let mut target_group = String::new();
-    for (item_index, def) in defs.iter().enumerate() {
+    for item_index in 0..defs.len() {
         let value = period_alias(item_index);
         let aliases = peer_aliases(item_index);
-        // Transform before the percentile pass — peer pools must rank the
-        // shaped values, not the raw artifact.
+        // INVARIANT: at most one peer row matches the target (the cohort
+        // relation is canonical-grained; entity_values groups by entity_id),
+        // so maxIf returns exactly that row's value — NULL when unobserved.
+        let _ = write!(
+            stats_selects,
+            ",
+            maxIf(peer.{value}, peer.entity_id = targets.entity_id) AS {target}",
+            target = aliases.target,
+        );
+        push_peer_stat_selects(&mut stats_selects, item_index);
+    }
+    stats_selects
+}
+
+fn peer_carried_selects(defs: &[&MetricDefinition]) -> String {
+    let mut carried = String::new();
+    for (item_index, def) in defs.iter().enumerate() {
+        let value = period_alias(item_index);
         let carried_value = transformed(def, format!("metric_values.{value}"));
         let _ = write!(
             carried,
             ",
                 {carried_value} AS {value}"
         );
-        let observed = format!("peer.{value} IS NOT NULL");
-        let pool = format!("uniqExactIf(peer.entity_id, {observed})");
-        // One `quantilesExactIf` over the pool yields all three quartiles in a
-        // single sort; the three `[i]` indexes reference the identical
-        // aggregate, which ClickHouse computes once. min/max come back from
-        // `*IfOrNull` already Nullable, so the disclosure guard's NULL branch
-        // needs no `toNullable`; the quartile elements are non-nullable and do.
-        let quantiles = format!("quantilesExactIf(0.25, 0.5, 0.75)(peer.{value}, {observed})");
+    }
+    carried
+}
+
+fn captured_target_tuple(defs: &[&MetricDefinition]) -> String {
+    let mut tuple = "tuple(peer.entity_id".to_owned();
+    for item_index in 0..defs.len() {
+        let value = period_alias(item_index);
+        let _ = write!(tuple, ", peer.{value}");
+    }
+    tuple.push(')');
+    tuple
+}
+
+fn population_stat_selects(defs: &[&MetricDefinition]) -> String {
+    let mut selects = String::new();
+    for item_index in 0..defs.len() {
+        push_peer_stat_selects(&mut selects, item_index);
+    }
+    selects
+}
+
+fn tenant_result_selects(defs: &[&MetricDefinition]) -> String {
+    let mut result_selects = String::new();
+    for item_index in 0..defs.len() {
+        let aliases = peer_aliases(item_index);
+        // SAFETY: arrayFirst yields the default tuple when the target was not
+        // captured; its Nullable elements read NULL, so an unmeasured target
+        // stays NULL. Element 1 is the entity id, values start at 2.
         let _ = write!(
-            stats_selects,
+            result_selects,
             ",
-            target_values.{value} AS {target},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[1]), NULL) AS {p25},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {median},
-            if({pool} >= {min_peer_n}, toNullable({quantiles}[3]), NULL) AS {p75},
-            if({pool} >= {min_peer_n}, minIfOrNull(peer.{value}, {observed}), NULL) AS {min},
-            if({pool} >= {min_peer_n}, maxIfOrNull(peer.{value}, {observed}), NULL) AS {max},
-            toUInt64({pool}) AS {n}",
+            tupleElement(arrayFirst(t -> t.1 = targets.entity_id, population_stats.target_rows), {position}) AS {target},
+            population_stats.{p25} AS {p25},
+            population_stats.{median} AS {median},
+            population_stats.{p75} AS {p75},
+            population_stats.{min} AS {min},
+            population_stats.{max} AS {max},
+            population_stats.{n} AS {n}",
+            position = item_index + 2,
             target = aliases.target,
             p25 = aliases.p25,
             median = aliases.median,
@@ -630,11 +914,34 @@ fn peer_item_selects(defs: &[&MetricDefinition]) -> (String, String, String) {
             min = aliases.min,
             max = aliases.max,
             n = aliases.n,
-            min_peer_n = MIN_PEER_N,
         );
-        let _ = write!(target_group, ", target_values.{value}");
     }
-    (carried, stats_selects, target_group)
+    result_selects
+}
+
+fn push_peer_stat_selects(selects: &mut String, item_index: usize) {
+    let value = period_alias(item_index);
+    let aliases = peer_aliases(item_index);
+    let observed = format!("peer.{value} IS NOT NULL");
+    let pool = format!("uniqExactIf(peer.entity_id, {observed})");
+    let quantiles = format!("quantilesExactIf(0.25, 0.5, 0.75)(peer.{value}, {observed})");
+    let _ = write!(
+        selects,
+        ",
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[1]), NULL) AS {p25},
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[2]), NULL) AS {median},
+            if({pool} >= {min_peer_n}, toNullable({quantiles}[3]), NULL) AS {p75},
+            if({pool} >= {min_peer_n}, minIfOrNull(peer.{value}, {observed}), NULL) AS {min},
+            if({pool} >= {min_peer_n}, maxIfOrNull(peer.{value}, {observed}), NULL) AS {max},
+            toUInt64({pool}) AS {n}",
+        p25 = aliases.p25,
+        median = aliases.median,
+        p75 = aliases.p75,
+        min = aliases.min,
+        max = aliases.max,
+        n = aliases.n,
+        min_peer_n = MIN_PEER_N,
+    );
 }
 
 fn item_value_selects(
@@ -674,20 +981,26 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             numerator,
             denominator,
             scale,
+            denominator_aggregation,
         } => {
             // Ratio inputs share one source (enforced at definition load:
             // "ratio inputs must share one source"), so the numerator's
             // source_key scopes both halves. The numerator is OrNull: a tool
             // that reports the denominator but never the numerator measure
             // must read NULL (unknown split), not a fabricated 0. The
-            // denominator needs no OrNull — no rows sum to 0 and nullIf
-            // already turns that into NULL.
+            // denominator needs no OrNull — both supported aggregations yield
+            // 0 for no rows and nullIf already turns that into NULL.
             params.push(numerator.source_key.clone());
             params.push(numerator.measure_key.clone());
             params.push(numerator.source_key.clone());
             params.push(denominator.measure_key.clone());
+            let denominator = ratio_denominator_expr(
+                *denominator_aggregation,
+                "source_key = ? AND measure_key = ? AND value IS NOT NULL",
+                "source_key = ? AND measure_key = ? AND subject_key IS NOT NULL",
+            );
             format!(
-                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf(sumIf(value, source_key = ? AND measure_key = ? AND value IS NOT NULL), 0)"
+                "{scale} * sumIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL) / nullIf({denominator}, 0)"
             )
         }
         ComputationSpec::Median { value } => {
@@ -712,6 +1025,19 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             // OrNull is preserved through the cast (NULL stays NULL).
             "toFloat64(uniqExactIfOrNull(subject_key, source_key = ? AND measure_key = ? AND subject_key IS NOT NULL))"
                 .to_owned()
+        }
+    }
+}
+
+fn ratio_denominator_expr(
+    aggregation: RatioDenominatorAggregation,
+    sum_condition: &str,
+    distinct_condition: &str,
+) -> String {
+    match aggregation {
+        RatioDenominatorAggregation::Sum => format!("sumIf(value, {sum_condition})"),
+        RatioDenominatorAggregation::DistinctCount => {
+            format!("uniqExactIf(subject_key, {distinct_condition})")
         }
     }
 }
@@ -972,11 +1298,16 @@ fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
+// INVARIANT: the bucket key must be non-nullable — a custom source may
+// declare `metric_date` as `Nullable(Date)`, and GROUPING SETS fills the
+// totals row's absent key with NULL instead of the default date, which the
+// row parser rejects. The date-range predicate has already dropped NULL
+// dates, so `assumeNotNull` never sees one.
 fn bucket_expr(bucket: Bucket) -> &'static str {
     match bucket {
-        Bucket::Day => "metric_date",
-        Bucket::Week => "toStartOfWeek(metric_date, 1)",
-        Bucket::Month => "toStartOfMonth(metric_date)",
+        Bucket::Day => "assumeNotNull(metric_date)",
+        Bucket::Week => "toStartOfWeek(assumeNotNull(metric_date), 1)",
+        Bucket::Month => "toStartOfMonth(assumeNotNull(metric_date))",
     }
 }
 
@@ -989,7 +1320,9 @@ fn observation_table(source: &ObservationSource) -> String {
 ///
 /// SAFETY: a custom source is tenant-authored SQL whose contract says
 /// `entity_id` is already the canonical person id. Resolving it would look up an
-/// id that is not an email and silently return nothing.
+/// id that is not an email and silently return nothing. A tenant-entity read is
+/// canonical for every source: tenant evidence repeats its tenant key as the
+/// entity id, so there is no person to resolve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityResolution {
     QueryTime,
@@ -997,18 +1330,24 @@ enum EntityResolution {
 }
 
 impl EntityResolution {
-    fn of(source: &ObservationSource) -> Self {
-        match source {
-            ObservationSource::Managed(_) => Self::QueryTime,
-            ObservationSource::Custom(_) => Self::Canonical,
+    fn of(source: &ObservationSource, entity: &ValidatedEntitySelection) -> Self {
+        match (source, entity) {
+            (ObservationSource::Custom(_), _)
+            | (ObservationSource::Managed(_), ValidatedEntitySelection::Tenant { .. }) => {
+                Self::Canonical
+            }
+            (ObservationSource::Managed(_), ValidatedEntitySelection::Person { .. }) => {
+                Self::QueryTime
+            }
         }
     }
 }
 
 /// Which people an observation read resolves and returns.
 enum PersonScope<'a> {
-    /// The people the request asked about. Binds their ids, then the date range,
-    /// in that order — the caller's param contract.
+    /// The people the request asked about. Binds their ids (prune), the date
+    /// range, then their ids again (the resolved filter) — the caller's param
+    /// contract.
     Requested(&'a ValidatedMetricResultsRequest),
     /// Everyone in the peer pool, read from the `cohort` CTE the peer query
     /// defines above this subquery. Binds no person ids — a peer comparison
@@ -1016,6 +1355,18 @@ enum PersonScope<'a> {
     /// would answer with a pool of one — only the date range, so the scan is
     /// bounded here rather than trusting predicate pushdown from above.
     CohortMembers(&'a ValidatedMetricResultsRequest),
+    /// Everyone in the tenant: the whole-population peer pool. Every row that
+    /// resolves to a person joins the pool; only the date range bounds the
+    /// scan.
+    TenantWide(&'a ValidatedMetricResultsRequest),
+}
+
+impl PersonScope<'_> {
+    fn request(&self) -> &ValidatedMetricResultsRequest {
+        match self {
+            Self::Requested(req) | Self::CohortMembers(req) | Self::TenantWide(req) => req,
+        }
+    }
 }
 
 /// An observation read: where to read from, and whether the people were already
@@ -1037,15 +1388,37 @@ impl ObservationRead {
     ) -> String {
         match self.resolution {
             EntityResolution::QueryTime => String::new(),
-            EntityResolution::Canonical => {
-                params.extend(req.entity.entity_ids());
-                format!(
-                    "\n          AND entity_id IN ({})",
-                    placeholders(req.entity.len())
-                )
-            }
+            EntityResolution::Canonical => match &req.entity {
+                ValidatedEntitySelection::Person { .. } => {
+                    params.extend(req.entity.entity_ids());
+                    format!(
+                        "\n          AND entity_id IN ({})",
+                        placeholders(req.entity.len())
+                    )
+                }
+                // Tenant evidence repeats its tenant key as the entity id, so
+                // the row-internal equality is the whole scope — no id to bind.
+                ValidatedEntitySelection::Tenant { .. } => {
+                    "\n          AND entity_id = tenant_id".to_owned()
+                }
+            },
         }
     }
+}
+
+/// The identity store's form of an observation row's account-binding key.
+///
+/// INVARIANT: identity stores `source_id` as sipHash128 of the connector's raw
+/// `source_id` (see the connectors' `identity_inputs` models) and
+/// `identity.account_assignment` lowercases `account_id` — both expressions
+/// must stay in lockstep with those minting rules, or the lookup silently
+/// matches nothing.
+pub(crate) fn account_source_uuid_expr(alias: &str) -> String {
+    format!("toUUID(UUIDNumToString(sipHash128(coalesce({alias}.account_source_id, ''))))")
+}
+
+pub(crate) fn account_id_expr(alias: &str) -> String {
+    format!("lower(trimBoth(coalesce({alias}.account_id, '')))")
 }
 
 /// The `FROM` target for an observation read, with identity resolved when the
@@ -1056,12 +1429,20 @@ impl ObservationRead {
 /// id, so scoping, `GROUP BY`, `GROUPING SETS`, window partitions and `ORDER BY`
 /// are unchanged by this move — the one place identity enters is here.
 ///
-/// Two predicates, on purpose. The `IN (SELECT email …)` is what prunes: it
-/// filters `entity_id`, which leads the relation's sort key after the tenant and
-/// source, so only the requested people's parts are read. The join then attaches
-/// the person. An unresolved or contested email is in neither, so it simply does
-/// not appear — no group for nobody, and it starts counting the moment identity
-/// learns it.
+/// Resolution is account-first: a row that carries its author's source account
+/// id resolves through the account binding — the source's own primary key for
+/// the person, which survives an empty profile email — and an account bound to
+/// the excluded person terminates resolution, so a bot's rows never fall
+/// through to a human's email. Only a row with no matched binding consults the
+/// email map. An unresolved or contested row resolves to nobody, so it simply
+/// does not appear — no group for nobody, and it starts counting the moment
+/// identity learns it.
+///
+/// The prune term exists for the scan, not the semantics: `entity_id` leads the
+/// relation's sort key after the tenant and source, so the email lookup reads
+/// only the requested people's parts, and account-carrying rows (a small
+/// fraction — facts that name their author's account) pass through to the
+/// exact resolved filter above.
 fn resolved_observation_from(
     source: &ObservationSource,
     scope: &PersonScope<'_>,
@@ -1069,7 +1450,7 @@ fn resolved_observation_from(
     params: &mut Vec<String>,
 ) -> ObservationRead {
     let table = observation_table(source);
-    let resolution = EntityResolution::of(source);
+    let resolution = EntityResolution::of(source, &scope.request().entity);
     if resolution == EntityResolution::Canonical {
         return ObservationRead {
             from: table,
@@ -1077,17 +1458,21 @@ fn resolved_observation_from(
         };
     }
 
-    let (email_scope, date_scope) = match scope {
+    let date_scope =
+        "\n          AND obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)";
+    let (inner_where, resolved_filter) = match scope {
         PersonScope::Requested(req) => {
             params.extend(req.entity.entity_ids());
             params.push(req.from.to_string());
             params.push(req.to.to_string());
+            params.extend(req.entity.entity_ids());
             let person_params = placeholders(req.entity.len());
             (
                 format!(
-                    "SELECT email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})"
+                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} WHERE person_id IN ({person_params})) \
+                      OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
-                "\n          AND obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)",
+                format!("resolved_person_id IN ({person_params})"),
             )
         }
         PersonScope::CohortMembers(req) => {
@@ -1095,25 +1480,61 @@ fn resolved_observation_from(
             params.push(req.to.to_string());
             (
                 format!(
-                    "SELECT email FROM {PERSON_MAP_RELATION} \
-                     WHERE toString(person_id) IN (SELECT entity_id FROM cohort)"
+                    "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} \
+                      WHERE toString(person_id) IN (SELECT entity_id FROM cohort)) \
+                      OR coalesce(obs.account_id, '') != ''){date_scope}"
                 ),
-                "\n          AND obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)",
+                "resolved_person_id IN (SELECT entity_id FROM cohort)".to_owned(),
+            )
+        }
+        PersonScope::TenantWide(req) => {
+            params.push(req.from.to_string());
+            params.push(req.to.to_string());
+            (
+                "obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)"
+                    .to_owned(),
+                "resolved_person_id != ''".to_owned(),
             )
         }
     };
 
+    // Null-proof under EITHER join_use_nulls setting (queries differ): each
+    // match test is non-Nullable via coalesce on a String column, and the
+    // joined person_id is read only on its matched branch.
     let resolved = format!(
         r"(
         SELECT
             {columns},
-            toString(person_map.person_id) AS entity_id
-        FROM {table} AS obs
-        INNER JOIN {PERSON_MAP_RELATION} AS person_map
-            ON person_map.email = obs.entity_id
-        WHERE obs.entity_id IN ({email_scope}){date_scope}
+            resolved_person_id AS entity_id
+        FROM (
+            SELECT
+                {qualified},
+                multiIf(
+                    coalesce(account_map.account_id, '') != '',
+                    if(
+                        assumeNotNull(account_map.person_id) = toUUID('{EXCLUDED_PERSON_ID}'),
+                        '',
+                        toString(assumeNotNull(account_map.person_id))
+                    ),
+                    coalesce(person_map.email, '') != '',
+                    toString(assumeNotNull(person_map.person_id)),
+                    ''
+                ) AS resolved_person_id
+            FROM {table} AS obs
+            LEFT JOIN {ACCOUNT_ASSIGNMENT_RELATION} AS account_map
+                ON account_map.source_type = obs.account_source_type
+               AND account_map.source_id = {account_source_uuid}
+               AND account_map.account_id = {account_id}
+            LEFT JOIN {PERSON_MAP_RELATION} AS person_map
+                ON person_map.email = obs.entity_id
+            WHERE {inner_where}
+        ) AS resolved
+        WHERE {resolved_filter}
         )",
-        columns = qualified_resolved_columns("obs"),
+        columns = RESOLVED_OBSERVATION_COLUMNS,
+        qualified = qualified_resolved_columns("obs"),
+        account_source_uuid = account_source_uuid_expr("obs"),
+        account_id = account_id_expr("obs"),
     );
 
     ObservationRead {
@@ -1388,8 +1809,32 @@ mod tests {
                 numerator: input(MetricInputRole::Numerator, "accepted_edit_actions"),
                 denominator: input(MetricInputRole::Denominator, "tool_use_offered"),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
+    }
+
+    #[test]
+    fn ratio_can_count_distinct_denominator_subjects() {
+        let mut metric = ratio_metric();
+        let ComputationSpec::Ratio {
+            denominator_aggregation,
+            ..
+        } = &mut metric.spec
+        else {
+            panic!("fixture must be ratio");
+        };
+        *denominator_aggregation = RatioDenominatorAggregation::DistinctCount;
+
+        let query = compile_timeseries_query(&metric, &request(), Bucket::Week, &[], &[], None);
+
+        assert!(
+            query
+                .sql
+                .contains("uniqExactIf(subject_key, measure_key = ? AND subject_key IS NOT NULL)")
+        );
+        assert_eq!(query.params[0], "accepted_edit_actions");
+        assert_eq!(query.params[1], "tool_use_offered");
     }
 
     const TEST_TENANT: uuid::Uuid = uuid::Uuid::from_u128(0x1967);
@@ -1452,11 +1897,14 @@ mod tests {
                 "ai_usage",
                 "tool_use_offered",
                 // identity resolution renders in the FROM, ahead of the WHERE:
-                // the people asked about, then the date range it narrows to
+                // the people asked about (the email prune), the date range it
+                // narrows to, then the same people for the resolved filter
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
                 "2026-01-31",
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
                 // shared scope (tenant predicate leads the WHERE)
                 TEST_TENANT_STR,
                 "person",
@@ -1471,6 +1919,19 @@ mod tests {
                 "tool_use_offered",
             ]
         );
+    }
+
+    #[test]
+    fn tenant_queries_match_the_entity_to_its_storage_partition() {
+        let sum = sum_metric();
+        let mut req = request();
+        req.entity = ValidatedEntitySelection::Tenant { id: TEST_TENANT };
+
+        let query = compile_period_batch_query(&[&sum], &req, &[]);
+
+        assert!(query.sql.contains("AND entity_id = tenant_id"));
+        assert!(!query.params.iter().any(|value| value == "default"));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
     }
 
     const CUSTOM_SQL: &str = "SELECT tenant_id, source_key, entity_type, entity_id, \
@@ -1534,11 +1995,14 @@ mod tests {
                 "accepted_edit_actions",
                 "ai_usage",
                 "tool_use_offered",
-                // identity resolution renders in the FROM, ahead of the WHERE
+                // identity resolution renders in the FROM, ahead of the WHERE:
+                // prune, dates, then the resolved filter
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
                 "2026-01-31",
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
                 TEST_TENANT_STR,
                 "person",
                 "2026-01-01",
@@ -1566,7 +2030,13 @@ mod tests {
 
         // The peer query reads the contract three times (targets, cohort,
         // metric_values); each must carry the tenant predicate and its value.
-        let peer = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&sum],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert_eq!(peer.sql.matches("tenant_id = ?").count(), 3);
         assert_eq!(tenant_binds(&peer), 3);
         assert_eq!(peer.sql.matches('?').count(), peer.params.len());
@@ -1594,17 +2064,23 @@ mod tests {
         assert_eq!(tenant_binds(&ts), 1);
 
         // All three peer reads (targets, cohort, metric_values) bypass together.
-        let peer = compile_peer_batch_query(&[&sum], &req, "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&sum],
+            &req,
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert_eq!(peer.sql.matches("(tenant_id = ? OR 1 = 1)").count(), 3);
         assert_eq!(peer.sql.matches('?').count(), peer.params.len());
     }
 
     #[test]
-    fn timeseries_query_uses_bucket_expression() {
+    fn timeseries_query_buckets_on_a_non_nullable_date() {
         for (bucket, expr) in [
-            (Bucket::Day, "metric_date"),
-            (Bucket::Week, "toStartOfWeek(metric_date, 1)"),
-            (Bucket::Month, "toStartOfMonth(metric_date)"),
+            (Bucket::Day, "assumeNotNull(metric_date)"),
+            (Bucket::Week, "toStartOfWeek(assumeNotNull(metric_date), 1)"),
+            (Bucket::Month, "toStartOfMonth(assumeNotNull(metric_date))"),
         ] {
             let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[], &[], None);
             assert!(
@@ -1708,6 +2184,45 @@ mod tests {
     }
 
     #[test]
+    fn rollup_aggregates_values_and_entity_counts_without_entity_grain() {
+        for def in [sum_metric(), ratio_metric(), median_metric()] {
+            let query = compile_rollup_query(&def, &request(), &["tool".to_owned()], &[], None);
+
+            assert!(
+                query
+                    .sql
+                    .contains("uniqExact(entity_id) AS contributing_entity_count")
+            );
+            assert!(query.sql.contains("GROUP BY dim_0_value"));
+            assert!(!query.sql.contains("GROUP BY entity_id"));
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+    }
+
+    #[test]
+    fn capped_rollup_recomputes_values_and_entity_counts_for_remainder() {
+        let query = compile_rollup_query(
+            &ratio_metric(),
+            &request(),
+            &["tool".to_owned()],
+            &[],
+            Some(&resolved_limit(true)),
+        );
+
+        assert!(query.sql.contains("AS group_rank"));
+        assert!(query.sql.contains("GROUP BY group_rank"));
+        assert!(
+            query
+                .sql
+                .contains("uniqExact(entity_id) AS contributing_entity_count")
+        );
+        assert!(query.sql.contains("toNullable('Other')"));
+        assert!(query.sql.contains("ORDER BY group_rank = 0, group_rank"));
+        assert_eq!(query.sql.matches("sumIfOrNull(value").count(), 1);
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
     fn empty_ranking_routes_displayed_data_to_the_remainder() {
         let query = compile_timeseries_query(
             &sum_metric(),
@@ -1741,7 +2256,13 @@ mod tests {
     #[test]
     fn peer_batch_keeps_cohort_ctes_and_param_order() {
         let sum = sum_metric();
-        let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(
             query
                 .sql
@@ -1778,22 +2299,112 @@ mod tests {
     }
 
     #[test]
+    fn flat_peer_batch_uses_every_measured_person_as_one_population() {
+        let sum = sum_metric();
+        let query =
+            compile_peer_batch_query(&[&sum], &request(), "org_unit", PeerPopulation::Tenant, &[]);
+
+        assert!(!query.sql.contains("metric_entity_cohorts_current"));
+        assert!(query.sql.contains("arrayJoin([?, ?]) AS entity_id"));
+        assert!(query.sql.contains("CROSS JOIN population_stats"));
+        assert!(!query.sql.contains("ON 1 = 1"));
+        // Stats aggregate once over the pool; the targets' own values ride the
+        // same pass as captured tuples, so target count never multiplies the
+        // aggregation state.
+        assert!(query.sql.contains(
+            "groupArrayIf(tuple(peer.entity_id, peer.m0), \
+             peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows"
+        ));
+        assert!(query.sql.contains(
+            "tupleElement(arrayFirst(t -> t.1 = targets.entity_id, \
+             population_stats.target_rows), 2) AS m0_target"
+        ));
+        assert!(
+            query
+                .sql
+                .contains("population_stats.m0_median AS m0_median")
+        );
+        assert!(
+            query
+                .sql
+                .contains("toUInt64(uniqExactIf(peer.entity_id, peer.m0 IS NOT NULL)) AS m0_n"),
+            "an empty observation window still yields the one aggregate row, so n reads 0"
+        );
+        assert_eq!(query.sql.matches("tenant_id = ?").count(), 1);
+        assert_eq!(
+            query.params,
+            vec![
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
+                "ai_usage",
+                "accepted_lines",
+                // the tenant-wide read binds only the date range: the pool is
+                // every row that resolves to a person
+                "2026-01-01",
+                "2026-01-31",
+                TEST_TENANT_STR,
+                "person",
+                "2026-01-01",
+                "2026-01-31",
+                "ai_usage",
+                "accepted_lines",
+            ]
+        );
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn peer_batches_read_the_observation_window_once() {
+        // ClickHouse expands a WITH body once per reference, so a second
+        // reference to entity_values would scan the whole observation window
+        // again. Each shape must reference it exactly once (definition + one
+        // use) and extract the target's own value from that single reference.
+        let sum = sum_metric();
+        for population in [PeerPopulation::DeclaredCohort, PeerPopulation::Tenant] {
+            let query = compile_peer_batch_query(&[&sum], &request(), "org_unit", population, &[]);
+            assert_eq!(
+                query.sql.matches("entity_values").count(),
+                2,
+                "one definition and one reference, got:\n{}",
+                query.sql
+            );
+            assert!(
+                !query.sql.contains("AS target_values"),
+                "the target join re-scans the window; extract from the single peer reference"
+            );
+        }
+    }
+
+    #[test]
     fn peer_batch_never_fabricates_zero_observations() {
         // Honest-null through the runtime: cohort members without observed
         // values stay NULL and drop out of the pool per metric — absence of
         // rows cannot be distinguished from "not covered by the source", so
         // the peer query must not invent zeros for them.
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum, &ratio],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(query.sql.contains("sumIfOrNull"));
-        assert!(!query.sql.contains("coalesce"));
+        assert!(!query.sql.contains("coalesce(metric_values"));
+        assert!(!query.sql.contains("coalesce(peer."));
         assert!(query.sql.contains("metric_values.m0 AS m0"));
     }
 
     #[test]
     fn peer_batch_guards_every_percentile_per_item() {
         let (sum, ratio) = (sum_metric(), ratio_metric());
-        let query = compile_peer_batch_query(&[&sum, &ratio], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum, &ratio],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         for item in 0..2 {
             let guard =
                 format!("uniqExactIf(peer.entity_id, peer.m{item} IS NOT NULL) >= {MIN_PEER_N}");
@@ -1830,11 +2441,7 @@ mod tests {
         );
         // Honest-null must not depend on server config or column typing.
         assert!(query.sql.contains("SETTINGS join_use_nulls = 1"));
-        assert!(
-            query
-                .sql
-                .contains("GROUP BY targets.entity_id, target_values.m0, target_values.m1")
-        );
+        assert!(query.sql.contains("GROUP BY targets.entity_id"));
     }
 
     #[test]
@@ -1847,9 +2454,15 @@ mod tests {
                 .contains(&limit)
         );
         assert!(
-            compile_peer_batch_query(&[&ratio], &request(), "org_unit", &[])
-                .sql
-                .contains(&limit)
+            compile_peer_batch_query(
+                &[&ratio],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            )
+            .sql
+            .contains(&limit)
         );
     }
 
@@ -1872,6 +2485,7 @@ mod tests {
                 &[&sum, &median, &ratio, &distinct],
                 &request(),
                 "org_unit",
+                PeerPopulation::DeclaredCohort,
                 &[],
             ),
         ] {
@@ -1887,7 +2501,13 @@ mod tests {
         // medians). Placeholder/param lockstep still holds.
         for query in [
             compile_period_batch_query(&[&median_metric()], &request(), &[]),
-            compile_peer_batch_query(&[&median_metric()], &request(), "org_unit", &[]),
+            compile_peer_batch_query(
+                &[&median_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
         ] {
             assert!(
                 query.sql.contains(
@@ -1923,7 +2543,13 @@ mod tests {
         // the builder zero-fills distinct counts like sums. Lockstep holds.
         for query in [
             compile_period_batch_query(&[&distinct_count_metric()], &request(), &[]),
-            compile_peer_batch_query(&[&distinct_count_metric()], &request(), "org_unit", &[]),
+            compile_peer_batch_query(
+                &[&distinct_count_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
         ] {
             assert!(
                 query
@@ -2004,7 +2630,8 @@ mod tests {
         assert!(query.sql.contains("* 10 /"));
         assert!(query.sql.contains("GROUP BY entity_id, bin_idx"));
         assert!(query.sql.contains("events.entity_hi = events.entity_lo"));
-        assert_eq!(query.sql.matches("JOIN").count(), 1);
+        assert_eq!(query.sql.matches("JOIN").count(), 2);
+        assert!(query.sql.contains("JOIN identity.account_assignment"));
         assert!(query.sql.contains("JOIN identity.person_map"));
         // Deterministic arithmetic only — never the adaptive aggregate.
         assert!(!query.sql.contains("histogram("));
@@ -2061,7 +2688,13 @@ mod tests {
             period.sql
         );
         assert_eq!(period.sql.matches('?').count(), period.params.len());
-        let peer = compile_peer_batch_query(&[&def], &request(), "org_unit", &[]);
+        let peer = compile_peer_batch_query(
+            &[&def],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
         assert!(
             peer.sql.contains("if((metric_values.m0) IS NULL, NULL,"),
             "peer carry must transform before percentiles: {}",
@@ -2117,6 +2750,7 @@ mod tests {
                     AliasCollapse::Max,
                 ),
                 scale: 1.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
         }
     }
@@ -2125,21 +2759,60 @@ mod tests {
     fn a_person_read_resolves_through_the_live_map_and_groups_by_the_person() {
         let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
 
-        assert!(query.sql.contains("JOIN identity.person_map AS person_map"));
-        assert!(query.sql.contains("ON person_map.email = obs.entity_id"));
         assert!(
-            query.sql.contains(
-                "WHERE obs.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?))"
-            ),
-            "scoping prunes on entity_id, which leads the relation sort key"
+            query
+                .sql
+                .contains("LEFT JOIN identity.account_assignment AS account_map")
         );
         assert!(
             query
                 .sql
-                .contains("toString(person_map.person_id) AS entity_id")
+                .contains("LEFT JOIN identity.person_map AS person_map")
         );
+        assert!(query.sql.contains("ON person_map.email = obs.entity_id"));
+        assert!(
+            query.sql.contains(
+                "(obs.entity_id IN (SELECT email FROM identity.person_map WHERE person_id IN (?, ?)) OR coalesce(obs.account_id, '') != '')"
+            ),
+            "the prune keeps the requested people's email parts plus every account-carrying row"
+        );
+        assert!(
+            query.sql.contains("WHERE resolved_person_id IN (?, ?)"),
+            "the resolved filter is exact, whatever the prune let through"
+        );
+        assert!(query.sql.contains("resolved_person_id AS entity_id"));
         assert!(query.sql.contains("GROUP BY entity_id"));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
+    fn an_account_binding_wins_over_the_email_and_an_excluded_one_terminates() {
+        let query = compile_period_batch_query(&[&sum_metric()], &request(), &[]);
+
+        assert!(
+            query
+                .sql
+                .contains("coalesce(account_map.account_id, '') != ''"),
+            "the account arm is decided before the email arm"
+        );
+        assert!(
+            query
+                .sql
+                .contains("= toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff')"),
+            "an account bound to the excluded person resolves to nobody"
+        );
+        assert!(
+            query
+                .sql
+                .contains("sipHash128(coalesce(obs.account_source_id, ''))"),
+            "the binding key uses identity's minted source id form"
+        );
+        assert!(
+            query
+                .sql
+                .contains("account_map.account_id = lower(trimBoth(coalesce(obs.account_id, '')))"),
+            "the fact side meets the map's lowered account id"
+        );
     }
 
     #[test]
@@ -2197,7 +2870,7 @@ mod tests {
         for def in [sum_metric(), median_metric(), distinct_count_metric()] {
             let query = compile_period_batch_query(&[&def], &request(), &[]);
             assert!(
-                !query.sql.contains("multiIf("),
+                !query.sql.contains("WITH resolved_rows AS"),
                 "{} should not collapse",
                 def.key()
             );
@@ -2206,7 +2879,13 @@ mod tests {
 
     #[test]
     fn a_peer_read_resolves_the_whole_cohort_not_only_the_targets() {
-        let query = compile_peer_batch_query(&[&sum_metric()], &request(), "org_unit", &[]);
+        let query = compile_peer_batch_query(
+            &[&sum_metric()],
+            &request(),
+            "org_unit",
+            PeerPopulation::DeclaredCohort,
+            &[],
+        );
 
         assert!(
             query

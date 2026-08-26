@@ -1,0 +1,28 @@
+# Mirrors the bronze_github.issue_types DDL in scripts/connectors-ddl/github.sql.
+schemas:
+  bronze_github.issue_types:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id:
+        type: string
+      _airbyte_extracted_at:
+        type: string
+        format: date-time
+      _airbyte_meta:
+        type: string
+      _airbyte_generation_id:
+        type: integer
+      unique_key: &id001
+        type: string
+      tenant_id: *id001
+      source_id: *id001
+      data_source: *id001
+      collected_at: *id001
+      org: *id001
+      issue_type_id: *id001
+      issue_type_name: *id001
+      description: *id001
+      is_enabled:
+        type: boolean

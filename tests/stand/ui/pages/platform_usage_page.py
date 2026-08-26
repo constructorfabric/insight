@@ -15,6 +15,8 @@ PEOPLE_TABLE = "Who opened it"
 
 PAGES_TABLE = "What they opened"
 
+FEEDBACK_TABLE = "What people told us"
+
 
 class PlatformUsagePage:
     ITEM = "Platform usage"

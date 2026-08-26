@@ -328,6 +328,7 @@ def build_records(
     fetch_lines: Callable[[str, str], tuple[str, Sequence[Mapping[str, Any]]]],
     *,
     drift_ratio: float = DRIFT_RATIO,
+    enriched: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Turn wrapper invoices into records, degrading per invoice.
 
@@ -349,6 +350,11 @@ def build_records(
       * the chain returned         -> `ok`, plus one row per line
     and if more than `drift_ratio` of the URLs the vendor did offer failed to
     parse, the run raises rather than writing rows that carry money but no prices.
+
+    `enriched` maps an invoice's identity to what an earlier chain found for it —
+    the invoice id its bronze rows are keyed under, and the period its lines gave.
+    An invoice listed there yields its own row and no hops: the classification is
+    made for every invoice up front, so the drift guards still see the whole run.
     """
     invoiced = [inv for inv in invoices if not is_draft(inv)]
     skipped = len(invoices) - len(invoiced)
@@ -383,6 +389,19 @@ def build_records(
             absent = not invoice.get("hosted_invoice_url")
             yield invoice_row(invoice, CHAIN_NO_URL if absent else CHAIN_UNPARSABLE, None)
             continue
+
+        identity = stable_invoice_ref(invoice.get("hosted_invoice_url"))
+        known = (enriched or {}).get(identity) if identity else None
+        if known:
+            # Chained by an earlier run: bronze already holds this invoice's lines
+            # under the invoice id below, and a settled invoice's lines do not
+            # move. The row is rebuilt from the listing, so the wrapper's money is
+            # as fresh as a chained one's — only the two hops are skipped.
+            yield invoice_row(
+                invoice, CHAIN_OK, known.get("invoice_id"), (known.get("period_start_ts"), known.get("period_end_ts"))
+            )
+            continue
+
         try:
             invoice_id, lines = fetch_lines(ref.acct, ref.token)
             unreadable = unreadable_seat_prices(lines)

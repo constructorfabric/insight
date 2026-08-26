@@ -1,0 +1,100 @@
+spec_version: 1
+description: >
+  Task Delivery - the bug split for GITHUB, and the two ways a type acquires a
+  kind.
+
+  GitHub states an issue's type by name and gives it no lifecycle meaning, so
+  `issue_kind` comes from one of two places: the operator's value map, which
+  wins, or the shared name lists, which catch what the map does not mention.
+  This fixture exercises both in one request and pins the gap between them.
+
+  Carol closes three issues. `Bug` is mapped to `bug` by the operator. `Task` is
+  mapped to `other`. `Incident` is mapped by nobody, and no configured name list
+  covers it either, so it stays `unknown` — counted among closures but claimed
+  by neither side. One bug plus one non-bug is one short of the three closed,
+  and the missing one is the Incident; a kind that silently defaulted to
+  `other` would hide exactly that.
+
+  The type breakdown therefore has three groups, not two, and the deliberately
+  unclassified one is visible rather than absorbed.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    - $ref: templates/github_task.yaml#/templates/role_state
+    - $ref: templates/github_task.yaml#/templates/role_assignees
+    - $ref: templates/github_task.yaml#/templates/role_type
+
+  config.task_value_map:
+    - $ref: templates/github_task.yaml#/templates/value_open
+    - $ref: templates/github_task.yaml#/templates/value_closed_completed
+    # Two types the operator classified; `Incident` is deliberately absent.
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_bug, unique_key: gh-value-type-bug, canonical_value: bug, value_display: Bug }
+    - { $ref: templates/github_task.yaml#/templates/value_open, field_id: type, value_id: IT_task, unique_key: gh-value-type-task, canonical_value: other, value_display: Task }
+
+  bronze_github.issue_types:
+    - $ref: templates/github_task.yaml#/templates/issue_type_task
+    - $ref: templates/github_task.yaml#/templates/issue_type_bug
+    - { $ref: templates/github_task.yaml#/templates/issue_type_task, unique_key: gh-type-incident, _airbyte_raw_id: gh-type-incident, issue_type_id: IT_incident, issue_type_name: Incident, description: An unplanned interruption }
+
+  bronze_github.issue_fields: []
+
+  bronze_github.issues:
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Bug, issue_type_id: IT_bug }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 2, number: 2, unique_key: gh-issue-2, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Task, issue_type_id: IT_task }
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 3, number: 3, unique_key: gh-issue-3, assignee_logins: carol, assignee_ids: "1003", author_id: 1003, issue_type: Incident, issue_type_id: IT_incident }
+
+  bronze_github.issue_timeline_events:
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-2, event_id: CE_2, item_number: 2, actor_id: 1003 }
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-3, event_id: CE_3, item_number: 3, actor_id: 1003 }
+
+cases:
+  - name: bug split across mapped and unmapped types
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-03-20", to: "2026-03-31" }
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - { view: period }
+              - { view: breakdown, dimensions: [type] }
+          - { metric_key: tasks.bugs_fixed, views: [{ view: period }] }
+          - { metric_key: tasks.closed_non_bug, views: [{ view: period }] }
+          - { metric_key: tasks.bugs_ratio, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 3 }
+      # The operator's map decides both of these.
+      - metric: tasks.bugs_fixed
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 1 }
+      - metric: tasks.closed_non_bug
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 1 }
+      # One bug plus one non-bug is one short of three: the Incident belongs to
+      # neither, and a kind that quietly defaulted would close that gap.
+      - metric: tasks.bugs_ratio
+        view: period
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && double(v.value) > 33.0 && double(v.value) < 34.0)"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "size(items.filter(v, v.entity_id == 'carol@example.com')) == 3"
+      - metric: tasks.closed
+        view: breakdown
+        assert: "items.exists(v, v.entity_id == 'carol@example.com' && v.dimensions.exists(d, d.key == 'type' && d.value == 'Incident') && double(v.value) == 1.0)"

@@ -27,6 +27,7 @@ import {
   getAttention,
   getPersonAccounts,
   mergePersons,
+  QUEUE_FIRST_PAGE,
   searchAccounts,
   searchPersons,
   type AccountBinding,
@@ -44,13 +45,25 @@ import { sessionAuthorizationScope } from "@/auth/session-scope";
 /** An operator works a queue; a minute of staleness is fine, losing edits is not. */
 const ATTENTION_STALE_TIME = 60 * 1000;
 
-export function useAttention(): UseQueryResult<AttentionResponse> {
+/**
+ * The review queue, capped at `limit` items.
+ *
+ * Raising the limit is what "load more" means here — the service derives the
+ * queue from the whole tenant on every read, so there is no cursor to resume
+ * from, and a bigger ask returns a longer prefix of the same order.
+ */
+export function useAttention(
+  limit: number = QUEUE_FIRST_PAGE,
+): UseQueryResult<AttentionResponse> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   return useQuery({
-    queryKey: ["identity", "resolution", "attention", sessionScope],
-    queryFn: () => getAttention(),
+    queryKey: ["identity", "resolution", "attention", sessionScope, limit],
+    queryFn: () => getAttention(limit),
     staleTime: ATTENTION_STALE_TIME,
+    // A longer ask re-reads the rows already on screen: without this the queue
+    // an operator is working blanks to a spinner every time they ask for more.
+    placeholderData: keepPreviousData,
     enabled: sessionScope != null,
   });
 }
@@ -139,9 +152,10 @@ export type PersonListIntent = "browse" | "match";
 
 /**
  * The same for {@link useAccountList}. The accounts mode browses — reviewing
- * what the connectors reported is the point there. Inside one person a blank
- * field asks nothing: the tenant's whole fold would bury the handful of accounts
- * that person actually holds, which is what the reader opened them for.
+ * what the connectors reported is the point there. The picker inside the person
+ * window asks nothing on a blank field: the tenant's whole fold would bury the
+ * handful of accounts that person actually holds, which is what the reader
+ * opened them for.
  */
 export type AccountListIntent = "browse" | "match";
 
@@ -293,7 +307,8 @@ export function useAccountList(
   });
 }
 
-/** The accounts a merge would move — fetched only while the preview is open. */
+/** Every account one person holds: the person window's list, and what a merge
+ *  preview says would move. */
 export function usePersonAccounts(
   personId: string | null,
 ): UseQueryResult<{ person_id: string; accounts: PersonAccountEntry[] }> {
