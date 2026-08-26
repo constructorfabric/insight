@@ -14,6 +14,10 @@
 -- sum it by category, extension or change type; drilldown shows the files
 -- themselves rather than a daily total that cannot be checked.
 --
+-- A projection of the shared file-change stage onto this dataset's column
+-- names, so the derivation the metric evidence reads and the derivation a
+-- drilldown reads are the same derivation.
+--
 -- Ordered by tenant, person and time because that is how it is read: one
 -- person's changes over a period, never a scan of every change ever made.
 
@@ -33,38 +37,32 @@ WITH
 -- keys as equal.
 deduplicated_file_changes AS (
     SELECT
-        raw_file_change.tenant_id AS tenant_id,
-        raw_file_change.source_id AS source_id,
-        raw_file_change.project_key AS project_key,
-        raw_file_change.repo_slug AS repo_slug,
-        raw_file_change.commit_hash AS commit_hash,
-        raw_file_change.data_source AS data_source,
-        raw_file_change.file_path AS file_path,
-        raw_file_change.file_extension AS file_extension,
-        raw_file_change.change_type AS change_type,
-        raw_file_change.lines_added AS lines_added,
-        raw_file_change.lines_removed AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
-    INNER JOIN {{ ref('git_commits_deduplicated') }} AS commits
-        ON commits.tenant_id = raw_file_change.tenant_id
-        AND commits.source_id = raw_file_change.source_id
-        AND commits.project_key = raw_file_change.project_key
-        AND commits.repo_slug = raw_file_change.repo_slug
-        AND commits.commit_hash = raw_file_change.commit_hash
-    ORDER BY commits.authored_at, raw_file_change.commit_hash
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        data_source,
+        file_path,
+        file_extension,
+        change_type,
+        lines_added,
+        lines_removed
+    FROM {{ ref('git_commit_file_changes') }}
+    ORDER BY observed_at, commit_hash
     LIMIT 1 BY
-        raw_file_change.tenant_id,
-        raw_file_change.data_source,
-        raw_file_change.project_key,
-        raw_file_change.repo_slug,
-        raw_file_change.file_path,
-        lower(raw_file_change.change_type),
-        raw_file_change.pre_image_oid,
-        raw_file_change.post_image_oid,
+        tenant_id,
+        data_source,
+        project_key,
+        repo_slug,
+        file_path,
+        lower(change_type),
+        pre_image_oid,
+        post_image_oid,
         if(
-            coalesce(raw_file_change.pre_image_oid, '') = ''
-                AND coalesce(raw_file_change.post_image_oid, '') = '',
-            raw_file_change.commit_hash,
+            coalesce(pre_image_oid, '') = ''
+                AND coalesce(post_image_oid, '') = '',
+            commit_hash,
             ''
         )
 )
@@ -76,10 +74,12 @@ SELECT
     file_changes.repo_slug AS repo_slug,
     file_changes.commit_hash AS commit_hash,
     file_changes.file_path AS file_path,
-    commits.author_email AS author_email,
+    commits.entity_id AS author_email,
     commits.author_name AS author_name,
-    commits.authored_at AS authored_at,
-    commits.authored_date AS authored_date,
+    -- SAFETY: the commit stage admits no row without a date, and neither a
+    -- partition key nor a sort key may be nullable.
+    assumeNotNull(commits.observed_at) AS authored_at,
+    assumeNotNull(commits.metric_date) AS authored_date,
     {{ git_file_category('file_changes.file_path') }} AS category,
     {{ git_file_category_label('category') }} AS category_label,
     if(file_changes.file_extension = '', '__unknown__', lower(file_changes.file_extension)) AS file_extension,
@@ -96,20 +96,18 @@ SELECT
     -- Inherited, not recomputed: lines belong to the bucket their commit
     -- belongs to. A commit in `default` whose lines read `non_default` is the
     -- column disagreement this inheritance exists to prevent.
-    commits.branch_scope AS branch_scope,
+    commits.branch_scope_value AS branch_scope,
     commits.branch_scope_label AS branch_scope_label,
-    commits.repository AS repository,
+    commits.repository_value AS repository,
     commits.repository_label AS repository_label,
-    commits.project AS project,
+    commits.project_value AS project,
     commits.project_label AS project_label,
-    commits.source AS source,
+    commits.source_value AS source,
     commits.source_label AS source_label,
     file_changes.lines_added AS lines_added,
     file_changes.lines_removed AS lines_removed
 FROM deduplicated_file_changes AS file_changes
-INNER JOIN {{ ref('git_commits_deduplicated') }} AS commits
+INNER JOIN {{ ref('git_authored_commits') }} AS commits
     ON commits.tenant_id = file_changes.tenant_id
-    AND commits.source_id = file_changes.source_id
-    AND commits.project_key = file_changes.project_key
-    AND commits.repo_slug = file_changes.repo_slug
+    AND commits.data_source = file_changes.data_source
     AND commits.commit_hash = file_changes.commit_hash

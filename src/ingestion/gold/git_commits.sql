@@ -11,9 +11,13 @@
 
 -- Authored commits: one row per commit a person wrote, carrying the lines that
 -- commit actually contributed. A semantic-layer dataset — measures aggregate
--- it, drilldown projects it, and neither re-solves what is settled here: which
--- commits are one commit, whose lines are whose, and whether the work reached
--- the default branch.
+-- it, drilldown projects it, and neither re-solves what is settled upstream:
+-- which commits are one commit, whose lines are whose, and whether the work
+-- reached the default branch.
+--
+-- A projection of the shared commit stage onto this dataset's column names, so
+-- the derivation the metric evidence reads and the derivation a drilldown
+-- reads are the same derivation.
 --
 -- Ordered by tenant, person and time because that is how it is read: one
 -- person's commits over a period, never a scan of every commit ever made.
@@ -28,7 +32,7 @@ reported_commit_file_lines AS (
         commit_hash,
         sum(lines_added) AS lines_added,
         sum(lines_removed) AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} FINAL
+    FROM {{ ref('git_commit_file_changes') }}
     GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
 ),
 authored_commit_file_lines AS (
@@ -50,18 +54,20 @@ SELECT
     commits.project_key AS project_key,
     commits.repo_slug AS repo_slug,
     commits.commit_hash AS commit_hash,
-    commits.author_email AS author_email,
+    commits.entity_id AS author_email,
     commits.author_name AS author_name,
     commits.message AS message,
-    commits.authored_at AS authored_at,
-    commits.authored_date AS authored_date,
-    commits.branch_scope AS branch_scope,
+    -- SAFETY: the stage admits no row without a date, and neither a partition
+    -- key nor a sort key may be nullable.
+    assumeNotNull(commits.observed_at) AS authored_at,
+    assumeNotNull(commits.metric_date) AS authored_date,
+    commits.branch_scope_value AS branch_scope,
     commits.branch_scope_label AS branch_scope_label,
-    commits.repository AS repository,
+    commits.repository_value AS repository,
     commits.repository_label AS repository_label,
-    commits.project AS project,
+    commits.project_value AS project,
     commits.project_label AS project_label,
-    commits.source AS source,
+    commits.source_value AS source,
     commits.source_label AS source_label,
     -- A commit's own line stats, less the lines of the file changes that lost
     -- the content dedup. The stats stay the base — a source can report a
@@ -93,7 +99,7 @@ SELECT
                 - (coalesce(reported.lines_removed, 0) - coalesce(authored.lines_removed, 0))
         ))
     ) AS lines_removed
-FROM {{ ref('git_commits_deduplicated') }} AS commits
+FROM {{ ref('git_authored_commits') }} AS commits
 LEFT JOIN reported_commit_file_lines AS reported
     ON reported.tenant_id = commits.tenant_id
     AND reported.source_id = commits.source_id

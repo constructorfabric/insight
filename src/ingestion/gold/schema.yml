@@ -114,12 +114,14 @@ models:
           - not_null
   - name: git_commits
     description: >
-      Authored commits: one row per commit a person wrote, deduplicated across
-      connector instances and mirrored repositories, with the lines that commit
-      actually contributed (its own stats less what lost the file-content
-      dedup). A semantic-layer dataset — measures aggregate it and drilldown
-      projects it. Identity stays as the source gave it (author_email);
-      the person is resolved when a query runs.
+      Authored commits: one row per commit a person wrote, with the lines that
+      commit actually contributed (its own stats less what lost the file-content
+      dedup). A projection of the shared commit stage, so which commits are one
+      commit — deduplicated across connector instances and mirrored
+      repositories, and excluding the commits whose work another commit already
+      carries — is settled in one place. A semantic-layer dataset — measures
+      aggregate it and drilldown projects it. Identity stays as the source gave
+      it (author_email); the person is resolved when a query runs.
     columns:
       - name: tenant_id
         description: "Owning tenant"
@@ -157,10 +159,11 @@ models:
     description: >
       Authored file changes: one row per change a person wrote, deduplicated by
       change content so a cherry-pick or a squashed branch counts once. A
-      semantic-layer dataset — measures sum it by category, extension or change
-      type, and drilldown shows the files themselves. Commit context
-      (branch_scope, repository, person, time) is inherited from the commit,
-      never recomputed.
+      projection of the shared file-change stage, so the changes attach to the
+      same surviving commits the metric evidence counts. A semantic-layer
+      dataset — measures sum it by category, extension or change type, and
+      drilldown shows the files themselves. Commit context (branch_scope,
+      repository, person, time) is inherited from the commit, never recomputed.
     columns:
       - name: tenant_id
         description: "Owning tenant"
