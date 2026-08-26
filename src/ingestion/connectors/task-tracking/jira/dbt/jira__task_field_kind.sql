@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='view',
     alias='jira__task_field_kind',
@@ -13,8 +12,8 @@
 --
 -- View: the classification is a pure function of the current field catalogue,
 -- so the current state of bronze is the current state of staging. Bronze
--- `jira_fields` is RMT-promoted (`jira__bronze_promoted`) keyed by
--- `unique_key`, hence FINAL on the read.
+-- `jira_fields` is ReplacingMergeTree keyed by `unique_key`, hence FINAL on
+-- the read.
 --
 -- 'staging' + 'jira' tags are required: the pipeline's staging phase selects
 -- the `tag:staging,tag:jira` intersection, and the models that consume this one

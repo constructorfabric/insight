@@ -33,7 +33,7 @@ chain.
 Bronze is created from [`scripts/connectors-ddl/jira.sql`](../../../../scripts/connectors-ddl/jira.sql),
 the snapshot the connectors-ddl gate keeps byte-identical to what the real
 connectors write — so the tables carry production's engines and types,
-including the plain MergeTree that `jira__bronze_promoted` promotes.
+including the ReplacingMergeTree shape the Airbyte destination creates.
 
 ## Run it
 

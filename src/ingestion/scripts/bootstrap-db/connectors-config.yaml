@@ -21,21 +21,21 @@ connectors:
         value: fake
       insight_tenant_id:
         value: fake
-  claude-team:
-    path: ai/claude-team
+  claude-team-invoices:
+    path: ai/claude-team-invoices
     config:
       claude_org_id:
         value: fake
       insight_source_id:
-        value: ""
+        value: fake
       insight_tenant_id:
         value: fake
       proxy_auth_token:
         value: fake
       proxy_url:
         value: fake
-  claude-team-invoices:
-    path: ai/claude-team-invoices
+  claude-team:
+    path: ai/claude-team
     config:
       claude_org_id:
         value: fake
@@ -131,19 +131,19 @@ connectors:
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:
+      bitbucket_start_date:
+        value: "2020-01-01"
       bitbucket_token:
         value: fake
       bitbucket_workspaces:
         value:
           - fake
-      bitbucket_start_date:
-        value: '2020-01-01'
-      git_proxy_url:
-        value: http://fake
       git_proxy_token:
         value: fake
+      git_proxy_url:
+        value: fake
       insight_source_id:
-        value: bitbucket-acme-prod
+        value: fake
       insight_tenant_id:
         value: fake
   github-directory:
@@ -155,7 +155,7 @@ connectors:
       github_token:
         value: fake
       insight_source_id:
-        value: github-directory-acme-prod
+        value: ""
       insight_tenant_id:
         value: fake
   github:

@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_team__bronze_promoted') }}
 {{ config(
     materialized='table',
     engine='ReplacingMergeTree',

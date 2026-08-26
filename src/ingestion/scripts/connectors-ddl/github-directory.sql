@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS bronze_github_directory.org_members
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `org` Nullable(String),
@@ -23,6 +23,6 @@ CREATE TABLE IF NOT EXISTS bronze_github_directory.org_members
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

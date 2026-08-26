@@ -20,11 +20,11 @@ CREATE TABLE IF NOT EXISTS bronze_m365.email_activity
     `reportPeriod` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity
@@ -45,11 +45,11 @@ CREATE TABLE IF NOT EXISTS bronze_m365.onedrive_activity
     `reportPeriod` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity
@@ -71,11 +71,11 @@ CREATE TABLE IF NOT EXISTS bronze_m365.sharepoint_activity
     `reportPeriod` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_m365.teams_activity
@@ -116,10 +116,10 @@ CREATE TABLE IF NOT EXISTS bronze_m365.teams_activity
     `reportPeriod` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

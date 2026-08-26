@@ -1,4 +1,3 @@
--- depends_on: {{ ref('claude_enterprise__bronze_promoted') }}
 -- Bronze → Silver: Claude Enterprise per-user per-day Code activity.
 --
 -- Source: bronze_claude_enterprise.claude_enterprise_users — daily per-user
@@ -102,7 +101,7 @@ FROM (
     -- is plain MergeTree (Airbyte default). Re-emitted days under the 3-day
     -- incremental lookback accumulate multiple Bronze rows per (user_id, date)
     -- with different _airbyte_extracted_at. Keep only the latest. Once
-    -- promote_bronze_to_rmt is enabled for this connector (ADR-0002), this
+    -- bronze is ReplacingMergeTree (destination append_dedup), this
     -- LIMIT 1 BY becomes a no-op but stays as defensive depth.
     SELECT *
     FROM {{ source('bronze_claude_enterprise', 'claude_enterprise_users') }}

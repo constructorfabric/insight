@@ -1,4 +1,3 @@
--- depends_on: {{ ref('github_directory__bronze_promoted') }}
 {{ config(
     materialized='table',
     schema='staging',

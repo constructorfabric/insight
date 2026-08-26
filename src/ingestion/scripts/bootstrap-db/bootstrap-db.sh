@@ -5,7 +5,7 @@
 #
 # Order matters (this is the fix for #1831/#1763):
 #   1. Core databases + the identity schema (init-identity migration).
-#   2. Connectors -> bronze (+ per-connector bronze_promoted).
+#   2. Connectors -> bronze (ReplacingMergeTree via append_dedup).
 #   3. dbt run (all): staging + silver + dbt-owned gold.
 #   4. Gold-view migrations (apply-ch-migrations.sh): CREATE OR REPLACE the
 #      migration-owned gold views on top of the silver dbt just built, then
@@ -52,7 +52,7 @@ CREATE DATABASE IF NOT EXISTS product_usage;
 SQL
 run_ch < "${MIGRATIONS_DIR}/20260408000000_init-identity.sql"
 
-echo "=== 2. Creating connector tables (bronze + promote) ==="
+echo "=== 2. Creating connector tables (bronze) ==="
 "${SCRIPT_DIR}/seed-connectors.sh" "${CONFIG_FILE}"
 
 echo "=== 3. Running all dbt models ==="

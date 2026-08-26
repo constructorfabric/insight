@@ -70,9 +70,9 @@ def _seat(tenant: str, read_at: str, deactivated_time: str | None) -> Seat:
 def _sync(ch_seeder: CHSeeder, dbt_runner: DbtRunner, row: Seat) -> None:
     """One sync: bronze is replaced by the new roster state, then the models run.
 
-    Replaced, not added to: the promoted relation dedups by unique_key only once
-    its parts merge, so a second roster state left beside the first would let the
-    snapshot hash whichever row it happened to read.
+    Replaced, not added to: the ReplacingMergeTree bronze relation dedups by
+    unique_key only once its parts merge, so a second roster state left beside the
+    first would let the snapshot hash whichever row it happened to read.
     """
     clear(ch_seeder.cfg, [(BRONZE_SCHEMA, BRONZE_TABLE)])
     ch_seeder.seed_records(BRONZE_SCHEMA, BRONZE_TABLE, [row])

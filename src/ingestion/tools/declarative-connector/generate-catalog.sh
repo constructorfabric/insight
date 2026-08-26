@@ -79,7 +79,7 @@ for line in sys.stdin:
         source_pk = entry.get('source_defined_primary_key', [])
 
         sync_mode = 'incremental' if 'incremental' in supported else 'full_refresh'
-        dest_mode = 'append_dedup' if sync_mode == 'incremental' else 'overwrite'
+        dest_mode = 'append_dedup' if 'unique_key' in (schema.get('properties') or {}) else 'append'
 
         stream_entry = {
             'stream': {

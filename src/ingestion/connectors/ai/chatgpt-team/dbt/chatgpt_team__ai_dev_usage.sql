@@ -1,4 +1,3 @@
--- depends_on: {{ ref('chatgpt_team__bronze_promoted') }}
 -- Bronze → Silver step 1: ChatGPT Team per-user per-day Codex usage → class_ai_dev_usage.
 --
 -- Source: bronze_chatgpt_team.chatgpt_team_codex_user_daily — daily aggregate

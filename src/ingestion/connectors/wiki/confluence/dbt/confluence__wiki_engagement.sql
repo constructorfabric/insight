@@ -46,7 +46,6 @@
 --   - Materialized as a view (cheap recompute); promote to incremental
 --     keyed on (page_id, day) if comment volume grows past ~1M rows.
 
--- depends_on: {{ ref('confluence__bronze_promoted') }}
 {{ config(
     materialized='view',
     schema='staging',
