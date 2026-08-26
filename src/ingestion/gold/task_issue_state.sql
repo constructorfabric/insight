@@ -56,7 +56,10 @@ history AS (
         fh._version                                                           AS _version,
         -- Null-proof under EITHER join_use_nulls setting: an unbound field must
         -- read as "no role", never as NULL propagating through the filter.
-        ifNull(r.role, '')                                                    AS role,
+        -- `availability` is a contract sentinel (the jira deletion spec), not a
+        -- vendor field — it gets its role directly, no binding row required.
+        multiIf(fh.field_id = 'availability', 'availability',
+                ifNull(r.role, ''))                                           AS role,
         -- Only a convertible unit is scaled. An estimate stated in a unit that
         -- is not commensurable with time must produce nothing rather than a
         -- plausible number.
@@ -67,7 +70,12 @@ history AS (
         ON r.insight_source_id = fh.insight_source_id
         AND r.data_source = fh.data_source
         AND r.field_id = fh.field_id
-    WHERE ifNull(r.role, '') != '' OR fh.event_kind = 'synthetic_initial'
+    -- `availability` carries its role directly (above), so it must survive this
+    -- filter too — r.role is NULL for it, being a contract sentinel with no
+    -- vendor binding row.
+    WHERE ifNull(r.role, '') != ''
+       OR fh.field_id = 'availability'
+       OR fh.event_kind = 'synthetic_initial'
 ),
 issue_pivot AS (
     SELECT
@@ -100,6 +108,10 @@ issue_pivot AS (
         argMax(id_readable, (event_at, _version))                            AS id_readable,
         argMax(title, (event_at, _version))                                  AS title,
         maxIf(event_at, role = 'status' AND delta_action = 'set')        AS last_status_event_at,
+        -- Availability lives in the same history as every other field
+        -- (synthetic 'availability' events; see the jira deletion spec).
+        argMaxIf(value_ids[1], (event_at, _version),
+                 role = 'availability')                                      AS availability,
         any(data_source)                                                     AS data_source
     FROM history
     GROUP BY insight_source_id, issue_id
@@ -150,3 +162,9 @@ LEFT JOIN {{ ref('class_task_statuses') }} AS cur FINAL
     ON cur.insight_source_id = p.insight_source_id AND cur.status_id = p.status_id
 LEFT JOIN {{ ref('class_task_issuetypes') }} AS it FINAL
     ON it.insight_source_id = p.insight_source_id AND it.issue_type_id = p.issue_type_id
+-- Issues deleted at the source (or in the project trash) leave every task
+-- metric: this table is the root of the gold task chain, so the filter
+-- propagates to spans, worklog flow and evidence. archived / access_lost /
+-- unobserved issues stay in — the entity still exists, its data is merely
+-- stale. Issues with no availability events default to present ('').
+WHERE p.availability NOT IN ('deleted', 'trashed')

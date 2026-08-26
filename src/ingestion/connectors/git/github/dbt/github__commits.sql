@@ -36,7 +36,8 @@ SELECT
     if(COALESCE(is_merge, false), 1, 0) AS is_merge_commit,
     'insight_github' AS data_source,
     toUnixTimestamp64Milli(now64()) AS _version,
-    _airbyte_extracted_at
+    _airbyte_extracted_at,
+    patch_id
 -- FINAL: the lookback window re-reads a commit under the same unique_key, and
 -- its membership flag can differ between the two rows. Without FINAL a
 -- full-refresh build inserts both into staging under one now64() _version, and

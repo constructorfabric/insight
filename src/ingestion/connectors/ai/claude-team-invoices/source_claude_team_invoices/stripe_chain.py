@@ -78,10 +78,12 @@ def stable_invoice_ref(url: str | None) -> str | None:
     The URL's `live_…`/`test_…` segment is base64 of
     `acct_<account>,_<invoiceEntityToken>,<rotating timestamp+nonce>`, and the
     vendor regenerates that trailing part on every list call — so only the first
-    two fields identify the invoice. Everything the wrapper reports beside the URL
-    either changes over an invoice's life (its total, its payment intent) or is
-    shared across a batch issued in the same second, which is why this is the
-    identity to key on and those are only a fallback.
+    two fields identify the invoice. That trailing part is raw bytes rather than
+    text, which is why the payload is split before either field is decoded.
+    Everything the wrapper reports beside the URL either changes over an invoice's
+    life (its total, its payment intent) or is shared across a batch issued in the
+    same second, which is why this is the identity to key on and those are only a
+    fallback.
 
     Returns None when no URL was offered or it does not decode; the caller then
     falls back to what the wrapper reports.
@@ -93,14 +95,20 @@ def stable_invoice_ref(url: str | None) -> str | None:
         return None
     try:
         segment = match.group(3)
-        decoded = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
+        decoded = base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+    except ValueError:
         return None
 
-    fields = decoded.split(",")
-    if len(fields) < 2 or not fields[0].startswith("acct_") or not fields[1]:
+    # INVARIANT: split before decoding. Reading the whole payload as text throws
+    # away a well-formed identity over the trailing nonce's bytes, and a run of
+    # those trips the drift guard below rather than reporting one bad URL.
+    fields = decoded.split(b",")
+    if len(fields) < 2 or not fields[0].startswith(b"acct_") or not fields[1]:
         return None
-    return f"{fields[0]},{fields[1]}"
+    try:
+        return f"{fields[0].decode('ascii')},{fields[1].decode('ascii')}"
+    except UnicodeDecodeError:
+        return None
 
 
 def classify_line(line: Mapping[str, Any]) -> str:

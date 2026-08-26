@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from lib.dbt_runner import DbtError, DbtRunner
+from lib.dbt_runner import PROFILE_SCHEMA, DbtError, DbtRunner
 from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.smoke
@@ -196,3 +196,47 @@ def test_dbt_build_with_worker_context_passes_var(dbt_runner: DbtRunner) -> None
     assert n == "0"
     expected_vars = json.dumps({"worker_id": "0"})
     assert "worker_id" in expected_vars
+
+
+def test_materialized_relations_names_the_relation_dbt_writes_to(dbt_runner: DbtRunner) -> None:
+    """The ledger must be told the schema dbt actually materializes into, which
+    for a connector staging model is `staging` and for a class model is `silver`
+    — not the profile's fallback schema."""
+    assert dbt_runner.materialized_relations(["github__commits", "class_git_commits"]) == [
+        ("silver", "class_git_commits"),
+        ("staging", "github__commits"),
+    ]
+
+
+def test_materialized_relations_skips_models_holding_no_rows(dbt_runner: DbtRunner) -> None:
+    """A view or an ephemeral model has nothing to truncate, so it never reaches
+    the ledger: `github__bronze_promoted` is a view, `jira__task_field_history`
+    is ephemeral."""
+    assert dbt_runner.materialized_relations(["github__bronze_promoted", "jira__task_field_history"]) == []
+
+
+def test_every_materialized_model_declares_its_schema(dbt_runner: DbtRunner) -> None:
+    """A model that configures no `schema` lands in the profile's fallback
+    schema, where nothing looks for it: the truncate ledger would register the
+    relation under that fallback while the rest of the project reads `staging`
+    or `silver`, and the model's rows would survive every test.
+    """
+    manifest = json.loads((dbt_runner.target_dir / "manifest.json").read_text(encoding="utf-8"))
+    undeclared = sorted(
+        node["name"]
+        for node in manifest["nodes"].values()
+        if node.get("resource_type") == "model"
+        and node.get("config", {}).get("materialized") not in ("ephemeral", "view")
+        and node.get("schema") == PROFILE_SCHEMA
+    )
+    assert undeclared == [], (
+        f"these models materialize into the fallback schema {PROFILE_SCHEMA!r} because they configure no "
+        f"`schema`: {undeclared}. Add `schema='staging'`/`'silver'` to each config() block."
+    )
+
+
+def test_materialized_relations_rejects_a_name_no_model_answers_to(dbt_runner: DbtRunner) -> None:
+    """A caller naming a model that does not exist gets an error, not an empty
+    list — silently recording nothing is what leaves rows behind."""
+    with pytest.raises(DbtError, match="no dbt model is named"):
+        dbt_runner.materialized_relations(["class_git_commits", "not_a_model"])

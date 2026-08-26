@@ -80,6 +80,17 @@ playwright-cli snapshot --depth=6
 
 When a wait does time out, **screenshot before giving up**. A picture of the actual page — "Sign-in failed", an empty state, a 502 — turns a silent hang into a diagnosis in one look. The same reflex applies to any recipe from memory or an old note: routes and the auth stack have changed inside a month before. Check it against the running build, and say so when it turns out stale.
 
+## Rule out your own driving before believing a negative
+
+A negative observation is the easiest false finding to produce, because the way you drove the page can manufacture it. Before "the control does nothing", "the column never changed", "no request fired" or "the list is short" becomes a claim, reproduce it from a fresh `goto` on the shortest path to the symptom. Four instruments account for most of these:
+
+- **The page you have been clicking in holds a cache.** The SPA keeps query results, so a control whose answer is already cached fires no request and re-renders nothing. On a page you have been driving, "no request fired" measures the cache, not the control.
+- **A selector reaches the whole page, not the container you meant.** A control matching by role or label can sit outside the dialog you are testing, so its state says nothing about that dialog. Check containment before attributing behaviour to it.
+- **A rendered list is a window onto a longer one.** Record tables virtualise, and the API behind them pages with a cursor. Take the count from the record label or by following the cursor to the end, never from the rows in the DOM.
+- **A wait that did not time out still proves nothing** about a control that renders late. Give a slow surface its full time, and screenshot before calling anything missing.
+
+When a negative survives that pass, say which instrument you ruled out. When it does not, the finding was yours and never reaches the report.
+
 ## Routes worth knowing
 
 - `/ic/<url-encoded-email>/personal` — IC dashboard, personal view (`@` encodes as `%40`)

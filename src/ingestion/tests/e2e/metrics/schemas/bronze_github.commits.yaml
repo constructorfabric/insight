@@ -24,3 +24,4 @@ schemas:
       deletions: {type: integer}
       is_merge: {type: boolean}
       is_in_default_branch: {type: [boolean, "null"]}
+      patch_id: {type: [string, "null"]}

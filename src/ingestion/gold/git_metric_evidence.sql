@@ -1,19 +1,34 @@
 {{ metric_evidence_table(join_use_nulls=1) }}
 
 -- Resolution happens HERE, once per gold build: evidence carries BOTH keys —
--- `entity_id` is the canonical person id (or '' when identity does not know
--- the email: those rows stay for coverage but reach no serving relation), and
--- `source_entity_id` keeps the source-native email for provenance. Everything
--- downstream (observations, cohorts, coverage, drilldown) reads THIS snapshot,
--- so one identity mapping answers for the whole build.
+-- `entity_id` is the canonical person id (or '' when identity cannot place
+-- the row: those rows stay for coverage but reach no serving relation), and
+-- `source_entity_id` keeps the source-native email for provenance. Rows that
+-- carry the author's source account id (pull requests) resolve through the
+-- account binding first and fall back to the email map; everything else is
+-- email-only. Everything downstream (observations, cohorts, coverage,
+-- drilldown) reads THIS snapshot, so one identity mapping answers for the
+-- whole build.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
     -- Null-proof under EITHER join_use_nulls setting (models differ): the
-    -- condition is non-Nullable via coalesce, and person_id is read only on
+    -- conditions are non-Nullable via coalesce, and person_id is read only on
     -- the matched branch, so entity_id is a plain String fit for the sort key.
-    if(
+    -- Account first: an account binding is the source's own answer to "whose
+    -- row is this" and survives an empty profile email; the email map decides
+    -- only when the row carries no bound account. A matched account bound to
+    -- the excluded person terminates resolution — the row attributes to
+    -- nobody even when its emails would resolve, or a bot pull request whose
+    -- commits carry a human's email would attribute to that human.
+    multiIf(
+        coalesce(account_map.account_id, '') != '',
+        if(
+            assumeNotNull(account_map.person_id) = {{ excluded_person_id() }},
+            '',
+            toString(assumeNotNull(account_map.person_id))
+        ),
         coalesce(identity_map.email, '') != '',
         toString(assumeNotNull(identity_map.person_id)),
         ''
@@ -26,8 +41,9 @@ SELECT
     -- hash) are identical across one person's accounts once entity_id is
     -- canonical, and both the evidence uniqueness grain and the drilldown
     -- cursor need one row per record key. Hashed, not the raw email — the id
-    -- reaches the client and stays opaque.
-    concat(src.record_id, ':', hex(sipHash64(src.entity_id))) AS record_id,
+    -- reaches the client and stays opaque. The account id joins the salt so
+    -- two email-less accounts cannot collide on one record key.
+    concat(src.record_id, ':', hex(sipHash64(concat(src.entity_id, ':', src.account_id)))) AS record_id,
     src.record_kind,
     src.granularity,
     src.record_label,
@@ -54,92 +70,9 @@ repository_default_branches AS (
     WHERE is_default = 1
     GROUP BY tenant_id, source_id, project_key, repo_slug
 ),
--- Commits that reached the default branch through a merged pull request.
---
--- `is_default_branch` alone is reachability AT SYNC TIME: a commit first seen
--- on a feature branch stays 0, and only a re-read corrects it. That is the
--- wrong tense for a `branch_scope` that means "did this work land". A merged
--- request whose destination IS the default branch is standing proof that its
--- commits landed, and it is proof the sources keep indefinitely.
---
--- INVARIANT: this cannot see a branch merged by a fast-forward push with no
--- pull request. GitLab still corrects those itself (advancing the default head
--- re-walks the range), the proxy-backed sources only within their lookback
--- window.
-merged_default_branch_commits AS (
-    SELECT DISTINCT
-        links.tenant_id AS tenant_id,
-        links.source_id AS source_id,
-        links.project_key AS project_key,
-        links.repo_slug AS repo_slug,
-        links.commit_hash AS commit_hash
-    FROM {{ ref('class_git_pull_requests_commits') }} AS links FINAL
-    INNER JOIN {{ ref('class_git_pull_requests') }} AS prs FINAL
-        ON prs.tenant_id = links.tenant_id
-        AND prs.source_id = links.source_id
-        AND prs.project_key = links.project_key
-        AND prs.repo_slug = links.repo_slug
-        AND prs.pr_id = links.pr_id
-    INNER JOIN repository_default_branches AS defaults
-        ON defaults.tenant_id = links.tenant_id
-        AND defaults.source_id = links.source_id
-        AND defaults.project_key = links.project_key
-        AND defaults.repo_slug = links.repo_slug
-    WHERE prs.state = 'MERGED'
-      AND prs.destination_branch = defaults.branch_name
-),
-commits_source AS (
-    SELECT
-        tenant_id,
-        source_id,
-        project_key,
-        repo_slug,
-        commit_hash,
-        author_name,
-        message,
-        date AS observed_at,
-        lower(trimBoth(author_email)) AS entity_id,
-        toDate(date) AS metric_date,
-        lines_added,
-        lines_removed,
-        -- A semi-join by tuple rather than a LEFT JOIN: the answer is
-        -- membership, and a nullable joined column would need guarding under
-        -- either join_use_nulls setting.
-        if(
-            is_default_branch = 1
-                OR (tenant_id, source_id, project_key, repo_slug, commit_hash) IN (
-                    SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
-                    FROM merged_default_branch_commits
-                ),
-            'default',
-            'non_default'
-        ) AS branch_scope_value,
-        {{ git_branch_scope_label('branch_scope_value') }} AS branch_scope_label,
-        if(coalesce(project_key, '') = '', '__unknown__', concat(coalesce(toString(source_id), ''), ':', project_key)) AS project_value,
-        if(coalesce(project_key, '') = '', 'Unknown', project_key) AS project_label,
-        concat(coalesce(toString(source_id), ''), ':', coalesce(project_key, ''), '/', coalesce(repo_slug, '')) AS repository_value,
-        if(coalesce(project_key, '') = '', coalesce(repo_slug, ''), concat(project_key, '/', repo_slug)) AS repository_label,
-        replaceOne(data_source, 'insight_', '') AS source_value,
-        {{ git_source_label('source_value') }} AS source_label,
-        CAST(
-            [
-                tuple('branch_scope', branch_scope_value, branch_scope_label),
-                tuple('repository', repository_value, repository_label),
-                tuple('project', project_value, project_label),
-                tuple('source', source_value, source_label)
-            ]
-            AS Array(Tuple(key String, value String, label Nullable(String)))
-        ) AS source_dimensions
-    FROM {{ ref('class_git_commits') }} FINAL
-    WHERE trimBoth(author_email) != ''
-      AND date IS NOT NULL
-      AND is_merge_commit = 0
-    ORDER BY tenant_id, data_source, commit_hash, source_id, project_key, repo_slug
-    LIMIT 1 BY tenant_id, data_source, commit_hash
-),
 -- One row per change CONTENT, not per commit that carries it. The same content
 -- entering a repository on two lines of history — a branch whose copy of a
--- tree was squashed onto the default branch as well, a cherry-pick, a
+-- tree also landed on the default branch, a cherry-pick, a
 -- reverted-then-restored file — is one authored change with one oid pair, and
 -- summing both commits' diffs would count those lines twice.
 --
@@ -152,38 +85,32 @@ commits_source AS (
 -- because LIMIT 1 BY reads their NULL keys as equal.
 deduplicated_file_changes AS (
     SELECT
-        raw_file_change.tenant_id AS tenant_id,
-        raw_file_change.source_id AS source_id,
-        raw_file_change.project_key AS project_key,
-        raw_file_change.repo_slug AS repo_slug,
-        raw_file_change.commit_hash AS commit_hash,
-        raw_file_change.data_source AS data_source,
-        raw_file_change.file_path AS file_path,
-        raw_file_change.file_extension AS file_extension,
-        raw_file_change.change_type AS change_type,
-        raw_file_change.lines_added AS lines_added,
-        raw_file_change.lines_removed AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} AS raw_file_change FINAL
-    INNER JOIN commits_source AS commits
-        ON commits.tenant_id = raw_file_change.tenant_id
-        AND commits.source_id = raw_file_change.source_id
-        AND commits.project_key = raw_file_change.project_key
-        AND commits.repo_slug = raw_file_change.repo_slug
-        AND commits.commit_hash = raw_file_change.commit_hash
-    ORDER BY commits.observed_at, raw_file_change.commit_hash
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        data_source,
+        file_path,
+        file_extension,
+        change_type,
+        lines_added,
+        lines_removed
+    FROM {{ ref('git_commit_file_changes') }}
+    ORDER BY observed_at, commit_hash
     LIMIT 1 BY
-        raw_file_change.tenant_id,
-        raw_file_change.data_source,
-        raw_file_change.project_key,
-        raw_file_change.repo_slug,
-        raw_file_change.file_path,
-        lower(raw_file_change.change_type),
-        raw_file_change.pre_image_oid,
-        raw_file_change.post_image_oid,
+        tenant_id,
+        data_source,
+        project_key,
+        repo_slug,
+        file_path,
+        lower(change_type),
+        pre_image_oid,
+        post_image_oid,
         if(
-            coalesce(raw_file_change.pre_image_oid, '') = ''
-                AND coalesce(raw_file_change.post_image_oid, '') = '',
-            raw_file_change.commit_hash,
+            coalesce(pre_image_oid, '') = ''
+                AND coalesce(post_image_oid, '') = '',
+            commit_hash,
             ''
         )
 ),
@@ -201,7 +128,7 @@ reported_commit_file_lines AS (
         commit_hash,
         sum(lines_added) AS lines_added,
         sum(lines_removed) AS lines_removed
-    FROM {{ ref('class_git_file_changes') }} FINAL
+    FROM {{ ref('git_commit_file_changes') }}
     GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
 ),
 authored_commit_file_lines AS (
@@ -252,7 +179,7 @@ authored_commits AS (
                     - (coalesce(reported.lines_removed, 0) - coalesce(authored.lines_removed, 0))
             ))
         ) AS lines_removed
-    FROM commits_source AS commits
+    FROM {{ ref('git_authored_commits') }} AS commits
     LEFT JOIN reported_commit_file_lines AS reported
         ON reported.tenant_id = commits.tenant_id
         AND reported.source_id = commits.source_id
@@ -331,7 +258,7 @@ file_changes_source AS (
         FROM deduplicated_file_changes AS raw_file_change
         GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, category, file_extension_value, file_extension_label, change_type_value, change_type_label
     ) AS file_changes
-    INNER JOIN commits_source AS commits
+    INNER JOIN {{ ref('git_authored_commits') }} AS commits
         ON commits.tenant_id = file_changes.tenant_id
         AND commits.source_id = file_changes.source_id
         AND commits.project_key = file_changes.project_key
@@ -416,6 +343,17 @@ pull_requests_source AS (
             pr_commit_emails.email IS NOT NULL AND pr_commit_emails.email != '', pr_commit_emails.email,
             CAST(NULL AS Nullable(String))
         ) AS entity_id,
+        -- identity's source_type vocabulary, not data_source's: the binding
+        -- rows say 'bitbucket', the class rows say 'insight_bitbucket_cloud'.
+        -- '' (gitlab — no identity inputs exist) keeps the account join
+        -- unmatched and resolution on the email path.
+        multiIf(
+            prs.data_source = 'insight_github', 'github',
+            prs.data_source = 'insight_bitbucket_cloud', 'bitbucket',
+            ''
+        ) AS account_source_type,
+        prs.source_id AS account_source_id,
+        prs.author_account_id AS account_id,
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
@@ -586,7 +524,13 @@ pull_request_measures AS (
         pr_number,
         title,
         author_name,
-        assumeNotNull(entity_id) AS entity_id,
+        -- coalesce, not assumeNotNull: an account-only pull request (author
+        -- with no resolvable email anywhere) legitimately carries NULL here
+        -- and resolves through the account join instead.
+        coalesce(entity_id, '') AS entity_id,
+        account_source_type,
+        account_source_id,
+        account_id,
         toDate(pr_measure.3) AS metric_date,
         pr_measure.3 AS observed_at,
         pr_measure.1 AS measure_key,
@@ -704,8 +648,12 @@ pull_request_measures AS (
             []
         )
     ) AS Array(Tuple(measure_key String, contribution Float64, observed_at DateTime64(3)))) AS pr_measure
-    WHERE pull_request.entity_id IS NOT NULL
-      AND pull_request.entity_id != ''
+    -- A row survives on EITHER key: the email (today's path) or the account
+    -- id, which the outer join resolves account-first. Only a pull request
+    -- with neither — no profile email, no attributable commit email, no
+    -- account id — drops here, exactly as before.
+    WHERE (pull_request.entity_id IS NOT NULL AND pull_request.entity_id != '')
+       OR pull_request.account_id != ''
 ),
 file_change_measures AS (
     SELECT
@@ -791,6 +739,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -820,6 +771,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     'commit_day' AS measure_key,
@@ -835,7 +789,7 @@ SELECT
     toNullable(toString(metric_date)) AS subject_key,
     source_dimensions AS dimensions,
     CAST(map() AS Map(String, String)) AS details
-FROM commits_source
+FROM {{ ref('git_authored_commits') }}
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
@@ -848,6 +802,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     commit_measure.1 AS measure_key,
@@ -890,6 +847,9 @@ SELECT
     'git' AS source_key,
     'person' AS entity_type,
     assumeNotNull(entity_id) AS entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     assumeNotNull(metric_date) AS metric_date,
     toNullable(toDateTime64(observed_at, 3)) AS observed_at,
     measure_key,
@@ -941,3 +901,4 @@ WHERE tenant_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
 {{ resolved_person_id_join('src') }}
+{{ resolved_person_id_by_account_join('src') }}

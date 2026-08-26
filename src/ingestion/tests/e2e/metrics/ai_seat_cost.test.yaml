@@ -8,9 +8,9 @@ description: >
     • silver: invoice lines keep their own per-seat amount and the billing month they
               charge for; seat snapshots keep the latest state per seat per month
     • gold:   the seat price is read ONLY from a non-proration subscription line, and
-              reaches a person through the tier their seat carries. Dated at the day
-              the seat snapshot was last read, so a monthly fee lands inside short
-              rolling windows. A seat with no tier gets no price, and neither does a
+              reaches a person through the tier their seat carries. Dated at the first
+              day of the billing month it charges for, so the date never moves with the
+              sync schedule. A seat with no tier gets no price, and neither does a
               seat whose tier the invoice never priced — a share of the invoice total
               would be an invention.
 
@@ -101,7 +101,7 @@ cases:
         equal: { target_value: 12.0, p25: 12.0, median: 12.0, p75: 25.0, min: 12.0, max: 25.0, n: 5 }
       - metric: ai.seat_cost
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 12.0))"
+        assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-01' && double(p.value) == 12.0))"
       - metric: ai.seat_cost
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'Standard') && double(v.value) == 12.0)"

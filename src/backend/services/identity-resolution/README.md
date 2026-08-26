@@ -9,10 +9,13 @@ Built on the gears-rust framework — same host pattern as `services/analytics`
 Current state: boots as a gears host, connects to MariaDB on startup, and
 implements the full ported surface — `POST /v1/profiles` (attributes, `ids[]`,
 org tree), persons-seed, roles / person-roles / visibility, org subchart, and
-two internal service-only S2S lookups kept as SEPARATE routes:
-`GET /internal/persons/by-external-id` (source-type-scoped external id — the
-authenticator's login bootstrap) and `GET /internal/persons/by-email-override`
-(email — its admin `__override` view-as feature only). (The deprecated legacy
+three internal service-only S2S lookups kept as SEPARATE routes, one question
+each: `GET /internal/persons/by-external-id` (source-type-scoped external id —
+the authenticator's login bootstrap), `GET /internal/persons/by-roster-email`
+(the login bootstrap of an install that resolves by address — tenant-scoped,
+confined to `roster_source_type`, and only for a person still holding a live
+account under it) and `GET /internal/persons/by-email-override` (any source, any
+tenant — the admin `__override` view-as feature only). (The deprecated legacy
 `GET /v1/persons/{email}` is intentionally not carried.)
 
 ## Run locally against the dev cluster DB

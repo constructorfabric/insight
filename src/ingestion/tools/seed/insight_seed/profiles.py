@@ -69,7 +69,7 @@ ADMIN_OPERATOR_UUID = "cccccccc-0000-0000-0000-000000000001"
 ADMIN_ROLE_NAME = "admin"
 
 # Author for every dev-seed observation (Guid.Empty == "system").
-AUTHOR_PERSON_UUID = "00000000-0000-0000-0000-000000000000"
+AUTHOR_PERSON_UUID = config.SYSTEM_AUTHOR_ID
 
 # Fixed insight_source_id used by every dev-seed observation, org-chart
 # edge, and account_person_map row. Matches what the original

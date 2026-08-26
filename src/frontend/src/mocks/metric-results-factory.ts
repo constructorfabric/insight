@@ -64,6 +64,40 @@ const MOCK_TOOLS = [
   { key: "tool", value: "cursor", label: "Cursor" },
 ];
 
+/**
+ * Values a dimension breaks down into, so a mock answers the dimension it was
+ * ASKED for. Returning one fixed set meant a section reading any other
+ * dimension found nothing in its rows and rendered as absent — which reads as
+ * a broken screen rather than as a mock with no fixture.
+ */
+const MOCK_DIMENSION_VALUES: Record<
+  string,
+  { value: string; label: string }[]
+> = {
+  category: [
+    { value: "code", label: "Code" },
+    { value: "test", label: "Tests" },
+    { value: "docs", label: "Documentation" },
+    { value: "config", label: "Configuration" },
+    { value: "vendored", label: "Vendored / Generated" },
+  ],
+  branch_scope: [
+    { value: "default", label: "Default branch" },
+    { value: "non_default", label: "Other branches" },
+  ],
+  source: [
+    { value: "github", label: "GitHub" },
+    { value: "gitlab", label: "GitLab" },
+  ],
+};
+
+function mockDimensionValues(key: string): { value: string; label: string }[] {
+  return (
+    MOCK_DIMENSION_VALUES[key] ??
+    MOCK_TOOLS.map(({ value, label }) => ({ value, label }))
+  );
+}
+
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
@@ -126,44 +160,33 @@ export function buildMetricResultsResponse(
             ),
           };
         }
-        case "breakdown":
-          // Rows answer under the REQUESTED dimension keys (a composition
-          // section looks its own dimension up by key and would find nothing
-          // under a hardcoded one). The first key cycles the mock values;
-          // further keys (splitBy, source) alternate so segments show up.
+        case "breakdown": {
+          // One row per combination the caller asked for, keyed by the
+          // requested dimension rather than by a fixed one. Every key draws
+          // from its OWN vocabulary: a composition splitting repositories by
+          // branch scope would otherwise label its segments with repository
+          // names, which reads as a broken screen rather than as a mock.
+          const axis = view.dimensions[0] ?? "tool";
           return {
             view: "breakdown",
             dimensions: view.dimensions,
             values: ids.flatMap((entityId) =>
-              MOCK_TOOLS.flatMap((dimension, index) =>
-                view.dimensions.length
-                  ? [
-                      {
-                        entity_id: entityId,
-                        dimensions: view.dimensions.map((dimKey, keyIndex) => {
-                          const pick =
-                            keyIndex === 0
-                              ? dimension
-                              : MOCK_TOOLS[(index + keyIndex) % MOCK_TOOLS.length]!;
-                          return {
-                            key: dimKey,
-                            value: pick.value,
-                            label: pick.label,
-                          };
-                        }),
-                        value: valueFor(entityId, key, dimension.value),
-                      },
-                    ]
-                  : [
-                      {
-                        entity_id: entityId,
-                        dimensions: [dimension],
-                        value: valueFor(entityId, key, dimension.value),
-                      },
-                    ],
-              ),
+              mockDimensionValues(axis).map((dimension, index) => ({
+                entity_id: entityId,
+                dimensions: view.dimensions.map((dimensionKey, keyIndex) => {
+                  const values = mockDimensionValues(dimensionKey);
+                  const pick = values[(index + keyIndex) % values.length] ?? dimension;
+                  return {
+                    key: dimensionKey,
+                    value: pick.value,
+                    label: pick.label,
+                  };
+                }),
+                value: valueFor(entityId, key, dimension.value),
+              })),
             ),
           };
+        }
         case "rollup":
           return {
             view: "rollup",

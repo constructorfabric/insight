@@ -5,6 +5,7 @@ subscription line, a proration credit from a mid-period seat change, and a
 prepaid extra-usage purchase.
 """
 
+import base64
 from collections.abc import Mapping
 from typing import Any
 
@@ -19,6 +20,7 @@ from source_claude_team_invoices.stripe_chain import (
     read_bootstrap,
     seat_unit_amount,
     shape_line,
+    stable_invoice_ref,
     unreadable_seat_prices,
 )
 
@@ -54,6 +56,15 @@ EXTRA_USAGE_LINE = {
 }
 
 
+def _hosted_url(payload: bytes, acct: str = "acct_1ABC") -> str:
+    """A hosted URL whose path segment is base64url of `payload`, unpadded."""
+    return f"https://invoice.stripe.com/i/{acct}/live_{base64.urlsafe_b64encode(payload).decode().rstrip('=')}?s=ap"
+
+
+# The rotating part of a payload: a timestamp followed by bytes that are not text.
+BINARY_NONCE = b"1756771200\xff\xfe\x01"
+
+
 @pytest.mark.parametrize(
     "url, acct, token",
     [
@@ -82,6 +93,34 @@ def test_hosted_url_yields_account_and_token(url: str, acct: str, token: str) ->
 )
 def test_unparsable_url_is_absent_not_an_error(url: str) -> None:
     assert parse_hosted_invoice_url(url) is None, f"should not parse: {url!r}"
+
+
+def test_the_identity_is_read_past_a_nonce_that_is_not_text() -> None:
+    """Only the two leading fields identify the invoice, and they are ASCII; the
+    nonce behind them is raw bytes, so the payload is no single string."""
+    assert stable_invoice_ref(_hosted_url(b"acct_1ABC,_ent1ABC," + BINARY_NONCE)) == "acct_1ABC,_ent1ABC"
+
+
+def test_one_invoice_keeps_one_identity_as_its_nonce_rotates() -> None:
+    calls = [b"acct_1ABC,_ent1ABC,1756771200\xff\x01", b"acct_1ABC,_ent1ABC,1756800000\xff\x02"]
+    assert {stable_invoice_ref(_hosted_url(payload)) for payload in calls} == {"acct_1ABC,_ent1ABC"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"acct_1ABC",
+        b"acct_1ABC,," + BINARY_NONCE,
+        b"1ABC,_ent1ABC," + BINARY_NONCE,
+        b"acct_1ABC,_ent\xff1ABC," + BINARY_NONCE,
+    ],
+)
+def test_no_identity_unless_both_leading_fields_are_readable(payload: bytes) -> None:
+    assert stable_invoice_ref(_hosted_url(payload)) is None, f"should carry no identity: {payload!r}"
+
+
+def test_a_segment_that_is_not_base64_carries_no_identity() -> None:
+    assert stable_invoice_ref("https://invoice.stripe.com/i/acct_1ABC/live_ABCDE") is None
 
 
 def test_category_comes_from_the_parent_not_the_description() -> None:

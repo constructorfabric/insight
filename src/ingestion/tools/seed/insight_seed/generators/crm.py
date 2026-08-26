@@ -14,15 +14,14 @@ from typing import TYPE_CHECKING
 from ..profiles import TEAM_PROFILES, Person
 from .base import (
     anchor_date,
-    bulk_insert,
     days_window,
     deterministic_uuid,
     persona_multiplier,
     poisson,
     seeded_rng,
-    truncate,
     weekday_multiplier,
 )
+from .insert import bulk_insert, truncate
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client

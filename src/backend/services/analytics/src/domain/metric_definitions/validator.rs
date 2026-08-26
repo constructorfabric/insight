@@ -1227,7 +1227,7 @@ mod tests {
     #[tokio::test]
     async fn custom_observation_sql_sources_are_never_probed() {
         let validator = MetricDefinitionValidator::new(
-            sea_orm::DatabaseConnection::Disconnected,
+            sea_orm::DatabaseConnection::default(),
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(
                 "http://unused",
                 "silver",
@@ -1259,7 +1259,7 @@ mod tests {
         }]));
 
         let validator = MetricDefinitionValidator::new(
-            sea_orm::DatabaseConnection::Disconnected,
+            sea_orm::DatabaseConnection::default(),
             insight_clickhouse::Client::new(insight_clickhouse::Config::new(mock.url(), "silver")),
         );
         let evidence = EvidenceRelation::parse("git_metric_evidence")

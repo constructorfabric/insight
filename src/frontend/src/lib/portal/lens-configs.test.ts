@@ -9,6 +9,7 @@ import {
   lensEntry,
   sectionMetricKeys,
   visibleSections,
+  type LensConfig,
   type SectionSpec,
 } from "./lens-configs";
 
@@ -33,6 +34,50 @@ describe("DIRECTION_LENSES registry", () => {
           expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key}`).toBe(true);
         }
       }
+    }
+  });
+
+  it("puts each default-branch reading next to the total it refines", () => {
+    const entry = lensEntry("dev", "Git output");
+    const headline = (entry as LensConfig).sections.find(
+      (section): section is Extract<SectionSpec, { kind: "headline" }> =>
+        section.kind === "headline",
+    );
+    const metrics = headline?.metrics ?? [];
+
+    // Adjacency is the rule, not the exact tile list: a split read apart from
+    // its total says nothing, because "landed" only means something against
+    // the whole. Asserting the whole array instead would fail on any unrelated
+    // tile, under a name that would not explain why.
+    for (const [total, split] of [
+      ["git.commits", "git.default_branch_commits"],
+      ["git.prs_merged", "git.default_branch_prs_merged"],
+    ]) {
+      const at = metrics.indexOf(total);
+      expect(at, `${total} is in the headline`).toBeGreaterThanOrEqual(0);
+      expect(metrics[at + 1], `the tile after ${total}`).toBe(split);
+    }
+  });
+
+  it("explains a derived dimension where a label cannot", () => {
+    const entry = lensEntry("dev", "Overview");
+    const composition = (entry as LensConfig).sections.find(
+      (section): section is Extract<SectionSpec, { kind: "composition" }> =>
+        section.kind === "composition" && section.dimension === "category",
+    );
+
+    // The lead states the precedence, which is the part a reader cannot guess
+    // from the labels, and every category the warehouse can emit is named.
+    const notes = composition?.notes ?? [];
+    expect(notes[0]).toMatch(/first rule that matches wins/i);
+    for (const label of [
+      "Vendored / Generated",
+      "Tests",
+      "Documentation",
+      "Configuration",
+      "Code",
+    ]) {
+      expect(notes.some((note) => note.startsWith(label)), label).toBe(true);
     }
   });
 

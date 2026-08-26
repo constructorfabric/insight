@@ -75,6 +75,66 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_authored_commits
+    description: >
+      One row per authored commit that reaches a git measure: the surviving row
+      of the commit-hash collapse, with branch scope, repository, project and
+      source dimensions already resolved. Materialized so the commit class read
+      and the collapse run once per build in their own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier; one row per tenant, data source and hash"
+        tests:
+          - not_null
+
+  - name: git_commit_file_changes
+    description: >
+      File changes attached to the commit row that survived the hash collapse,
+      one row per commit, path, change type and object id pair. Materialized so
+      the file-change class read runs in its own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit the change is attached to"
+        tests:
+          - not_null
+
+  - name: git_default_branch_commits
+    description: >
+      Commits that reached a repository's default branch through a merged pull
+      request: one row per tenant/source/project/repo/commit. Materialized so
+      the pull-request membership joins run once per build in their own query
+      budget; the git evidence build reads it as a semi-join set alongside the
+      sync-time is_default_branch flag.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the repository"
+        tests:
+          - not_null
+
+  - name: git_derived_commits
+    description: >
+      Commits whose work is already counted on another commit, one row per
+      tenant/data_source/commit_hash/reason. merge_result is the commit a
+      merged pull request produced on its destination (a squash result or the
+      last rebased copy), marked only when every linked branch commit was
+      collected; patch_duplicate is a later carrier of a patch id an earlier
+      commit in the same repository authored (a rebase copy or a cherry-pick).
+      The git
+      evidence build excludes these from both the commit and the line figures,
+      so one authored change counts once and the two figures describe the same
+      set of commits.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the source"
+        tests:
+          - not_null
+      - name: reason
+        description: "Why the commit is derived"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge_result', 'patch_duplicate']
+
   - name: git_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for Git source measures.
@@ -106,11 +166,11 @@ models:
 
   - name: ai_cost_metric_evidence
     description: >
-      Materialized MergeTree evidence serving table for AI cost measures. Seat
-      figures are monthly snapshots rather than daily activity, so a row is one
-      seat-month at source_summary granularity, dated at the day the snapshot
-      was last read. A separate family from ai_metric_evidence because one
-      evidence relation is bound per source.
+      Materialized MergeTree evidence serving table for AI cost measures, all
+      at source_summary granularity. A month-grain row is one seat-month, dated
+      at the first day of the month it bills for; a day-grain row is one reading
+      of a seat, dated at the day it was read. A separate family from
+      ai_metric_evidence because one evidence relation is bound per source.
     columns: *metric_evidence_columns
 
   - name: ai_cost_metric_observations
@@ -123,6 +183,13 @@ models:
       extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
       only as the utilisation denominator; daily_extra_usage_usd is the same
       billed money as extra_usage_usd, stepped across the days it was spent.
+      The month-grain measures are dated at the first day of the billing month
+      they charge for, so their date never moves with the sync schedule. A
+      reading taken on that month's last calendar day may raise the month but
+      never lower it: the endpoint names no billing period, so a drop there
+      cannot be told apart from its counter having already rolled over. A
+      reading taken before that rollover overstates the month it lands in, and
+      the same rewriting rule erases it once the month's real readings arrive.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -151,12 +218,13 @@ models:
           - not_null
       - name: metric_date
         description: >
-          The day the seat snapshot was last read, not the first of its billing
-          month — a date pinned to the 1st falls outside short rolling windows.
+          For a month-grain measure, the first day of the month it bills for, so
+          the date does not move with the sync schedule. For daily_extra_usage_usd,
+          the day the reading was taken.
         tests:
           - not_null
       - name: observed_at
-        description: "NULL — seat figures are month-grain aggregates."
+        description: "NULL here; the read timestamp lives on the evidence row."
       - name: measure_key
         description: "Source measure key registered in the metric registry"
         tests:

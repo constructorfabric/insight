@@ -27,7 +27,7 @@ dependencies = [
     "clickhouse-connect==1.7.1",
     # INVARIANT: exact pin — Faker's en_US pool changes between releases, and a
     # float pin would rename a stand's whole growth population on a rebuild.
-    "Faker==40.1.2",
+    "Faker==40.36.0",
 ]
 
 [project.optional-dependencies]

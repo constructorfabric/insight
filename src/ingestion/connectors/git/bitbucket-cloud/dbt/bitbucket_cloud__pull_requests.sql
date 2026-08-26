@@ -59,6 +59,9 @@ SELECT
     COALESCE(pr.author_display_name, '') AS author_name,
     -- Bitbucket exposes no address on the participant object.
     '' AS author_email,
+    -- ADR-0002 account key, normalized the way bitbucket_cloud__identity_inputs
+    -- writes it, so the account binding join matches byte-for-byte.
+    lower(trimBoth(COALESCE(pr.author_account_id, ''))) AS author_account_id,
     COALESCE(pr.source_branch, '') AS source_branch,
     COALESCE(pr.destination_branch, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(pr.created_on) AS created_on,

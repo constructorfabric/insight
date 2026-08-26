@@ -46,6 +46,10 @@ in_progress_per_day AS (
     WHERE i.status_category = 'in_progress'
     GROUP BY s.tenant_id, s.entity_id, day
 ),
+-- in_progress_per_day inherits the availability filter through its
+-- task_issue_state join; worklogs aggregate per person without touching
+-- issues, so deletion awareness comes from the class contract's is_deleted
+-- (worklog tombstones + issue re-fetch diff + deleted parent issue).
 worklog_per_day AS (
     SELECT
         u.tenant_id                                                          AS tenant_id,
@@ -56,6 +60,7 @@ worklog_per_day AS (
     INNER JOIN task_users AS u
         ON u.insight_source_id = w.insight_source_id AND u.user_id = w.author_id
     WHERE w.work_date IS NOT NULL
+      AND ifNull(w.is_deleted, 0) = 0
     GROUP BY u.tenant_id, u.email, toDate(w.work_date)
 )
 SELECT

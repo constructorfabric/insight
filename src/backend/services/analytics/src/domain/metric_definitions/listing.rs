@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 use serde::Serialize;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
@@ -270,7 +270,7 @@ async fn fetch_listing_rows(
          FROM metric_definitions d \
          WHERE d.tenant_id IS NULL OR d.tenant_id = ? \
          ORDER BY d.metric_key",
-        [Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec())))],
+        [Value::Bytes(Some(tenant_id.as_bytes().to_vec()))],
     ))
     .all(db)
     .await

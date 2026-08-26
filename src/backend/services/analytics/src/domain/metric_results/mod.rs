@@ -2,6 +2,8 @@ mod batch;
 mod builder;
 pub(crate) mod compiler;
 mod dto;
+#[cfg(test)]
+mod live_tests;
 mod validation;
 mod view;
 

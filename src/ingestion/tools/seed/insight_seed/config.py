@@ -29,6 +29,10 @@ SEED_REASON_PREFIX = "seed.py "
 #: The persons-seed's email-link reason (AUTO_SEED_LINK_REASON): a rebuildable projection, not foreign data.
 PERSONS_SEED_LINK_REASON = "auto-seed-link"
 
+#: The author on a row no human decided — identity-resolution's `SYSTEM_AUTHOR`.
+#: INVARIANT: the nil UUID; preflight's projection exemption turns on this column.
+SYSTEM_AUTHOR_ID = "00000000-0000-0000-0000-000000000000"
+
 #: The stand test suite's scratch namespace, and the connector instance it writes
 #: its journal rows under. The suite cannot delete what its resolution round trip
 #: appends (the journal is append-only), so preflight recognises those rows by

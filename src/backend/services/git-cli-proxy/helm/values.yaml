@@ -22,11 +22,18 @@ service:
 resources:
   requests:
     cpu: 200m
-    memory: 256Mi
+    memory: 1Gi
   limits:
-    # git subprocesses (clone, repack) are the CPU/memory consumers here.
+    # git subprocesses (clone, repack) are the memory consumers here, and
+    # their transient peak on a large repository reaches multiple GiB. The
+    # service caps git's own pack budgets (pack.threads, pack.windowMemory,
+    # pack.deltaCacheSize) so that peak cannot scale with the repository —
+    # this limit is the headroom above that ceiling, not a bound derived from
+    # cache.maxRepoBytes. Lower cache.heavyOpsConcurrency before raising it:
+    # overlapping heavy operations, not one large repository, are what push a
+    # correctly-capped pod over.
     cpu: "2"
-    memory: 2Gi
+    memory: 8Gi
 
 # Repository cache volume. The app budget below MUST stay under this size:
 # kubelet enforcement is pod eviction, which is a crash, not a mechanism.

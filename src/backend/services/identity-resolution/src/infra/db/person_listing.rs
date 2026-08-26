@@ -261,7 +261,7 @@ async fn page(
 ) -> anyhow::Result<Vec<PersonListRow>> {
     let (sql, values) = build_query(tenant_id, terms, narrowed_to, restrict, after, limit);
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
-    rows_from(db.query_all(stmt).await?)
+    rows_from(db.query_all_raw(stmt).await?)
 }
 
 /// Decide what the ranking may read.
@@ -311,7 +311,7 @@ async fn candidate_persons(
     let (sql, values) = build_probe(tenant_id, first, rest);
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut found = Vec::with_capacity(rows.len());
     for row in rows {
         let raw: Vec<u8> = row.try_get("", "person_id")?;

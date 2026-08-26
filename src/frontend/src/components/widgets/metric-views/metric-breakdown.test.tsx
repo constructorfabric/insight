@@ -65,7 +65,11 @@ describe("MetricBreakdown", () => {
     const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
+        value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
       >
         <MetricBreakdown
           metric={breakdownMetric([
