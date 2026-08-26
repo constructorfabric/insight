@@ -294,8 +294,8 @@ drilldown.
 ##### Responsibility scope
 
 `insight.ai_cost_metric_evidence` and `insight.ai_cost_metric_observations`, carrying
-`token_cost_usd`, `extra_usage_usd`, `extra_usage_limit_usd`; and the `ai_cost`
-source plus its metric keys in `registry.yaml`.
+`token_cost_usd`, `extra_usage_usd`, `extra_usage_limit_usd`, `seat_cost_usd`,
+`daily_extra_usage_usd`; and the `ai_cost` source plus its metric keys in `registry.yaml`.
 
 ##### Responsibility boundaries
 
@@ -355,7 +355,7 @@ Describes `cpt-insightspec-aicost-component-metric-source`.
 
 ### 3.3 API Contracts
 
-No new endpoint. Four metric keys are added to the existing contract:
+No new endpoint. Five metric keys are added to the existing contract:
 
 | `metric_key` | inputs | computation | format | direction | dimensions |
 |---|---|---|---|---|---|
@@ -363,6 +363,7 @@ No new endpoint. Four metric keys are added to the existing contract:
 | `ai.extra_usage_cost` | `extra_usage_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 | `ai.extra_usage_utilisation` | `extra_usage_usd` (numerator), `extra_usage_limit_usd` (denominator) | `ratio`, scale 100 | `percent` | — | `tool`, `seat_tier` |
 | `ai.seat_cost` | `seat_cost_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
+| `ai.daily_approximate_extra_usage_cost` | `daily_extra_usage_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 
 All carry `entity_type: person` and `peer_cohort_key: org_unit`. `ai.seat_cost` reads the
 per-seat amount on an invoice's non-proration `subscriptions` lines, which is the only place
@@ -588,12 +589,15 @@ Registry entry:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
+      revision_window_days: 31
     measures:
-      - key: token_cost_usd
-        evidence_granularity: source_summary
       - key: extra_usage_usd
         evidence_granularity: source_summary
       - key: extra_usage_limit_usd
+        evidence_granularity: source_summary
+      - key: seat_cost_usd
+        evidence_granularity: source_summary
+      - key: daily_extra_usage_usd
         evidence_granularity: source_summary
     dimensions:
       - tool
