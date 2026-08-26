@@ -18,11 +18,11 @@ use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
-    PlannedQuery, RankingQueryRow, RollupQueryRow, TimeseriesQueryRow, UnbatchedView,
-    ValidatedMetricResultsRequest, build_breakdown_view, build_histogram_view, build_metric_result,
-    build_peer_view, build_period_view, build_ranked_groups, build_rollup_view,
-    build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_view_row_limit,
-    plan_queries, plan_rankings, validate_request,
+    PlannedQuery, PooledHistogramQueryRow, RankingQueryRow, RollupQueryRow, TimeseriesQueryRow,
+    UnbatchedView, ValidatedMetricResultsRequest, build_breakdown_view, build_histogram_view,
+    build_metric_result, build_peer_view, build_period_view, build_pooled_histogram_view,
+    build_ranked_groups, build_rollup_view, build_timeseries_view, demux_peer_rows,
+    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
 
@@ -242,6 +242,12 @@ async fn execute_planned(
                     let comment = format!("metric-results:histogram:{}", def.key());
                     let rows = fetch_rows::<HistogramQueryRow>(state, query, &comment).await?;
                     build_histogram_view(req, rows)
+                }
+                UnbatchedView::PooledHistogram { dimensions } => {
+                    let comment = format!("metric-results:pooled-histogram:{}", def.key());
+                    let rows =
+                        fetch_rows::<PooledHistogramQueryRow>(state, query, &comment).await?;
+                    build_pooled_histogram_view(rows, &dimensions)?
                 }
             };
             Ok(vec![MetricViewResult {

@@ -102,6 +102,21 @@ pub struct HistogramQueryRow {
     pub bin_count: Option<u64>,
 }
 
+/// One observed (dimension tuple, bin) pair plus the tuple's exact value
+/// bounds, pooled over all selected entities' events — the dimensioned
+/// counterpart of [`HistogramQueryRow`], with the dimension value/label
+/// aliases arriving through `extra` like every dimensioned row shape.
+#[derive(Debug, Deserialize)]
+pub struct PooledHistogramQueryRow {
+    pub bin_idx: u32,
+    pub group_lo: f64,
+    pub group_hi: f64,
+    #[serde(default, deserialize_with = "optional_u64")]
+    pub bin_count: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
 pub(crate) fn compile_period_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -648,6 +663,68 @@ pub(crate) fn compile_histogram_query(
         FROM events
         GROUP BY entity_id, bin_idx
         ORDER BY entity_id, bin_idx
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+        event_value = transformed(def, "value".to_owned()),
+    );
+    CompiledQuery { sql, params }
+}
+
+// The pooled counterpart of `compile_histogram_query`: same deterministic
+// fixed-width binning, but the partition (and the [min, max] bounds) is the
+// dimension tuple instead of the entity — all selected entities' events pool
+// into one distribution per tuple, mirroring how rollup drops the entity
+// grain. Grouping by (value, label) alias pairs matches the breakdown /
+// timeseries dimension shape. Group cardinality is unbounded like an
+// uncapped rollup's, so the query carries the same row limit.
+pub(crate) fn compile_pooled_histogram_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_predicate = selected_entity_predicate(req, &mut params);
+    let observation_table = observation_table(def.observation_source());
+    let (dim_select, dim_group) = dimension_select_group(dimensions);
+    let bins = HISTOGRAM_BINS;
+    let max_bin = HISTOGRAM_BINS - 1;
+    let limit = query_row_limit();
+    let sql = format!(
+        r"
+        WITH raw_events AS (
+            SELECT
+                assumeNotNull({event_value}) AS event_value{dim_select}
+            FROM {observation_table}
+            WHERE {metric_where}
+              {filter_where}
+              AND {entity_predicate}
+              AND value IS NOT NULL
+        ),
+        events AS (
+            SELECT
+                *,
+                min(event_value) OVER (PARTITION BY {dim_group}) AS group_lo,
+                max(event_value) OVER (PARTITION BY {dim_group}) AS group_hi
+            FROM raw_events
+        )
+        SELECT
+            {dim_group},
+            if(
+                events.group_hi = events.group_lo,
+                0,
+                toUInt32(least({max_bin}, toInt64(floor(
+                    (events.event_value - events.group_lo) * {bins} / (events.group_hi - events.group_lo)
+                ))))
+            ) AS bin_idx,
+            any(events.group_lo) AS group_lo,
+            any(events.group_hi) AS group_hi,
+            toUInt64(count()) AS bin_count
+        FROM events
+        GROUP BY {dim_group}, bin_idx
+        ORDER BY {dim_group}, bin_idx
         LIMIT {limit}
         ",
         metric_where = metric_where(def, req.enforce_tenant_scope),
@@ -2286,6 +2363,42 @@ mod tests {
     }
 
     #[test]
+    fn pooled_histogram_query_bins_per_dimension_tuple_without_entity_grain() {
+        let query = compile_pooled_histogram_query(
+            &percentile_metric(),
+            &request(),
+            &["source".to_owned()],
+            &[],
+        );
+        // Bounds and bins partition/group by the dimension aliases — the
+        // entity only scopes which rows enter the pool.
+        assert!(
+            query
+                .sql
+                .contains("min(event_value) OVER (PARTITION BY dim_0_value, dim_0_label)")
+        );
+        assert!(
+            query
+                .sql
+                .contains("max(event_value) OVER (PARTITION BY dim_0_value, dim_0_label)")
+        );
+        assert!(
+            query
+                .sql
+                .contains("GROUP BY dim_0_value, dim_0_label, bin_idx")
+        );
+        assert!(!query.sql.contains("PARTITION BY entity_id"));
+        assert!(query.sql.contains("entity_id IN (?, ?)"));
+        // Same deterministic fixed-width arithmetic as the per-entity shape.
+        assert!(query.sql.contains("least(9,"));
+        assert!(query.sql.contains("* 10 /"));
+        assert!(!query.sql.contains("histogram("));
+        // Unbounded group cardinality rides the shared row limit.
+        assert!(query.sql.contains(&format!("LIMIT {}", query_row_limit())));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
     fn transform_wraps_every_query_shape() {
         let mut def = ratio_metric();
         def.transform = Some(ValueTransform {
@@ -2326,6 +2439,18 @@ mod tests {
             hist.sql
         );
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
+        // The pooled shape bins the same transformed alias.
+        let pooled =
+            compile_pooled_histogram_query(&median, &request(), &["source".to_owned()], &[]);
+        assert!(
+            pooled
+                .sql
+                .contains("if((value) IS NULL, NULL, least(100.0, value))")
+                && pooled.sql.contains("AS event_value"),
+            "pooled histogram must transform into the event_value alias: {}",
+            pooled.sql
+        );
+        assert_eq!(pooled.sql.matches('?').count(), pooled.params.len());
         let period = compile_period_batch_query(&[&def], &request(), &[]);
         assert!(
             period
