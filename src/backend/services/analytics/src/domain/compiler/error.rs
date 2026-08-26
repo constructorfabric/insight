@@ -49,4 +49,20 @@ pub enum CompileError {
     },
     #[error("metric `{metric}` takes a percentile of measure `{measure}`, which folds no value")]
     PercentileWithoutValue { metric: String, measure: String },
+    #[error("metric `{metric}` cannot be read as a {view} view: {reason}")]
+    UnsupportedView {
+        metric: String,
+        view: &'static str,
+        reason: &'static str,
+    },
+    #[error("metric `{metric}` declares no peer cohort `{cohort_key}`")]
+    UndeclaredCohort { metric: String, cohort_key: String },
+    #[error(
+        "the group cap ranks group {rank} by {named} dimension values, and the read groups by {requested}"
+    )]
+    GroupCapArity {
+        rank: u32,
+        named: usize,
+        requested: usize,
+    },
 }

@@ -18,7 +18,9 @@ use crate::domain::definitions::filter::{
 use crate::domain::field_catalog::model::{CatalogDataset, FieldRole, ReadDiscipline};
 
 use super::error::CompileError;
-use super::request::{Bucket, DimensionFilter, EntityScope, MeasureQuery, MetricQuery};
+use super::request::{
+    Bucket, DimensionFilter, EntityScope, GroupRankingQuery, MeasureQuery, MetricQuery,
+};
 
 /// A bound value in the spelling ClickHouse receives it in. Every value a
 /// statement carries is one of these, and none of them is ever written into
@@ -68,6 +70,28 @@ impl<'a> ReadScope<'a> {
             from: query.from,
             to: query.to,
             dimension_filters: &query.dimension_filters,
+        }
+    }
+
+    pub fn of_ranking(query: &'a GroupRankingQuery) -> Self {
+        Self {
+            tenant_id: &query.tenant_id,
+            entity_scope: &query.entity_scope,
+            from: query.from,
+            to: query.to,
+            dimension_filters: &query.dimension_filters,
+        }
+    }
+
+    /// The same scope with the entity narrowing dropped, for a read that
+    /// selects its entities by joining a pool rather than by a predicate.
+    pub fn over_every_entity(&self, population: &'a EntityScope) -> Self {
+        Self {
+            tenant_id: self.tenant_id,
+            entity_scope: population,
+            from: self.from,
+            to: self.to,
+            dimension_filters: self.dimension_filters,
         }
     }
 }

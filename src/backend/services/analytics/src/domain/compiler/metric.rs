@@ -2,26 +2,23 @@
 //!
 //! A metric is a computation over measures plus a post-aggregation transform,
 //! so the statement this writes is a measure read whose value column is the
-//! computation and whose outer projection is the transform. Both view kinds
-//! emit the row shape the metric-result builders already decode: a period read
-//! emits `(entity_id, value)`, a timeseries read emits one row per bucket plus
-//! the range total the same aggregation pipeline produces.
+//! computation and whose outer projection is the transform. Every view kind
+//! emits the row shape the metric-result builders already decode: a period
+//! read emits `(entity_id, value)`, a timeseries read emits one row per bucket
+//! plus the range total the same aggregation pipeline produces, and the
+//! grouped, binned, and peer views each emit their own.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::domain::definitions::definition::{
-    Computation, MeasureDefinition, MetricDefinition, Transform,
-};
-use crate::domain::definitions::filter::FilterTree;
+use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
 use crate::domain::field_catalog::model::{CatalogDataset, FieldCatalog};
 
 use super::error::CompileError;
+use super::fold::{Fold, ScopedRead, bounded_query};
 use super::request::{Bucket, MetricQuery, ViewKind};
-use super::sql::{
-    CompiledMeasureQuery, EmptyFold, QueryParam, ReadScope, aggregate_expr, bucket_expr,
-    conditional_aggregate_expr, from_clause, read_predicates, render_filter,
-};
+use super::sql::{CompiledMeasureQuery, ReadScope, bucket_expr, from_clause};
+use super::{breakdown, histogram, peer, rollup};
 
 pub fn compile_metric_query(
     catalog: &FieldCatalog,
@@ -30,212 +27,44 @@ pub fn compile_metric_query(
     query: &MetricQuery,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let fold = Fold::resolve(metric, measures)?;
-    let dataset =
-        catalog
-            .dataset(&fold.grain.dataset)
-            .ok_or_else(|| CompileError::UnknownDataset {
-                measure: fold.grain.key.clone(),
-                dataset: fold.grain.dataset.clone(),
-            })?;
+    let dataset = fold.dataset(catalog)?;
 
-    // A placeholder binds by position, and the value column is written before
-    // the predicates are, so the fold's values bind before the scope's.
-    let mut params = Vec::new();
-    let value = fold.value_expr(metric, &mut params)?;
-    let predicates = read_predicates(
-        dataset,
-        fold.grain,
-        fold.where_filter,
-        &ReadScope::of_metric(query),
-        &mut params,
-    )?;
-    params.push(QueryParam::UInt(query.row_limit));
-
-    let inner = match query.view {
-        ViewKind::Period => period_sql(dataset, fold.grain, &value, &predicates),
+    match &query.view {
+        ViewKind::Period => {
+            let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
+            let inner = period_sql(dataset, fold.grain, &read);
+            Ok(bounded_query(
+                metric.transform.as_ref(),
+                read.params,
+                query.row_limit,
+                inner,
+            ))
+        }
         ViewKind::Timeseries => {
-            timeseries_sql(dataset, fold.grain, &value, &predicates, query.bucket)
+            let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
+            let inner = timeseries_sql(dataset, fold.grain, &read, query.bucket);
+            Ok(bounded_query(
+                metric.transform.as_ref(),
+                read.params,
+                query.row_limit,
+                inner,
+            ))
         }
-    };
-
-    Ok(CompiledMeasureQuery {
-        sql: transformed(metric.transform.as_ref(), inner),
-        params,
-    })
-}
-
-/// A metric's computation resolved against the measures it names.
-struct Fold<'a> {
-    /// The measure whose entity, event time, and dimensions the read is
-    /// grained by. A ratio folds two measures in one scan, and the numerator
-    /// owns the grain both halves are read at.
-    grain: &'a MeasureDefinition,
-    /// The stored filter to scope the scan by, when one measure owns the whole
-    /// read. A ratio keeps both filters in its folds instead.
-    where_filter: Option<&'a FilterTree>,
-    kind: FoldKind<'a>,
-}
-
-enum FoldKind<'a> {
-    Aggregate(&'a MeasureDefinition),
-    Ratio {
-        numerator: &'a MeasureDefinition,
-        denominator: &'a MeasureDefinition,
-    },
-    Quantile {
-        measure: &'a MeasureDefinition,
-        quantile: f64,
-    },
-}
-
-impl<'a> Fold<'a> {
-    fn resolve(
-        metric: &MetricDefinition,
-        measures: &'a BTreeMap<String, MeasureDefinition>,
-    ) -> Result<Self, CompileError> {
-        let input = |key: &str| {
-            measures
-                .get(key)
-                .ok_or_else(|| CompileError::MeasureNotFound {
-                    metric: metric.key.clone(),
-                    measure: key.to_owned(),
-                })
-        };
-
-        match &metric.computation {
-            Computation::Direct { measure } => {
-                let measure = input(measure)?;
-                Ok(Self {
-                    grain: measure,
-                    where_filter: measure.filter.as_ref(),
-                    kind: FoldKind::Aggregate(measure),
-                })
-            }
-            Computation::Ratio {
-                numerator,
-                denominator,
-            } => {
-                let numerator = input(numerator)?;
-                let denominator = input(denominator)?;
-                agree_on(metric, numerator, denominator)?;
-                Ok(Self {
-                    grain: numerator,
-                    where_filter: None,
-                    kind: FoldKind::Ratio {
-                        numerator,
-                        denominator,
-                    },
-                })
-            }
-            Computation::Percentile { measure, quantile } => {
-                let measure = input(measure)?;
-                Ok(Self {
-                    grain: measure,
-                    where_filter: measure.filter.as_ref(),
-                    kind: FoldKind::Quantile {
-                        measure,
-                        quantile: *quantile,
-                    },
-                })
-            }
+        ViewKind::Breakdown(view) => {
+            breakdown::compile(dataset, metric, &fold, query, &view.dimensions)
         }
-    }
-
-    /// The metric's served value as one aggregate expression over the scan.
-    fn value_expr(
-        &self,
-        metric: &MetricDefinition,
-        params: &mut Vec<QueryParam>,
-    ) -> Result<String, CompileError> {
-        let value = match self.kind {
-            FoldKind::Aggregate(measure) => aggregate_expr(measure)?,
-            FoldKind::Ratio {
-                numerator,
-                denominator,
-            } => {
-                // A numerator that matches no row is an unknown split, not a
-                // zero; a zero denominator is an undefined ratio. Both read
-                // NULL, and the builders never fill a NULL back in.
-                let numerator = conditional_aggregate_expr(
-                    numerator,
-                    &fold_condition(numerator, params)?,
-                    EmptyFold::Null,
-                )?;
-                let denominator = conditional_aggregate_expr(
-                    denominator,
-                    &fold_condition(denominator, params)?,
-                    EmptyFold::Zero,
-                )?;
-                format!("{numerator} / nullIf({denominator}, 0)")
-            }
-            FoldKind::Quantile { measure, quantile } => {
-                // The quantile is taken over the measure's per-row values: a
-                // quantile of pre-folded aggregates is not that quantile.
-                let value = measure.value_expr.as_deref().ok_or_else(|| {
-                    CompileError::PercentileWithoutValue {
-                        metric: metric.key.clone(),
-                        measure: measure.key.clone(),
-                    }
-                })?;
-                format!("quantileExact({quantile})({value})")
-            }
-        };
-
-        Ok(format!("toFloat64({value})"))
+        ViewKind::Rollup(view) => rollup::compile(dataset, metric, &fold, query, view),
+        ViewKind::Histogram => histogram::compile(dataset, metric, &fold, query),
+        ViewKind::Peer(view) => peer::compile(dataset, metric, &fold, query, view),
     }
 }
 
-/// The rows one half of a ratio folds over, as an aggregate-function
-/// condition. A measure with no stored filter folds over every scanned row.
-fn fold_condition(
-    measure: &MeasureDefinition,
-    params: &mut Vec<QueryParam>,
-) -> Result<String, CompileError> {
-    match &measure.filter {
-        Some(filter) => render_filter(measure, filter, params),
-        None => Ok("1".to_owned()),
-    }
-}
-
-/// One scan can be grained one way only, so the two halves of a ratio must
-/// read the same rows about the same subject at the same time.
-fn agree_on(
-    metric: &MetricDefinition,
-    numerator: &MeasureDefinition,
-    denominator: &MeasureDefinition,
-) -> Result<(), CompileError> {
-    let disagreement = if numerator.dataset != denominator.dataset {
-        Some("the dataset they read")
-    } else if numerator.entity != denominator.entity {
-        Some("the field they identify an entity by")
-    } else if numerator.event_time != denominator.event_time {
-        Some("the field they take an event time from")
-    } else {
-        None
-    };
-
-    match disagreement {
-        None => Ok(()),
-        Some(aspect) => Err(CompileError::RatioInputsDisagree {
-            metric: metric.key.clone(),
-            numerator: numerator.key.clone(),
-            denominator: denominator.key.clone(),
-            aspect,
-        }),
-    }
-}
-
-fn period_sql(
-    dataset: &CatalogDataset,
-    measure: &MeasureDefinition,
-    value: &str,
-    predicates: &[String],
-) -> String {
+fn period_sql(dataset: &CatalogDataset, measure: &MeasureDefinition, read: &ScopedRead) -> String {
     let mut sql = String::from("SELECT\n");
     let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
-    let _ = writeln!(sql, "    {value} AS value");
+    let _ = writeln!(sql, "    {} AS value", read.value);
     let _ = writeln!(sql, "FROM {}", from_clause(dataset));
-    let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
+    let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id");
     let _ = write!(sql, "LIMIT ?");
     sql
@@ -248,8 +77,7 @@ fn period_sql(
 fn timeseries_sql(
     dataset: &CatalogDataset,
     measure: &MeasureDefinition,
-    value: &str,
-    predicates: &[String],
+    read: &ScopedRead,
     bucket: Bucket,
 ) -> String {
     let bucket = bucket_expr(&measure.event_time, bucket);
@@ -257,13 +85,13 @@ fn timeseries_sql(
     let mut sql = String::from("SELECT\n");
     let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
     let _ = writeln!(sql, "    toString({bucket}) AS bucket_start,");
-    let _ = writeln!(sql, "    {value} AS value,");
+    let _ = writeln!(sql, "    {} AS value,", read.value);
     let _ = writeln!(sql, "    toUInt8(grouping({bucket})) AS is_total,");
     let _ = writeln!(sql, "    CAST(NULL AS Nullable(UInt32)) AS rank,");
     let _ = writeln!(sql, "    toUInt8(0) AS remainder,");
     let _ = writeln!(sql, "    CAST(NULL AS Nullable(String)) AS group_label");
     let _ = writeln!(sql, "FROM {}", from_clause(dataset));
-    let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
+    let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(
         sql,
         "GROUP BY GROUPING SETS ((entity_id, {bucket}), (entity_id))"
@@ -272,179 +100,17 @@ fn timeseries_sql(
     let _ = write!(sql, "LIMIT ?");
     sql
 }
-
-/// Projects the transform over the aggregated value. The fold stays in the
-/// inner statement so its placeholders bind once; the projection reads only
-/// the `value` column, which the clamp guard references more than once.
-fn transformed(transform: Option<&Transform>, inner: String) -> String {
-    match transform {
-        Some(transform) if !is_identity(transform) => {
-            let value = transform_expr(transform, "value");
-            format!("SELECT\n    * EXCEPT (value),\n    {value} AS value\nFROM (\n{inner}\n)")
-        }
-        Some(_) | None => inner,
-    }
-}
-
-fn is_identity(transform: &Transform) -> bool {
-    transform.multiplier.is_none()
-        && transform.offset.is_none()
-        && transform.clamp_min.is_none()
-        && transform.clamp_max.is_none()
-}
-
-// SAFETY: ClickHouse `least`/`greatest` ignore NULL arguments (24.12+), so an
-// unguarded clamp would resurrect an honest NULL as the clamp bound. The
-// explicit guard keeps an unknown value unknown.
-fn transform_expr(transform: &Transform, expr: &str) -> String {
-    let mut out = expr.to_owned();
-    if let Some(multiplier) = transform.multiplier {
-        out = format!("{multiplier:?} * ({out})");
-    }
-    if let Some(offset) = transform.offset {
-        out = format!("({offset:?} + {out})");
-    }
-    if transform.clamp_min.is_none() && transform.clamp_max.is_none() {
-        return out;
-    }
-
-    let mut clamped = out.clone();
-    if let Some(clamp_min) = transform.clamp_min {
-        clamped = format!("greatest({clamp_min:?}, {clamped})");
-    }
-    if let Some(clamp_max) = transform.clamp_max {
-        clamped = format!("least({clamp_max:?}, {clamped})");
-    }
-
-    format!("if(({out}) IS NULL, NULL, {clamped})")
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use chrono::NaiveDate;
-
     use super::*;
-    use crate::domain::compiler::request::{DimensionFilter, EntityScope};
-    use crate::domain::compiler::test_catalog::catalog;
-    use crate::domain::definitions::definition::{
-        Aggregation, DimensionBinding, Direction, Format,
+    use crate::domain::compiler::fixtures::{
+        compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile, query,
+        ratio, sized_measure, text,
     };
-
-    fn measure(key: &str, filter: Option<&str>) -> MeasureDefinition {
-        MeasureDefinition {
-            key: key.to_owned(),
-            dataset: "git_pull_requests".to_owned(),
-            description: None,
-            filter: filter.map(|filter| serde_yaml::from_str(filter).expect("filter parses")),
-            aggregation: Aggregation::Count,
-            value_expr: None,
-            subject_expr: None,
-            event_time: "closed_on".to_owned(),
-            entity: "author_email".to_owned(),
-            dimensions: vec![DimensionBinding {
-                key: "repository".to_owned(),
-                value_field: "repo_slug".to_owned(),
-                label_field: None,
-            }],
-        }
-    }
-
-    fn sized_measure(key: &str) -> MeasureDefinition {
-        MeasureDefinition {
-            aggregation: Aggregation::Sum,
-            value_expr: Some("lines_added".to_owned()),
-            ..measure(key, None)
-        }
-    }
-
-    fn measures(defined: &[MeasureDefinition]) -> BTreeMap<String, MeasureDefinition> {
-        defined
-            .iter()
-            .map(|measure| (measure.key.clone(), measure.clone()))
-            .collect()
-    }
-
-    fn metric(computation: Computation) -> MetricDefinition {
-        MetricDefinition {
-            key: "git.merge_rate".to_owned(),
-            computation,
-            transform: None,
-            format: Format::Percent,
-            direction: Direction::HigherIsBetter,
-            entity_type: "person".to_owned(),
-            cohort_key: None,
-            label: None,
-            description: None,
-        }
-    }
-
-    fn direct(measure: &str) -> Computation {
-        Computation::Direct {
-            measure: measure.to_owned(),
-        }
-    }
-
-    fn ratio(numerator: &str, denominator: &str) -> Computation {
-        Computation::Ratio {
-            numerator: numerator.to_owned(),
-            denominator: denominator.to_owned(),
-        }
-    }
-
-    fn percentile(measure: &str, quantile: f64) -> Computation {
-        Computation::Percentile {
-            measure: measure.to_owned(),
-            quantile,
-        }
-    }
-
-    fn percent_of_total() -> Transform {
-        Transform {
-            multiplier: Some(100.0),
-            offset: None,
-            clamp_min: Some(0.0),
-            clamp_max: Some(100.0),
-        }
-    }
-
-    fn query(view: ViewKind) -> MetricQuery {
-        MetricQuery {
-            tenant_id: "acme-tenant".to_owned(),
-            entity_scope: EntityScope::Tenant,
-            from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
-            to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
-            bucket: Bucket::Day,
-            dimension_filters: Vec::new(),
-            view,
-            row_limit: 10_001,
-        }
-    }
-
-    fn text(value: &str) -> QueryParam {
-        QueryParam::Text(value.to_owned())
-    }
-
-    fn lines(expected: &[&str]) -> String {
-        expected.join("\n")
-    }
-
-    fn compile(
-        metric: &MetricDefinition,
-        defined: &[MeasureDefinition],
-        query: &MetricQuery,
-    ) -> CompiledMeasureQuery {
-        compile_metric_query(&catalog(), metric, &measures(defined), query).expect("compiles")
-    }
-
-    fn compile_err(
-        metric: &MetricDefinition,
-        defined: &[MeasureDefinition],
-        query: &MetricQuery,
-    ) -> CompileError {
-        compile_metric_query(&catalog(), metric, &measures(defined), query)
-            .expect_err("expected a compile error")
-    }
+    use crate::domain::compiler::request::{DimensionFilter, EntityScope};
+    use crate::domain::compiler::sql::QueryParam;
+    use crate::domain::definitions::definition::{Aggregation, Transform};
 
     #[test]
     fn a_direct_metric_folds_one_measure_per_entity_over_the_window() {
@@ -620,6 +286,7 @@ mod tests {
         ];
 
         for (view, expected_group) in cases {
+            let name = view.name();
             let compiled = compile(
                 &metric(percentile("pr_size", 0.5)),
                 std::slice::from_ref(&sized),
@@ -630,10 +297,10 @@ mod tests {
                 compiled
                     .sql
                     .contains("toFloat64(quantileExact(0.5)(lines_added)) AS value"),
-                "{view:?}: {}",
+                "{name}: {}",
                 compiled.sql
             );
-            assert!(compiled.sql.contains(expected_group), "{view:?}");
+            assert!(compiled.sql.contains(expected_group), "{name}");
         }
     }
 
