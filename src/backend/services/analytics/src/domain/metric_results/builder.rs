@@ -1073,6 +1073,15 @@ mod tests {
     }
 
     #[test]
+    fn an_error_view_never_trips_the_row_limit() {
+        let view = MetricResultViewDto::Error {
+            code: crate::domain::metric_results::dto::MetricViewErrorCode::QueryFailed,
+            message: "generic".to_owned(),
+        };
+        assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_ok());
+    }
+
+    #[test]
     fn missing_value_ignores_the_transform() {
         let mut def = sum_metric();
         def.transform = Some(ValueTransform {

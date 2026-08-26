@@ -158,6 +158,27 @@ mod tests {
     }
 
     #[test]
+    fn each_failure_kind_carries_its_code_and_a_nonempty_generic_message() {
+        let failures = [
+            ViewFailure::timeout(),
+            ViewFailure::from_parse_error("invalid type: null"),
+            ViewFailure::from_assembly_error("metric-results:period-batch:m_a"),
+        ];
+        let expected = [
+            MetricViewErrorCode::QueryTimeout,
+            MetricViewErrorCode::ResultParseFailed,
+            MetricViewErrorCode::ResultParseFailed,
+        ];
+        for (failure, expected) in failures.into_iter().zip(expected) {
+            assert_eq!(failure.code, expected, "wrong code: {failure:?}");
+            let MetricResultViewDto::Error { message, .. } = failure.into_view(false) else {
+                panic!("expected an error view");
+            };
+            assert!(!message.is_empty());
+        }
+    }
+
+    #[test]
     fn admin_sees_the_detail_and_others_the_generic_message() {
         let failure = ViewFailure::from_query_error("Code: 241. Memory limit exceeded");
 

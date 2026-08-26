@@ -720,17 +720,22 @@ mod tests {
     #[test]
     fn a_failed_ranking_fails_only_the_views_that_asked_for_it() -> Result<(), CanonicalError> {
         let rank_by = def("m_rank", Some("org_unit"));
+        let limit = ValidatedGroupLimit {
+            count: 10,
+            rank_by: Box::new(rank_by),
+            include_remainder: true,
+        };
         let req = request(vec![views(
             vec![
                 ValidatedMetricView::Period,
                 ValidatedMetricView::Timeseries {
                     bucket: Bucket::Week,
                     dimensions: vec!["tool".to_owned()],
-                    group_limit: Some(ValidatedGroupLimit {
-                        count: 10,
-                        rank_by: Box::new(rank_by),
-                        include_remainder: true,
-                    }),
+                    group_limit: Some(limit.clone()),
+                },
+                ValidatedMetricView::Rollup {
+                    dimensions: vec!["tool".to_owned()],
+                    group_limit: Some(limit),
                 },
             ],
             "m_a",
@@ -744,24 +749,26 @@ mod tests {
 
         let planned = plan_queries(&req, &rankings, PeerPopulation::DeclaredCohort)?;
 
-        assert_eq!(planned.len(), 2);
+        assert_eq!(planned.len(), 3);
         assert!(
             planned
                 .iter()
                 .any(|query| matches!(query, PlannedQuery::PeriodBatch { .. })),
             "the period view must still plan a real query"
         );
-        assert!(
-            planned.iter().any(|query| matches!(
-                query,
-                PlannedQuery::Failed {
-                    metric_index: 0,
-                    view_index: 1,
-                    ..
-                }
-            )),
-            "the group-limited view must pre-fail in its own slot"
-        );
+        for view_index in [1, 2] {
+            assert!(
+                planned.iter().any(|query| matches!(
+                    query,
+                    PlannedQuery::Failed {
+                        metric_index: 0,
+                        view_index: index,
+                        ..
+                    } if *index == view_index
+                )),
+                "the group-limited view {view_index} must pre-fail in its own slot"
+            );
+        }
         Ok(())
     }
 
