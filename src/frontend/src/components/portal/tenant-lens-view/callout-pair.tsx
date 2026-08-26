@@ -56,7 +56,7 @@ export function CalloutPairSection({
               {formatMetricValue(pair.unweightedMean, r.format, r.unit)}
             </div>
             <p className="text-xs text-muted-foreground">
-              unweighted mean over {pair.groups} {section.dimension}s
+              unweighted mean over {pair.groups} groups
             </p>
           </CardContent>
         </Card>

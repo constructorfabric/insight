@@ -939,7 +939,7 @@ describe("TenantLensView", () => {
     );
     expect(screen.getByText("88%")).toBeTruthy();
     expect(screen.getByText("70%")).toBeTruthy();
-    expect(screen.getByText(/unweighted mean over 2 repositorys/)).toBeTruthy();
+    expect(screen.getByText(/unweighted mean over 2 groups/)).toBeTruthy();
   });
 
   it("draws dumbbells only for values with both split readings", () => {
