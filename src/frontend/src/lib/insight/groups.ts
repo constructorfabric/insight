@@ -230,10 +230,8 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
     },
     // The pre-split keys back the Repositories lens headline, where the
     // question is "did it land on the trunk", not the pair's ratio.
-    {
-      key: "git.default_branch_prs_merged",
-      views: [{ view: "period" }, { view: "peer" }],
-    },
+    // `git.default_branch_prs_merged` is already above — a key may appear
+    // once per request, and the API rejects the WHOLE request otherwise.
     {
       key: "git.default_branch_code_lines",
       views: [{ view: "period" }, { view: "peer" }],
