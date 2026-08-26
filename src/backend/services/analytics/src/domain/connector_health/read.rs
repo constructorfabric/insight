@@ -481,6 +481,68 @@ mod tests {
     }
 
     #[test]
+    fn storage_facts_carry_each_column_to_its_own_field() {
+        // A swapped pair here is invisible: both are small counts, and the page
+        // would report "3 of 7 streams have data" with the two exchanged.
+        let facts = storage_facts(vec![StorageRow {
+            connector: "alpha".to_owned(),
+            observed_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            streams: 7,
+            streams_with_data: 3,
+            rows_total: 4_096,
+            bytes_on_disk: 8_192,
+        }]);
+
+        let (connector, storage) = facts.into_iter().next().expect("one connector");
+        assert_eq!(connector, "alpha");
+        assert_eq!(storage.streams, 7);
+        assert_eq!(storage.streams_with_data, 3);
+        assert_eq!(storage.rows_total, 4_096);
+        assert_eq!(storage.bytes_on_disk, 8_192);
+        assert_eq!(storage.observed_at, Utc.timestamp_opt(1_700_000_000, 0).unwrap());
+    }
+
+    #[test]
+    fn stream_facts_keep_each_stream_with_its_own_connector() {
+        let facts = stream_facts(vec![
+            StreamRow {
+                connector: "alpha".to_owned(),
+                stream: "issues".to_owned(),
+                rows_total: 10,
+                bytes_on_disk: 100,
+            },
+            StreamRow {
+                connector: "beta".to_owned(),
+                stream: "commits".to_owned(),
+                rows_total: 20,
+                bytes_on_disk: 200,
+            },
+        ]);
+
+        let named: Vec<(String, String, u64)> = facts
+            .into_iter()
+            .map(|(connector, stream)| (connector, stream.stream, stream.rows_total))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                ("alpha".to_owned(), "issues".to_owned(), 10),
+                ("beta".to_owned(), "commits".to_owned(), 20),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_absent_ledger_yields_a_tick_that_matches_no_snapshot_row() {
+        // Every snapshot read binds this run_id. An empty one must select
+        // nothing rather than accidentally matching rows that carry no tick.
+        let tick = SealedTick::none();
+
+        assert_eq!(tick.swept_at, None);
+        assert!(tick.run_id.is_empty());
+    }
+
+    #[test]
     fn a_transform_outcome_attaches_only_to_its_own_run() {
         let facts = run_facts(
             vec![run_row("alpha", "wf-2")],
