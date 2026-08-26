@@ -569,7 +569,9 @@ macros, which own materialisation, storage keys and monthly partitioning.
 |---|---|---|
 | `token_cost_usd` | one row per `(person, day, model, token_type)` | `source_summary` |
 | `extra_usage_usd` | one row per `(seat, month)` snapshot | `source_summary` |
-| `extra_usage_limit_usd` | one row per `(seat, month)` snapshot | `source_summary` |
+| `extra_usage_limit_usd` | one row per `(seat, month)` snapshot carrying a ceiling | `source_summary` |
+| `seat_cost_usd` | one row per `(seat, month)` snapshot the invoice priced | `source_summary` |
+| `daily_extra_usage_usd` | one row per `(seat, read day)` step | `source_summary` |
 
 `details` carries what a reader needs without leaving the drilldown: for token cost the
 model, token type, token count and rate applied; for seat rows the seat tier, the ceiling,
