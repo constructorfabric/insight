@@ -76,8 +76,14 @@ f74e89258c6ae15e  JiraToken          src/ingestion/tests/e2e/metrics/team_bullet
 3fdd46f911f50d69  JiraToken          src/ingestion/tests/e2e/metrics/templates/confluence_wiki_pages.yaml  # synthetic e2e metric fixture value
 a32d11c0e57c50f7  JiraToken          src/ingestion/tests/e2e/specs/templates/jira_task.yaml  # synthetic e2e metric fixture value
 84ccb186bda267d2  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
+d3eac4f45d3aa99b  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
+49ecd707196e4990  Lob                ?  # test function name; `test_` + 35 chars is also the Lob key shape
 d3a5da2ebda00b3f  Lob                deploy/preview/tests/test_render.py  # test function name; `test_` + 35 chars is also the Lob key shape
 c74cd50dc146bc0e  Lob                src/backend/services/gateway/tests/downstream-verify/test_downstream.py  # test function name; `test_` + 35 chars is also the Lob key shape
+37aea45b8c947947  Lob                src/backend/services/identity-resolution/helm/tests/test_seed_cronjob_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
+58392041bbf26f2d  Lob                src/backend/services/keycloak/helm/tests/test_httproute_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
+840a5e59e79d9d33  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_build_records.py  # test function name; `test_` + 35 chars is also the Lob key shape
+2eba2f79df37b4cf  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_stripe_chain.py  # test function name; `test_` + 35 chars is also the Lob key shape
 69768a957e81bddc  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
 5f08f11f567aae92  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
 c66b1be441c9ff70  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_org_metrics.py  # test function name; `test_` + 35 chars is also the Lob key shape
@@ -95,6 +101,29 @@ cfe6ecf368006fc3  Lob                src/ingestion/connectors/crm/hubspot/tests/
 2bf4bdc68babea2e  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
 31e1d0e9c3deca94  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
 ba59650be7fd4a57  Lob                src/ingestion/connectors/crm/salesforce/tests/test_source.py  # test function name; `test_` + 35 chars is also the Lob key shape
+63f9b03bc055f398  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
+5096929df4189458  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_bitbucket_vendor_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+9ea0853eab44fffc  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_branches.py  # test function name; `test_` + 35 chars is also the Lob key shape
+26c6ef39c8697db2  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_branches.py  # test function name; `test_` + 35 chars is also the Lob key shape
+dc2a8b9f078b90a1  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
+3918de4ed9d23f06  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
+5d68fd720a1d9e7e  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_concurrency.py  # test function name; `test_` + 35 chars is also the Lob key shape
+c66f2f99c351dfe2  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_legacy_compat.py  # test function name; `test_` + 35 chars is also the Lob key shape
+4ee93de18dafddbe  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_metric_events.py  # test function name; `test_` + 35 chars is also the Lob key shape
+9ed6f7a6d343045c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_repositories.py  # test function name; `test_` + 35 chars is also the Lob key shape
+a67bc177d183319c  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_request_budget.py  # test function name; `test_` + 35 chars is also the Lob key shape
+fbe6ea67ba120e80  Lob                src/ingestion/connectors/git/bitbucket-cloud/tests/test_unresolvable_heads.py  # test function name; `test_` + 35 chars is also the Lob key shape
+d1e880a97fcc9690  Lob                src/ingestion/connectors/git/bitbucket-nocode/tests/test_bitbucket_vendor_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+b4061d441060f295  Lob                src/ingestion/connectors/git/github-directory/tests/test_org_members.py  # test function name; `test_` + 35 chars is also the Lob key shape
+99a303b6fd7a5331  Lob                src/ingestion/connectors/git/github-nocode/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+2a7b0de409622f98  Lob                src/ingestion/connectors/git/github-v2/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
+beee0351c639ec18  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
+595ba01586789e6c  Lob                src/ingestion/connectors/git/github-v2/tests/test_commits.py  # test function name; `test_` + 35 chars is also the Lob key shape
+26cff599ec98ae8e  Lob                src/ingestion/connectors/git/github-v2/tests/test_file_changes.py  # test function name; `test_` + 35 chars is also the Lob key shape
+bb3a7fbda6080765  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+6c468f60e43fd1a7  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+73541b8bbce187c2  Lob                src/ingestion/connectors/git/github/tests/test_github_streams.py  # test function name; `test_` + 35 chars is also the Lob key shape
+286b669ccca78278  Lob                src/ingestion/connectors/git/gitlab/tests/test_file_changes_stream.py  # test function name; `test_` + 35 chars is also the Lob key shape
 063a530576b20665  Lob                src/ingestion/connectors/git/gitlab/tests/test_mr_child.py  # test function name; `test_` + 35 chars is also the Lob key shape
 6975843dfd4f4686  Lob                src/ingestion/connectors/git/gitlab/tests/test_windowing.py  # test function name; `test_` + 35 chars is also the Lob key shape
 bb96cc56962de929  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_client.py  # test function name; `test_` + 35 chars is also the Lob key shape
@@ -111,6 +140,11 @@ f6dc123b40097b5a  Lob                src/ingestion/tests/e2e/identity/test_error
 985d49dc057fb058  Lob                src/ingestion/tests/e2e/identity/test_meta_gate.py  # test function name; `test_` + 35 chars is also the Lob key shape
 2b6e591bb3aa713f  Lob                src/ingestion/tests/e2e/identity/test_profiles.py  # test function name; `test_` + 35 chars is also the Lob key shape
 f79234b092fd64ee  Lob                src/ingestion/tests/e2e/meta/test_expect_engine.py  # test function name; `test_` + 35 chars is also the Lob key shape
+765a20889dcefd84  Lob                src/ingestion/tools/seed/tests/test_bulk_insert.py  # test function name; `test_` + 35 chars is also the Lob key shape
+28a2f3aecef95b84  Lob                src/ingestion/tools/seed/tests/test_credential_scrub.py  # test function name; `test_` + 35 chars is also the Lob key shape
+358783a6504aa34e  Lob                src/ingestion/tools/seed/tests/test_full_refresh.py  # test function name; `test_` + 35 chars is also the Lob key shape
+bb93a5ad3d2ed56d  Lob                src/ingestion/tools/seed/tests/test_org_headcount.py  # test function name; `test_` + 35 chars is also the Lob key shape
+b901145d1a8a857c  Lob                tests/stand/api/identity/test_resolution.py  # test function name; `test_` + 35 chars is also the Lob key shape
 ae0f3db7b13618ec  Lob                tests/stand/api/test_analytics_queries.py  # test function name; `test_` + 35 chars is also the Lob key shape
 a2a99adc2d26a608  Lob                tests/stand/api/test_analytics_results.py  # test function name; `test_` + 35 chars is also the Lob key shape
 c393fa520bb7aad6  Lob                tests/stand/api/test_authenticated.py  # test function name; `test_` + 35 chars is also the Lob key shape

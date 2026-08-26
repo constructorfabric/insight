@@ -6,6 +6,7 @@ import type {
   MetricComputation,
   MetricDirection,
   MetricDimensionFilter,
+  MetricErrorView,
   MetricFormat,
   MetricGroupLimit,
   MetricResult,
@@ -118,6 +119,8 @@ export type NormalizedMetricResult = {
   breakdown?: BreakdownView;
   rollup?: RollupView;
   histogram?: HistogramView;
+  /** Set when a view's computation failed server-side (first error wins). */
+  error?: Pick<MetricErrorView, "code" | "message">;
   drilldown?: MetricResult["drilldown"];
   selection?: MetricResult["selection"];
 };
@@ -215,6 +218,12 @@ export function normalizeMetricResult(
         break;
       case "histogram":
         normalized.histogram = view;
+        break;
+      case "error":
+        // A failed view arrives in its requested slot; the slot's field stays
+        // unset and downstream reads are optional-chained already. First
+        // error wins — one message per metric is enough to render.
+        normalized.error ??= { code: view.code, message: view.message };
         break;
       default:
         // Forward-compat: the server may ship new view kinds before this
@@ -351,6 +360,7 @@ export function mergeNormalizedResults(
       } else if (result.peer) {
         existing.peer = { ...result.peer, values: [...result.peer.values] };
       }
+      existing.error ??= result.error;
     }
   }
   return out;

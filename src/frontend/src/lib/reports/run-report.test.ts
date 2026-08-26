@@ -7,6 +7,7 @@ vi.mock("@/api/metric-results-client", () => ({
 
 import { AnalyticsApiError } from "@/api/analytics-client";
 import { isResultTooLarge, runReport } from "@/lib/reports/run-report";
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 
 const tooLarge = () =>
   new AnalyticsApiError(400, {
@@ -80,6 +81,29 @@ describe("runReport", () => {
     const [lastDone, lastTotal] = seen.at(-1) ?? [];
     expect(lastDone).toBe(lastTotal);
     expect(seen).toHaveLength((lastTotal ?? 0) + 1);
+  });
+
+  it("carries a metric whose computation failed instead of throwing", async () => {
+    // The server answers 200 with an error view in the timeseries slot; the
+    // run completes and the metric simply has no series to merge.
+    mocks.query.mockResolvedValueOnce({
+      metrics: [
+        {
+          metric_key: "a",
+          label: "a",
+          computation: "sum",
+          views: [buildMetricErrorView()],
+        },
+      ],
+    });
+    const merged = await runReport({
+      metricKeys: ["a"],
+      entityIds: people(10),
+      range: { from: "2026-01-01", to: "2026-12-31" },
+      granularity: "month" as const,
+      bucketCount: 12,
+    });
+    expect(merged.get("a")?.views[0]?.view).toBe("error");
   });
 
   it("yields nothing when a batch fails", async () => {

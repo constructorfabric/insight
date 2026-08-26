@@ -1,0 +1,14 @@
+# Keep the packaged chart to what the cluster needs. The theme under theme/
+# IS chart content — .Files.Get reads it at render time — so it must never be
+# listed here.
+.DS_Store
+.idea/
+.vscode/
+.project
+.git/
+.gitignore
+*.tmproj
+tests/
+__pycache__/
+.pytest_cache/
+*.py[cod]

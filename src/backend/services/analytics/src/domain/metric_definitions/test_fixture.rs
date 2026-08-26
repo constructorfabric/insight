@@ -157,9 +157,9 @@ async fn insert_definitions(
             db.get_database_backend(),
             "INSERT INTO metric_definitions \
                 (id, tenant_id, metric_key, label, format, direction, entity_type, \
-                 computation_type, origin, schema_status) \
+                 computation_type, origin, schema_status, peer_cohort_key) \
              VALUES (?, ?, ?, ?, 'integer', 'higher_is_better', 'person', \
-                     'sum', 'custom', 'ok')",
+                     'sum', 'custom', 'ok', 'org_unit')",
             [
                 uuid_value(definition_id),
                 uuid_value(tenant_id),

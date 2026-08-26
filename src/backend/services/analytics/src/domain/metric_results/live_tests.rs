@@ -15,6 +15,8 @@ use super::batch::{RankedDimension, RankedGroup, ResolvedGroupLimit};
 use super::builder::build_timeseries_view;
 use super::compiler::{CompiledQuery, TimeseriesQueryRow, compile_timeseries_query};
 use super::dto::MetricResultViewDto;
+use super::dto::MetricViewErrorCode;
+use super::failure::ViewFailure;
 use super::validation::{ValidatedEntitySelection, ValidatedMetricResultsRequest};
 use super::view::Bucket;
 use crate::domain::metric_definitions::definition::{
@@ -203,6 +205,33 @@ async fn capped_timeseries_over_nullable_metric_date_builds() -> anyhow::Result<
     anyhow::ensure!(
         (total - 10.0).abs() < f64::EPSILON,
         "capped series totals must sum all four observations, got {total}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_real_missing_relation_error_classifies_as_source_relation_missing() -> anyhow::Result<()>
+{
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+
+    let error = match ch
+        .query("SELECT * FROM relation_absent_for_this_test")
+        .fetch_bytes("JSONEachRow")
+    {
+        Err(e) => e.to_string(),
+        Ok(mut cursor) => match cursor.collect().await {
+            Err(e) => e.to_string(),
+            Ok(_) => anyhow::bail!("the query over a missing relation must fail"),
+        },
+    };
+
+    let failure = ViewFailure::from_query_error(&error);
+    anyhow::ensure!(
+        failure.code == MetricViewErrorCode::SourceRelationMissing,
+        "the live UNKNOWN_TABLE wording must classify as a missing relation, got {failure:?}"
     );
     Ok(())
 }

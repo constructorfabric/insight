@@ -195,6 +195,23 @@ pub enum MetricResultViewDto {
         dimensions: Vec<String>,
         values: Vec<HistogramValueDto>,
     },
+    /// This view's computation failed; sibling views and metrics are
+    /// unaffected. `message` detail depends on the caller's role: admins get
+    /// the underlying description, everyone else a generic one.
+    Error {
+        code: MetricViewErrorCode,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetricViewErrorCode {
+    SourceRelationMissing,
+    ResourceExhausted,
+    QueryTimeout,
+    ResultParseFailed,
+    QueryFailed,
 }
 
 /// One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,

@@ -470,6 +470,13 @@ keycloak:
     passwordSecret: {name: "", key: ""}
   route:
     enabled: false
+  # Login theme, shipped with this Keycloak. Inert until a realm sets
+  # `loginTheme: insight` — never set that when keycloakConfig points at a
+  # Keycloak this chart does not deploy. `returnUrl` is where the overridden
+  # page hands the browser back to (relative to the Gateway host the SPA and
+  # Keycloak share).
+  theme:
+    returnUrl: "/?auth_error=kc_page_expired"
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
 # the gitops `keycloak-broker-realms` target) with keycloak-config-cli on every
