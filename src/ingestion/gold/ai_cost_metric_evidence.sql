@@ -41,16 +41,33 @@ month_seat_prices AS (
         groupUniqArray(tuple(tier, price))      AS tier_prices
     FROM (
         SELECT
-            insight_tenant_id                   AS tenant_id,
-            source,
-            period_month,
-            coalesce(tier_label, '')            AS tier,
-            seat_unit_cents                     AS price
-        FROM {{ ref('class_ai_invoice') }} FINAL
-        WHERE line_id IS NOT NULL
-          AND category = 'subscriptions'
-          AND is_proration = 0
-          AND seat_unit_cents IS NOT NULL
+            invoice.insight_tenant_id           AS tenant_id,
+            invoice.source                      AS source,
+            invoice.period_month                AS period_month,
+            -- What a seat would call this line's tier, per the operator's
+            -- binding. Unbound leaves it empty, and no seat tier is empty, so an
+            -- unrecognised plan prices nothing rather than pricing a guess.
+            coalesce(binding.seat_tier, '')      AS tier,
+            invoice.seat_unit_cents             AS price
+        FROM {{ ref('class_ai_invoice') }} AS invoice FINAL
+        LEFT JOIN (
+            SELECT
+                tenant_id,
+                insight_source_id,
+                source,
+                tier_ref,
+                seat_tier
+            FROM {{ source('config', 'ai_seat_tier_map') }} FINAL
+            WHERE is_deleted = 0
+        ) AS binding
+            ON  binding.tenant_id = invoice.insight_tenant_id
+            AND binding.insight_source_id = invoice.source_id
+            AND binding.source = invoice.source
+            AND binding.tier_ref = invoice.tier_ref
+        WHERE invoice.line_id IS NOT NULL
+          AND invoice.category = 'subscriptions'
+          AND invoice.is_proration = 0
+          AND invoice.seat_unit_cents IS NOT NULL
         GROUP BY tenant_id, source, period_month, tier, price
     )
     GROUP BY tenant_id, source, period_month
@@ -84,9 +101,9 @@ seat_month_source AS (
 -- The price this seat was billed at. One priced tier in the month prices every
 -- seat billed in it, which is the common shape and the only one the vendor
 -- states unambiguously. With several, the seat's own tier has to name one of
--- them: the two vocabularies come from different APIs and need not agree, so a
--- seat that names none is left without a price rather than given a share of the
--- invoice total.
+-- them, which needs the operator's binding above: no vendor states that an
+-- invoice line's tier and a seat's tier are the same tier. A seat that names
+-- none is left without a price rather than given a share of the invoice total.
 seat_month_priced AS (
     SELECT
         seat.*,

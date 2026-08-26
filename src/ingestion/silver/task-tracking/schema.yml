@@ -7,11 +7,14 @@ sources:
   # model materializing over them would wipe the decisions they hold. Declared
   # in the task-tracking domain rather than under one connector, because every
   # task source and gold itself read them.
+  # One `config` source serves every domain — a dbt source name is declared once
+  # project-wide, so the AI binding is listed here beside the task ones.
   - name: config
     schema: config
     tables:
       - name: task_field_roles
       - name: task_value_map
+      - name: ai_seat_tier_map
 
 models:
   - name: class_task_field_history

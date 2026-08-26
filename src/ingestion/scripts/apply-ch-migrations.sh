@@ -109,12 +109,23 @@ ALTER TABLE staging.${table} DROP COLUMN IF EXISTS surface_label;
 SQL
 }
 
+heal_ai_invoice_staging() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS tier_ref Nullable(String) AFTER tier_label;
+ALTER TABLE staging.${table} MODIFY COLUMN tier_ref Nullable(String) AFTER tier_label;
+SQL
+}
+
 heal_ai_dev_staging cursor__ai_dev_usage
 heal_ai_dev_staging claude_enterprise__ai_dev_usage
 heal_ai_dev_staging claude_team__ai_dev_usage
 heal_ai_dev_staging chatgpt_team__ai_dev_usage
 heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
+heal_ai_invoice_staging claude_team__ai_invoice
 
 echo "=== Healing CRM staging contract schemas ==="
 # The CRM overflow blob left the contract — the connectors carry the

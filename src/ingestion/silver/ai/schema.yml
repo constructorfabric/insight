@@ -354,6 +354,8 @@ models:
         description: "'ok' | 'failed' | 'unparsable_url' — how far the enrichment got for the invoice this line belongs to"
         tests:
           - not_null
+      - name: tier_ref
+        description: "The vendor's own stable identifier for the tier this line prices. config.ai_seat_tier_map binds it to the tier a seat carries; the two vocabularies come from different APIs and no vendor states the correspondence."
       - name: currency
         tests:
           - not_null
