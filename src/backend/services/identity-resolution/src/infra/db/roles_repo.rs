@@ -44,7 +44,7 @@ pub async fn has_active_role(
         ],
     );
 
-    Ok(db.query_one(stmt).await?.is_some())
+    Ok(db.query_one_raw(stmt).await?.is_some())
 }
 
 /// Convenience: does `person_id` hold the active `admin` role in the tenant?
@@ -84,7 +84,7 @@ fn row_to_role(r: &sea_orm::QueryResult) -> anyhow::Result<Role> {
 pub async fn get_by_name(db: &DatabaseConnection, name: &str) -> anyhow::Result<Option<Role>> {
     const SQL: &str = "SELECT role_id, name FROM roles WHERE name = ? LIMIT 1";
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, SQL, [name.into()]);
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_role)
@@ -100,7 +100,7 @@ pub async fn get_by_id(db: &DatabaseConnection, role_id: Uuid) -> anyhow::Result
     const SQL: &str = "SELECT role_id, name FROM roles WHERE role_id = ? LIMIT 1";
     let stmt =
         Statement::from_sql_and_values(DbBackend::MySql, SQL, [role_id.as_bytes().to_vec().into()]);
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_role)
@@ -138,7 +138,7 @@ pub async fn active_roles_of_person(
         ],
     );
 
-    db.query_all(stmt).await?.iter().map(row_to_role).collect()
+    db.query_all_raw(stmt).await?.iter().map(row_to_role).collect()
 }
 
 /// All roles, ordered by name. Ported from `SqlRoles.ListAllRoles`.
@@ -149,7 +149,11 @@ pub async fn active_roles_of_person(
 pub async fn list_all(db: &DatabaseConnection) -> anyhow::Result<Vec<Role>> {
     const SQL: &str = "SELECT role_id, name FROM roles ORDER BY name";
     let stmt = Statement::from_sql_and_values(DbBackend::MySql, SQL, []);
-    db.query_all(stmt).await?.iter().map(row_to_role).collect()
+    db.query_all_raw(stmt)
+        .await?
+        .iter()
+        .map(row_to_role)
+        .collect()
 }
 
 /// Insert a new role. Ported from `SqlRoles.InsertRole`.
@@ -164,7 +168,7 @@ pub async fn insert_role(db: &DatabaseConnection, role_id: Uuid, name: &str) -> 
         SQL,
         [role_id.as_bytes().to_vec().into(), name.into()],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }
 
@@ -188,7 +192,7 @@ pub async fn try_delete_if_unused(db: &DatabaseConnection, role_id: Uuid) -> any
     let bytes = role_id.as_bytes().to_vec();
     let stmt =
         Statement::from_sql_and_values(DbBackend::MySql, SQL, [bytes.clone().into(), bytes.into()]);
-    Ok(db.execute(stmt).await?.rows_affected())
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }
 
 /// Count active `person_roles` referencing a role across ALL tenants — feeds the
@@ -205,7 +209,7 @@ pub async fn count_active_assignments_any_tenant(
         "SELECT COUNT(*) AS c FROM person_roles WHERE role_id = ? AND valid_to IS NULL";
     let stmt =
         Statement::from_sql_and_values(DbBackend::MySql, SQL, [role_id.as_bytes().to_vec().into()]);
-    match db.query_one(stmt).await? {
+    match db.query_one_raw(stmt).await? {
         Some(row) => Ok(row.try_get::<i64>("", "c")?),
         None => Ok(0),
     }

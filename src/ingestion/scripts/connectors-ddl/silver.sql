@@ -428,7 +428,8 @@ CREATE TABLE IF NOT EXISTS silver.class_git_commits
     `is_merge_commit` UInt8,
     `data_source` String,
     `_version` Int64,
-    `_airbyte_extracted_at` DateTime64(3)
+    `_airbyte_extracted_at` DateTime64(3),
+    `patch_id` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY unique_key
@@ -785,7 +786,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_field_history
     `title` Nullable(String),
     `event_id` String,
     `event_at` DateTime64(3),
-    `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2),
+    `event_kind` Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4),
     `_seq` UInt32,
     `author_id` Nullable(String),
     `author_display` Nullable(String),
@@ -934,6 +935,7 @@ CREATE TABLE IF NOT EXISTS silver.class_task_worklogs
     `duration_seconds` Nullable(Float64),
     `description` Nullable(String),
     `collected_at` Nullable(DateTime64(3)),
+    `is_deleted` Nullable(UInt8),
     `_version` Int64
 )
 ENGINE = ReplacingMergeTree(_version)

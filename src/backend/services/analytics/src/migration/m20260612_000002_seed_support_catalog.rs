@@ -152,11 +152,11 @@ impl MigrationTrait for Migration {
         let conn = manager.get_connection();
         let backend = manager.get_database_backend();
         for row in SEEDS {
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_CATALOG_SQL,
                 [
-                    Value::Bytes(Some(Box::new(Uuid::now_v7().as_bytes().to_vec()))),
+                    Value::Bytes(Some(Uuid::now_v7().as_bytes().to_vec())),
                     Value::from(row.metric_key),
                     Value::from(row.label),
                     nullable_str(row.sublabel),
@@ -168,11 +168,11 @@ impl MigrationTrait for Migration {
                 ],
             ))
             .await?;
-            conn.execute(Statement::from_sql_and_values(
+            conn.execute_raw(Statement::from_sql_and_values(
                 backend,
                 INSERT_THRESHOLD_SQL,
                 [
-                    Value::Bytes(Some(Box::new(Uuid::now_v7().as_bytes().to_vec()))),
+                    Value::Bytes(Some(Uuid::now_v7().as_bytes().to_vec())),
                     Value::from(row.metric_key),
                     Value::from(row.good),
                     Value::from(row.warn),

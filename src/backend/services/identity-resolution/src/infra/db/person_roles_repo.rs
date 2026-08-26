@@ -72,7 +72,7 @@ pub async fn get_by_id(
             person_role_id.as_bytes().to_vec().into(),
         ],
     );
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_person_role)
@@ -111,7 +111,7 @@ pub async fn list(
     params.push(limit.into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -158,7 +158,7 @@ pub async fn insert(
             reason.into(),
         ],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }
 
@@ -196,7 +196,7 @@ pub async fn soft_delete(
             person_role_id.as_bytes().to_vec().into(),
         ],
     );
-    Ok(db.execute(stmt).await?.rows_affected())
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }
 
 /// Revoke (soft-delete) an assignment, but REFUSE to remove the tenant's last
@@ -273,7 +273,7 @@ pub async fn try_soft_delete_protecting_last_admin(
         .begin_with_config(Some(IsolationLevel::RepeatableRead), None)
         .await?;
 
-    txn.query_one(Statement::from_sql_and_values(
+    txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         LOCK_SQL,
         [pr.clone().into(), admin.clone().into()],
@@ -281,7 +281,7 @@ pub async fn try_soft_delete_protecting_last_admin(
     .await?;
 
     let rows = txn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [admin.clone().into(), pr.into(), reason.into(), admin.into()],

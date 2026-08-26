@@ -1,0 +1,346 @@
+spec_version: 1
+description: >
+  Commit metrics count an authored change once, however many commits re-apply
+  it, and the commit and line figures describe the same set of commits.
+
+  A merged pull request's result commit (a squash, or the last rebased copy)
+  re-applies the branch commits' work, so it contributes neither a commit nor
+  lines — including the squash's own A-to-C file rows, which match no branch
+  transition and would otherwise count a twice-touched path's lines again. A
+  commit carrying a patch id an earlier commit already carries (a rebase copy,
+  a cherry-pick) is the same authored change: the earliest commit keeps it.
+  When one hash is present in two connected repositories, its file rows attach
+  to whichever commit row survives the collapse instead of vanishing with the
+  losing repository.
+
+  Fixtures isolate per repository:
+    * squash-merge: three branch commits, one path touched twice (A-to-B then
+      B-to-C), and the squash result carrying A-to-C. Three commits, the
+      branch's lines once, nothing from the squash.
+    * fast-forward: the merged request's result hash IS a branch commit. It
+      stays authored — excluding it would lose real work.
+    * patch-copy: the same patch id on an October and a November commit with
+      different blob oids (a rebase moves the base, so line identity alone
+      cannot fold them). October keeps the work, November reports nothing.
+    * unseen-branch: a merged request whose branch commits were never
+      collected. Its result commit is the only record of the work and stays.
+    * partial-branch: a merged request with two linked commits of which one
+      was collected. Coverage is incomplete, so the result commit stays the
+      complete record and both count; the overlapping lines still fold
+      through blob-oid content identity.
+    * indep-a / indep-b: the same patch id on commits in two unrelated
+      repositories — two independent authored changes, both count. Patch
+      identity folds within a repository only.
+    * xr-fork / xr-upstream: one hash in two repositories, file rows recorded
+      only under the repository that loses the commit collapse. The lines
+      count once, under the surviving repository.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # squash-merge: the three branch originals and the squash result.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-sq-b1, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 10}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-sq-b2, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b2, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-sq-b3, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b3, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-sq-result, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-result, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 23, deletions: 3}
+    # fast-forward: the merged request promotes this very commit.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-ff-head, repository: "https://github.com/constructor/fast-forward.git", sha: wi-ff-head, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 7}
+    # patch-copy: one patch id, two commits, two months.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-pc-orig, repository: "https://github.com/constructor/patch-copy.git", sha: wi-pc-orig, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 6, deletions: 1, patch_id: wi-patch-aaa}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-pc-copy, repository: "https://github.com/constructor/patch-copy.git", sha: wi-pc-copy, committed_date: "2026-11-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 6, deletions: 1, patch_id: wi-patch-aaa}
+    # unseen-branch: only the squash result was ever collected.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-un-result, repository: "https://github.com/constructor/unseen-branch.git", sha: wi-un-result, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 9}
+    # partial-branch: one of the two linked commits, plus the squash result.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-pt-b1, repository: "https://github.com/constructor/partial-branch.git", sha: wi-pt-b1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 3}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-pt-result, repository: "https://github.com/constructor/partial-branch.git", sha: wi-pt-result, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5}
+    # indep: one patch id, two unrelated repositories.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-ia, repository: "https://github.com/constructor/indep-a.git", sha: wi-ia-1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 2, patch_id: wi-patch-shared}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-ib, repository: "https://github.com/constructor/indep-b.git", sha: wi-ib-1, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 2, patch_id: wi-patch-shared}
+    # xr: the same hash in two connected repositories.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-xr-fork, repository: "https://github.com/constructor/xr-fork.git", sha: wi-xr-1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 4}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: wi-c-xr-upstream, repository: "https://github.com/constructor/xr-upstream.git", sha: wi-xr-1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 4}
+
+  bronze_github.file_changes:
+    # squash-merge branch rows: src/app.rs makes two transitions.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-sq-b1, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b1, filename: src/one.rs, status: added, additions: 10, deletions: 0, pre_image_oid: null, post_image_oid: 11111111111111111111111111111111111111a1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-sq-b2, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b2, filename: src/app.rs, status: modified, additions: 8, deletions: 2, pre_image_oid: 22222222222222222222222222222222222222b0, post_image_oid: 22222222222222222222222222222222222222b1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-sq-b3, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-b3, filename: src/app.rs, status: modified, additions: 5, deletions: 1, pre_image_oid: 22222222222222222222222222222222222222b1, post_image_oid: 22222222222222222222222222222222222222b2}
+    # The squash's rows: the add repeats an oid October already carries, and
+    # the A-to-C transition on src/app.rs matches NEITHER branch transition —
+    # only the commit-level exclusion keeps its 13 lines from counting again.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-sq-r1, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-result, filename: src/one.rs, status: added, additions: 10, deletions: 0, pre_image_oid: null, post_image_oid: 11111111111111111111111111111111111111a1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-sq-r2, repository: "https://github.com/constructor/squash-merge.git", sha: wi-sq-result, filename: src/app.rs, status: modified, additions: 13, deletions: 3, pre_image_oid: 22222222222222222222222222222222222222b0, post_image_oid: 22222222222222222222222222222222222222b2}
+    # fast-forward.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-ff, repository: "https://github.com/constructor/fast-forward.git", sha: wi-ff-head, filename: src/ff.rs, status: added, additions: 7, deletions: 0, pre_image_oid: null, post_image_oid: 33333333333333333333333333333333333333c1}
+    # patch-copy: the copy's oids differ (rebased base), so only the commit's
+    # patch identity can fold it.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-pc-orig, repository: "https://github.com/constructor/patch-copy.git", sha: wi-pc-orig, filename: src/pick.rs, status: modified, additions: 6, deletions: 1, pre_image_oid: 44444444444444444444444444444444444444d0, post_image_oid: 44444444444444444444444444444444444444d1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-pc-copy, repository: "https://github.com/constructor/patch-copy.git", sha: wi-pc-copy, filename: src/pick.rs, status: modified, additions: 6, deletions: 1, pre_image_oid: 44444444444444444444444444444444444444d2, post_image_oid: 44444444444444444444444444444444444444d3}
+    # unseen-branch.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-un, repository: "https://github.com/constructor/unseen-branch.git", sha: wi-un-result, filename: src/unseen.rs, status: added, additions: 9, deletions: 0, pre_image_oid: null, post_image_oid: 55555555555555555555555555555555555555e1}
+    # partial-branch: the squash repeats the collected commit's blob (folds by
+    # oid, earliest wins) and carries the uncollected commit's content.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-pt-b1, repository: "https://github.com/constructor/partial-branch.git", sha: wi-pt-b1, filename: src/p1.rs, status: added, additions: 3, deletions: 0, pre_image_oid: null, post_image_oid: 77777777777777777777777777777777777777a1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-pt-r1, repository: "https://github.com/constructor/partial-branch.git", sha: wi-pt-result, filename: src/p1.rs, status: added, additions: 3, deletions: 0, pre_image_oid: null, post_image_oid: 77777777777777777777777777777777777777a1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-pt-r2, repository: "https://github.com/constructor/partial-branch.git", sha: wi-pt-result, filename: src/p2.rs, status: added, additions: 2, deletions: 0, pre_image_oid: null, post_image_oid: 77777777777777777777777777777777777777a2}
+    # indep: different paths and oids; only the patch id coincides.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-ia, repository: "https://github.com/constructor/indep-a.git", sha: wi-ia-1, filename: src/a.rs, status: modified, additions: 2, deletions: 0, pre_image_oid: 88888888888888888888888888888888888888b0, post_image_oid: 88888888888888888888888888888888888888b1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-ib, repository: "https://github.com/constructor/indep-b.git", sha: wi-ib-1, filename: src/b.rs, status: modified, additions: 2, deletions: 0, pre_image_oid: 99999999999999999999999999999999999999c0, post_image_oid: 99999999999999999999999999999999999999c1}
+    # xr: rows recorded ONLY under xr-upstream, which loses the commit
+    # collapse to xr-fork (lexicographic repo order).
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: wi-f-xr, repository: "https://github.com/constructor/xr-upstream.git", sha: wi-xr-1, filename: src/x.rs, status: added, additions: 4, deletions: 0, pre_image_oid: null, post_image_oid: 66666666666666666666666666666666666666f1}
+
+  bronze_github.pull_requests:
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: wi-pr-sq, repo_full_name: constructor/squash-merge, id: 41, number: 41, author_login: erin, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: wi-sq-result}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: wi-pr-ff, repo_full_name: constructor/fast-forward, id: 42, number: 42, author_login: erin, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: wi-ff-head}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: wi-pr-un, repo_full_name: constructor/unseen-branch, id: 43, number: 43, author_login: erin, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: wi-un-result}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: wi-pr-pt, repo_full_name: constructor/partial-branch, id: 44, number: 44, author_login: erin, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: wi-pt-result}
+
+  bronze_github.pull_request_commits:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-sq-b1, sha: wi-sq-b1, pull_number: 41, repo_full_name: constructor/squash-merge, author_email: erin@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-sq-b2, sha: wi-sq-b2, pull_number: 41, repo_full_name: constructor/squash-merge, author_email: erin@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-sq-b3, sha: wi-sq-b3, pull_number: 41, repo_full_name: constructor/squash-merge, author_email: erin@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-ff, sha: wi-ff-head, pull_number: 42, repo_full_name: constructor/fast-forward, author_email: erin@example.com, is_merge: false}
+    # unseen-branch: the linked commits were never collected into the commits
+    # stream, so the result commit stays the only record of the work.
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-un-b1, sha: wi-un-b1, pull_number: 43, repo_full_name: constructor/unseen-branch, author_email: erin@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-un-b2, sha: wi-un-b2, pull_number: 43, repo_full_name: constructor/unseen-branch, author_email: erin@example.com, is_merge: false}
+    # partial-branch: two linked commits, only wi-pt-b1 exists in the commits
+    # stream — coverage is incomplete.
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-pt-b1, sha: wi-pt-b1, pull_number: 44, repo_full_name: constructor/partial-branch, author_email: erin@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: wi-lnk-pt-b2, sha: wi-pt-b2, pull_number: 44, repo_full_name: constructor/partial-branch, author_email: erin@example.com, is_merge: false}
+
+cases:
+  - name: A squash result contributes neither a commit nor its recombined lines
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # The three branch originals; the squash result is the fourth sha and
+      # must not appear as a commit.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/squash-merge"}}
+        equal: {value: 3}
+      # 10 + 8 + 5: the branch's own transitions once each. The squash's
+      # A-to-C row (13) matches neither and is excluded with its commit.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/squash-merge"}}
+        equal: {value: 23}
+      - metric: git.lines_removed
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/squash-merge"}}
+        equal: {value: 3}
+
+  - name: A fast-forward merge promotes an original, which stays authored
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/fast-forward"}}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/fast-forward"}}
+        equal: {value: 7}
+
+  - name: One patch id is one authored change, kept by the earliest commit
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/patch-copy"}}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/patch-copy"}}
+        equal: {value: 6}
+
+  - name: The later carrier of an already-authored patch reports nothing
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-11-01", to: "2026-11-30"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # The November copy carries the October patch: no commit row and no
+      # lines at all for the repository in November.
+      - metric: git.commits
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/patch-copy'))"
+      - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/patch-copy'))"
+
+  - name: A merge result whose branch commits were never collected stays counted
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/unseen-branch"}}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/unseen-branch"}}
+        equal: {value: 9}
+
+  - name: File rows under the repository that lost the hash collapse still count
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # One hash, one commit, counted under the surviving repository.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/xr-fork"}}
+        equal: {value: 1}
+      - metric: git.commits
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/xr-upstream'))"
+      # The lines were recorded only under xr-upstream, whose commit row lost
+      # the collapse — they attach to the surviving row instead of vanishing.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/xr-fork"}}
+        equal: {value: 4}
+
+  - name: A merge result with partially collected branch commits stays counted
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # One of the two linked commits was collected, so coverage is incomplete
+      # and the result commit stays the complete record: both count.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/partial-branch"}}
+        equal: {value: 2}
+      # 3 (the collected original, whose blob the squash repeats — folded by
+      # oid, earliest wins) + 2 (the uncollected commit's content, present
+      # only on the squash). The overlap does not double.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/partial-branch"}}
+        equal: {value: 5}
+
+  - name: The same patch id in unrelated repositories is two authored changes
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.lines_added
+            views:
+              - {view: breakdown, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # Patch identity folds within a repository only: neither independent
+      # change loses to the other.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/indep-a"}}
+        equal: {value: 1}
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/indep-b"}}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/indep-a"}}
+        equal: {value: 2}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/indep-b"}}
+        equal: {value: 2}

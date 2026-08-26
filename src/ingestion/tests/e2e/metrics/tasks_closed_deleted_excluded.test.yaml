@@ -1,0 +1,145 @@
+spec_version: 1
+description: >
+  Task Delivery - tasks.closed with the deletion/visibility mechanism (#2419): issues deleted at the source leave the metric; issues whose whole project merely became invisible (lost access) stay counted. #magic___^_^___line bronze -> silver -> gold: jira_issue + jira_issue_history close events as in tasks_closed, PLUS the absence censuses — jira_issue_census (ids observed alive) and jira_project_visibility (the project roster). An issue present in bronze but absent from the census classifies as: deleted (its project is still in the roster) or access_lost (project gone from the roster). The classification lands in silver as synthetic availability events in the same field history as every other change; gold excludes ONLY deleted/trashed. #magic___^_^___line Department: 5 Engineering members alice..erin of rank r in 1..5, each closing r issues in project TST on 2026-12-25; the census observes all 15. On top: erin closed DELX-1 (TST) which is MISSING from the census while TST is visible -> deleted -> excluded (erin stays 5, not 6); carol closed LSTC-1 in project LOST which is absent from the roster entirely -> access_lost -> still counted (carol 3+1=4). Per-person sums {1,2,4,4,5} -> median 4, p25 2, p75 4. Cases: erin IC (deleted excluded), carol IC (access_lost counted), peer stats. #magic___^_^___line
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_jira.jira_user:
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-alice-jira-acct, account_id: alice-jira-acct, email: alice@example.com, display_name: Alice Alpha}
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-bob-jira-acct, account_id: bob-jira-acct, email: bob@example.com, display_name: Bob Beta}
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-carol-jira-acct, account_id: carol-jira-acct, email: carol@example.com, display_name: Carol Gamma}
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-dave-jira-acct, account_id: dave-jira-acct, email: dave@example.com, display_name: Dave Delta}
+    - {$ref: templates/jira_task.yaml#/templates/jira_user, unique_key: jira-test-erin-jira-acct, account_id: erin-jira-acct, email: erin@example.com, display_name: Erin Epsilon,}
+
+  bronze_jira.jira_statuses:
+    - $ref: templates/jira_task.yaml#/templates/status_open
+    - $ref: templates/jira_task.yaml#/templates/status_in_progress
+    - $ref: templates/jira_task.yaml#/templates/status_closed
+
+  bronze_jira.jira_issuetypes:
+    - $ref: templates/jira_task.yaml#/templates/issuetype_task
+
+  bronze_jira.jira_fields:
+    - $ref: templates/jira_task.yaml#/templates/field_status
+    - $ref: templates/jira_task.yaml#/templates/field_assignee
+    - $ref: templates/jira_task.yaml#/templates/field_issuetype
+
+  # tenant_id is stamped explicitly: the availability entity key is
+  # {tenant}-{source}-{jira_id}, and the census rows below must merge with
+  # these bronze rows into one entity each.
+  bronze_jira.jira_issue:
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELA-1, jira_id: DELA-1, unique_key: jira-test-DELA-1, id_readable: TSTA1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"alice-jira-acct","displayName":"Alice Alpha"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELB-1, jira_id: DELB-1, unique_key: jira-test-DELB-1, id_readable: TSTB1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELB-2, jira_id: DELB-2, unique_key: jira-test-DELB-2, id_readable: TSTB2, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"bob-jira-acct","displayName":"Bob Beta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELC-1, jira_id: DELC-1, unique_key: jira-test-DELC-1, id_readable: TSTC1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELC-2, jira_id: DELC-2, unique_key: jira-test-DELC-2, id_readable: TSTC2, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELC-3, jira_id: DELC-3, unique_key: jira-test-DELC-3, id_readable: TSTC3, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELD-1, jira_id: DELD-1, unique_key: jira-test-DELD-1, id_readable: TSTD1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELD-2, jira_id: DELD-2, unique_key: jira-test-DELD-2, id_readable: TSTD2, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELD-3, jira_id: DELD-3, unique_key: jira-test-DELD-3, id_readable: TSTD3, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELD-4, jira_id: DELD-4, unique_key: jira-test-DELD-4, id_readable: TSTD4, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"dave-jira-acct","displayName":"Dave Delta"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELE-1, jira_id: DELE-1, unique_key: jira-test-DELE-1, id_readable: TSTE1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELE-2, jira_id: DELE-2, unique_key: jira-test-DELE-2, id_readable: TSTE2, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELE-3, jira_id: DELE-3, unique_key: jira-test-DELE-3, id_readable: TSTE3, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELE-4, jira_id: DELE-4, unique_key: jira-test-DELE-4, id_readable: TSTE4, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELE-5, jira_id: DELE-5, unique_key: jira-test-DELE-5, id_readable: TSTE5, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    # Deleted at the source: closed by erin, in bronze, ABSENT from the census
+    # below while project TST stays in the roster -> availability=deleted.
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: DELX-1, jira_id: DELX-1, unique_key: jira-test-DELX-1, id_readable: TSTX1, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"erin-jira-acct","displayName":"Erin Epsilon"}}'}
+    # Lost access: closed by carol in project LOST, which is absent from the
+    # visibility roster entirely -> availability=access_lost -> still counted.
+    - {$ref: templates/jira_task.yaml#/templates/jira_issue, tenant_id: "11111111-1111-1111-1111-111111111111", id: LSTC-1, jira_id: LSTC-1, unique_key: jira-test-LSTC-1, id_readable: LOST1, project_key: LOST, created: "2026-12-20T09:00:00", custom_fields_json: '{"status":{"id":"6","name":"Closed"},"issuetype":{"id":"10001","name":"Task"},"assignee":{"accountId":"carol-jira-acct","displayName":"Carol Gamma"}}',}
+
+  bronze_jira.jira_issue_history:
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTA1, changelog_id: "57001", unique_key: jira-test-TSTA1-57001, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: alice-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTB1, changelog_id: "57002", unique_key: jira-test-TSTB1-57002, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTB2, changelog_id: "57003", unique_key: jira-test-TSTB2-57003, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: bob-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTC1, changelog_id: "57004", unique_key: jira-test-TSTC1-57004, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTC2, changelog_id: "57005", unique_key: jira-test-TSTC2-57005, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTC3, changelog_id: "57006", unique_key: jira-test-TSTC3-57006, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTD1, changelog_id: "57007", unique_key: jira-test-TSTD1-57007, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTD2, changelog_id: "57008", unique_key: jira-test-TSTD2-57008, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTD3, changelog_id: "57009", unique_key: jira-test-TSTD3-57009, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTD4, changelog_id: "57010", unique_key: jira-test-TSTD4-57010, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: dave-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTE1, changelog_id: "57011", unique_key: jira-test-TSTE1-57011, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTE2, changelog_id: "57012", unique_key: jira-test-TSTE2-57012, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTE3, changelog_id: "57013", unique_key: jira-test-TSTE3-57013, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTE4, changelog_id: "57014", unique_key: jira-test-TSTE4-57014, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTE5, changelog_id: "57015", unique_key: jira-test-TSTE5-57015, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    # Close events for the deleted and the access-lost issues: both were
+    # legitimately closed in the window — availability decides the counting.
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: TSTX1, changelog_id: "57016", unique_key: jira-test-TSTX1-57016, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: erin-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]'}
+    - {$ref: templates/jira_task.yaml#/templates/jira_history, id_readable: LOST1, changelog_id: "57017", unique_key: jira-test-LOST1-57017, created_at: "2026-12-25T14:00:00.000+0000", author_account_id: carol-jira-acct, items: '[{"field":"Status","fieldId":"status","fromString":"In Progress","from":"3","toString":"Closed","to":"6"}]',}
+
+  # The census: the 15 rank issues observed alive. DELX-1 (deleted) and LSTC-1
+  # (its whole project lost) are NOT here.
+  bronze_jira.jira_issue_census:
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELA-1, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELA-1}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELB-1, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELB-1}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELB-2, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELB-2}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELC-1, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELC-1}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELC-2, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELC-2}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELC-3, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELC-3}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELD-1, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELD-1}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELD-2, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELD-2}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELD-3, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELD-3}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELD-4, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELD-4}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-1, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELE-1}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-2, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELE-2}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-3, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELE-3}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-4, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELE-4}
+    - {$ref: templates/jira_task.yaml#/templates/jira_census, jira_id: DELE-5, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-DELE-5,}
+
+  # The roster: TST is visible and live; project LOST is absent entirely.
+  bronze_jira.jira_project_visibility:
+    - {$ref: templates/jira_task.yaml#/templates/jira_visibility, id: "100", key: TST, name: Test Project, unique_key: 11111111-1111-1111-1111-111111111111-jira-test-100, project_id: 100, project_key: TST,}
+
+cases:
+  - name: deleted issue leaves tasks.closed, access_lost issue stays
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com, carol@example.com]}
+        period: {from: "2026-12-20", to: "2026-12-31"}
+        metrics:
+          - metric_key: tasks.closed
+            views:
+              - {view: period}
+              - {view: peer}
+    expect:
+      - assert: "status == 200"
+      # Erin closed 5 rank issues + DELX-1; DELX-1 is deleted -> 5, not 6.
+      - metric: tasks.closed
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 5}
+      # Carol closed 3 rank issues + LSTC-1 in the lost project; access_lost
+      # is NOT a deletion -> 4.
+      - metric: tasks.closed
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 4}
+      # Department distribution {1,2,4,4,5}: the deleted issue is out of the
+      # peer stats too, the access_lost one is in.
+      - metric: tasks.closed
+        view: peer
+        find: {entity_id: erin@example.com}
+        equal: {target_value: 5, p25: 2, median: 4, p75: 4, min: 1, max: 5, n: 5}
+
+  - name: tasks.closed empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics: [{metric_key: tasks.closed, views: [{view: period}]}]
+    expect:
+      - assert: "status == 200"
+      - {metric: tasks.closed, view: period, find: {entity_id: erin@example.com}, equal: {value: null}}

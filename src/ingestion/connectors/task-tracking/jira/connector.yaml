@@ -40,9 +40,7 @@ definitions:
         # jira_project_discovery partition router (see definitions), not from
         # config — the manual jira_project_keys allowlist is gone.
         jql: >-
-          project = "{{ stream_partition.project_key }}" AND updated >= "{{
-          stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
-          }}" ORDER BY updated ASC
+          project = "{{ stream_partition.project_key }}" AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
         expand: names
         fields: "*all"
     SimpleRetriever:
@@ -123,8 +121,7 @@ definitions:
             path:
               - last_issue_update_time
             value: >-
-              {{ (record.get('insight') or {}).get('lastIssueUpdateTime') or
-              '1970-01-01T00:00:00.000+0000' }}
+              {{ (record.get('insight') or {}).get('lastIssueUpdateTime') or '1970-01-01T00:00:00.000+0000' }}
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: last_issue_update_time
@@ -161,6 +158,56 @@ definitions:
               - string
               - "null"
           last_issue_update_time:
+            type:
+              - string
+              - "null"
+        additionalProperties: true
+
+  # ─── Census parent (specs/DELETION-AND-VISIBILITY.md) ──────────────────
+  # Inline-only parent for jira_issue_census: lists every live project the
+  # account can browse, with NO incremental gate. jira_project_discovery must
+  # never drive the census — its insight.lastIssueUpdateTime gate skips idle
+  # projects, and a deletion does not reliably bump that aggregate, so a
+  # gated census would miss exactly the disappearances it exists to observe.
+  # Parent responses are tiny (id/key per project), so the CDK's SQLite
+  # substream-parent cache stays small.
+  jira_census_projects:
+    type: DeclarativeStream
+    name: jira_census_projects
+    primary_key:
+      - project_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - values
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/project/search"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - project_key
+            value: "{{ record['key'] }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          project_key:
             type:
               - string
               - "null"
@@ -290,8 +337,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -334,8 +380,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - field_id
@@ -520,6 +565,10 @@ streams:
           $ref: "#/definitions/linked/HttpRequester/authenticator"
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
+        # expand=lead: without it /project/search omits the lead object and
+        # the lead_account_id stamp below is always empty (bronze gap, #2419).
+        request_parameters:
+          expand: lead
         url: "{{ config['jira_instance_url'] }}/rest/api/3/project/search"
     transformations:
       - type: AddFields
@@ -538,8 +587,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - project_id
@@ -682,6 +730,14 @@ streams:
             type:
               - boolean
               - "null"
+          lead:
+            type:
+              - object
+              - "null"
+          lead_account_id:
+            type:
+              - string
+              - "null"
           collected_at:
             type:
               - string
@@ -746,8 +802,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['accountId'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['accountId'] }}
           - type: AddedFieldDefinition
             path:
               - account_id
@@ -965,8 +1020,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
           - type: AddedFieldDefinition
             path:
               - jira_id
@@ -999,14 +1053,12 @@ streams:
             path:
               - assignee_id
             value: >-
-              {{ ((record.get('fields') or {}).get('assignee') or
-              {}).get('accountId') }}
+              {{ ((record.get('fields') or {}).get('assignee') or {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - reporter_id
             value: >-
-              {{ ((record.get('fields') or {}).get('reporter') or
-              {}).get('accountId') }}
+              {{ ((record.get('fields') or {}).get('reporter') or {}).get('accountId') }}
           - type: AddedFieldDefinition
             path:
               - parent_id
@@ -1015,12 +1067,16 @@ streams:
             path:
               - labels_csv
             value: "{{ ((record.get('fields') or {}).get('labels') or []) | join(',') }}"
+          # No hardcoded field-id fallback: story-points custom-field ids are
+          # instance-specific and a wrong guess silently reads the wrong field
+          # (or nothing). The config key remains as an explicit operator
+          # override; the authoritative resolution happens in dbt from
+          # bronze_jira.jira_fields metadata (specs/DATA-COMPLETENESS.md).
           - type: AddedFieldDefinition
             path:
               - story_points
             value: >-
-              {{ (record.get('fields') or {}).get(config.get('jira_story_points_field_id',
-              'customfield_10016')) or (record.get('fields') or {}).get('story_points') }}
+              {{ (record.get('fields') or {}).get(config.get('jira_story_points_field_id', '')) or (record.get('fields') or {}).get('story_points') }}
           - type: AddedFieldDefinition
             path:
               - due_date
@@ -6463,8 +6519,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/changelog
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/changelog
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -6507,8 +6562,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -6668,8 +6722,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/comment
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/comment
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -6712,8 +6765,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - comment_id
@@ -6942,8 +6994,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{
-          stream_partition.id_readable }}/worklog
+          {{ config['jira_instance_url'] }}/rest/api/3/issue/{{ stream_partition.id_readable }}/worklog
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -6986,8 +7037,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - worklog_id
@@ -7012,8 +7062,7 @@ streams:
             path:
               - comment
             value: >-
-              {{ record.get('comment', '') | tojson if record.get('comment') is
-              mapping else record.get('comment', '') }}
+              {{ record.get('comment', '') | tojson if record.get('comment') is mapping else record.get('comment', '') }}
           - type: AddedFieldDefinition
             path:
               - collected_at
@@ -7223,8 +7272,7 @@ streams:
         error_handler:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         url: >-
-          {{ config['jira_instance_url'] }}/rest/agile/1.0/board/{{
-          stream_partition.board_id }}/sprint
+          {{ config['jira_instance_url'] }}/rest/agile/1.0/board/{{ stream_partition.board_id }}/sprint
       partition_router:
         type: SubstreamPartitionRouter
         parent_stream_configs:
@@ -7276,8 +7324,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - sprint_id
@@ -7436,8 +7483,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - status_id
@@ -7606,8 +7652,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - priority_id
@@ -7709,8 +7754,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - issuetype_id
@@ -7854,8 +7898,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['id'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
           - type: AddedFieldDefinition
             path:
               - resolution_id
@@ -7965,9 +8008,7 @@ streams:
           $ref: "#/definitions/linked/HttpRequester/error_handler"
         request_parameters:
           jql: >-
-            project = "{{ stream_partition.project_key }}" AND updated >= "{{
-            stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time
-            }}" ORDER BY updated ASC
+            project = "{{ stream_partition.project_key }}" AND updated >= "{{ stream_slice.start_time }}" AND updated <= "{{ stream_slice.end_time }}" ORDER BY updated ASC
           fields: updated
         url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
       partition_router:
@@ -8034,8 +8075,7 @@ streams:
             path:
               - unique_key
             value: >-
-              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
-              }}-{{ record['key'] }}
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['key'] }}
           - type: AddedFieldDefinition
             path:
               - id_readable
@@ -8098,6 +8138,579 @@ streams:
           - updated
         additionalProperties: true
 
+  # ─── Deletion & visibility censuses (specs/DELETION-AND-VISIBILITY.md) ──
+  # Both streams are full-refresh: each sync re-observes the complete visible
+  # surface. After RMT promotion (version = _airbyte_extracted_at) each row's
+  # extracted-at is the entity's last-seen timestamp; dbt classifies absences
+  # against the census high-water mark (deleted / archived / trashed /
+  # access_lost / unobserved) — see dbt/jira__issue_availability_state.sql.
+
+  # Roster of every project the account can see, per lifecycle status.
+  # Presence in /project/search IS the Browse-permission check: the endpoint
+  # returns only projects the caller can browse. status=deleted means the
+  # project sits in Jira's trash (retention window before permanent purge).
+  - type: DeclarativeStream
+    name: jira_project_visibility
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - values
+      paginator:
+        $ref: "#/definitions/linked/SimpleRetriever/paginator"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        request_parameters:
+          status: "{{ stream_partition.project_status }}"
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/project/search"
+      partition_router:
+        type: ListPartitionRouter
+        cursor_field: project_status
+        values:
+          - live
+          - archived
+          - deleted
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+      - type: AddFields
+        fields:
+          # Keyed by immutable numeric project id, not by key: project keys
+          # can be renamed, and a rename must not look like access loss.
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+          - type: AddedFieldDefinition
+            path:
+              - project_id
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - project_key
+            value: "{{ record['key'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - project_status
+            value: "{{ stream_partition.project_status }}"
+          - type: AddedFieldDefinition
+            path:
+              - is_private
+            value: "{{ record.get('isPrivate', false) }}"
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          expand:
+            type:
+              - string
+              - "null"
+          self:
+            type:
+              - string
+              - "null"
+          id:
+            type:
+              - string
+              - "null"
+          key:
+            type:
+              - string
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          avatarUrls:
+            type:
+              - object
+              - "null"
+          projectCategory:
+            type:
+              - object
+              - "null"
+          projectTypeKey:
+            type:
+              - string
+              - "null"
+          simplified:
+            type:
+              - boolean
+              - "null"
+          style:
+            type:
+              - string
+              - "null"
+          isPrivate:
+            type:
+              - boolean
+              - "null"
+          properties:
+            type:
+              - object
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+          # CDK interpolation literal-evals the rendered Jinja value, so the
+          # numeric-string API id becomes an int — declared number, like
+          # jira_projects.project_id.
+          project_id:
+            type:
+              - number
+              - "null"
+          project_key:
+            type:
+              - string
+              - "null"
+          project_status:
+            type: string
+          is_private:
+            type:
+              - boolean
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+          - project_status
+        additionalProperties: true
+
+  # Id-only sweep of ALL issues in every visible live project. Jira Cloud
+  # serves large pages when only `id` is requested (maxResults up to 5000),
+  # so the census costs ceil(issues/5000) requests per
+  # project. Keyed by numeric issue id, never by key: moving an issue between
+  # projects changes its key but not its id — a key-based census would report
+  # every moved issue as deleted.
+  - type: DeclarativeStream
+    name: jira_issue_census
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - issues
+      paginator:
+        type: DefaultPaginator
+        page_size_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: maxResults
+        page_token_option:
+          type: RequestOption
+          inject_into: request_parameter
+          field_name: nextPageToken
+        pagination_strategy:
+          type: CursorPagination
+          page_size: 5000
+          cursor_value: "{{ response.get('nextPageToken', '') }}"
+          stop_condition: "{{ not response.get('nextPageToken') }}"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        request_parameters:
+          jql: >-
+            project = "{{ stream_partition.project_key }}" ORDER BY created ASC
+          fields: id
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/search/jql"
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: project_key
+            partition_field: project_key
+            stream:
+              $ref: "#/definitions/jira_census_projects"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['id'] }}
+          - type: AddedFieldDefinition
+            path:
+              - jira_id
+            value: "{{ record['id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - project_key
+            value: "{{ stream_partition.project_key }}"
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - string
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+          # Declared string like every other stream carrying jira_id (the
+          # 2.4.0 consistency rule — see migration 20260723000000): bronze
+          # jira_issue.jira_id is String and dbt joins the two directly.
+          jira_id:
+            type:
+              - string
+              - "null"
+          project_key:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+
+  # ─── Worklog deletion tombstones (specs/DELETION-AND-VISIBILITY.md) ─────
+  # /rest/api/3/worklog/deleted is the one Jira surface where deletions are
+  # first-class: every deleted worklog id with its deletion timestamp. The
+  # list is small and bounded (one row per ever-deleted worklog), so the
+  # stream re-reads it in full each sync — same census philosophy as
+  # jira_issue_census, no cursor state to corrupt. Pagination: the API pages
+  # via a `nextPage` URL that carries since=<until>; the paginator swaps the
+  # request URL wholesale (RequestPath token), so the initial `since=0` baked
+  # into the url never conflicts with the page token.
+  - type: DeclarativeStream
+    name: jira_worklog_deleted
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - values
+      paginator:
+        type: DefaultPaginator
+        page_token_option:
+          type: RequestPath
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response.get('nextPage', '') }}"
+          stop_condition: "{{ response.get('lastPage', true) }}"
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        url: "{{ config['jira_instance_url'] }}/rest/api/3/worklog/deleted?since=0"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['worklogId'] }}
+          - type: AddedFieldDefinition
+            path:
+              - worklog_id
+            value: "{{ record['worklogId'] }}"
+          # The API calls it updatedTime, but on this endpoint it IS the
+          # deletion timestamp (epoch millis).
+          - type: AddedFieldDefinition
+            path:
+              - deleted_at_ms
+            value: "{{ record['updatedTime'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          worklogId:
+            type:
+              - number
+              - "null"
+          updatedTime:
+            type:
+              - number
+              - "null"
+          properties:
+            type:
+              - array
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+          worklog_id:
+            type:
+              - number
+              - "null"
+          deleted_at_ms:
+            type:
+              - number
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+
+  # ─── Board configuration (specs/DATA-COMPLETENESS.md) ──────────────────
+  # /board/{id}/configuration carries the board's estimation field (the
+  # instance's actual Story Points custom-field id), the column-to-status
+  # mapping and the board location. One request per board.
+  - type: DeclarativeStream
+    name: jira_board_configuration
+    primary_key:
+      - unique_key
+    retriever:
+      type: SimpleRetriever
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: []
+      paginator:
+        type: NoPagination
+      requester:
+        type: HttpRequester
+        http_method: GET
+        authenticator:
+          $ref: "#/definitions/linked/HttpRequester/authenticator"
+        error_handler:
+          $ref: "#/definitions/linked/HttpRequester/error_handler"
+        url: >-
+          {{ config['jira_instance_url'] }}/rest/agile/1.0/board/{{ stream_partition.board_id }}/configuration
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: board_id
+            stream:
+              $ref: "#/streams/0"
+    transformations:
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - tenant_id
+            value: "{{ config['insight_tenant_id'] }}"
+          - type: AddedFieldDefinition
+            path:
+              - source_id
+            value: "{{ config['insight_source_id'] }}"
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path:
+              - unique_key
+            value: >-
+              {{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ stream_partition.board_id }}
+          - type: AddedFieldDefinition
+            path:
+              - board_id
+            value: "{{ stream_partition.board_id }}"
+          - type: AddedFieldDefinition
+            path:
+              - board_type
+            value: "{{ record.get('type') }}"
+          - type: AddedFieldDefinition
+            path:
+              - estimation_field_id
+            value: >-
+              {{ ((record.get('estimation') or {}).get('field') or {}).get('fieldId') }}
+          - type: AddedFieldDefinition
+            path:
+              - estimation_field_name
+            value: >-
+              {{ ((record.get('estimation') or {}).get('field') or {}).get('displayName') }}
+          - type: AddedFieldDefinition
+            path:
+              - column_config
+            value: "{{ (record.get('columnConfig') or {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - board_location
+            value: "{{ (record.get('location') or {}) | tojson }}"
+          - type: AddedFieldDefinition
+            path:
+              - collected_at
+            value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z' }}"
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id:
+            type:
+              - number
+              - "null"
+          name:
+            type:
+              - string
+              - "null"
+          type:
+            type:
+              - string
+              - "null"
+          self:
+            type:
+              - string
+              - "null"
+          filter:
+            type:
+              - object
+              - "null"
+          columnConfig:
+            type:
+              - object
+              - "null"
+          estimation:
+            type:
+              - object
+              - "null"
+          ranking:
+            type:
+              - object
+              - "null"
+          location:
+            type:
+              - object
+              - "null"
+          tenant_id:
+            type:
+              - string
+              - "null"
+          source_id:
+            type:
+              - string
+              - "null"
+          unique_key:
+            type: string
+          board_id:
+            type:
+              - number
+              - "null"
+          board_type:
+            type:
+              - string
+              - "null"
+          estimation_field_id:
+            type:
+              - string
+              - "null"
+          estimation_field_name:
+            type:
+              - string
+              - "null"
+          column_config:
+            type:
+              - string
+              - "null"
+          board_location:
+            type:
+              - string
+              - "null"
+          collected_at:
+            type:
+              - string
+              - "null"
+        required:
+          - unique_key
+        additionalProperties: true
+
 spec:
   type: Spec
   connection_specification:
@@ -8144,10 +8757,8 @@ spec:
       jira_story_points_field_id:
         type: string
         description: >-
-          Instance-specific custom field ID for Story Points (e.g.,
-          customfield_10016 for Next-gen). Leave default if unsure.
-        title: Story Points Field ID
-        default: customfield_10016
+          Optional operator override for the instance-specific Story Points custom field ID (e.g., customfield_10016). Leave unset to let dbt resolve it automatically from the /rest/api/3/field metadata.
+        title: Story Points Field ID (override)
         order: 8
     additionalProperties: true
 

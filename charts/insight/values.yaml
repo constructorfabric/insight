@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.25.01.20-112fc46" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.05.07-9623811" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.25.01.20-112fc46" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.05.07-9623811" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -563,9 +563,15 @@ gitCliProxy:
     repository: ghcr.io/constructorfabric/insight-git-cli-proxy
     tag: ""
     pullPolicy: IfNotPresent
+  # The git subprocesses (clone, fetch, repack) run in this pod's cgroup and
+  # dominate its memory. The service caps git's own pack budgets so their
+  # peak cannot scale with the repository; this limit is the headroom above
+  # that ceiling rather than a figure derived from cache.maxRepoBytes. Lower
+  # cache.heavyOpsConcurrency before raising it — overlapping heavy
+  # operations are what push a correctly-capped pod over.
   resources:
-    requests: {cpu: 200m, memory: 256Mi}
-    limits: {cpu: "2", memory: 2Gi}
+    requests: {cpu: 200m, memory: 1Gi}
+    limits: {cpu: "2", memory: 8Gi}
   persistence:
     size: 50Gi
     storageClass: ""

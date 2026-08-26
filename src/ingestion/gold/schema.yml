@@ -75,6 +75,29 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_authored_commits
+    description: >
+      One row per authored commit that reaches a git measure: the surviving row
+      of the commit-hash collapse, with branch scope, repository, project and
+      source dimensions already resolved. Materialized so the commit class read
+      and the collapse run once per build in their own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier; one row per tenant, data source and hash"
+        tests:
+          - not_null
+
+  - name: git_commit_file_changes
+    description: >
+      File changes attached to the commit row that survived the hash collapse,
+      one row per commit, path, change type and object id pair. Materialized so
+      the file-change class read runs in its own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit the change is attached to"
+        tests:
+          - not_null
+
   - name: git_default_branch_commits
     description: >
       Commits that reached a repository's default branch through a merged pull
@@ -87,6 +110,30 @@ models:
         description: "Commit identifier within the repository"
         tests:
           - not_null
+
+  - name: git_derived_commits
+    description: >
+      Commits whose work is already counted on another commit, one row per
+      tenant/data_source/commit_hash/reason. merge_result is the commit a
+      merged pull request produced on its destination (a squash result or the
+      last rebased copy), marked only when every linked branch commit was
+      collected; patch_duplicate is a later carrier of a patch id an earlier
+      commit in the same repository authored (a rebase copy or a cherry-pick).
+      The git
+      evidence build excludes these from both the commit and the line figures,
+      so one authored change counts once and the two figures describe the same
+      set of commits.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the source"
+        tests:
+          - not_null
+      - name: reason
+        description: "Why the commit is derived"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge_result', 'patch_duplicate']
 
   - name: git_metric_evidence
     description: >

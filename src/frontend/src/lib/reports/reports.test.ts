@@ -593,6 +593,31 @@ describe("bucketsInRange", () => {
     ]);
   });
 
+  it("keys a week the same way whatever weekday the period starts on", () => {
+    for (const from of [
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-08",
+      "2026-08-09",
+    ]) {
+      expect(bucketsInRange(from, "2026-08-23", "week"), from).toEqual([
+        "2026-08-03",
+        "2026-08-10",
+        "2026-08-17",
+      ]);
+    }
+  });
+
+  it("keys a week that crosses a year boundary to its own Monday", () => {
+    expect(bucketsInRange("2026-12-30", "2027-01-10", "week")).toEqual([
+      "2026-12-28",
+      "2027-01-04",
+    ]);
+  });
+
   it("gives every month of a year its own bucket", () => {
     expect(bucketsInRange("2026-01-01", "2026-12-31", "year")).toEqual(["2026"]);
     expect(bucketsInRange("2026-01-01", "2026-03-31", "month")).toEqual([

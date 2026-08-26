@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   definitions: [] as unknown[],
   computations: new Map<string, string>(),
   scope: {} as Record<string, unknown>,
+  dateRange: { from: "2026-05-13", to: "2026-08-12" },
   run: vi.fn(),
   csv: vi.fn(),
   xlsx: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock("@/lib/portal/use-org-scope", () => ({ useOrgScope: () => mocks.scope })
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({
     period: "quarter",
-    dateRange: { from: "2026-05-13", to: "2026-08-12" },
+    dateRange: mocks.dateRange,
   }),
 }));
 vi.mock("@/lib/reports/run-report", () => ({ runReport: mocks.run }));
@@ -128,6 +129,7 @@ beforeEach(() => {
     isLoading: false,
     isError: false,
   };
+  mocks.dateRange = { from: "2026-05-13", to: "2026-08-12" };
   mocks.run.mockReset().mockResolvedValue(new Map());
   mocks.csv.mockReset();
   mocks.xlsx.mockReset();
@@ -333,5 +335,54 @@ describe("ReportBuilderView", () => {
     expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull();
     expect(mocks.csv).not.toHaveBeenCalled();
     expect(mocks.xlsx).not.toHaveBeenCalled();
+  });
+  it("drops a held grain the shortened period cannot carry, and builds at the finer one", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ReportBuilderView />);
+    await user.click(screen.getByRole("button", { name: "Quarterly" }));
+    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    mocks.dateRange = { from: "2026-08-17", to: "2026-08-23" };
+    rerender(<ReportBuilderView />);
+
+    expect(screen.getByRole("button", { name: "Weekly" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Quarterly" })).toBeDisabled();
+
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    await waitFor(() =>
+      expect(mocks.run).toHaveBeenCalledWith(
+        expect.objectContaining({ granularity: "week" }),
+      ),
+    );
+  });
+
+  it("hands both exporters the table the preview showed, without building again", async () => {
+    const user = userEvent.setup();
+    mocks.run.mockResolvedValueOnce(
+      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
+    );
+    render(<ReportBuilderView />);
+    await user.click(box("Commits"));
+    await user.click(screen.getByRole("button", { name: "Build report" }));
+    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
+    await closeDialog(user);
+    await user.click(await screen.findByRole("button", { name: /rows ·/ }));
+
+    await user.click(await screen.findByRole("button", { name: "CSV" }));
+    await user.click(await screen.findByRole("button", { name: "Excel" }));
+
+    const exported = mocks.csv.mock.calls[0][1];
+    expect(
+      exported.rows.some((row: unknown[]) => row.includes(1082.2)),
+    ).toBe(true);
+    expect(mocks.xlsx.mock.calls[0][2]).toBe(exported);
+    expect(mocks.run).toHaveBeenCalledTimes(1);
   });
 });
