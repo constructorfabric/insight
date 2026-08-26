@@ -1,4 +1,3 @@
--- depends_on: {{ ref('github__bronze_promoted') }}
 {{ config(
     materialized='table',
     alias='github__task_field_history',

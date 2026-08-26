@@ -141,7 +141,7 @@ vars:
 #      The Rust `jira-enrich` binary has INSERT rights only; dbt owns DDL.
 #
 # Bronze MergeTree → ReplacingMergeTree promotion happens per-connector via
-# a dedicated bootstrap model (e.g. `jira__bronze_promoted`) using `pre_hook`,
+# a dedicated bootstrap model using `pre_hook`,
 # so all the connector's other models depend on it via `-- depends_on:`. This
 # keeps connector-specific table lists co-located with the connector code.
 on-run-start:

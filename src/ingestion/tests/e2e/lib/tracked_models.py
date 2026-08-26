@@ -33,7 +33,7 @@ class TrackedModels:
 
     def build(self, models: Sequence[str], *, worker_ctx: WorkerContext, with_ancestors: bool = False) -> None:
         """`dbt build` the named models. `with_ancestors` prefixes each with `+`,
-        which pulls the connector's `<connector>__bronze_promoted` view."""
+        so bronze-facing staging builds run before the silver class models."""
         if not models:
             return
         self._record(models)

@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='view',
     alias='jira__task_users',

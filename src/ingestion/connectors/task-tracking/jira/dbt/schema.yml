@@ -51,15 +51,6 @@ sources:
       - name: jira__task_field_history
 
 models:
-  - name: jira__bronze_promoted
-    description: |
-      Bootstrap model that promotes every Airbyte-managed `bronze_jira.*` table from
-      MergeTree to ReplacingMergeTree(_airbyte_extracted_at) with a natural-key
-      ORDER BY. Idempotent — subsequent runs are no-ops once tables are RMT.
-
-      Every other Jira staging model declares a `depends_on` comment referencing
-      this model, so dbt's DAG materializes the view (and runs the migration
-      side effects) before any model reads bronze.
   - name: jira__task_comments
     description: "Per-source staging projection of Jira comments. Unioned into silver.class_task_comments."
   - name: jira__task_worklogs

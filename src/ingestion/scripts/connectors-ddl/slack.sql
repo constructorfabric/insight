@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bronze_slack.users_details
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `date` Nullable(String),
@@ -34,6 +34,6 @@ CREATE TABLE IF NOT EXISTS bronze_slack.users_details
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 

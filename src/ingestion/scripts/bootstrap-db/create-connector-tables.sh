@@ -74,6 +74,10 @@ jq -Rc 'fromjson? | select(.type == "CATALOG") | .catalog' "${WORKDIR}/discover.
   | tail -n 1 > "${WORKDIR}/catalog.json"
 [[ -s "${WORKDIR}/catalog.json" ]] || { echo "[${NAME}] no CATALOG message in discover output" >&2; exit 1; }
 
+# append_dedup + primary_key [["unique_key"]] mirrors normalize_catalog.py:
+# the destination creates the table as ReplacingMergeTree ORDER BY unique_key
+# itself, so the dumped snapshot is byte-identical to what a real sync creates.
+# Keyless streams fall back to plain append (same as reconcile).
 jq --arg ns "${NAMESPACE}" '{streams: [.streams[] | {
     stream: {
       name: .name,
@@ -82,11 +86,15 @@ jq --arg ns "${NAMESPACE}" '{streams: [.streams[] | {
       supported_sync_modes: (.supported_sync_modes // ["full_refresh"])
     },
     sync_mode: "full_refresh",
-    destination_sync_mode: "append",
     generation_id: 1,
     minimum_generation_id: 0,
     sync_id: 1
-  }]}' "${WORKDIR}/catalog.json" > "${WORKDIR}/configured_catalog.json"
+  }
+  + (if (.json_schema.properties // {}) | has("unique_key")
+     then {destination_sync_mode: "append_dedup", primary_key: [["unique_key"]]}
+     else {destination_sync_mode: "append"}
+     end)
+  ]}' "${WORKDIR}/catalog.json" > "${WORKDIR}/configured_catalog.json"
 
 jq -c --arg ns "${NAMESPACE}" '.streams[] | {
     type: "TRACE",
@@ -120,17 +128,3 @@ docker run --rm -i -v "${WORKDIR}:/work:ro" "${DESTINATION_CLICKHOUSE_IMAGE}" \
   > "${WORKDIR}/write.jsonl" \
   || { tail -n 5 "${WORKDIR}/write.jsonl" >&2; exit 1; }
 
-# Guard the missing-dir case: a connector without a dbt/ directory makes `find`
-# exit nonzero, which under `set -e`/`pipefail` would abort before the skip
-# branch below can run.
-PROMOTED_FILE=""
-if [[ -d "${CONNECTOR_DIR}/dbt" ]]; then
-  PROMOTED_FILE="$(find "${CONNECTOR_DIR}/dbt" -maxdepth 1 -name "*__bronze_promoted.sql" -print -quit)"
-fi
-if [[ -n "${PROMOTED_FILE}" ]]; then
-  MODEL="$(basename "${PROMOTED_FILE}" .sql)"
-  echo "[${NAME}] promote bronze to ReplacingMergeTree (${MODEL})"
-  "${SCRIPT_DIR}/run-dbt.sh" --select "${MODEL}"
-else
-  echo "[${NAME}] no *__bronze_promoted.sql model, skipping promotion"
-fi

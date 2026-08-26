@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# normalize_catalog_to_append.py
+# normalize_catalog.py
 #
 # Read an Airbyte discover_schema response from stdin and emit a syncCatalog
-# JSON suitable for connections/create. Every stream is forced to
-# destinationSyncMode=append. syncMode=incremental when a default cursor is
-# advertised (default_cursor_field non-empty OR source_defined_cursor=true);
-# otherwise full_refresh.
+# JSON suitable for connections/create. Every stream that advertises a
+# `unique_key` property is forced to destinationSyncMode=append_dedup with
+# primaryKey=[["unique_key"]]: the destination then creates the bronze table
+# as ReplacingMergeTree ORDER BY unique_key itself (engine-level dedup, same
+# append-only insert path). Streams without `unique_key` fall back to plain
+# append. syncMode=incremental when a default cursor is advertised
+# (default_cursor_field non-empty OR source_defined_cursor=true); otherwise
+# full_refresh.
 #
 # @cpt-algo: cpt-insightspec-algo-reconcile-normalize-catalog-append-only:p1
-#
-# Per cpt-dataflow-constraint-airbyte-append: append-only at destination
-# avoids OOMs from append_dedup buffering and survives mid-stream pod kills.
-# Dedup happens in silver via unique_key.
 # ---------------------------------------------------------------------------
 
 import json
 import sys
+
+UNIQUE_KEY = "unique_key"
 
 
 def _field(stream: dict, *keys):
@@ -44,6 +46,11 @@ def _stream_supports_incremental(stream: dict) -> bool:
     return False
 
 
+def _stream_has_unique_key(stream: dict) -> bool:
+    schema = _field(stream, "jsonSchema", "json_schema") or {}
+    return UNIQUE_KEY in (schema.get("properties") or {})
+
+
 def normalize(discover_response: dict) -> dict:
     catalog = discover_response.get("catalog") or {}
     raw_streams = catalog.get("streams") or []
@@ -53,7 +60,6 @@ def normalize(discover_response: dict) -> dict:
         sync_mode = "incremental" if _stream_supports_incremental(stream) else "full_refresh"
         cfg = {
             "syncMode": sync_mode,
-            "destinationSyncMode": "append",
             # Per ADR-0015: every stream the source advertises is enabled.
             "selected": True,
             # Per ADR-0015: every field in jsonSchema is enabled. Explicit
@@ -63,6 +69,19 @@ def normalize(discover_response: dict) -> dict:
             # prior connection state.
             "fieldSelectionEnabled": False,
         }
+        if _stream_has_unique_key(stream):
+            cfg["destinationSyncMode"] = "append_dedup"
+            cfg["primaryKey"] = [[UNIQUE_KEY]]
+        else:
+            # A keyless stream cannot dedup; keep today's append behavior and
+            # surface the gap instead of failing the whole reconcile.
+            cfg["destinationSyncMode"] = "append"
+            name = _field(stream, "name") or "<unnamed>"
+            print(
+                f"normalize_catalog: stream {name} has no {UNIQUE_KEY} property;"
+                " falling back to destinationSyncMode=append",
+                file=sys.stderr,
+            )
         cursor = _field(stream, "defaultCursorField", "default_cursor_field") or []
         if sync_mode == "incremental" and cursor:
             cfg["cursorField"] = cursor

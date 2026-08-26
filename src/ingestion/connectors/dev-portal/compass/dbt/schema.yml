@@ -19,5 +19,3 @@ sources:
       - name: deployment_events
 
 models:
-  - name: compass__bronze_promoted
-    description: "Promotes every bronze_compass table to ReplacingMergeTree ordered by unique_key, so later FINAL reads are well-defined. Required for deployment_events, whose rows are rewritten in place as a deployment progresses."

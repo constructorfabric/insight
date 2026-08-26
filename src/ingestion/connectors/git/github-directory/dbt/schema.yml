@@ -14,8 +14,6 @@ sources:
       - name: org_members
 
 models:
-  - name: github_directory__bronze_promoted
-    description: "Promotes bronze_github_directory tables to ReplacingMergeTree ordered by unique_key, so the snapshot's FINAL read is well-defined."
 
   # Profile / identity trio (mirrors youtrack + bamboohr): snapshot → fields_history → identity_inputs.
   - name: github_directory__org_members_snapshot

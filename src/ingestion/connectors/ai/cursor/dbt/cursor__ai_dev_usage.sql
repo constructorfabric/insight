@@ -1,4 +1,3 @@
--- depends_on: {{ ref('cursor__bronze_promoted') }}
 -- Bronze → Silver step 1: Cursor per-user per-day usage → class_ai_dev_usage
 --
 -- Source: bronze_cursor.cursor_daily_usage — daily aggregate stream from

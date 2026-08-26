@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {# `staging` tag (issue #1893): the prod jira pipeline materializes staging
    feeders only in its staging step (`tag:staging,tag:jira`) and builds silver
    with `tag:silver,tag:jira+`. Tagged only `jira`, this model matched neither

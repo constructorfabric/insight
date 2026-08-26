@@ -1,4 +1,3 @@
--- depends_on: {{ ref('jira__bronze_promoted') }}
 {{ config(
     materialized='table',
     alias='jira_issue_field_snapshot',

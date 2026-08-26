@@ -112,7 +112,7 @@ class CHSeeder:
         # nothing to TRUNCATE (and ClickHouse rejects `TRUNCATE … View` with
         # NOT_IMPLEMENTED, code 48). Several staging models are materialized as
         # views over overwrite-mode bronze (e.g. jira__task_users,
-        # jira__bronze_promoted): the bronze table underneath is itself in the
+        # bronze-facing staging models): the bronze table underneath is itself in the
         # ledger and gets truncated, which clears the view's content. Skipping
         # the view keeps per-test isolation correct without erroring.
         engine = self._fetch_engine(schema, table)
