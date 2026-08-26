@@ -2,8 +2,9 @@
 #
 # These templates record what an ingestion run did, and two of their properties
 # are invisible in a diff. A DAG's phase comes from its targets, so a recorder
-# that runs after the work it records can erase that work's failure — a failed
-# sync reported a green run, and dbt rebuilt from stale bronze. And the inverse:
+# that runs after the work it records would erase that work's failure: a failed
+# sync would read as a green run and dbt would rebuild stale bronze. And the
+# inverse:
 # a recorder that cannot run must not fail the run it only observes. Both
 # properties follow from documented Argo semantics, and the assertions below
 # are what hold the templates to them.

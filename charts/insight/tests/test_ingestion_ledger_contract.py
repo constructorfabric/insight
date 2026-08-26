@@ -5,10 +5,10 @@ two facts a diff does not show, both following from documented Argo semantics:
 
 * A DAG's phase comes from its TARGETS, and a target is any task nothing depends
   on. A recorder that runs after the work it records is therefore the only
-  target, and a recorder that succeeds after a failure **erases that failure** —
-  a failed sync reported a green run, and dbt went on to rebuild from stale
-  bronze. The fix is `dag.target` naming the real work alongside the recorder,
-  and that is what these tests pin.
+  target, so a recorder succeeding after a failure would **erase that failure**:
+  the DAG would report Succeeded, a failed sync would read as a green run, and
+  dbt would rebuild from stale bronze. `dag.target` names the real work
+  alongside the recorder, and that is what these tests pin.
 
 * The inverse must hold too: a recorder that cannot run — an image it cannot
   pull, an eviction, its deadline — must not fail the run it only observes. A

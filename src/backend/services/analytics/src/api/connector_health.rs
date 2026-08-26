@@ -239,7 +239,7 @@ fn run_event_view(row: read::HistoryRow) -> RunEventView {
         origin: row.origin,
         job_id: non_empty(row.job_id),
         started_at: row.started_at,
-        duration_ms: row.has_counters.then_some(row.duration_or_zero),
+        duration_ms: row.has_duration.then_some(row.duration_or_zero),
         records_moved: row.has_counters.then_some(row.moved_or_zero),
         rows_landed: row.has_measurement.then_some(row.rows_landed_or_zero),
     }
@@ -388,6 +388,7 @@ mod tests {
             job_id: "job-1".to_owned(),
             started_at: at(),
             duration_or_zero: 1,
+            has_duration: true,
             moved_or_zero: 0,
             has_counters: true,
             rows_landed_or_zero: 0,
@@ -411,6 +412,7 @@ mod tests {
             job_id: String::new(),
             started_at: at(),
             duration_or_zero: 1,
+            has_duration: true,
             moved_or_zero: 0,
             has_counters: false,
             rows_landed_or_zero: 0,
@@ -419,7 +421,11 @@ mod tests {
 
         let view = run_event_view(row);
         assert_eq!(view.records_moved, None);
-        assert_eq!(view.duration_ms, None, "duration comes with the sweep too");
+        assert_eq!(
+            view.duration_ms,
+            Some(1),
+            "a pipeline run.finished carries the workflow layer's own elapsed time"
+        );
     }
 
     #[test]
@@ -433,6 +439,7 @@ mod tests {
             job_id: "job-1".to_owned(),
             started_at: at(),
             duration_or_zero: 1,
+            has_duration: true,
             moved_or_zero: 0,
             has_counters: true,
             rows_landed_or_zero: 0,

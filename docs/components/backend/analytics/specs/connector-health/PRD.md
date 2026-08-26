@@ -224,7 +224,7 @@ request path.
 
 ### 5.1 Recording Runs
 
-#### FR-1 — Every pipeline run leaves a terminal record
+#### FR-1 — A pipeline run records its own outcome
 
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-terminal-record`
 
@@ -456,9 +456,9 @@ first failure of a long series is out of scope for this surface.
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-usecase-silent-stop`
 
 A connector's schedule disappears (a suspended or deleted workflow). No new runs are
-recorded. The page shows the connector's last recorded run receding into the past against
-its own recorded cadence, so the operator sees "used to run daily, last ran N days ago" —
-without the product claiming to know the intended schedule.
+recorded. The page shows how long ago the connector's last run started, and the drill-down
+lists the start times of the recent recorded runs. The operator reads the gap from those
+timestamps; the product computes no cadence and claims no intended schedule.
 
 ### UC-3 — A manual sync is accounted for
 

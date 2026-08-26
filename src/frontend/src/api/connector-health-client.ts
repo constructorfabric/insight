@@ -100,7 +100,8 @@ export interface RunEvent {
   /** The mover's job, so an event lines up with the summary by identity. */
   job_id: string | null;
   started_at: string;
-  duration_ms: number;
+  /** Null where nobody timed the row — absence, never a zero. */
+  duration_ms: number | null;
   /** Null on a row no sweep has reached: nobody counted, which is not zero. */
   records_moved: number | null;
   rows_landed: number | null;

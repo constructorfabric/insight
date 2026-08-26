@@ -220,6 +220,12 @@ ingestion:
     schedule: "0 6 * * *" # daily 06:00 UTC, after overnight connector syncs
     successfulJobsHistoryLimit: 3
     failedJobsHistoryLimit: 3
+    # Beyond this, a sync with no recorded claim stays `unclaimed` rather than
+    # being called out-of-band: the run that could have claimed it may simply
+    # have been collected. Set it to the workflow layer's own retention — the
+    # default is deliberately short, because only a value LONGER than that
+    # retention can attribute a sync to a person on evidence that was deleted.
+    claimHorizonSeconds: 86400
     ttlSecondsAfterCompletion: 1800
     ttlSecondsAfterSuccess: 600
     ttlSecondsAfterFailure: 3600

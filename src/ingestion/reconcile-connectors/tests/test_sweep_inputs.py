@@ -215,3 +215,25 @@ class TestTheCoverageFrontier:
 
         assert "orderBy=createdAt%7CASC" in airbyte
         assert "orderBy=createdAt%7CDESC" not in airbyte
+
+
+class TestPlacingAJobInTime:
+    """The frontier moves along `createdAt`, so a job must be placed on it."""
+
+    def test_an_unreadable_start_time_falls_back_to_the_listing_order_field(self):
+        # Skipped outright, this job sits behind a watermark that later jobs
+        # push forward, and its outcome is never recorded.
+        request = build(
+            jobs=[{"jobId": "77", "startTime": "not-a-time", "createdAt": "2026-01-15T09:00:00"}],
+            mapping={}, ledger=[], claims={}, tick_run_id="tick-1", horizon_epoch=0,
+        )
+
+        assert request["jobs"][0]["startTimeEpoch"] > 0
+
+    def test_a_job_datable_by_neither_field_is_left_at_zero_for_the_planner(self):
+        request = build(
+            jobs=[{"jobId": "77", "startTime": "", "createdAt": ""}],
+            mapping={}, ledger=[], claims={}, tick_run_id="tick-1", horizon_epoch=0,
+        )
+
+        assert request["jobs"][0]["startTimeEpoch"] == 0

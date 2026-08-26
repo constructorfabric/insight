@@ -323,8 +323,9 @@ function RunHistory({ connector }: { connector: string }) {
 
 function describeOutcome(event: RunEvent): string {
   const step = event.step ? ` at ${event.step}` : "";
+  // Absence stays silent; a recorded zero is a measurement and gets rendered.
   const took =
-    event.duration_ms > 0 ? ` · ${formatDuration(event.duration_ms)}` : "";
+    event.duration_ms === null ? "" : ` · ${formatDuration(event.duration_ms)}`;
   return `${event.status}${step} · ${formatAge(event.started_at)}${took}`;
 }
 

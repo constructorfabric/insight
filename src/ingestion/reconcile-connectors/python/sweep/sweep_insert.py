@@ -46,7 +46,7 @@ def row_tuple(row: dict[str, Any]) -> str:
         sql_literal(row["origin"]),
         sql_literal(row["claim"]),
         f"toDateTime64({int(row['started_at_epoch'])}, 3)",
-        str(int(row["duration_ms"])),
+        "NULL" if row["duration_ms"] is None else str(int(row["duration_ms"])),
         str(int(row["records_moved"])),
     ]
     return "(" + ", ".join(fields) + ")"

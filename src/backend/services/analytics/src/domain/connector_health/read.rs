@@ -42,7 +42,7 @@ const RUNS_SQL: &str = "\
            argMax(status, ts)      AS status,
            argMax(step, ts)        AS step,
            argMax(started_at, ts)  AS started_at,
-           argMax(duration_ms, ts) AS duration_ms,
+           argMax(ifNull(duration_ms, 0), ts) AS duration_ms,
            argMax(run_id, ts)      AS run_id
     FROM {LEDGER}
     WHERE event = 'run.finished' AND connector != ''
@@ -72,13 +72,16 @@ const SYNCS_SQL: &str = "\
            argMax(claim, (rank, ts))               AS claim,
            argMax(status, (rank, ts))              AS status,
            argMax(started_at, (from_sweep, ts))    AS started_at,
-           argMax(duration_ms, (from_sweep, ts))   AS duration_ms,
+           argMax(duration_or_zero, (from_sweep, ts)) AS duration_ms,
+           max(timed)                              AS has_duration,
            argMax(records_moved, (from_sweep, ts)) AS records_moved,
            max(from_sweep)                         AS has_counters,
            max(landed_or_zero)                     AS rows_landed,
            max(measured)                           AS has_measurement
     FROM (
-      SELECT connector, job_id, claim, status, started_at, duration_ms,
+      SELECT connector, job_id, claim, status, started_at,
+             ifNull(duration_ms, 0) AS duration_or_zero,
+             duration_ms IS NOT NULL AS timed,
              records_moved,
              ifNull(rows_landed, 0) AS landed_or_zero,
              rows_landed IS NOT NULL AS measured,
@@ -139,7 +142,8 @@ const CONFIGURED_SQL: &str = "\
 /// them here would bury the history under one line per tick.
 const HISTORY_SQL: &str = "\
     SELECT event, status, step, origin, claim, job_id, started_at,
-           duration_ms AS duration_or_zero,
+           ifNull(duration_ms, 0) AS duration_or_zero,
+           duration_ms IS NOT NULL AS has_duration,
            records_moved AS moved_or_zero,
            origin = 'sweep' AS has_counters,
            ifNull(rows_landed, 0) AS rows_landed_or_zero,
@@ -183,7 +187,9 @@ struct SyncRow {
     status: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     started_at: DateTime<Utc>,
+    // INVARIANT: field order matches the SELECT — the client reads positionally.
     duration_ms: u64,
+    has_duration: bool,
     records_moved: u64,
     has_counters: bool,
     rows_landed: u64,
@@ -251,9 +257,12 @@ pub(crate) struct HistoryRow {
     pub(crate) job_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub(crate) started_at: DateTime<Utc>,
-    /// INVARIANT: only meaningful when `has_counters`, for the same reason as
-    /// the counters — the mover's history is what knows how long a sync ran.
+    /// INVARIANT: only meaningful when `has_duration`. Not tied to the
+    /// counters: a pipeline-written `run.finished` carries the workflow layer's
+    /// own elapsed time, while its `sync.completed` carries none until a sweep
+    /// reads the mover.
     pub(crate) duration_or_zero: u64,
+    pub(crate) has_duration: bool,
     /// INVARIANT: only meaningful when `has_counters`. Counters reach the ledger
     /// with the sweep; a pipeline row stores the column's zero and means
     /// "nobody counted", which is not the same statement.
@@ -441,7 +450,7 @@ fn sync_facts(syncs: Vec<SyncRow>) -> Vec<(String, SyncFacts)> {
                     claim: Claim::parse(&row.claim),
                     status: row.status,
                     started_at: row.started_at,
-                    duration_ms: row.has_counters.then_some(row.duration_ms),
+                    duration_ms: row.has_duration.then_some(row.duration_ms),
                     records_moved: row.has_counters.then_some(row.records_moved),
                     rows_landed: row.has_measurement.then_some(row.rows_landed),
                 },
@@ -506,6 +515,18 @@ mod tests {
             connector: connector.to_owned(),
             run_id: run_id.to_owned(),
             status: status.to_owned(),
+        }
+    }
+
+    #[test]
+    fn elapsed_time_is_absent_only_when_the_column_says_so() {
+        // Not derived from the writer: a pipeline `run.finished` carries the
+        // workflow layer's own elapsed time, and gating on origin threw it away.
+        for statement in [sql(SYNCS_SQL), sql(HISTORY_SQL)] {
+            assert!(
+                statement.contains("duration_ms IS NOT NULL"),
+                "absence must come from the column: {statement}"
+            );
         }
     }
 
@@ -642,6 +663,7 @@ mod tests {
             status: "ok".to_owned(),
             started_at: Utc.timestamp_opt(0, 0).unwrap(),
             duration_ms: 0,
+            has_duration: false,
             records_moved: 0,
             has_counters: false,
             rows_landed: 4_200,
@@ -670,6 +692,7 @@ mod tests {
             status: "ok".to_owned(),
             started_at: Utc.timestamp_opt(0, 0).unwrap(),
             duration_ms: 1,
+            has_duration: true,
             records_moved: 400,
             has_counters: true,
             rows_landed: 0,
@@ -688,6 +711,7 @@ mod tests {
             status: "ok".to_owned(),
             started_at: Utc.timestamp_opt(0, 0).unwrap(),
             duration_ms: 1,
+            has_duration: true,
             records_moved: 400,
             has_counters: true,
             rows_landed: 0,

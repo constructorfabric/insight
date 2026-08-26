@@ -49,7 +49,8 @@ def ledger_row(raw: dict[str, str]) -> dict[str, Any]:
         "status": raw["status"],
         "has_counters": raw["has_counters"] == "1",
         "started_at_epoch": int(raw["started_at_epoch"]),
-        "duration_ms": int(raw["duration_ms"]),
+        # Empty means the warehouse held NULL: nobody timed this one.
+        "duration_ms": int(raw["duration_ms"]) if raw["duration_ms"] else None,
         "records_moved": int(raw["records_moved"]),
     }
 
@@ -63,7 +64,11 @@ def build(
     horizon_epoch: int,
 ) -> dict[str, Any]:
     for job in jobs:
-        job["startTimeEpoch"] = epoch(job.get("startTime"))
+        # `createdAt` is the field the listing is ORDERED by, so it is the one
+        # the frontier moves along. Falling back to it keeps a job whose
+        # `startTime` is unreadable inside the covered region — skipped without
+        # it, the watermark advances past the job and nothing asks again.
+        job["startTimeEpoch"] = epoch(job.get("startTime")) or epoch(job.get("createdAt"))
 
     return {
         "jobs": jobs,

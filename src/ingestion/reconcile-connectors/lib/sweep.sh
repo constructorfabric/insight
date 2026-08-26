@@ -38,7 +38,7 @@ SWEEP_OVERLAP_SECONDS="${SWEEP_OVERLAP_SECONDS:-1800}"  # RULE-DEFAULTS-OK: re-r
 # run that could have claimed it may simply have been deleted. The pipeline's
 # own claim is the primary mechanism; this is the fallback for a lost write, and
 # a lost write is recent.
-SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"  # RULE-DEFAULTS-OK: fail-safe by direction — too short only widens `unclaimed`, which is the honest answer; only a value LONGER than the records' real retention could call a job out_of_band on deleted evidence, so the default is deliberately short
+SWEEP_CLAIM_HORIZON_SECONDS="${SWEEP_CLAIM_HORIZON_SECONDS:-86400}"  # RULE-DEFAULTS-OK: the deployed value comes from the chart (ingestion.reconcile.claimHorizonSeconds); this mirrors it for a direct run, and is fail-safe by direction — short only widens `unclaimed`, only LONGER than the records' real retention could attribute a sync on deleted evidence
 
 # A warehouse that stops answering must not hold the tick until the workflow's
 # own deadline, long after the connector work it observes has finished.
@@ -126,7 +126,7 @@ _sweep_ledger_state() {
                'status', argMax(status, (prec, ts)),
                'has_counters', toString(max(origin = 'sweep')),
                'started_at_epoch', toString(toUnixTimestamp(argMax(started_at, (prec, ts)))),
-               'duration_ms', toString(argMax(duration_ms, (prec, ts))),
+               'duration_ms', ifNull(toString(argMax(duration_ms, (prec, ts))), ''),
                'records_moved', toString(argMax(records_moved, (prec, ts)))
              ) AS row
       FROM (

@@ -221,11 +221,19 @@ describe("connectorState", () => {
     expect(state).toBe("state_unknown");
   });
 
-  it("treats an absent transform outcome as absence, not as a mystery", () => {
-    // Null means the run did not get that far. Absence is not a finding — the
-    // same rule the whole page runs on.
+  it("names a run that recorded no transform outcome at all", () => {
+    // FR-4 makes "failed or absent transform" a state of its own: a finished
+    // run always runs a transform, so nothing recorded means nothing rebuilt
+    // downstream while bronze looks fresh.
     expect(
       connectorState(row({ last_run: run({ transform_status: null }) }))
+    ).toBe("transform_missing");
+  });
+
+  it("does not claim a missing transform when no run was recorded", () => {
+    // Nothing ran, so there is nothing for a transform to have followed.
+    expect(
+      connectorState(row({ last_run: null, last_sync: sync() }))
     ).toBe("delivering");
   });
 

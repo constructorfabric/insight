@@ -159,12 +159,16 @@ the richer row. This is what makes NFR-3 hold by construction.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-constraint-metadata-only-grant`
 
-The read-only query-path role gains exactly one thing: SELECT on the ledger database. It
-gets no grant on bronze, in data or in metadata. Row visibility in `system.parts` follows
-actual data access, so `SHOW` on a bronze pattern does not make those relations visible there
-and "metadata only" is not a reachable permission state. Storage
-facts therefore reach the page the same way every other fact does: recorded into the ledger
-by a writer that already owns bronze.
+The read-only query-path role gains exactly one thing: SELECT on the ledger database. It gets
+no grant on bronze, in data or in metadata.
+
+This is a constraint, not a preference. `system.parts` is filtered by what the role can
+actually read, so a role granted only visibility — and not data access — sees no rows there
+for those relations. A "metadata only" grant that would let the reader size bronze without
+reading it is therefore not expressible. Storage facts reach the page the way every other
+fact does: recorded into the ledger by a writer that already owns bronze. The migration in
+§3.6 is the reproducible statement of the grant surface, and the stand asserts the reader
+holds no INSERT.
 
 #### No compose-stand behaviour beyond degradation
 
@@ -329,9 +333,9 @@ the step; the reconcile tick's connector work is unaffected (NFR-2).
 
 ##### Why this component exists
 
-The page needs one merged answer from two relations (ledger, storage metadata) with
-duplicate resolution and name mapping — domain logic that belongs in one tested module, not
-in a handler.
+The page needs one merged answer from several statements over the ledger — duplicate
+resolution, run/transform linkage and name mapping — domain logic that belongs in one tested
+module, not in a handler. Storage figures are ledger rows too: nothing else is read.
 
 ##### Responsibility scope
 
@@ -348,9 +352,12 @@ history slices for the expansion (FR-8, UC-1).
 
 ##### Responsibility boundaries
 
-Holds no bronze access at all; never calls the mover; never classifies freshness. A missing
-ledger table (migration not yet applied) or an empty one degrades to the configured-set list
-with `history_available = false` and unknown storage figures (FR-13).
+Holds no bronze access at all; never calls the mover; never classifies freshness. The
+configured-set snapshot lives in the ledger like everything else, so a missing table
+(migration not yet applied) leaves nothing to serve: the endpoint answers an empty list with
+`history_available = false` rather than erroring (FR-13). A table that exists but holds no
+sealed tick behaves the same way for storage and the configured set, while any runs it does
+hold are still reported.
 
 ##### Related components (by ID)
 

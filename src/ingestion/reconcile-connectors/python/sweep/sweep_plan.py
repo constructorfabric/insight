@@ -71,7 +71,7 @@ class Row:
     claim: str = ""
     origin: str = ORIGIN
     started_at_epoch: int = 0
-    duration_ms: int = 0
+    duration_ms: int | None = None
     records_moved: int = 0
 
 
@@ -95,20 +95,34 @@ class Plan:
     undatable_jobs: list[str] = field(default_factory=list)
 
 
+#: What the ledger stores for a word outside the mover's documented vocabulary.
+#:
+#: The read surface reasons over a closed set — the frontend maps each word to a
+#: state and refuses to call an unreadable one healthy. Passing a vendor word
+#: straight through would put a value in the column that nothing downstream has
+#: a reading for, so the boundary names the unknown instead.
+UNKNOWN_STATUS = "unknown"
+
+
 def ledger_status(mover_status: str) -> str:
-    return STATUS_FROM_MOVER.get(str(mover_status).lower(), str(mover_status).lower())
+    """The ledger's word for a mover outcome. Closed set in, closed set out."""
+    return STATUS_FROM_MOVER.get(str(mover_status).lower(), UNKNOWN_STATUS)
 
 
-def duration_ms(duration: Any) -> int:
-    """Milliseconds from the mover's ISO-8601 duration (`PT1M37S`) or a number."""
+def duration_ms(duration: Any) -> int | None:
+    """Milliseconds from the mover's ISO-8601 duration (`PT1M37S`) or a number.
+
+    None when the mover reported none or reported it in a shape we cannot read
+    — the page states elapsed time as a fact, and a zero would be one.
+    """
     if duration is None or duration == "":
-        return 0
+        return None
     if isinstance(duration, (int, float)):
         return int(float(duration) * 1000)
 
     text = str(duration).strip().upper()
     if not text.startswith("PT"):
-        return 0
+        return None
 
     seconds = 0.0
     number = ""
@@ -221,7 +235,7 @@ def corroboration_rows(request: dict[str, Any], plan: Plan) -> None:
                 status=row.get("status", ""),
                 claim=claim,
                 started_at_epoch=started_at,
-                duration_ms=int(row.get("duration_ms") or 0),
+                duration_ms=row.get("duration_ms"),
                 records_moved=int(row.get("records_moved") or 0),
             )
         )

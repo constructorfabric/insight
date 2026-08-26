@@ -277,6 +277,18 @@ class TestVocabularyAtTheBoundary:
     def test_the_movers_outcome_words_become_the_ledgers(self, mover, ledger):
         assert ledger_status(mover) == ledger, f"should map: {mover!r}"
 
+    def test_a_word_outside_that_vocabulary_is_named_unknown(self):
+        # Closed set in, closed set out. Passing a vendor word straight through
+        # would put a value in the column that nothing downstream can read, and
+        # the surface refuses to call an unreadable state healthy.
+        assert ledger_status("some_new_vendor_word") == "unknown"
+
+    def test_the_recorded_row_carries_that_word_too(self):
+        plan = plan_sweep(request(jobs=[job(status="some_new_vendor_word")]))
+
+        (row,) = syncs(plan)
+        assert row.status == "unknown"
+
     @pytest.mark.parametrize(
         ("duration", "expected"),
         [
@@ -285,12 +297,15 @@ class TestVocabularyAtTheBoundary:
             ("PT0S", 0),
             ("PT2M", 120000),
             ("PT1H2M3S", 3723000),
-            ("", 0),
-            (None, 0),
+            ("", None),
+            (None, None),
+            ("not-a-duration", None),
             (12.5, 12500),
         ],
     )
     def test_the_movers_duration_becomes_milliseconds(self, duration, expected):
+        # None, not zero: the page states elapsed time as a fact, and "PT0S" —
+        # a real zero — must stay distinguishable from nobody having timed it.
         assert duration_ms(duration) == expected, f"should convert: {duration!r}"
 
 

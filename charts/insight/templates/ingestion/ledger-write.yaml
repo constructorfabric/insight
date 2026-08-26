@@ -30,7 +30,7 @@ spec:
           - name: step
             default: ""  # RULE-DEFAULTS-OK: as connector
           - name: duration_ms
-            default: "0"  # RULE-DEFAULTS-OK: as connector
+            default: ""  # RULE-DEFAULTS-OK: empty is "nobody timed this", which the column stores as NULL
           - name: duration_seconds
             default: ""  # RULE-DEFAULTS-OK: as connector
           - name: records_moved
@@ -92,7 +92,7 @@ spec:
           - name: step
             default: ""  # RULE-DEFAULTS-OK: derived from failures_json when a run failed
           - name: duration_ms
-            default: "0"  # RULE-DEFAULTS-OK: rows that report no elapsed time
+            default: ""  # RULE-DEFAULTS-OK: empty is "nobody timed this", which the column stores as NULL
           # Argo reports a workflow's elapsed time in fractional seconds. Callers
           # that have that rather than milliseconds pass it here.
           - name: duration_seconds
@@ -234,10 +234,16 @@ spec:
 
 
           def elapsed_ms():
+              """Milliseconds elapsed, or None when the caller timed nothing.
+
+              A zero here would be indistinguishable from a run that took no
+              time, and the page reports elapsed time as a fact.
+              """
               seconds = os.environ.get("LEDGER_DURATION_SECONDS", "")
               if seconds:
                   return int(float(seconds) * 1000)
-              return int(os.environ.get("LEDGER_DURATION_MS") or 0)
+              raw = os.environ.get("LEDGER_DURATION_MS", "")
+              return int(raw) if raw.isdigit() else None
 
 
           def window_start_epoch(raw):
@@ -364,6 +370,7 @@ spec:
                       log("ledger.step_parse_failed", level="warning", error=repr(error))
                       step = ""
 
+              elapsed = elapsed_ms()
               columns = {
                   "run_id": quote(os.environ.get("LEDGER_RUN_ID", "")),
                   "job_id": quote(os.environ.get("LEDGER_JOB_ID", "")),
@@ -374,7 +381,7 @@ spec:
                   "claim": quote(os.environ.get("LEDGER_CLAIM", "")),
                   "step": quote(step),
                   "started_at": started_at_sql(),
-                  "duration_ms": str(elapsed_ms()),
+                  "duration_ms": "NULL" if elapsed is None else str(elapsed),
                   "records_moved": str(int(os.environ.get("LEDGER_RECORDS_MOVED") or 0)),
                   "rows_landed": "NULL" if landed is None else str(landed),
               }

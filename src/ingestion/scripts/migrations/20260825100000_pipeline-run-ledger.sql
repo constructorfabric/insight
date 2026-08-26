@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ingestion_runs.pipeline_events (
     claim             LowCardinality(String),
     step              LowCardinality(String),
     started_at        DateTime64(3, 'UTC'),
-    duration_ms       UInt64,
+    duration_ms       Nullable(UInt64),
     records_moved     UInt64,
     rows_landed       Nullable(UInt64),
     stream            LowCardinality(String),

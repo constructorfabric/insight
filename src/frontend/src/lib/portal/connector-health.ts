@@ -24,6 +24,8 @@ export type ConnectorState =
   | "sync_failed"
   /** The sync succeeded and this run's transform did not. */
   | "transform_failed"
+  /** The run completed and recorded no transform outcome at all (FR-4). */
+  | "transform_missing"
   /** A run or sync is still in flight — not yet an outcome. */
   | "in_flight"
   /** Nothing manages this connector any more, though it has history. */
@@ -66,6 +68,11 @@ const STATES: Record<ConnectorState, Omit<ConnectorStateLabel, "state"> & { tile
   transform_failed: {
     label: "transform failed",
     tile: "transform failed",
+    tone: "warning",
+  },
+  transform_missing: {
+    label: "no transform recorded",
+    tile: "no transform recorded",
     tone: "warning",
   },
   in_flight: { label: "in flight", tile: "in flight", tone: "warning" },
@@ -155,6 +162,11 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
   if (failed(run?.status)) return "run_failed";
   if (failed(sync?.status)) return "sync_failed";
   if (failed(run?.transform_status)) return "transform_failed";
+
+  // FR-4: a successful sync with a failed OR absent transform is a state of its
+  // own — downstream layers stalling while bronze stays fresh. A finished run
+  // always runs a transform, so nothing recorded means nothing rebuilt.
+  if (run && run.transform_status === null) return "transform_missing";
 
   if (inFlight(run?.status) || inFlight(sync?.status)) return "in_flight";
 

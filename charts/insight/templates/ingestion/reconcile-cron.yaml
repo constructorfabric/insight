@@ -63,6 +63,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # How far back the workflow layer's records are treated as
+            # complete, and so how far back a missing claim is evidence that a
+            # sync started outside the pipeline. It belongs here, where a
+            # deployer can see it against their own Argo retention, rather than
+            # in the loop's own default.
+            - name: SWEEP_CLAIM_HORIZON_SECONDS
+              value: {{ .Values.ingestion.reconcile.claimHorizonSeconds | default 86400 | quote }}
             - name: AIRBYTE_URL
               value: {{ include "insight.airbyte.url" . | quote }}
             - name: INSIGHT_NAMESPACE
