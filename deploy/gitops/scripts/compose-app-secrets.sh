@@ -204,6 +204,25 @@ if [ "$AUTH_RESOLVE_BY" = "email" ]; then
     echo "ERROR: authenticator.oidc.resolveBy=email needs identityResolution.rosterSourceType in $VALUES — the email lookup is confined to the roster, and without one identity refuses it rather than matching an address any source happened to state" >&2
     exit 1
   }
+  # The gear refuses this pair at boot (minting needs the source-native id the
+  # roster observed), so a stand that sets both composes cleanly and then
+  # CrashLoops with auth always on at the next pod start.
+  if [ "$(yq -r '.authenticator.oidc.provisionOnLogin // false' "$VALUES")" = "true" ]; then
+    echo "ERROR: authenticator.oidc.provisionOnLogin cannot be used with resolveBy=email in $VALUES — no login provisions in this mode" >&2
+    exit 1
+  fi
+  # The mode's one input is the `email` claim, which rides the `email` scope. An
+  # explicit list that omits it installs cleanly and denies every login; adding
+  # it back is harmless.
+  AUTH_SCOPE_LIST=$(yq -r '(.authenticator.oidc.scopes // []) | join(" ")' "$VALUES")
+  case " $AUTH_SCOPE_LIST " in
+    "  ") ;;                      # unset — the gear asks for its own default set
+    *" email "*) ;;
+    *)
+      echo "ERROR: authenticator.oidc.resolveBy=email needs \"email\" in authenticator.oidc.scopes in $VALUES (got '$AUTH_SCOPE_LIST')" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 for v in MDB_HOST MDB_USER MDB_DB CH_HOST CH_USER CH_DB RD_HOST; do

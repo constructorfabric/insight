@@ -475,59 +475,18 @@ pub async fn internal_person_by_roster_email(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_service(&ctx)?;
 
-    let email = query.email.trim();
-    if email.is_empty() {
-        // The authenticator calls this route only in email mode, so an empty
-        // address means a token reached it without the claim it was configured
-        // to resolve by. It fails closed on its own side and logs there; this is
-        // the same event seen from the identity side of the hop, and it is the
-        // one that survives if the two are read separately.
-        tracing::warn!(
-            "by-roster-email called with an empty address — the caller resolved no email claim"
-        );
-        return Err(ProfileError::invalid_argument()
-            .with_field_violation("email", "email must not be empty", "REQUIRED")
-            .create());
-    }
-
-    let roster_source_type = state.config.roster_source_type.trim();
-    if roster_source_type.is_empty() {
-        tracing::warn!(
-            "by-roster-email called with no roster_source_type configured — refusing to \
-             match a login address against every source"
-        );
-        return Err(ProfileError::failed_precondition()
-            .with_precondition_violation(
-                "roster_source_type",
-                "resolving a login by address needs the roster source to be configured",
-                "roster_source_type_unconfigured",
-            )
-            .create());
-    }
-
-    // The caller's own tenant, off the service JWT. Nil would widen the lookup
-    // to every tenant sharing this database, which is the one thing an address
-    // key cannot survive.
-    let tenant_id = ctx.subject_tenant_id();
-    if tenant_id.is_nil() {
-        tracing::warn!(
-            "by-roster-email called with no tenant on the caller's token — refusing to \
-             match a login address across tenants"
-        );
-        return Err(ProfileError::failed_precondition()
-            .with_precondition_violation(
-                "tenant_id",
-                "resolving a login by address needs the caller's tenant",
-                "tenant_unresolved",
-            )
-            .create());
-    }
+    let asked = login_bootstrap::parse_roster_email(
+        &query.email,
+        &state.config.roster_source_type,
+        ctx.subject_tenant_id(),
+    )
+    .map_err(refused_roster_email)?;
 
     let candidates = persons_repo::resolve_person_ids_by_roster_email(
         &state.db,
-        tenant_id,
-        roster_source_type,
-        email,
+        asked.tenant_id,
+        asked.source_type,
+        asked.address,
     )
     .await
     .map_err(|e| {
@@ -535,37 +494,92 @@ pub async fn internal_person_by_roster_email(
         CanonicalError::internal("lookup failed").create()
     })?;
 
-    let Some((person_id, rest)) = candidates.split_first() else {
-        return Err(ProfileError::not_found(format!(
-            "no person holding a live {roster_source_type} account states email '{email}'"
-        ))
-        .with_resource(email.to_owned())
-        .create());
-    };
-
-    if !rest.is_empty() {
-        // The roster states one address for several people. The seed refuses to
-        // auto-link that shape, and an operator may have split them on purpose;
-        // admitting the newest observation silently would override that decision
-        // at the door with nothing to read afterwards. Answering is still the
-        // install's chosen behaviour — this is the line that makes it auditable.
-        tracing::warn!(
-            target: "audit",
-            event = "login_roster_email_ambiguous",
-            tenant_id = %tenant_id,
-            source_type = %roster_source_type,
-            candidates = candidates.len(),
-            resolved_person_id = %person_id,
-            "several persons state this roster address; resolving to the newest observation"
-        );
-    }
+    let resolved = login_bootstrap::choose_roster_email_match(&candidates)
+        .ok_or_else(|| no_person_states(&asked))?;
+    audit_contested_roster_email(&asked, &resolved);
 
     Ok(Json(InternalPersonResponse {
         value_type: "email".to_owned(),
-        value: email.to_owned(),
+        value: asked.address.to_owned(),
         insight_source_type: "person",
-        insight_source_id: *person_id,
+        insight_source_id: resolved.person_id,
     }))
+}
+
+/// The roster states this address for nobody who still holds a live account
+/// under it — which is also how an excluded account reads from here.
+fn no_person_states(asked: &login_bootstrap::RosterEmail<'_>) -> CanonicalError {
+    ProfileError::not_found(format!(
+        "no person holding a live {} account states email '{}'",
+        asked.source_type, asked.address
+    ))
+    .with_resource(asked.address.to_owned())
+    .create()
+}
+
+/// Answering a contested address is the install's chosen behaviour; this is the
+/// line that makes it auditable rather than silent. The seed refuses to
+/// auto-link the same shape, and an operator may have split the two people
+/// deliberately.
+fn audit_contested_roster_email(
+    asked: &login_bootstrap::RosterEmail<'_>,
+    resolved: &login_bootstrap::RosterEmailMatch,
+) {
+    if resolved.candidates <= 1 {
+        return;
+    }
+    tracing::warn!(
+        target: "audit",
+        event = "login_roster_email_ambiguous",
+        tenant_id = %asked.tenant_id,
+        source_type = %asked.source_type,
+        candidates = resolved.candidates,
+        resolved_person_id = %resolved.person_id,
+        "several persons state this roster address; resolving to the newest observation"
+    );
+}
+
+/// Map a roster-email refusal to its wire shape, and log the two that mean an
+/// install is misconfigured rather than a caller mistaken — each would
+/// otherwise surface only as an unexplained refusal for every person.
+fn refused_roster_email(refusal: login_bootstrap::RosterEmailRefusal) -> CanonicalError {
+    use login_bootstrap::RosterEmailRefusal as R;
+    match refusal {
+        R::AddressMissing => {
+            tracing::warn!(
+                "by-roster-email called with an empty address — the caller resolved no email claim"
+            );
+            ProfileError::invalid_argument()
+                .with_field_violation("email", "email must not be empty", "REQUIRED")
+                .create()
+        }
+        R::RosterUnconfigured => {
+            tracing::warn!(
+                "by-roster-email called with no roster_source_type configured — refusing to \
+                 match a login address against every source"
+            );
+            ProfileError::failed_precondition()
+                .with_precondition_violation(
+                    "roster_source_type",
+                    "resolving a login by address needs the roster source to be configured",
+                    "roster_source_type_unconfigured",
+                )
+                .create()
+        }
+        R::TenantUnresolved => {
+            tracing::warn!(
+                "by-roster-email called with no tenant on the caller's token — refusing to \
+                 match a login address across tenants"
+            );
+            ProfileError::failed_precondition()
+                .with_precondition_violation(
+                    "tenant_id",
+                    "resolving a login by address needs the caller's tenant",
+                    "tenant_unresolved",
+                )
+                .create()
+        }
+    }
 }
 
 /// Validate the request and resolve it to candidate `person_id`s.
