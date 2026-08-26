@@ -65,6 +65,22 @@ describe("MetricEvidenceTable", () => {
     });
   });
 
+  it("renders a branch column the server sent, value and header alike", () => {
+    // The branch is server-driven like every other column (#2806): the table
+    // must not need to know the key to show it.
+    renderTable({
+      columns: [
+        { key: "ref", label: "Ref", type: "string" as const },
+        { key: "destination_branch", label: "Target branch", type: "string" as const },
+      ],
+      rows: [{ values: { ref: "42", destination_branch: "release/1.4" } }],
+    });
+    expect(
+      screen.getByRole("columnheader", { name: /Target branch/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("release/1.4")).toBeInTheDocument();
+  });
+
   it("preserves table semantics while virtualizing rows", () => {
     renderTable();
 
