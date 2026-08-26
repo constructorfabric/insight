@@ -69,7 +69,7 @@ export function ConnectorHealthView() {
           Connector health
         </h1>
         <p className="text-sm text-muted-foreground">
-          {rows.length} connectors ·{" "}
+          {rows.length} {rows.length === 1 ? "connector" : "connectors"} ·{" "}
           {/* The recorded marker, never the reader's own clock — that would say
               "just now" however long ago the controller last ran. */}
           {data?.swept_at
@@ -156,9 +156,12 @@ function ConnectorSummaryRow({
   return (
     <TableRow
       className="cursor-pointer"
-      role="button"
+      // No role override: `role="button"` on a <tr> replaces its implicit `row`
+      // role, taking the row out of the table and stranding its cells from
+      // their column headers. The row stays a row and is activated by hand.
       tabIndex={0}
       aria-expanded={isExpanded}
+      aria-label={`${row.connector}: ${state.label}. ${isExpanded ? "Collapse" : "Expand"} details`}
       onClick={(event) => {
         if (activatesRow(event)) onToggle();
       }}

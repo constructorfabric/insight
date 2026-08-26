@@ -217,20 +217,27 @@ spec:
               return STATUS_FROM_WORKFLOW.get(raw, raw)
 
 
-          def started_at_sql():
-              """When the reported thing started, not when this row was written.
+          def started_at_sql(elapsed):
+              """When the reported thing STARTED, not when this row was written.
 
-              The caller passes the real start where it has one; otherwise the
-              write time is the closest fact available, and the row is written at
-              the moment the event happened.
+              Three sources, in order of directness:
+              1. an explicit start the caller measured;
+              2. the write time minus the elapsed time it reports — a terminal
+                 row is written when the thing ENDED, so the write time alone
+                 would put a run's start at its finish and the page would read
+                 "last run 30m ago" for a run that began hours earlier;
+              3. the write time, for a row that reports a moment rather than a
+                 span (a run beginning, a transform outcome).
               """
-              raw = os.environ.get("LEDGER_WINDOW_START", "")
-              if not raw:
-                  return "now64(3)"
-              try:
-                  return f"toDateTime64({window_start_epoch(raw)}, 3)"
-              except (ValueError, TypeError):
-                  return "now64(3)"
+              raw = os.environ["LEDGER_WINDOW_START"]
+              if raw:
+                  try:
+                      return f"toDateTime64({window_start_epoch(raw)}, 3)"
+                  except (ValueError, TypeError):
+                      pass
+              if elapsed:
+                  return f"now64(3) - toIntervalMillisecond({int(elapsed)})"
+              return "now64(3)"
 
 
           def elapsed_ms():
@@ -239,10 +246,10 @@ spec:
               A zero here would be indistinguishable from a run that took no
               time, and the page reports elapsed time as a fact.
               """
-              seconds = os.environ.get("LEDGER_DURATION_SECONDS", "")
+              seconds = os.environ["LEDGER_DURATION_SECONDS"]
               if seconds:
                   return int(float(seconds) * 1000)
-              raw = os.environ.get("LEDGER_DURATION_MS", "")
+              raw = os.environ["LEDGER_DURATION_MS"]
               return int(raw) if raw.isdigit() else None
 
 
@@ -271,6 +278,10 @@ spec:
               return bool(name) and all(c.isalnum() or c == "_" for c in name)
 
 
+          #: This template's own step names. A recorder is not a step of the run.
+          LEDGER_WRITER_TEMPLATES = {"write", "write-tolerated"}
+
+
           def failed_step(failures_json):
               """The step whose failure caused the run to fail.
 
@@ -294,11 +305,19 @@ spec:
               if not payload:
                   return ""
 
-              workflow_name = os.environ.get("LEDGER_RUN_ID", "")
+              workflow_name = os.environ["LEDGER_RUN_ID"]
               named = [
                   node
                   for node in payload
-                  if node.get("displayName") and node.get("displayName") != workflow_name
+                  if node.get("displayName")
+                  and node.get("displayName") != workflow_name
+                  # The ledger's own writers are excluded. `continueOn` lets a
+                  # failed recorder pass without failing the run, but it does
+                  # NOT clear the node's phase, so it still lands here — and
+                  # `record-run-started` finishes before any real work, so it
+                  # would win the earliest-finish sort and name the recorder as
+                  # the step a run failed at, on a run that failed at dbt.
+                  and node.get("templateName") not in LEDGER_WRITER_TEMPLATES
               ]
               if not named:
                   return ""
@@ -349,8 +368,8 @@ spec:
 
               A failed measurement is honest absence, never a fabricated zero.
               """
-              connector = os.environ.get("LEDGER_CONNECTOR", "")
-              window_start = os.environ.get("LEDGER_WINDOW_START", "")
+              connector = os.environ["LEDGER_CONNECTOR"]
+              window_start = os.environ["LEDGER_WINDOW_START"]
               if not connector or not window_start:
                   return None
               try:
@@ -362,27 +381,27 @@ spec:
 
           def main():
               landed = measured_rows()
-              step = os.environ.get("LEDGER_STEP", "")
+              step = os.environ["LEDGER_STEP"]
               if not step:
                   try:
-                      step = failed_step(os.environ.get("LEDGER_FAILURES_JSON", ""))
+                      step = failed_step(os.environ["LEDGER_FAILURES_JSON"])
                   except Exception as error:
                       log("ledger.step_parse_failed", level="warning", error=repr(error))
                       step = ""
 
               elapsed = elapsed_ms()
               columns = {
-                  "run_id": quote(os.environ.get("LEDGER_RUN_ID", "")),
-                  "job_id": quote(os.environ.get("LEDGER_JOB_ID", "")),
-                  "connector": quote(os.environ.get("LEDGER_CONNECTOR", "")),
+                  "run_id": quote(os.environ["LEDGER_RUN_ID"]),
+                  "job_id": quote(os.environ["LEDGER_JOB_ID"]),
+                  "connector": quote(os.environ["LEDGER_CONNECTOR"]),
                   "event": quote(os.environ["LEDGER_EVENT"]),
-                  "status": quote(normalized_status(os.environ.get("LEDGER_STATUS", ""))),
+                  "status": quote(normalized_status(os.environ["LEDGER_STATUS"])),
                   "origin": quote("pipeline"),
-                  "claim": quote(os.environ.get("LEDGER_CLAIM", "")),
+                  "claim": quote(os.environ["LEDGER_CLAIM"]),
                   "step": quote(step),
-                  "started_at": started_at_sql(),
+                  "started_at": started_at_sql(elapsed),
                   "duration_ms": "NULL" if elapsed is None else str(elapsed),
-                  "records_moved": str(int(os.environ.get("LEDGER_RECORDS_MOVED") or 0)),
+                  "records_moved": str(int((os.environ["LEDGER_RECORDS_MOVED"] or 0))),
                   "rows_landed": "NULL" if landed is None else str(landed),
               }
 
@@ -394,7 +413,7 @@ spec:
               log(
                   "ledger.recorded",
                   ledger_event=os.environ["LEDGER_EVENT"],
-                  connector=os.environ.get("LEDGER_CONNECTOR", ""),
+                  connector=os.environ["LEDGER_CONNECTOR"],
                   step=step,
                   rows_landed=landed,
               )

@@ -191,7 +191,7 @@ describe("connectorState", () => {
     );
 
     expect(state).not.toBe("sync_without_transform");
-    expect(state).toBe("state_unknown");
+    expect(state).toBe("no_run_recorded");
   });
 
   it("separates configured-and-never-ran from a schema nobody configured", () => {
@@ -226,12 +226,16 @@ describe("connectorState", () => {
 
   it("does not call a connector delivering on a sync alone", () => {
     // The mover reporting its own success is not a completed run: nothing says
-    // the pipeline finished or that anything landed. A gap, not a delivery.
+    // the pipeline finished or that anything landed. A gap, not a delivery —
+    // and named for what is missing, not as an unreadable word.
     const state = connectorState(
       row({ last_run: null, last_sync: sync({ trigger: "claimed" }) })
     );
 
-    expect(state).toBe("state_unknown");
+    expect(state).toBe("no_run_recorded");
+    expect(connectorStateLabel(row({ last_run: null, last_sync: sync() })).label).toBe(
+      "no run recorded"
+    );
   });
 
   it("names a run that recorded no transform outcome at all", () => {
@@ -248,7 +252,7 @@ describe("connectorState", () => {
     // with no run there is nothing to call delivering either.
     expect(
       connectorState(row({ last_run: null, last_sync: sync() }))
-    ).toBe("state_unknown");
+    ).toBe("no_run_recorded");
   });
 
   it("still prefers a known-bad reading over an unrecognised one", () => {
@@ -260,6 +264,55 @@ describe("connectorState", () => {
     );
 
     expect(state).toBe("run_failed");
+  });
+
+  it("does not call a run still going a run with no transform", () => {
+    // A run in flight has not reached its transform yet. Reporting "no
+    // transform recorded" turns a normal moment into a downstream finding.
+    const state = connectorState(
+      row({ last_run: run({ status: "running", transform_status: null }) })
+    );
+
+    expect(state).toBe("in_flight");
+  });
+
+  it("reports a failed sync rather than the mismatch its failure explains", () => {
+    // Nothing landing is what a failed sync means. Leading with "recorded,
+    // nothing landed" states the more alarming and less useful of the two, and
+    // buries the failure entirely.
+    const state = connectorState(
+      row({
+        last_run: null,
+        last_sync: sync({ status: "failed", records_moved: 12_400, rows_landed: 0 }),
+      })
+    );
+
+    expect(state).toBe("sync_failed");
+  });
+
+  it("does not read a mismatch off a sync that is still moving rows", () => {
+    const state = connectorState(
+      row({
+        last_run: run({ status: "running" }),
+        last_sync: sync({ status: "running", records_moved: 12_400, rows_landed: 0 }),
+      })
+    );
+
+    expect(state).toBe("in_flight");
+  });
+
+  it("refuses to order two runs when a timestamp is missing", () => {
+    // "Was the newest data transformed?" has no answer without both stamps, and
+    // an unanswerable question must not resolve to the reassuring reading.
+    const state = connectorState(
+      row({
+        last_run: run({ started_at: null }),
+        last_sync: sync({ trigger: "out_of_band", started_at: null }),
+      })
+    );
+
+    expect(state).not.toBe("delivering");
+    expect(state).toBe("state_unknown");
   });
 
   it("gives every state words as well as a tone, so colour is never alone", () => {

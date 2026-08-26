@@ -68,7 +68,9 @@ def test_the_health_read_serves_the_operator_a_valid_contract(
     this stand rather than a requirement on it, and re-asserting a field Pydantic
     has already typed would only look like a second check.
     """
-    assert health.connectors is not None
+    # The `health` fixture parsed it. Re-asserting a required, non-nullable
+    # field here would be the second check this docstring rules out — it cannot
+    # fail, because the parse would have failed first.
 
 
 @pytest.mark.requires_seed("admin_operator")

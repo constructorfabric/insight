@@ -48,6 +48,7 @@ const RUNS_SQL: &str = "\
            argMax(step, ts)        AS step,
            argMax(started_at, ts)  AS started_at,
            argMax(ifNull(duration_ms, 0), ts) AS duration_ms,
+           max(duration_ms IS NOT NULL) AS has_duration,
            argMax(run_id, ts)      AS run_id
     FROM {LEDGER}
     WHERE event = 'run.finished' AND connector != ''
@@ -156,7 +157,7 @@ const HISTORY_SQL: &str = "\
     FROM {LEDGER}
     WHERE connector = ?
       AND event NOT IN ('storage.observed', 'connector.configured', 'sweep.completed')
-    ORDER BY started_at DESC
+    ORDER BY ifNull(started_at, ts) DESC, ts DESC
     LIMIT {HISTORY_LIMIT}";
 
 fn sql(template: &str) -> String {
@@ -174,6 +175,7 @@ struct RunRow {
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
     started_at: Option<DateTime<Utc>>,
     duration_ms: u64,
+    has_duration: bool,
     run_id: String,
 }
 
@@ -287,10 +289,25 @@ pub(crate) enum ReadError {
     Clickhouse(#[from] clickhouse::error::Error),
 }
 
+/// ClickHouse's codes for "the relation is not there": `UNKNOWN_TABLE` and
+/// `UNKNOWN_DATABASE`.
+const ABSENT_RELATION_CODES: [&str; 2] = ["Code: 60", "Code: 81"];
+
 fn absent_ledger(error: &clickhouse::error::Error) -> bool {
-    // The one error that is a deployment state rather than a fault: an install
-    // whose migration has not landed answers this way until it does.
-    error.to_string().contains("UNKNOWN_TABLE") || error.to_string().contains("UNKNOWN_DATABASE")
+    // SAFETY: matched on the code at the START of the payload, never by
+    // searching the whole message. ClickHouse echoes the failing statement in
+    // its exception text, and that statement carries a caller-supplied
+    // connector name — a request for a connector literally named after one of
+    // these codes would otherwise turn any warehouse fault into "no ledger
+    // here", answered 200 with an empty list and nothing logged.
+    let clickhouse::error::Error::BadResponse(payload) = error else {
+        return false;
+    };
+
+    let message = payload.trim_start();
+    ABSENT_RELATION_CODES
+        .iter()
+        .any(|code| message.starts_with(code))
 }
 
 async fn fetch<T>(ch: &insight_clickhouse::Client, statement: &str) -> Result<Vec<T>, ReadError>
@@ -436,7 +453,7 @@ fn run_facts(runs: Vec<RunRow>, transforms: &[TransformRow]) -> Vec<(String, Run
                     status: row.status,
                     step: row.step,
                     started_at: row.started_at,
-                    duration_ms: row.duration_ms,
+                    duration_ms: row.has_duration.then_some(row.duration_ms),
                     transform_status,
                 },
             )
@@ -511,6 +528,7 @@ mod tests {
             step: "done".to_owned(),
             started_at: Some(Utc.timestamp_opt(0, 0).unwrap()),
             duration_ms: 1,
+            has_duration: true,
             run_id: run_id.to_owned(),
         }
     }
@@ -553,10 +571,30 @@ mod tests {
     }
 
     #[test]
+    fn the_drill_down_can_reach_an_event_with_no_start_time() {
+        // NULLs sort last in BOTH directions, so ordering by `started_at` alone
+        // put a job the mover never started below every dated row — and the
+        // LIMIT cut it. That job is one of the states this page exists to show.
+        let rendered = sql(HISTORY_SQL);
+
+        assert!(
+            rendered.contains("ORDER BY ifNull(started_at, ts) DESC"),
+            "a row with no start must still be placed in time: {rendered}"
+        );
+        assert!(
+            !rendered.contains("ORDER BY started_at DESC"),
+            "ordering on the nullable column alone hides those rows: {rendered}"
+        );
+    }
+
+    #[test]
     fn elapsed_time_is_absent_only_when_the_column_says_so() {
         // Not derived from the writer: a pipeline `run.finished` carries the
         // workflow layer's own elapsed time, and gating on origin threw it away.
-        for statement in [sql(SYNCS_SQL), sql(HISTORY_SQL)] {
+        // RUNS_SQL is in the list because it was the one read that discarded the
+        // column's nullability, so the summary and the drill-down disagreed
+        // about the very same row.
+        for statement in [sql(RUNS_SQL), sql(SYNCS_SQL), sql(HISTORY_SQL)] {
             assert!(
                 statement.contains("duration_ms IS NOT NULL"),
                 "absence must come from the column: {statement}"
@@ -788,8 +826,9 @@ mod tests {
 
         assert!(rendered.contains("NOT IN ('storage.observed'"));
         assert!(
-            rendered.contains("ORDER BY started_at DESC"),
-            "a reader orders runs by when they ran, not by when a row was written"
+            rendered.contains("ORDER BY ifNull(started_at, ts) DESC"),
+            "a reader orders runs by when they ran, falling back to the write \
+             time only for a row with no start at all"
         );
     }
 
@@ -847,10 +886,27 @@ mod tests {
 
     #[test]
     fn an_absent_ledger_is_told_apart_from_a_warehouse_fault() {
-        let absent = clickhouse::error::Error::Custom("Code: 60. UNKNOWN_TABLE".to_owned());
-        let fault = clickhouse::error::Error::Custom("Code: 241. MEMORY_LIMIT_EXCEEDED".to_owned());
+        let absent = clickhouse::error::Error::BadResponse("Code: 60. UNKNOWN_TABLE".to_owned());
+        let fault =
+            clickhouse::error::Error::BadResponse("Code: 241. MEMORY_LIMIT_EXCEEDED".to_owned());
 
         assert!(absent_ledger(&absent));
+        assert!(!absent_ledger(&fault));
+    }
+
+    #[test]
+    fn a_caller_cannot_name_a_warehouse_fault_into_an_absent_ledger() {
+        // ClickHouse echoes the failing statement in its message, and the
+        // statement carries a connector name from the path. Searching the whole
+        // message would let a request for a connector called after one of these
+        // codes turn a real fault into "no ledger here" — answered 200 with an
+        // empty list, and nothing logged.
+        let fault = clickhouse::error::Error::BadResponse(
+            "Code: 241. DB::Exception: Memory limit exceeded ... WHERE connector = \
+             'UNKNOWN_TABLE' ORDER BY ..."
+                .to_owned(),
+        );
+
         assert!(!absent_ledger(&fault));
     }
 }

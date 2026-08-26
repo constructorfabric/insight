@@ -36,6 +36,8 @@ export type ConnectorState =
   | "nothing_stored"
   /** A recorded status this build has no reading for. Never "delivering". */
   | "state_unknown"
+  /** A sync exists but no run was recorded, so nothing says the run finished. */
+  | "no_run_recorded"
   /** The last run completed and nothing contradicts it. */
   | "delivering"
   /** Configured, and nothing has run yet. */
@@ -60,7 +62,7 @@ export interface ConnectorStateLabel {
 const STATES: Record<ConnectorState, Omit<ConnectorStateLabel, "state"> & { tile: string }> = {
   misdelivered: {
     label: "recorded, nothing landed",
-    tile: "nothing landed",
+    tile: "recorded, nothing landed",
     tone: "critical",
   },
   run_failed: { label: "run failed", tile: "run failed", tone: "critical" },
@@ -96,6 +98,11 @@ const STATES: Record<ConnectorState, Omit<ConnectorStateLabel, "state"> & { tile
     tile: "unrecognised state",
     tone: "warning",
   },
+  no_run_recorded: {
+    label: "no run recorded",
+    tile: "no run recorded",
+    tone: "warning",
+  },
   delivering: { label: "delivering", tile: "delivering", tone: "ok" },
   never_ran: { label: "never ran", tile: "never ran", tone: "idle" },
   not_configured: {
@@ -122,8 +129,17 @@ const SUCCEEDED = new Set(["ok"]);
  * outgrow the reader's, and falling through to "delivering" would turn a state
  * nobody here understands into a reassurance.
  */
+/**
+ * Whether a status this build was given is one it can read.
+ *
+ * Only called for a record that EXISTS. `null` is the documented absence of an
+ * outcome; `undefined` means the key was missing from a response the contract
+ * marks required, which is unreadable rather than absent — but an absent record
+ * has no status to judge, so the caller checks that first.
+ */
 function recognised(status: string | null | undefined): boolean {
-  if (status === null || status === undefined) return true;
+  if (status === undefined) return false;
+  if (status === null) return true;
   return TERMINAL_FAILURES.has(status) || IN_FLIGHT.has(status) || SUCCEEDED.has(status);
 }
 
@@ -155,9 +171,20 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
 
   if (!row.configured && !run && !sync) return "not_configured";
 
+  // Nothing in flight is an outcome yet. A sync still moving rows has not
+  // finished delivering, so no measurement taken now is final.
+  if (inFlight(run?.status) || inFlight(sync?.status)) return "in_flight";
+
   // Both halves must be known: an unrecorded counter or an unmeasured delivery
-  // is a gap, and a gap is not a finding.
-  if (sync && sync.records_moved !== null && sync.records_moved > 0 && sync.rows_landed === 0) {
+  // is a gap, and a gap is not a finding. Only meaningful once the sync ended —
+  // a failed sync explains its own zero, so its failure is the truer report.
+  if (
+    !failed(sync?.status) &&
+    sync &&
+    sync.records_moved !== null &&
+    sync.records_moved > 0 &&
+    sync.rows_landed === 0
+  ) {
     return "misdelivered";
   }
 
@@ -165,12 +192,22 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
   if (failed(sync?.status)) return "sync_failed";
   if (failed(run?.transform_status)) return "transform_failed";
 
-  // FR-4: a successful sync with a failed OR absent transform is a state of its
-  // own — downstream layers stalling while bronze stays fresh. A finished run
-  // always runs a transform, so nothing recorded means nothing rebuilt.
-  if (run && run.transform_status === null) return "transform_missing";
+  // After every definite reading, before any reassuring one. A known failure
+  // outranks it — that is a fact, and burying it under "unrecognised" would
+  // cost the operator the one thing they can act on. But nothing gentler may
+  // be said over a word this build cannot read. Only for records that exist:
+  // a missing record is a different question, answered further down.
+  const unreadable =
+    (run && (!recognised(run.status) || !recognised(run.transform_status))) ||
+    (sync && !recognised(sync.status));
+  if (unreadable) return "state_unknown";
 
-  if (inFlight(run?.status) || inFlight(sync?.status)) return "in_flight";
+  // FR-4: a successful sync with a failed OR absent transform is a state of its
+  // own — downstream layers stalling while bronze stays fresh. Only for a run
+  // that FINISHED: one still going has simply not reached its transform yet.
+  if (run && !inFlight(run.status) && run.transform_status === null) {
+    return "transform_missing";
+  }
 
   // History outlives configuration by design, so a connector with runs and no
   // configuration is not "never configured" — it is one nothing manages now.
@@ -179,28 +216,22 @@ export function connectorState(row: ConnectorHealthRow): ConnectorState {
   // A sync the pipeline did not perform runs no transform of its own, so the
   // downstream layers were not rebuilt. True whenever that sync is the newest
   // thing to have happened, not only when no run exists at all.
-  if (sync?.trigger === "out_of_band" && (!run || isNewer(sync.started_at, run.started_at))) {
-    return "sync_without_transform";
+  if (sync?.trigger === "out_of_band") {
+    if (!run) return "sync_without_transform";
+    if (isNewer(sync.started_at, run.started_at)) return "sync_without_transform";
+    // Neither newer nor older: one of the stamps is missing or unreadable, so
+    // "was the newest data transformed?" has no answer. Not a green one.
+    if (sync.started_at === null || run.started_at === null) return "state_unknown";
   }
 
   if (!run && !sync) return "never_ran";
 
   // "Delivering" is a claim about a completed run. A sync alone — however it
   // ended — is the mover reporting on itself, with nothing saying the run
-  // finished or that anything landed. That is a gap in the record, not a
-  // delivery, and the page must not colour it green.
-  if (!run) return "state_unknown";
-
-  // After the known-bad readings, before any reassurance. The transform counts:
-  // its outcome is one of the three this page reports, and a word we cannot
-  // read there is no more evidence of delivery than one on the run.
-  if (
-    !recognised(run?.status) ||
-    !recognised(sync?.status) ||
-    !recognised(run?.transform_status)
-  ) {
-    return "state_unknown";
-  }
+  // finished or that anything landed. Its own state, not "unrecognised": there
+  // is no word here to fail to recognise, and sending the operator hunting for
+  // a bad status when the run record is simply missing wastes the trip.
+  if (!run) return "no_run_recorded";
 
   // A connector whose runs succeed while nothing is ever stored is one of the
   // four states this page exists to separate, and it is not delivering.

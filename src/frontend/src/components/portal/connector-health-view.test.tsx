@@ -101,7 +101,10 @@ describe("connector health · what a row says", () => {
     ]);
     render(<ConnectorHealthView />);
 
-    expect(screen.getByText("recorded, nothing landed")).toBeInTheDocument();
+    // Two matches by design: the tile and the row badge say the SAME words, so
+    // the count an operator acts on names something they can find in the table.
+    const said = screen.getAllByText("recorded, nothing landed");
+    expect(said).toHaveLength(2);
     expect(screen.getByText("12,400 / 0")).toBeInTheDocument();
   });
 
@@ -257,7 +260,9 @@ describe("connector health · expansion", () => {
     respond([row()]);
     render(<ConnectorHealthView />);
 
-    const summary = screen.getByRole("button", { name: /example-tool/ });
+    // Found as a ROW, not a button: `role="button"` on a <tr> would take it out
+    // of the table and strand its cells from their column headers.
+    const summary = screen.getByRole("row", { name: /example-tool/ });
     summary.focus();
     await userEvent.keyboard("{Enter}");
 

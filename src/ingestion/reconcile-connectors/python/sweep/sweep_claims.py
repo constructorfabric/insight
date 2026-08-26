@@ -9,8 +9,7 @@ triggered as its own result. Timing is never used: a manual sync may run while a
 pipeline run is mid-transform, so overlapping wall-clock proves nothing.
 
 Deliberately does NOT derive how far back the records reach. Retention there may
-instance, retention is uneven: a few ancient runs survive while whole recent days
-are collected, so the oldest surviving record is not a floor under anything. The
+be uneven, so the oldest surviving record is not a floor under anything. The
 caller supplies the horizon as a duration instead.
 """
 

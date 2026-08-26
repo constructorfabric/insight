@@ -56,7 +56,9 @@ pub(crate) struct RunView {
     /// Absent where nothing recorded when it began.
     #[schema(required)]
     pub started_at: Option<DateTime<Utc>>,
-    pub duration_ms: u64,
+    /// Absent where nothing timed the run.
+    #[schema(required)]
+    pub duration_ms: Option<u64>,
     /// Outcome of this run's own transform step, when it got that far.
     #[schema(required)]
     pub transform_status: Option<String>,

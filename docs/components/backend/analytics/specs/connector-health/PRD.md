@@ -561,11 +561,11 @@ yet rather than implying anything.
 
 ## 13. Risks
 
-- ~~**Run-termination recording may not work as assumed**~~ — measured and working; see
-  §11. What the same measurements found instead: a recorder placed after the work it records
-  becomes the only thing its DAG's phase is read from, so a successful recording ERASED a
-  failed sync and the run reported green. Mitigated by naming the real work as a phase target
-  and by a rendered-chart test that fails if any DAG is ever assessed over recorders alone.
+- ~~**Run-termination recording may not work as assumed**~~ — settled; see §11. The risk that
+  replaced it is the phase contract: a DAG's phase is assessed over its targets, so a recorder
+  placed after the work it records becomes the only target and one succeeding after a failure
+  would mask that failure. Mitigated by naming the real work as a phase target and by a
+  rendered-chart test that fails if any DAG is ever assessed over recorders alone.
 - **The sweep reads the mover's API across versions.** Mitigation: consume only its stable
   public listing for outcomes; treat any richer detail as optional enrichment that may
   degrade without degrading the page (FR-14 keeps the read path independent).

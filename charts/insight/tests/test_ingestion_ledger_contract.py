@@ -191,6 +191,10 @@ class TestRecordingCannotFailTheRun:
 SUBMITTERS = [
     "src/ingestion/workflows/onetime/sync.yaml.tpl",
     "src/ingestion/reconcile-connectors/templates/sync-trigger.yaml.tpl",
+    # The scheduled path — the one that produces almost every run. A
+    # CronWorkflow nests its spec, which is why it was invisible to assertions
+    # that read `spec` directly.
+    "src/ingestion/reconcile-connectors/templates/cron-workflow.yaml.tpl",
 ]
 
 REPO = CHART.parents[1]
@@ -230,11 +234,17 @@ class TestTheSweepIsToldItsPolicy:
 class TestEverySubmitterCarriesTheHandler:
     """The terminal row is written by `spec.onExit`, which one reference drops."""
 
-    @pytest.mark.parametrize("submitter", SUBMITTERS)
-    def test_the_submitter_references_the_pipeline_at_spec_level(self, submitter: str) -> None:
+    @staticmethod
+    def submitted_spec(submitter: str) -> dict:
+        """The workflow spec, wherever this kind of resource keeps it."""
         # envsubst placeholders are plain scalars, so these parse as YAML as-is.
         document = yaml.safe_load((REPO / submitter).read_text())
         spec = document["spec"]
+        return spec.get("workflowSpec", spec)
+
+    @pytest.mark.parametrize("submitter", SUBMITTERS)
+    def test_the_submitter_references_the_pipeline_at_spec_level(self, submitter: str) -> None:
+        spec = self.submitted_spec(submitter)
 
         assert spec.get("workflowTemplateRef", {}).get("name") == "ingestion-pipeline", (
             f"{submitter} must reach the pipeline by workflowTemplateRef; a "
@@ -258,10 +268,9 @@ class TestEverySubmitterCarriesTheHandler:
             for parameter in template["inputs"]["parameters"]
             if "default" not in parameter
         }
-        document = yaml.safe_load((REPO / submitter).read_text())
         supplied = {
             parameter["name"]
-            for parameter in document["spec"].get("arguments", {}).get("parameters", [])
+            for parameter in self.submitted_spec(submitter).get("arguments", {}).get("parameters", [])
         }
 
         assert required <= supplied, (
@@ -271,10 +280,9 @@ class TestEverySubmitterCarriesTheHandler:
 
     @pytest.mark.parametrize("submitter", SUBMITTERS)
     def test_the_submitter_names_the_ledger_identity(self, submitter: str) -> None:
-        document = yaml.safe_load((REPO / submitter).read_text())
         supplied = {
             parameter["name"]
-            for parameter in document["spec"].get("arguments", {}).get("parameters", [])
+            for parameter in self.submitted_spec(submitter).get("arguments", {}).get("parameters", [])
         }
 
         assert {"connector", "tenant_id"} <= supplied, (

@@ -54,7 +54,9 @@ pub(crate) struct RunFacts {
     /// The step the run reached; empty when it did not fail.
     pub(crate) step: String,
     pub(crate) started_at: Option<DateTime<Utc>>,
-    pub(crate) duration_ms: u64,
+    /// Absent where nothing timed the run — the same rule as the sync's, and
+    /// the reason the column is nullable.
+    pub(crate) duration_ms: Option<u64>,
     /// Outcome of the transform step, when the run got that far.
     pub(crate) transform_status: Option<String>,
 }
@@ -119,6 +121,10 @@ enum Attention {
     SyncFailed,
     /// The sync succeeded and the transform did not.
     TransformFailed,
+    /// A recorded status this build cannot read. Not a failure, and not a
+    /// reason to stop asking — it sorts above the quiet band so the operator
+    /// sees it rather than losing it among the connectors that are fine.
+    Unreadable,
     /// Delivering, or at least not visibly broken.
     Quiet,
     /// Configured, never ran.
@@ -127,8 +133,24 @@ enum Attention {
     NotConfigured,
 }
 
+/// The words the ledger's closed status set holds. `unknown` is the sweep's
+/// deliberate marker for a mover word it could not read (`sweep_plan.py`), so
+/// it is neither a failure nor a reason to sort a connector as quiet.
+const TERMINAL_FAILURES: [&str; 2] = ["failed", "cancelled"];
+const HEALTHY: [&str; 1] = ["ok"];
+
 fn failed(status: &str) -> bool {
-    status == "failed" || status == "cancelled"
+    TERMINAL_FAILURES.contains(&status)
+}
+
+/// INVARIANT: a status outside the closed set is not evidence of health. It
+/// must not sort into the quiet band, where the page stops asking about it.
+fn unreadable(status: &str) -> bool {
+    !status.is_empty() && !failed(status) && !HEALTHY.contains(&status) && !in_flight(status)
+}
+
+fn in_flight(status: &str) -> bool {
+    status == "running"
 }
 
 fn attention(health: &ConnectorHealth) -> Attention {
@@ -159,6 +181,20 @@ fn attention(health: &ConnectorHealth) -> Attention {
         && run.transform_status.as_deref().is_some_and(failed)
     {
         return Attention::TransformFailed;
+    }
+
+    // A word outside the closed set is not evidence of health, so it must not
+    // fall into the band the page stops asking about.
+    let statuses = [
+        health.last_run.as_ref().map(|run| run.status.as_str()),
+        health
+            .last_run
+            .as_ref()
+            .and_then(|run| run.transform_status.as_deref()),
+        health.last_sync.as_ref().map(|sync| sync.status.as_str()),
+    ];
+    if statuses.into_iter().flatten().any(unreadable) {
+        return Attention::Unreadable;
     }
 
     if health.last_run.is_none() && health.last_sync.is_none() {
@@ -257,7 +293,7 @@ mod tests {
             status: status.to_owned(),
             step: String::new(),
             started_at: Some(at(1)),
-            duration_ms: 1000,
+            duration_ms: Some(1000),
             transform_status: transform.map(str::to_owned),
         }
     }
@@ -419,6 +455,30 @@ mod tests {
         );
 
         assert_eq!(names(&summaries), vec!["failing", "stalled"]);
+    }
+
+    #[test]
+    fn a_status_this_build_cannot_read_does_not_sort_as_quiet() {
+        // `unknown` is what the sweep records for a mover word it could not
+        // read. Sorting it with the healthy connectors is the page deciding an
+        // unanswered question in the reassuring direction.
+        let health = ConnectorHealth {
+            connector: "alpha".to_owned(),
+            configured: true,
+            last_run: Some(RunFacts {
+                status: "unknown".to_owned(),
+                ..run("ok", None)
+            }),
+            last_sync: None,
+            storage: None,
+            streams: vec![],
+        };
+
+        assert_eq!(attention(&health), Attention::Unreadable);
+        assert!(
+            Attention::Unreadable < Attention::Quiet,
+            "it must sort above quiet"
+        );
     }
 
     #[test]

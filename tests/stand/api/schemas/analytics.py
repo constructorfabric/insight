@@ -722,7 +722,7 @@ class RunView(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    duration_ms: int = Field(..., ge=0)
+    duration_ms: int | None = Field(..., description='Absent where nothing timed the run.', ge=0)
     started_at: UnzonedDatetime | None = Field(..., description='Absent where nothing recorded when it began.')
     status: str
     step: str | None = Field(..., description='The step the run reached; absent when it did not fail.')

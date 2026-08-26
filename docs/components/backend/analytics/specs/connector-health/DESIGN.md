@@ -693,13 +693,13 @@ from day one (FR-13), so partial rollout degrades to today's behaviour, never to
 including on a failure in the first task, and the failures payload names the step. FR-1
 therefore needs no fallback and the §3.5 workflow-record path stays what it is: the routine
 corroboration input, not a substitute writer. A submitter that reaches the pipeline by plain
-`templateRef` carries no handler, which §3.4 addresses.
+`templateRef` carries no handler, which the submitter row in §3.8 addresses.
 
-What this overturns is the phase contract. A DAG's phase comes from its
-targets, and a recorder that runs after the work it records is the only target — so a
-succeeded recorder erased a failed sync, turning it into a green run that went on to rebuild
-from stale bronze. `dag.target` names the real work alongside the recorder, and a rendered
-chart test now fails if any DAG is ever assessed over recorders alone. The inverse is pinned
+What this overturns is the phase contract. A DAG's phase comes from its targets, and a
+recorder that runs after the work it records is the only target — so one succeeding after a
+failure would mask it: the DAG would report Succeeded, a failed sync would read as a green
+run, and dbt would rebuild stale bronze. `dag.target` names the real work alongside the
+recorder, and a rendered chart test fails if any DAG is ever assessed over recorders alone. The inverse is pinned
 the same way: every write goes through a `steps` wrapper carrying `continueOn`, which a
 `depends` DAG rejects, so a recorder that cannot run leaves the run alone.
 

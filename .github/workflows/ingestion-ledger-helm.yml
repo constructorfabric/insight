@@ -19,6 +19,13 @@ on:
     paths:
       - "charts/insight/templates/ingestion/**"
       - "charts/insight/tests/**"
+      # The tests assert about these too, and a gate that does not run on what
+      # it guards is not a gate: reverting a submitter to a `templateRef` step,
+      # or dropping the horizon from values.yaml — which makes every install
+      # fail to render — would otherwise pass without this job ever starting.
+      - "src/ingestion/workflows/onetime/**"
+      - "src/ingestion/reconcile-connectors/templates/**"
+      - "charts/insight/values.yaml"
       - ".github/workflows/ingestion-ledger-helm.yml"
   workflow_dispatch:
 

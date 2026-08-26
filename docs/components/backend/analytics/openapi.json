@@ -2250,9 +2250,13 @@
       "RunView": {
         "properties": {
           "duration_ms": {
+            "description": "Absent where nothing timed the run.",
             "format": "int64",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "started_at": {
             "description": "Absent where nothing recorded when it began.",
