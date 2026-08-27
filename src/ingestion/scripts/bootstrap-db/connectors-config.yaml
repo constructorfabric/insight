@@ -115,6 +115,19 @@ connectors:
         value: hubspot-acme-prod
       insight_tenant_id:
         value: fake
+  compass:
+    path: dev-portal/compass
+    config:
+      atlassian_api_token:
+        value: fake
+      atlassian_cloud_id:
+        value: fake
+      atlassian_email:
+        value: fake
+      insight_source_id:
+        value: fake
+      insight_tenant_id:
+        value: fake
   bitbucket-cloud:
     path: git/bitbucket-cloud
     config:

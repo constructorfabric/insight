@@ -35,6 +35,12 @@ SOME_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
 #: string, not a UUID, so it needs its own recognisable value.
 SOME_ACCOUNT_ID: Final[str] = "stand-in-account"
 
+#: Stand-in for `{connector}`, which is a hyphenated descriptor name. Hyphenated
+#: on purpose: the route's own parser accepts lowercase letters, digits and
+#: hyphens and refuses anything else, so a stand-in outside that shape would be
+#: refused before the gate under test was reached.
+SOME_CONNECTOR: Final[str] = "stand-in-connector"
+
 #: Stand-in for `{metric_key}`, which is a dotted `family.name` string rather
 #: than a UUID. Kept a DOTTED key on purpose: the literal `export`/`import`
 #: segments of the sibling routes must not collide with it, so the template
@@ -49,6 +55,7 @@ _PARAMETERS: Final[dict[str, str]] = {
     SOME_ID: "{id}",
     SOME_METRIC_KEY: "{metric_key}",
     SOME_ACCOUNT_ID: "{account_id}",
+    SOME_CONNECTOR: "{connector}",
 }
 
 
@@ -128,6 +135,11 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # invisible here and asserted in test_feedback.py.
     _a("POST", "/v1/feedback"),
     _a("GET", "/v1/feedback"),
+    # Connector health. Both are `.authenticated()` at the edge with the
+    # operator gate inside the handler, so the refusal is invisible here and
+    # asserted in test_connector_health.py.
+    _a("GET", "/v1/connector-health"),
+    _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
 #: identity-resolution — 26 operations. `/health` and `/healthz` are the host

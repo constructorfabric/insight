@@ -1,0 +1,30 @@
+# Mirrors the columns of bronze_github.pull_request_review_comments in
+# scripts/connectors-ddl/github.sql that the staging models read.
+schemas:
+  bronze_github.pull_request_review_comments:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      unique_key: {type: string}
+      tenant_id: {type: string}
+      source_id: {type: string}
+      id: {type: integer}
+      pull_number: {type: integer}
+      repo_full_name: {type: string}
+      author_login: {type: string}
+      author_association: {type: string}
+      created_at: {type: string}
+      updated_at: {type: string}
+      body: {type: string}
+      author_id: {type: integer}
+      author_type: {type: string}
+      path: {type: string}
+      line: {type: integer}
+      side: {type: string}
+      commit_id: {type: string}
+      review_id: {type: integer}

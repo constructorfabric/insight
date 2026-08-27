@@ -1,0 +1,16 @@
+{
+  "eventType": "DEPLOYMENT",
+  "displayName": "billing-api 1.4.2",
+  "description": "release pipeline",
+  "url": "https://ci.example.com/builds/4242",
+  "lastUpdated": "2026-06-15T10:20:30.123Z",
+  "updateSequenceNumber": 1750000000123,
+  "deploymentProperties": {
+    "sequenceNumber": 4242,
+    "state": "SUCCESSFUL",
+    "startedAt": "2026-06-15T10:15:00.000Z",
+    "completedAt": "2026-06-15T10:20:30.123Z",
+    "environment": {"category": "PRODUCTION", "displayName": "Production", "environmentId": "prod"},
+    "pipeline": {"pipelineId": "4242", "displayName": "release", "url": "https://ci.example.com/pipelines/release"}
+  }
+}

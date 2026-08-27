@@ -187,14 +187,12 @@ fn compile_ratio_query(
 /// identity. Grouping by identity would leave one person's aliases uncollapsed;
 /// omitting the person entirely would collapse a roster's people into each
 /// other, so a flagged denominator would read `1` for a whole team.
-fn resolved_person_expr() -> String {
-    format!(
-        "multiIf(coalesce(account_map.account_id, '') != '', \
-          toString(assumeNotNull(account_map.person_id)), \
-          coalesce(person_map.email, '') != '', \
-          toString(assumeNotNull(person_map.person_id)), \
-          evidence.entity_id)"
-    )
+fn resolved_person_expr() -> &'static str {
+    "multiIf(coalesce(account_map.account_id, '') != '', \
+      toString(assumeNotNull(account_map.person_id)), \
+      coalesce(person_map.email, '') != '', \
+      toString(assumeNotNull(person_map.person_id)), \
+      evidence.entity_id)"
 }
 
 /// Per-identity combination for the two halves of a ratio, at evidence grain.

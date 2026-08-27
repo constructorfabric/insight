@@ -130,6 +130,7 @@ bb3a7fbda6080765  Lob                src/ingestion/connectors/git/github/tests/t
 6975843dfd4f4686  Lob                src/ingestion/connectors/git/gitlab/tests/test_windowing.py  # test function name; `test_` + 35 chars is also the Lob key shape
 bb96cc56962de929  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_client.py  # test function name; `test_` + 35 chars is also the Lob key shape
 c92f1ad78ae8322c  Lob                src/ingestion/connectors/hr-directory/bamboohr/tests/test_fields_discovery.py  # test function name; `test_` + 35 chars is also the Lob key shape
+67d774383c91b87e  Lob                src/ingestion/reconcile-connectors/tests/test_sweep_plan.py  # test function name; `test_` + 35 chars is also the Lob key shape
 e0ecc3df5888177a  Lob                src/ingestion/scripts/tests/test_reconcile_against_clickhouse.py  # test function name; `test_` + 35 chars is also the Lob key shape
 ac6b1f5e17b6f4fb  Lob                src/ingestion/scripts/tests/test_reconcile_bronze_schema.py  # test function name; `test_` + 35 chars is also the Lob key shape
 2fd74bf6cecacdff  Lob                src/ingestion/tests/e2e/api/test_metric_thresholds.py  # test function name; `test_` + 35 chars is also the Lob key shape

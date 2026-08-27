@@ -1,0 +1,9 @@
+{
+  "role": "REGULAR",
+  "state": "FULL_MEMBER",
+  "member": {
+    "id": "ari:cloud:identity::user/u1",
+    "name": "Alex Example",
+    "accountStatus": "active"
+  }
+}

@@ -1,0 +1,22 @@
+# Operator-authored tier bindings; DDL owned by the create_ai_config_tables macro.
+schemas:
+  config.ai_seat_tier_map:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      tenant_id: &id001
+        type: string
+      insight_source_id: *id001
+      source: *id001
+      tier_ref: *id001
+      unique_key: *id001
+      seat_source_id: *id001
+      seat_tier: *id001
+      is_deleted:
+        type: integer
+      note: *id001
+      recorded_by: *id001
+      _version:
+        type: string
+        format: date-time

@@ -80,13 +80,13 @@ vi.mock("@/queries/visible-roster", () => ({
 vi.mock("@/queries/member-grid", () => ({
   useMemberGridData: () => mocks.grid,
 }));
-// DomainLensView calls useMetricCollection three times (trend, composition,
-// event-histogram) in that order on every render. The counter is reset per test
-// (see beforeEach): left running, each caller's slot would depend on how many
-// renders every earlier test happened to do.
+// DomainLensView calls useMetricCollection four times (trend, composition,
+// event-histogram, dimension-table rollup) in that order on every render. The
+// counter is reset per test (see beforeEach): left running, each caller's slot
+// would depend on how many renders every earlier test happened to do.
 vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: () => {
-    const r = mocks.collections[mocks.call % 3] ?? emptyCollection();
+    const r = mocks.collections[mocks.call % 4] ?? emptyCollection();
     mocks.call += 1;
     return r;
   },
@@ -881,5 +881,189 @@ describe("trend section", () => {
       ["a"],
       ["a", "b"],
     ]);
+  });
+});
+
+describe("dimension-table (rollup: one row per dimension value)", () => {
+  const TABLE_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "headline", metrics: ["t.commits"] },
+      {
+        kind: "dimension-table",
+        title: "Repositories ranked",
+        dimension: "repository",
+        noun: "repositories",
+        limit: 2,
+        metrics: ["t.commits", "t.cycle"],
+      },
+    ],
+  };
+
+  function rollup(
+    key: string,
+    values: Array<[string, string, number, number]>,
+    over: Partial<NormalizedMetricResult> = {},
+  ): NormalizedMetricResult {
+    return {
+      ...metric(key, []),
+      ...over,
+      rollup: {
+        view: "rollup",
+        dimensions: ["repository"],
+        values: values.map(([value, label, v, persons]) => ({
+          dimensions: [{ key: "repository", value, label }],
+          value: v,
+          contributing_entity_count: persons,
+        })),
+      },
+    } as never;
+  }
+
+  it("ranks rows by the first metric, joins columns and folds the tail into a remainder", () => {
+    const table = emptyCollection();
+    table.byKey.set(
+      "t.commits",
+      rollup("t.commits", [
+        ["r1", "org/one", 40, 3],
+        ["r2", "org/two", 60, 2],
+        ["r3", "org/three", 10, 1],
+      ]),
+    );
+    table.byKey.set(
+      "t.cycle",
+      rollup(
+        "t.cycle",
+        [
+          ["r1", "org/one", 12, 3],
+          ["r2", "org/two", 24, 2],
+          ["r3", "org/three", 44, 1],
+        ],
+        { computation: "median" },
+      ),
+    );
+    mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+
+    expect(screen.getByText("Repositories ranked · 3 repositories")).toBeInTheDocument();
+    const rows = screen.getAllByRole("row").slice(1); // skip the header
+    // Ranked by t.commits: org/two (60) before org/one (40); r3 folds away.
+    expect(rows[0]).toHaveTextContent("org/two");
+    expect(rows[0]).toHaveTextContent("60");
+    expect(rows[0]).toHaveTextContent("24");
+    expect(rows[0]).toHaveTextContent("2");
+    expect(rows[1]).toHaveTextContent("org/one");
+    // The remainder sums the sum metric and stays honest about the median.
+    expect(rows[2]).toHaveTextContent("Other (1)");
+    expect(rows[2]).toHaveTextContent("10");
+    expect(rows[2]).toHaveTextContent("—");
+  });
+
+  it("keeps two repositories that share a label as two rows", () => {
+    // The dimension VALUE identifies a row; a label is what a reader sees.
+    // Two sources whose repositories are both called `org/app` are two
+    // repositories, and keying the rows by label would collapse them in
+    // React's reconciliation.
+    const table = emptyCollection();
+    table.byKey.set(
+      "t.commits",
+      rollup("t.commits", [
+        ["src-a:org/app", "org/app", 40, 2],
+        ["src-b:org/app", "org/app", 10, 1],
+      ]),
+    );
+    mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("40");
+    expect(rows[1]).toHaveTextContent("10");
+  });
+
+  it("renders nothing for a single row (empty-shell rule)", () => {
+    const table = emptyCollection();
+    table.byKey.set("t.commits", rollup("t.commits", [["r1", "org/one", 40, 3]]));
+    mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+    expect(screen.queryByText(/Repositories ranked/)).not.toBeInTheDocument();
+  });
+
+  it("shows a retryable error card when the rollup request fails", () => {
+    const table = emptyCollection();
+    table.isError = true;
+    mocks.collections = [emptyCollection(), emptyCollection(), emptyCollection(), table];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+    expect(screen.getByText(/unable to load/i)).toBeInTheDocument();
+  });
+});
+
+describe("ownership (concentration risk per dimension value)", () => {
+  const OWNERSHIP_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "headline", metrics: ["t.commits"] },
+      {
+        kind: "ownership",
+        metric: "t.commits",
+        dimension: "repository",
+        title: "Ownership concentration",
+      },
+    ],
+  };
+
+  function breakdownRow(id: string, repo: string, value: number) {
+    return {
+      entity_id: id,
+      dimensions: [{ key: "repository", value: repo, label: repo }],
+      value,
+    };
+  }
+
+  it("computes top-1/top-3 shares per value without naming anyone", () => {
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: [
+          // alpha: a=70, b=20, c=10 → top-1 70% (flagged), top-3 100%
+          breakdownRow(pid("a"), "alpha", 70),
+          breakdownRow(pid("b"), "alpha", 20),
+          breakdownRow(pid("c"), "alpha", 10),
+          // beta: a=30, b=30, c=40, d=20 → top-1 33%, top-3 83%
+          breakdownRow(pid("a"), "beta", 30),
+          breakdownRow(pid("b"), "beta", 30),
+          breakdownRow(pid("c"), "beta", 40),
+          breakdownRow(pid("d"), "beta", 20),
+        ],
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection(), emptyCollection()];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+
+    expect(screen.getByText("Ownership concentration")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /alpha: top person 70%, top three 100%/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /beta: top person 33%, top three 83%/ }),
+    ).toBeInTheDocument();
+    // No member names anywhere on the section.
+    expect(screen.queryByText("a")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing with fewer than two values", () => {
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: [breakdownRow(pid("a"), "alpha", 70)],
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection(), emptyCollection()];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+    expect(screen.queryByText("Ownership concentration")).not.toBeInTheDocument();
   });
 });

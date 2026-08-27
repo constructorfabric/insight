@@ -78,7 +78,10 @@ pub enum MetricViewRequest {
         dimensions: Vec<String>,
         group_limit: Option<MetricGroupLimitRequest>,
     },
-    Histogram,
+    Histogram {
+        #[serde(default)]
+        dimensions: Vec<String>,
+    },
 }
 
 impl MetricViewRequest {
@@ -89,7 +92,7 @@ impl MetricViewRequest {
             Self::Timeseries { .. } => MetricResultViewKind::Timeseries,
             Self::Breakdown { .. } => MetricResultViewKind::Breakdown,
             Self::Rollup { .. } => MetricResultViewKind::Rollup,
-            Self::Histogram => MetricResultViewKind::Histogram,
+            Self::Histogram { .. } => MetricResultViewKind::Histogram,
         }
     }
 }
@@ -186,6 +189,10 @@ pub enum MetricResultViewDto {
         values: Vec<RollupValueDto>,
     },
     Histogram {
+        /// Present only for the pooled (dimensioned) shape; absent for the
+        /// per-entity shape, keeping that wire form unchanged.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        dimensions: Vec<String>,
         values: Vec<HistogramValueDto>,
     },
     /// This view's computation failed; sibling views and metrics are
@@ -207,10 +214,17 @@ pub enum MetricViewErrorCode {
     QueryFailed,
 }
 
+/// One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
+/// every requested entity listed. Pooled shape (dimensioned request):
+/// `dimensions` set, `entity_id` absent, one row per observed dimension tuple
+/// over all selected entities' events — no entity grain, like rollup.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HistogramValueDto {
-    pub entity_id: String,
-    /// Empty when the entity has no events in the period — the entity is
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dimensions: Vec<MetricDimensionDto>,
+    /// Empty when a listed entity has no events in the period — the entity is
     /// still listed, mirroring the period view's every-requested-entity rule.
     pub bins: Vec<HistogramBinDto>,
 }
@@ -331,6 +345,28 @@ mod tests {
         }));
 
         assert!(request.is_ok());
+    }
+
+    #[test]
+    fn histogram_view_deserializes_with_and_without_dimensions() {
+        // Bare `{"view": "histogram"}` must keep parsing exactly as before the
+        // pooled shape existed (dimensions default to empty).
+        let bare = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "person", "ids": ["019e27bc-dec0-7626-81a9-c5524662a6a9"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "git.x", "views": [{ "view": "histogram" }] }]
+        }));
+        assert!(bare.is_ok());
+
+        let pooled = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "person", "ids": ["019e27bc-dec0-7626-81a9-c5524662a6a9"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{
+                "metric_key": "git.x",
+                "views": [{ "view": "histogram", "dimensions": ["repository"] }]
+            }]
+        }));
+        assert!(pooled.is_ok());
     }
 
     #[test]

@@ -208,14 +208,6 @@ class HistogramBinDto(BaseModel):
     lo: float
 
 
-class HistogramValueDto(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    bins: list[HistogramBinDto] = Field(..., description="Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
-    entity_id: str
-
-
 class ImportCustomMetricsResponse(BaseModel):
     """
     `POST /v1/metrics/import` result — counts landed and the `metric_key`s
@@ -498,14 +490,6 @@ class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto6(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    values: list[HistogramValueDto]
-    view: View5
-
-
 class View6(StrEnum):
     error = 'error'
 
@@ -666,6 +650,7 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    dimensions: list[str] | None = None
     view: View12
 
 
@@ -826,6 +811,26 @@ class SnapshotSeries(BaseModel):
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
 
 
+class SyncFact(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int | None = Field(None, description='Absent for a job still in flight, and for one the mover gave no usable\npair of stamps for. Never zero to mean absent.', ge=0)
+    job_id: str = Field(..., description="The mover's own job identity.")
+    records_reported: int | None = Field(None, description='What the mover states it moved. Absent where it reported no count at\nall, which is a different answer from a reported zero.', ge=0)
+    started_at: str | None = Field(None, description='Absent for a job the mover had not started.')
+    status: str = Field(..., description="The mover's own word for how the sync ended, or `unknown` where the\nrecorded word was outside its documented vocabulary.")
+
+
+class SyncHistoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    syncs: list[SyncFact] = Field(..., description='A bounded window, newest first — not the full retained history.')
+    window: int = Field(..., description='How many rows this window holds at most, so the page can say the list\nis a window rather than everything.', ge=0)
+
+
 class TelemetryRecord(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -962,6 +967,26 @@ class BreakdownValueDto(BaseModel):
     value: float | None = None
 
 
+class ConnectorHealth(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
+    connector: str
+    last_sync: SyncFact | None = None
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
+    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
+    connectors: list[ConnectorHealth]
+    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
+    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
+
+
 class ContextEntryResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1012,6 +1037,21 @@ class CustomMetricSummary(BaseModel):
     label: str
     metric_key: str
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
+
+
+class HistogramValueDto(BaseModel):
+    """
+    One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
+    every requested entity listed. Pooled shape (dimensioned request):
+    `dimensions` set, `entity_id` absent, one row per observed dimension tuple
+    over all selected entities' events — no entity grain, like rollup.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: list[HistogramBinDto] = Field(..., description="Empty when a listed entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
+    dimensions: list[MetricDimensionDto] | None = None
+    entity_id: str | None = None
 
 
 class MetricDefinitionView(BaseModel):
@@ -1124,6 +1164,15 @@ class MetricResultViewDto5(BaseModel):
     dimensions: list[str]
     values: list[RollupValueDto]
     view: View4
+
+
+class MetricResultViewDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str] | None = Field(None, description='Present only for the pooled (dimensioned) shape; absent for the\nper-entity shape, keeping that wire form unchanged.')
+    values: list[HistogramValueDto]
+    view: View5
 
 
 class MetricResultViewDto7(BaseModel):

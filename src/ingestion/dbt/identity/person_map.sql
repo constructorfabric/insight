@@ -1,3 +1,9 @@
+{{ config(
+    materialized='view',
+    schema='identity',
+    tags=['identity', 'identity:map']
+) }}
+
 -- INVARIANT: one row per email. A duplicate multiplies every joined fact, so
 -- schema.yml asserts it at error severity instead of this model repairing it.
 -- INVARIANT: `identity_inputs` is an RMT read WITHOUT `FINAL`. Sound only while
@@ -12,12 +18,6 @@
 -- SAFETY: no tenant join. `identity_inputs` carries a producer-side hashed
 -- tenant that never equals the journal's; the account triple is the only key
 -- sound across the two stores.
-
-{{ config(
-    materialized='view',
-    schema='identity',
-    tags=['identity', 'identity:map']
-) }}
 
 WITH account_emails AS (
     SELECT DISTINCT

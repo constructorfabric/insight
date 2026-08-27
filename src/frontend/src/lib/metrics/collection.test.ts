@@ -308,6 +308,78 @@ describe("histogram view", () => {
   });
 });
 
+describe("rollup view", () => {
+  const ROLLUP_COLLECTION: MetricCollectionConfig = {
+    metrics: [
+      {
+        key: "git.prs_merged",
+        views: [
+          {
+            view: "rollup",
+            dimensions: ["repository"],
+            groupLimit: {
+              count: 10,
+              rank_by_metric: "git.prs_merged",
+              include_remainder: true,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  it("derives the rollup wire view with its group limit", () => {
+    const request = buildMetricCollectionRequest(
+      ROLLUP_COLLECTION,
+      { type: "person", ids: ["alice@example.com"] },
+      RANGE
+    );
+    expect(request.metrics[0]?.views).toEqual([
+      {
+        view: "rollup",
+        dimensions: ["repository"],
+        group_limit: {
+          count: 10,
+          rank_by_metric: "git.prs_merged",
+          include_remainder: true,
+        },
+      },
+    ]);
+  });
+
+  it("normalizes onto the rollup field", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [
+        {
+          view: "rollup",
+          dimensions: ["repository"],
+          values: [
+            {
+              dimensions: [
+                { key: "repository", value: "r1", label: "org/repo" },
+              ],
+              value: 12,
+              contributing_entity_count: 3,
+            },
+          ],
+        },
+      ],
+    });
+    expect(normalized.rollup?.values).toEqual([
+      {
+        dimensions: [{ key: "repository", value: "r1", label: "org/repo" }],
+        value: 12,
+        contributing_entity_count: 3,
+      },
+    ]);
+  });
+
+  it("is not chunkable — rollup rows carry no entity grain to merge on", () => {
+    expect(entityChunkSize(ROLLUP_COLLECTION)).toBeNull();
+  });
+});
+
 describe("resolveBucket", () => {
   it("keeps explicit buckets", () => {
     expect(resolveBucket("month", RANGE)).toBe("month");

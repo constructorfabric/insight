@@ -328,6 +328,57 @@ models:
           - not_null
           - unique
 
+  - name: class_git_pr_review_events
+    description: "Unified pull-request review activity from GitHub and Bitbucket Cloud: one row per review verdict or pull-request comment. Comment and review bodies stay in bronze — silver keeps the event, not the text."
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite deduplication key"
+        tests:
+          - not_null
+          - unique
+      - name: source_id
+        description: "The connector instance the event was collected through"
+      - name: project_key
+        description: "Repository owner or Bitbucket workspace"
+      - name: repo_slug
+        description: "Repository name within the project"
+      - name: pr_id
+        description: "The provider's own id for the pull request the event is on"
+      - name: pr_number
+        description: "The number the request is known by in its repository, as a reader sees it"
+      - name: event_kind
+        description: "'review' for a submitted review verdict, 'comment' for a conversation or review-thread comment"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['review', 'comment']
+      - name: review_state
+        description: "The verdict of a 'review' event, '' on 'comment' rows. GitHub's enum arrives lower-cased; Bitbucket's approval maps to approved and changes_requested passes through."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['approved', 'changes_requested', 'commented', 'dismissed', 'pending', '']
+      - name: actor_login
+        description: "GitHub login or Bitbucket nickname, '' when the source names none"
+      - name: actor_name
+        description: "Display name where the source carries one; GitHub exposes only the login on these streams, so it repeats there"
+      - name: actor_account_id
+        description: "The stable account key identity claims are keyed on: GitHub's numeric account id as a string ('0' when unknown), Bitbucket's account_id ('' when unknown)"
+      - name: actor_email
+        description: "An address observed for the actor's account via the connector's account-emails mapping, '' when none is known"
+      - name: created_at
+        description: "When the review was submitted or the comment posted"
+      - name: data_source
+        description: "The connector family the row came from (github, bitbucket_cloud)"
+      - name: _version
+        description: "ReplacingMergeTree version — the newest read of a row wins"
+      - name: _airbyte_extracted_at
+        description: "When the connector read the row, the incremental watermark"
+
   - name: fct_git_pr
     description: "PR-row facts: adds person_key, state_norm, cycle_time_h"
     columns:

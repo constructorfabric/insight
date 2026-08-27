@@ -124,6 +124,10 @@ on-run-start:
   # consumes. dbt guarantees the relations exist and reads them as sources; the
   # rows are written by an operator, so no model may own them.
   - "{{ create_task_config_tables() }}"
+  # config.ai_seat_tier_map — the operator-authored binding from an invoice
+  # line's tier identifier to the tier a seat carries. Same ownership rule: dbt
+  # guarantees the relation exists, an operator writes the rows.
+  - "{{ create_ai_config_tables() }}"
   # identity.identity_persons — the persons-log copy the identity-resolution
   # service's persons-sync fills; gold models resolve email → person_id
   # against it. The hook only guarantees the (possibly empty) table exists

@@ -1,0 +1,133 @@
+spec_version: 1
+description: >
+  Metric: git.pr_comments — PR comments (sum) with the comment_target split.
+  How it's computed (bronze → silver → gold):
+    • bronze: conversation comments (pull_request_comments, keyed by
+      issue_number — only numbers naming a seeded pull request pass) and
+      inline review comments (pull_request_review_comments); commit_authors
+      supplies the (account, e-mail) pairs the commenter ids resolve through
+    • silver: class_git_pr_review_events keeps one 'comment' event per row,
+      stamped with the resolved actor_email
+    • gold:   one pr_comment evidence row per event, attributed to the ACTOR,
+      dated by posting; comment_target compares the actor with the request's
+      author — 'own' when they are the same person (or the same e-mail),
+      'others' otherwise, and 'others' when the author cannot be determined,
+      so own + others = total always holds
+
+  alice comments twice on her own request #1 (one conversation, one inline —
+  both arms) and once on carol's #2 → total 3 = own 2 + others 1.
+  dave comments on #99, whose author has no e-mail anywhere → others.
+  carol/erin/heidi one comment each keep the peer pool at five.
+  Team: per-person values alice 3, carol 1, dave 1, erin 1, heidi 1 →
+  median 1, range [1, 3], n 5.
+  Cases: alice across views + the own/others split, dave's unknown-author
+  fallback, empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+    - $ref: templates/people.yaml#/templates/heidi
+  bronze_github.pull_requests:
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-1, id: 1, number: 1, title: Add parser, author_login: alice, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-2, id: 2, number: 2, title: Fix lexer, author_login: carol, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+    # No diff_stats row → the request's author e-mail stays unknown.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-99, id: 99, number: 99, title: Mystery change, author_login: ghost, state: open, closed_at: "", merged_at: "", merge_commit_sha: ""}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else
+    # — it is what lets comment_target recognise the author.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-1, pull_number: 1, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-2, pull_number: 2, additions: 10, author_email: carol@example.com}
+  bronze_github.commit_authors:
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-401, author_id: 401, author_login: alice, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-402, author_id: 402, author_login: carol, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-403, author_id: 403, author_login: dave, author_email: dave@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-404, author_id: 404, author_login: erin, author_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-405, author_id: 405, author_login: heidi, author_email: heidi@example.com}
+  bronze_github.pull_request_comments:
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-a1, id: 601, issue_number: 1, author_login: alice, author_id: 401, created_at: "2026-10-01T09:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-a2, id: 602, issue_number: 2, author_login: alice, author_id: 401, created_at: "2026-10-01T11:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-c1, id: 603, issue_number: 1, author_login: carol, author_id: 402, created_at: "2026-10-01T09:30:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-d1, id: 604, issue_number: 99, author_login: dave, author_id: 403, created_at: "2026-10-01T09:45:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-e1, id: 605, issue_number: 1, author_login: erin, author_id: 404, created_at: "2026-10-01T09:50:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_comment, unique_key: cmt-h1, id: 606, issue_number: 1, author_login: heidi, author_id: 405, created_at: "2026-10-01T09:55:00Z"}
+  bronze_github.pull_request_review_comments:
+    # alice's second own-request comment arrives through the inline arm.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review_comment, unique_key: rcmt-a1, id: 701, pull_number: 1, author_login: alice, author_id: 401, created_at: "2026-10-01T10:00:00Z"}
+
+cases:
+  - name: PR comments split into own and others, and the halves add up
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_comments
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [comment_target]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_comments, view: period, find: {entity_id: alice@example.com}, equal: {value: 3}}
+      - {metric: git.pr_comments, view: peer, find: {entity_id: alice@example.com}, equal: {target_value: 3, p25: 1, median: 1, p75: 1, min: 1, max: 3, n: 5}}
+      - {metric: git.pr_comments, view: timeseries, find: {entity_id: alice@example.com}, contains: {points: {bucket_start: "2026-10-01", value: 3}}}
+      # own 2 + others 1 = the period total of 3.
+      - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: comment_target, value: own}}, equal: {value: 2}}
+      - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: comment_target, value: others}}, equal: {value: 1}}
+
+  - name: Every comment came from the one connected forge
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_comments
+            views:
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      # A request carries at most ONE view of a kind, so the source split is
+      # its own case rather than a second breakdown beside comment_target.
+      - {metric: git.pr_comments, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}, equal: {value: 3}}
+
+  - name: A comment on a request whose author is unknown counts under others
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [dave@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_comments
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [comment_target]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_comments, view: period, find: {entity_id: dave@example.com}, equal: {value: 1}}
+      # own + others = total even here: the undeterminable author reads others.
+      - {metric: git.pr_comments, view: breakdown, find: {entity_id: dave@example.com, dimensions: {key: comment_target, value: others}}, equal: {value: 1}}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - metric_key: git.pr_comments
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_comments, view: period, find: {entity_id: alice@example.com}, equal: {value: null}}
