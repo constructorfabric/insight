@@ -1,7 +1,8 @@
 # Insight sample-data seeder
 
 Populates a stand with a 25-person demo organisation (4 teams + CEO) and
-per-team activity in ClickHouse silver tables. `profiles.py` documents the
+per-team activity in ClickHouse silver tables. That roster is the default and
+the floor; [a bigger organisation](#a-bigger-organisation) is one variable away. `profiles.py` documents the
 roster and the per-team source-type weights; the per-domain generators under
 `generators/` document the row shapes they emit. See
 [PROFILE.md](PROFILE.md) for what a freshly seeded stand actually contains
@@ -128,7 +129,8 @@ the seed writes.
 Useful flags — `--dry-run` prints the rendered Job instead of applying it,
 `--step identity|silver|analytics` runs one step (identity alone needs no
 ClickHouse and finishes in seconds), `--tenant` seeds a tenant of your choosing,
-and `--days` / `--anchor` pin the activity window. `--help` lists the rest.
+`--days` / `--anchor` pin the activity window, and `--org-headcount` seeds a
+[bigger organisation](#a-bigger-organisation). `--help` lists the rest.
 
 Anything the script cannot discover is a hard error naming the flag that supplies
 it — it never falls back to a guess.
@@ -189,6 +191,82 @@ Unset (or the literal `today`), the anchor is yesterday UTC, so the developer
 loop stays populated as the calendar moves. Whichever applied is recorded in
 `manifest.json`, so a stand always reports how to recreate it.
 
+## A bigger organisation
+
+26 people is the committed roster, and it is a *fixture*: CI and the compose
+stand suite resolve named personas out of it by uuid, so nothing may renumber
+it. `SEED_ORG_HEADCOUNT` seeds a larger organisation without disturbing them —
+the committed 26 keep their uuids, emails, names and build order, and the extra
+people are appended after them.
+
+```bash
+SEED_ORG_HEADCOUNT=250 ./dev-compose.sh seed                     # compose
+./src/ingestion/tools/seed/seed-stand.sh -n insight --org-headcount 250
+```
+
+| `SEED_ORG_HEADCOUNT` | Result |
+|---|---|
+| unset, empty, `0`, or `26` | the committed roster, byte for byte |
+| `27`..`3000` | exactly that many people |
+| `1`..`25` | refused — the roster only grows |
+| above `3000`, or not a whole number | refused, naming the ceiling |
+
+The extra people join the four EXISTING teams, round-robin, so the per-team
+source weights keep their ratios. Each team gets squads of at most 8 growth ICs
+under a squad manager, and the squad managers report to that team's existing
+lead; the committed ICs keep reporting to theirs. No new team and no new role is
+invented — `TEAM_PROFILES` and three separate role tables are indexed directly,
+and an unknown key there fails mid-seed.
+
+Four things to know before pointing it at a stand:
+
+- **The ceiling is 3000, and it is about blast radius.** Every person multiplies
+  the per-day rows the generators write, across ten domains and the whole
+  window, so a mistyped headcount is the difference between a stand and an
+  incident. Raise `config.MAX_ORG_HEADCOUNT` deliberately if a stand needs more,
+  and check two bounds when you do: the Job's `limits.memory` (2Gi, fixed in
+  `seed-job.yaml.tpl`) and the ~1 MiB ConfigMap the manifest is published to —
+  the seeder's tests pin the second, nothing pins the first.
+- **There is no shrink.** The silver step truncates what it writes, so activity
+  rows do follow the roster down — but `identity.py` only ever inserts, so the
+  extra people's `persons`, `org_chart` and login rows in MariaDB survive a
+  re-seed at the default. Re-seed a downgraded stand into a fresh database, or
+  clear those rows yourself.
+- **The realm must be sized with the seed.** Keycloak users come from the
+  same roster, but Keycloak imports its realm when its container is created —
+  a realm generated without `SEED_ORG_HEADCOUNT` in the environment holds only
+  the committed 26 users, and every growth person gets a valid database row
+  and no login. Compose handles this (`test-stand up` generates the realm in
+  the same environment); a gitops-deployed stand must export the same
+  `SEED_ORG_HEADCOUNT` when running the `keycloak-realm` make target, then
+  recreate the Keycloak pod.
+- **The manifest gets big, and switches transport.** Past ~64 personas the
+  compact document outgrows the 16 KiB a CRI log line survives, so the seeder
+  emits ordered `SEED_MANIFEST_GZ: <i>/<n> <base64 gzip>` chunks instead of the
+  single `SEED_MANIFEST_JSON:` line. Nothing is trimmed. Pipe a Job log through
+  [`manifest-from-log.sh`](manifest-from-log.sh) to get one plain sentinel line
+  back, whichever form it was:
+
+  ```bash
+  kubectl -n <ns> logs job/<job> --tail=-1 \
+    | ./src/ingestion/tools/seed/manifest-from-log.sh | cut -d' ' -f2- | jq .
+  ```
+
+  A completed `--step all` on a cluster stand also publishes the compact
+  document to `configmap/seed-stand-manifest` (key `manifest`), which outlives
+  the Job's one-hour TTL — the copy to prefer once the Job is reaped:
+
+  ```bash
+  kubectl -n <ns> get configmap seed-stand-manifest \
+    -o 'go-template={{index .data "manifest"}}' | jq .
+  ```
+
+  You rarely need any of that. `seed-stand.sh --manifest-out <path>` writes the
+  run's manifest straight to a file, which is what `deploy-test-stand.yml` and
+  `run-stand-suite.yml`'s reseed path use. `run-stand-suite.yml` reads the
+  ConfigMap when it is testing a stand it did not just seed, and falls back to
+  the Job log only for a stand seeded before that existed.
+
 ## [PROFILE.md](PROFILE.md)
 
 [`PROFILE.md`](PROFILE.md) is generated and committed. Regenerate it after any change to the
@@ -205,7 +283,7 @@ uv run python -m insight_seed.render_profile --check # verify (no database neede
 ```bash
 cd src/ingestion/tools/seed
 
-uv run --extra dev python -m unittest discover -s tests -t .   # tests
+uv run --extra dev pytest tests                                # tests
 uv run --extra dev ruff check .                                # package + tests
 uv run --extra dev mypy .
 ```
@@ -245,14 +323,17 @@ src/ingestion/tools/seed/
 │   ├── silver.py            ClickHouse: placeholders → generators → gold build
 │   ├── analytics.py         the catalogue rows no endpoint can create
 │   ├── profiles.py          demo roster + per-team activity weights
+│   ├── scale.py             grows the roster past it; opt-in, never imported
+│   │                        on the default path
 │   ├── manifest.py          builds `manifest.json`, the stand's description
 │   ├── golden_metrics.py    the only source for the manifest's golden set
 │   ├── profile_md.py        renders `PROFILE.md` from a manifest
 │   ├── render_profile.py    regenerates / verifies `PROFILE.md`; no database
 │   ├── keycloak_realm.py    the `insight-seed-realm` entry point, same roster
 │   └── generators/          one module per activity domain, `base.py` shared
-├── tests/                   stdlib unittest against the installed package
+├── tests/                   pytest against the installed package
 ├── seed-stand.sh            seeds a Kubernetes stand (discover → render → apply)
+├── manifest-from-log.sh     recovers a manifest from a Job log, either transport
 ├── seed-job.yaml.tpl        the Job it renders — and the reference manifest
 ├── Dockerfile               the `insight-seed` image, for both callers
 ├── pyproject.toml           package metadata, deps, ruff + mypy config

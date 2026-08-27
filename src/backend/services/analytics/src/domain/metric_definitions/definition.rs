@@ -28,6 +28,8 @@ pub enum MetricComputation {
     Sum,
     Ratio,
     Median,
+    Percentile,
+    Stddev,
     DistinctCount,
 }
 
@@ -235,11 +237,24 @@ pub enum ComputationSpec {
         numerator: MetricInput,
         denominator: MetricInput,
         scale: f64,
+        denominator_aggregation: RatioDenominatorAggregation,
     },
     /// Exact middle of per-event observation values. Median measures emit
     /// one row per source event (multiple rows per entity/day are the
     /// intended shape), so the aggregate is over events, not day totals.
     Median {
+        value: MetricInput,
+    },
+    /// Exact q-quantile of per-event observation values — the tail the median
+    /// hides (p90 duration). Same event-grain observation shape as Median;
+    /// `q` is stored in the definition's `scale` column.
+    Percentile {
+        value: MetricInput,
+        q: f64,
+    },
+    /// Sample standard deviation of per-event observation values — the spread
+    /// around the mean. Same event-grain observation shape as Median.
+    Stddev {
         value: MetricInput,
     },
     /// Count of distinct `subject_key` values over the entity's observations
@@ -250,6 +265,31 @@ pub enum ComputationSpec {
     DistinctCount {
         value: MetricInput,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RatioDenominatorAggregation {
+    #[default]
+    Sum,
+    DistinctCount,
+}
+
+impl RatioDenominatorAggregation {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::DistinctCount => "distinct_count",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sum" => Some(Self::Sum),
+            "distinct_count" => Some(Self::DistinctCount),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -277,6 +317,8 @@ impl MetricDefinition {
         match &self.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
@@ -418,6 +460,8 @@ impl MetricComputation {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
             Self::Median => "median",
+            Self::Percentile => "percentile",
+            Self::Stddev => "stddev",
             Self::DistinctCount => "distinct_count",
         }
     }
@@ -427,6 +471,8 @@ impl MetricComputation {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
+            "percentile" => Some(Self::Percentile),
+            "stddev" => Some(Self::Stddev),
             "distinct_count" => Some(Self::DistinctCount),
             _ => None,
         }
@@ -506,6 +552,8 @@ mod tests {
             MetricComputation::Sum,
             MetricComputation::Ratio,
             MetricComputation::Median,
+            MetricComputation::Percentile,
+            MetricComputation::Stddev,
             MetricComputation::DistinctCount,
         ] {
             assert_eq!(

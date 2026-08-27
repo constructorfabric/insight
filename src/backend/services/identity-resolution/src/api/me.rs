@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use super::AppState;
 use super::gate::require_caller;
+use crate::config::VisibilityPolicy;
 use crate::infra::db::roles_repo::{self, Role};
 
 /// One active role assignment of the caller.
@@ -42,6 +43,7 @@ pub struct MeResponse {
     pub person_id: Uuid,
     pub insight_tenant_id: Uuid,
     pub roles: Vec<MeRoleResponse>,
+    pub visibility_policy: VisibilityPolicy,
 }
 impl toolkit::api::api_dto::ResponseApiDto for MeResponse {}
 
@@ -61,6 +63,7 @@ pub async fn get_me(
         person_id: caller,
         insight_tenant_id: tenant,
         roles: roles.into_iter().map(MeRoleResponse::from).collect(),
+        visibility_policy: state.config.visibility_policy,
     }))
 }
 
@@ -68,4 +71,27 @@ pub async fn get_me(
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "caller roles query failed");
     CanonicalError::internal("failed to read caller roles").create()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_policy_is_named_on_the_wire_as_the_config_names_it() -> anyhow::Result<()> {
+        for (policy, expected) in [
+            (VisibilityPolicy::OrgChart, "org_chart"),
+            (VisibilityPolicy::Flat, "flat"),
+        ] {
+            let body = serde_json::to_value(MeResponse {
+                person_id: Uuid::from_u128(1),
+                insight_tenant_id: Uuid::from_u128(2),
+                roles: Vec::new(),
+                visibility_policy: policy,
+            })?;
+
+            assert_eq!(body["visibility_policy"], expected);
+        }
+        Ok(())
+    }
 }

@@ -197,6 +197,14 @@ fn a_visitor_is_named_from_the_mirrored_identity_rows() {
 }
 
 #[test]
+fn a_visitor_without_a_name_is_still_named_by_its_account_handle() {
+    let sql = people_sql();
+
+    assert!(sql.contains("'username'"), "{sql}");
+    assert!(sql.contains("AS username"), "{sql}");
+}
+
+#[test]
 fn a_malformed_day_is_refused_rather_than_queried() {
     let query = UsageRangeQuery {
         since: Some("2026-99-99".to_owned()),
@@ -307,4 +315,73 @@ fn an_event_held_longer_than_a_day_is_not_trusted() {
     );
 
     assert_eq!(row.ts, arrival);
+}
+
+#[test]
+fn a_batch_whose_flush_stamp_was_hoisted_into_meta_keeps_its_own_times() {
+    let arrival = Utc::now();
+    let sent = arrival.timestamp_millis();
+
+    let meta = TelemetryRecord {
+        time_sent: Some(sent),
+        ..TelemetryRecord::default()
+    };
+
+    let mut first = record("session_start", serde_json::json!({}));
+    first.time_triggered = Some(sent - 4_000);
+    let mut second = record("page_view", serde_json::json!({ "path": "/portal" }));
+    second.time_triggered = Some(sent - 1_000);
+
+    let rows = [
+        to_row(&first, &meta, Uuid::now_v7(), Uuid::now_v7(), arrival),
+        to_row(&second, &meta, Uuid::now_v7(), Uuid::now_v7(), arrival),
+    ];
+
+    assert_eq!(rows[0].ts, arrival - Duration::milliseconds(4_000));
+    assert_eq!(rows[1].ts, arrival - Duration::milliseconds(1_000));
+}
+
+#[test]
+fn a_batch_keeps_every_record_the_sdks_duplicate_rides_with() {
+    let tenant = Uuid::now_v7();
+    let person = Uuid::now_v7();
+    // Neither page view carries its own name: the SDK hoists the one they share.
+    let req = UsageIngestRequest {
+        meta: TelemetryRecord {
+            name: Some("page_view".to_owned()),
+            context_session_id: Some("session-1".to_owned()),
+            ..TelemetryRecord::default()
+        },
+        records: vec![
+            TelemetryRecord {
+                data: Some(serde_json::json!({ "path": "\"/ic/:id/team\"" })),
+                ..TelemetryRecord::default()
+            },
+            TelemetryRecord {
+                data: Some(serde_json::json!({
+                    "url": "\"/ic/bbbbbbbb-0000-0000-0000-000000010001/team\""
+                })),
+                ..TelemetryRecord::default()
+            },
+            record(
+                "drill",
+                serde_json::json!({ "target": "git.commits", "path": "\"/ic/:id/team\"" }),
+            ),
+        ],
+    };
+
+    let rows = recordable_rows(&req, tenant, person, Utc::now());
+
+    let kept: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|row| (row.event_name.as_str(), row.path.as_str()))
+        .collect();
+    assert_eq!(
+        kept,
+        vec![("page_view", "/ic/:id/team"), ("drill", "/ic/:id/team")]
+    );
+    assert!(
+        rows.iter().all(|row| !row.path.contains("bbbbbbbb")),
+        "a raw person id must never reach a stored row"
+    );
 }

@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS bronze_claude_team.claude_team_overage_spend
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `unique_key` Nullable(String),
+    `snapshot_date` Nullable(String),
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `account_uuid` Nullable(String),

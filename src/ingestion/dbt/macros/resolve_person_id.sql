@@ -119,6 +119,77 @@
 {% endmacro %}
 
 {#-
+  The account-first companion of resolve_person_id(): the CURRENT
+  `(source_type, source_id, account_id) -> person_id` map, straight from the
+  bindings — no email hop. For facts that carry the author's source account id
+  (git pull requests), the account is the source's own primary key for the
+  person: it survives an empty or private profile email, a squash-merge that
+  unlinks the PR's commits, and an address change. Same claim semantics as the
+  email map: the latest `value_type='id'` row per account decides.
+
+  Excluded bindings STAY in this map, unlike the email map's claims: an
+  operator binding an account to the excluded person is a statement about the
+  account, and it must TERMINATE resolution, not merely decline to help — a
+  bot pull request whose commits carry a human's email would otherwise fall
+  through to the email map and attribute to that human. Consumers read a
+  matched row with person_id = excluded_person_id() as "attribute to nobody,
+  and do not consult any other key".
+
+  account_id is normalized lower(trimBoth(...)) on BOTH sides of the join
+  (see resolved_person_id_by_account_join): connector identity inputs are not
+  uniform about casing, and the fact side must meet whatever the seed stored.
+
+  Same single-resolve-point rule as the email map: resolution semantics live
+  here and in resolve_person_id() only.
+-#}
+{% macro resolve_person_id_by_account() %}
+{%- set journal = adapter.get_relation(
+        database=target.database, schema='identity', identifier='identity_persons') -%}
+{%- if journal is none -%}
+    {#- The identity journal has never been created: resolve nothing rather
+        than fail the build, mirroring resolve_person_id(). -#}
+    SELECT
+        ''                                   AS source_type,
+        toUUID('00000000-0000-0000-0000-000000000000') AS source_id,
+        ''                                   AS account_id,
+        toUUID('00000000-0000-0000-0000-000000000000') AS person_id
+    WHERE 0
+{%- else -%}
+    SELECT
+        insight_source_type              AS source_type,
+        insight_source_id                AS source_id,
+        lower(trimBoth(value_effective)) AS account_id,
+        person_id
+    FROM identity.identity_persons
+    WHERE value_type = 'id'
+      AND value_effective IS NOT NULL
+      AND trimBoth(value_effective) != ''
+    ORDER BY
+        source_type,
+        source_id,
+        account_id,
+        created_at DESC,
+        id DESC
+    LIMIT 1 BY source_type, source_id, account_id
+{%- endif -%}
+{% endmacro %}
+
+{#-
+  The join for models whose rows carry (account_source_type,
+  account_source_id, account_id). INVARIANT: identity stores
+  insight_source_id as sipHash128 of the connector's raw source_id (see the
+  connectors' identity_inputs models), while class relations carry the raw
+  string — the hash below must stay in lockstep with that minting expression
+  or the join silently matches nothing.
+-#}
+{% macro resolved_person_id_by_account_join(rel) %}
+    LEFT JOIN ({{ resolve_person_id_by_account() }}) AS account_map
+        ON account_map.source_type = {{ rel }}.account_source_type
+       AND account_map.source_id = toUUID(UUIDNumToString(sipHash128(coalesce({{ rel }}.account_source_id, ''))))
+       AND account_map.account_id = lower(trimBoth({{ rel }}.account_id))
+{% endmacro %}
+
+{#-
   The reserved person meaning "not a human" (bots, CI, service accounts). One
   global constant, unmintable — UUIDv7 never produces an all-ones value — and
   the service binds excluded accounts to it. Every consumer reads it as no

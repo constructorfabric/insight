@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "libs/insight-migration",
     "libs/authenticator-sdk",
     "services/analytics",
     "services/git-cli-proxy",
@@ -57,17 +58,19 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 axum = "0.8"
 
 # Database (MariaDB via SeaORM)
-sea-orm = { version = "1.1", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
-sea-orm-migration = { version = "1.1", features = ["runtime-tokio", "sqlx-mysql"] }
+sea-orm = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql", "with-uuid", "with-chrono", "with-json", "macros"] }
+sea-orm-migration = { version = "2.0", features = ["runtime-tokio", "sqlx-mysql"] }
 
 # IDs and time
 uuid = { version = "1.19", features = ["serde", "v7"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.23"
 sha2 = "0.11"
+aes-gcm = "0.11"
+zeroize = "1.8"
 hex = "0.4"
 csv = "1.3"
-rust_xlsxwriter = "0.97"
+rust_xlsxwriter = "0.98"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Logging
@@ -126,6 +129,7 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
+insight-migration = { path = "libs/insight-migration" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
 
 # CI rebuild marker — bumped to retrigger the analytics

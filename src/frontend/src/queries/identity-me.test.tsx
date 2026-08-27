@@ -23,7 +23,7 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { ADMIN_ROLE_ID, useIsAdmin } from "./identity-me";
+import { ADMIN_ROLE_ID, useIsAdmin, useVisibilityPolicy } from "./identity-me";
 
 const getMe = vi.mocked(identityClient.getMe);
 
@@ -120,5 +120,36 @@ describe("useIsAdmin", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getMe).not.toHaveBeenCalled();
     expect(result.current.isAdmin).toBe(false);
+  });
+});
+
+describe("useVisibilityPolicy", () => {
+  it("reads back the policy the service serves", async () => {
+    for (const policy of ["org_chart", "flat"] as const) {
+      getMe.mockResolvedValue({ ...me([]), visibility_policy: policy });
+      const { result } = renderHook(() => useVisibilityPolicy(), harness());
+
+      await waitFor(() => expect(result.current.policy).toBe(policy));
+    }
+  });
+
+  it("reads as org_chart while the answer is not in", () => {
+    getMe.mockReturnValue(new Promise(() => {}) as Promise<identityClient.MeResponse>);
+    const { result } = renderHook(() => useVisibilityPolicy(), harness());
+
+    // Unknown must never WIDEN the rail: an IC keeps their own page until a
+    // flat answer actually arrives.
+    expect(result.current.policy).toBe("org_chart");
+    expect(result.current.isFlat).toBe(false);
+    expect(result.current.isPending).toBe(true);
+  });
+
+  it("reads as org_chart when the check fails", async () => {
+    getMe.mockRejectedValue(new Error("identity unreachable"));
+    const { result } = renderHook(() => useVisibilityPolicy(), harness());
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.policy).toBe("org_chart");
+    expect(result.current.isFlat).toBe(false);
   });
 });

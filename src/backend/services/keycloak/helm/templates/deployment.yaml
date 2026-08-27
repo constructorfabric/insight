@@ -11,6 +11,10 @@ spec:
       {{- include "insight-keycloak.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # Roll pods when the login theme changes: `start` caches themes, so a
+        # ConfigMap update alone would not reach a running Keycloak.
+        checksum/theme: {{ include (print $.Template.BasePath "/configmap-theme.yaml") . | sha256sum }}
       labels:
         {{- include "insight-keycloak.selectorLabels" . | nindent 8 }}
     spec:
@@ -88,6 +92,12 @@ spec:
             # No readOnlyRootFilesystem: Keycloak re-augments Quarkus into
             # /opt/keycloak/lib/quarkus on boot, and an emptyDir there hides
             # quarkus-application.dat from the image. See #2084.
+          volumeMounts:
+            # Flat ConfigMap keys land as themes/insight/login/<key>, which is
+            # exactly the layout Keycloak discovers a theme from.
+            - name: theme
+              mountPath: /opt/keycloak/themes/insight/login
+              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           # Health lives on the management interface (KC 25+); its path
@@ -102,3 +112,7 @@ spec:
           readinessProbe:
             httpGet: {path: /kc/health/ready, port: mgmt}
             periodSeconds: 10
+      volumes:
+        - name: theme
+          configMap:
+            name: {{ include "insight-keycloak.fullname" . }}-theme

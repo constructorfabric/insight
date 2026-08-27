@@ -24,10 +24,16 @@
 -- was issued — a monthly invoice is raised at the period boundary and would
 -- otherwise land in the neighbouring month. Rows carrying no line fall back to
 -- the invoice date.
--- STRATEGY: delete+insert, not append. An invoice's row is rewritten whenever its
--- chain gets further, so the same unique_key arrives twice; appending would leave
--- both versions standing until a background merge collapsed them, and the
--- `unique` test reads without FINAL.
+-- STRATEGY: delete+insert, not append. A deliberate departure from the staging
+-- convention (check-dbt-conventions prescribes delete+insert for silver and
+-- append for staging), because this model carries an invariant the convention
+-- does not anticipate: an invoice's row is REWRITTEN as its chain gets further,
+-- so a later sync must replace the row an earlier one wrote rather than stand
+-- beside it. Appending leaves both versions until a background merge collapses
+-- them, which makes the replacement unobservable — the `unique` test reads
+-- without FINAL. The models this convention was written for restate a value
+-- under a key that never moves, which union_by_tag already resolves by
+-- _version; that is not this case. See #2668.
 {{ config(
     materialized='incremental',
     incremental_strategy='delete+insert',
@@ -80,6 +86,7 @@ SELECT
     toJSONString(map(
         'product_name',  ifNull(toString(product_name), ''),
         'description',   ifNull(toString(description), ''),
+        'invoice_ref',   ifNull(toString(invoice_ref), ''),
         'num_seats',     ifNull(toString(invoice_num_seats), ''),
         'invoice_total', ifNull(toString(invoice_total), ''),
         'period_end_ts', ifNull(toString(period_end_ts), '')
@@ -91,14 +98,24 @@ SELECT
 FROM latest_per_key
 {% if is_incremental() %}
   -- A row only ever changes because a newer read produced it, so rows read since
-  -- the last build are the only ones that can carry anything new. The empty-table
-  -- guard mirrors the sibling models: over an empty `this` the max is the epoch
-  -- and every row would be filtered out.
-  WHERE (
-    (SELECT count() FROM {{ this }}) = 0
-    OR _airbyte_extracted_at > (
-        SELECT coalesce(max(collected_at), toDateTime64('1970-01-01 00:00:00', 3))
-        FROM {{ this }}
-    )
-  )
+  -- the last build are the only ones that can carry anything new.
+  --
+  -- Scoped to ONE source instance, for the reason silver_incremental_watermark
+  -- gives at the class above: two instances of this connector write here, each
+  -- stamping its own extraction clock, and a boundary taken over the whole table
+  -- lets whichever ran first put the other's rows below it FOREVER. `coalesce`
+  -- to the epoch is what admits an instance the table has never seen — comparing
+  -- against NULL would drop every row of every new one.
+  LEFT JOIN (
+      SELECT
+          insight_tenant_id,
+          source_id AS watermark_source_id,
+          max(collected_at) AS max_collected
+      FROM {{ this }}
+      GROUP BY insight_tenant_id, source_id
+  ) AS watermarks
+      ON latest_per_key.tenant_id = watermarks.insight_tenant_id
+     AND latest_per_key.source_id = watermarks.watermark_source_id
+  WHERE latest_per_key._airbyte_extracted_at
+      > coalesce(watermarks.max_collected, toDateTime64('1970-01-01 00:00:00', 3))
 {% endif %}

@@ -27,7 +27,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 export type SectionTrendSeries = {
   key: string;
   label: string;
-  type?: "line" | "area" | "stacked-area";
+  /** "step" reads as "held at", not "drifted to" — for slow-moving medians. */
+  type?: "line" | "step" | "area" | "stacked-area";
   yAxisId?: "left" | "right";
 };
 
@@ -124,7 +125,7 @@ export function SectionTrend({
   );
 
   return (
-    <Card>
+    <Card className="relative">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-semibold">{title}</CardTitle>
         {description ? (
@@ -202,6 +203,7 @@ export function SectionTrend({
                   yAxisId={yAxisId}
                   dataKey={s.key}
                   name={s.label}
+                  type={s.type === "step" ? "stepAfter" : "linear"}
                   stroke={color}
                   strokeWidth={2}
                 />

@@ -19,6 +19,10 @@ const METRIC_CURRENCY_FORMAT = new Intl.NumberFormat(LOCALE, {
  */
 export const NO_METRIC_VALUE = "—";
 
+export function roundMetricValue(v: number, fmt: MetricFormat): number {
+  return fmt === "decimal" ? Math.round(v * 10) / 10 : Math.round(v);
+}
+
 /**
  * Formatting for `/v1/metric-results` values: the wire `format` decides
  * rounding and presentation; `unit` is a display suffix only. Bare number —
@@ -33,8 +37,8 @@ export function formatMetricNumber(
   fmt: MetricFormat,
 ): string {
   if (v == null || !Number.isFinite(v)) return NO_METRIC_VALUE;
-  if (fmt === "currency") return METRIC_CURRENCY_FORMAT.format(v);
-  const rounded = fmt === "decimal" ? Math.round(v * 10) / 10 : Math.round(v);
+  const rounded = roundMetricValue(v, fmt);
+  if (fmt === "currency") return METRIC_CURRENCY_FORMAT.format(rounded);
   return NF_THOUSANDS.format(rounded);
 }
 
@@ -104,9 +108,9 @@ export function formatDate(iso: string, pattern = "d MMM"): string {
 /**
  * Format an instant the identity service journals. Its timestamps are UTC
  * clock readings serialized WITHOUT a zone designator
- * (`2026-08-01T10:15:00.000000`); `parseISO` would read that as local time and
- * shift every audit entry by the viewer's UTC offset. Zone-suffixed input is
- * passed through untouched, so the helper is safe for either shape.
+ * (`2026-08-01T10:15:00.000000`); `parseISO` would read that as local time
+ * and shift every audit entry by the viewer's UTC offset. Zone-suffixed
+ * input is passed through untouched, so the helper is safe for either shape.
  */
 export function formatUtcInstant(iso: string, pattern = "d MMM"): string {
   return formatDate(withZone(iso), pattern);

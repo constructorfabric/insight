@@ -1,4 +1,4 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult, Statement, Value};
+use sea_orm::{DatabaseConnection, FromQueryResult, Statement, Value};
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
 
@@ -7,7 +7,7 @@ use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{
     EvidenceGranularity, MetricDefinition, load_definitions_with_ids,
 };
-use crate::domain::metric_results::{normalize_entity_type, normalize_key, normalize_metric_key};
+use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
 use super::capability::EvidenceInputRow;
 use super::capability::healthy_evidence;
@@ -15,9 +15,9 @@ use super::cursor::{
     decode_cursor, evidence_snapshot_id, selection_fingerprint, verify_evidence_snapshot,
 };
 use super::dto::{
-    DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_EXPORT_ROWS,
-    MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT, MAX_PERIOD_DAYS,
-    MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
+    DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_ENTITY_PERSONS,
+    MAX_EXPORT_ROWS, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT,
+    MAX_PERIOD_DAYS, MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
     MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection,
     ValidatedMetricDrilldown,
 };
@@ -96,20 +96,51 @@ pub async fn validate_export_request(
 pub(crate) fn parse_person_entity(
     entity: &MetricDrilldownEntity,
 ) -> Result<(String, Uuid), CanonicalError> {
-    let entity_type = normalize_entity_type(&entity.r#type)?;
-    if entity_type != "person" {
-        return Err(invalid_error(
-            "entity.type",
-            "only person entities are supported",
-        ));
-    }
+    let Some(id) = entity.person_id() else {
+        return Err(invalid_error("entity.type", "entity must select a person"));
+    };
 
-    let person_id = Uuid::parse_str(entity.id.trim())
+    let person_id = Uuid::parse_str(id.trim())
         .ok()
         .filter(|id| !id.is_nil())
         .ok_or_else(|| invalid_error("entity.id", "entity.id must be a person UUID"))?;
 
-    Ok((entity_type, person_id))
+    Ok(("person".to_owned(), person_id))
+}
+
+/// Every person a selection reads, canonical and deduplicated.
+///
+/// INVARIANT: like `parse_person_entity`, this runs BEFORE the visibility gate
+/// on both handlers, so it reaches no backend — an unauthorized caller gets no
+/// further than the shape of their own request.
+pub(crate) fn parse_person_ids(
+    entity: &MetricDrilldownEntity,
+) -> Result<Vec<Uuid>, CanonicalError> {
+    let ids = entity.person_ids();
+    if ids.is_empty() {
+        return Err(invalid_error("entity.ids", "entity must select a person"));
+    }
+    if ids.len() > MAX_ENTITY_PERSONS {
+        return Err(invalid_error(
+            "entity.ids",
+            format!("entity.ids must name at most {MAX_ENTITY_PERSONS} people"),
+        ));
+    }
+    let mut parsed = ids
+        .iter()
+        .map(|id| {
+            Uuid::parse_str(id.trim())
+                .ok()
+                .filter(|id| !id.is_nil())
+                .ok_or_else(|| invalid_error("entity.ids", "entity.ids must be person UUIDs"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // Sorted and deduplicated so one set of people is one selection: the
+    // cursor fingerprint is taken over the selection, and the same roster in
+    // another order would otherwise reject its own next page.
+    parsed.sort_unstable();
+    parsed.dedup();
+    Ok(parsed)
 }
 
 async fn validate_common(
@@ -129,8 +160,25 @@ async fn validate_common(
         cursor,
     } = request;
     let metric_key = normalize_metric_key("metric_key", &metric_key)?;
-    let (entity_type, person_id) = parse_person_entity(&entity)?;
-    let entity_id = person_id.to_string();
+    let entity = match entity {
+        MetricDrilldownEntity::Person { id } => {
+            let (_, person_id) = parse_person_entity(&MetricDrilldownEntity::Person { id })?;
+            MetricDrilldownEntity::Person {
+                id: person_id.to_string(),
+            }
+        }
+        MetricDrilldownEntity::Persons { .. } => MetricDrilldownEntity::Persons {
+            ids: parse_person_ids(&entity)?
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+        },
+        MetricDrilldownEntity::Tenant {} => MetricDrilldownEntity::Tenant {},
+        MetricDrilldownEntity::Unknown => {
+            return invalid("entity.type", "unsupported entity type");
+        }
+    };
+    let entity_type = entity.entity_type();
     if limit == 0 || limit > max_limit {
         return invalid("limit", format!("limit must be between 1 and {max_limit}"));
     }
@@ -161,10 +209,7 @@ async fn validate_common(
     let snapshot_id = evidence_snapshot_id(ch, &plan.relation).await?;
     let selection = MetricDrilldownSelection {
         metric_key,
-        entity: MetricDrilldownEntity {
-            r#type: entity_type,
-            id: entity_id,
-        },
+        entity,
         period: MetricDrilldownPeriod {
             from: from.to_string(),
             to: to.to_string(),
@@ -214,9 +259,7 @@ async fn load_evidence_plan(
          INNER JOIN metric_sources s ON s.id = m.source_id \
          WHERE i.metric_definition_id = ? AND m.is_enabled = TRUE AND s.is_enabled = TRUE \
          ORDER BY i.input_role, m.measure_key",
-        [Value::Bytes(Some(Box::new(
-            definition_id.as_bytes().to_vec(),
-        )))],
+        [Value::Bytes(Some(definition_id.as_bytes().to_vec()))],
     ))
     .all(db)
     .await
@@ -366,5 +409,56 @@ mod tests {
             .is_err()
         );
         assert!(normalize_display_dimensions(&definition, vec!["unknown".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn roster_ids_are_canonical_sorted_and_deduplicated() {
+        let first = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0001);
+        let second = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0002);
+        let parsed = parse_person_ids(&MetricDrilldownEntity::Persons {
+            ids: vec![format!(" {second} "), first.to_string(), second.to_string()],
+        })
+        .unwrap_or_else(|error| panic!("roster must parse: {error}"));
+
+        // One set of people is one selection: the cursor fingerprint is taken
+        // over the selection, so the same roster in another order must not
+        // reject its own next page.
+        assert_eq!(parsed, [first, second]);
+    }
+
+    #[test]
+    fn a_roster_must_name_real_people_and_stay_within_the_cap() {
+        assert!(parse_person_ids(&MetricDrilldownEntity::Persons { ids: vec![] }).is_err());
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: vec!["alice@example.com".to_owned()],
+            })
+            .is_err()
+        );
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: vec![Uuid::nil().to_string()],
+            })
+            .is_err()
+        );
+        assert!(
+            parse_person_ids(&MetricDrilldownEntity::Persons {
+                ids: (0..=MAX_ENTITY_PERSONS)
+                    .map(|index| Uuid::from_u128(index as u128 + 1).to_string())
+                    .collect(),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_single_person_reads_as_a_roster_of_one() {
+        let person = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0003);
+        let parsed = parse_person_ids(&MetricDrilldownEntity::Person {
+            id: person.to_string(),
+        })
+        .unwrap_or_else(|error| panic!("person must parse: {error}"));
+
+        assert_eq!(parsed, [person]);
     }
 }

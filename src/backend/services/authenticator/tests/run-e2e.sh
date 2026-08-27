@@ -144,8 +144,8 @@ KC_BASE="http://localhost:$KC_PORT"
 ISSUER="$KC_BASE/realms/$KC_REALM"
 ISSUER_B="$KC_BASE/realms/$KC_REALM_B"
 
-echo "==> build the authenticator"
-cargo build --release --bin authenticator
+echo "==> compile the authenticator and E2E tests"
+cargo build --release -p authenticator --bin authenticator --tests
 
 # Wait for an HTTP endpoint to answer, or fail loudly. Tries default to 30.
 wait_ready() { # name url [tries]
@@ -276,45 +276,45 @@ export E2E_USER_PASSWORD=insight-dev
 
 echo "==> run the login loop"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
-  cargo test -p authenticator --test e2e_login_loop -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_login_loop -- --ignored --nocapture
 
 echo "==> run the refresh rotation-with-grace loop (step 10.1)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
-  cargo test -p authenticator --test e2e_refresh -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_refresh -- --ignored --nocapture
 
 echo "==> run the session-management loop (step 10.2)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
-  cargo test -p authenticator --test e2e_sessions -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_sessions -- --ignored --nocapture
 
 echo "==> run the 401 contract for the session-cookie surface"
 AUTH_BASE="http://localhost:$AUTH_PORT" \
-  cargo test -p authenticator --test e2e_unauthorized -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_unauthorized -- --ignored --nocapture
 
 echo "==> run the __override view-as loop (#1941)"
 # Each test owns a disjoint {impersonator + targets} set of realm users
 # (kc-realm-overlay.py), so the suite is safe under cargo's default parallel
 # execution — one test's revoke-all can never reach a sibling's session.
 AUTH_BASE="http://localhost:$AUTH_PORT" AUTH_BASE_DISABLED="http://localhost:$AUTH2_PORT" \
-  cargo test -p authenticator --test e2e_override -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_override -- --ignored --nocapture
 
 echo "==> run the host-keyed issuer map loop (ADR-0003)"
 AUTH_BASE="http://localhost:$AUTH3_PORT" AUTH_FLAT_BASE="http://localhost:$AUTH_PORT" \
   AUTH3_LOG=/tmp/authenticator-e2e-auth3.log \
   E2E_IDP_ISSUER="$ISSUER" E2E_IDP2_ISSUER="$ISSUER_B" \
   E2E_USER="$E2E_USER" \
-  cargo test -p authenticator --test e2e_hostmap -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_hostmap -- --ignored --nocapture
 
 echo "==> run the back-channel logout loop (step 10.3)"
 AUTH_BASE="http://localhost:$AUTH_PORT" \
-  cargo test -p authenticator --test e2e_backchannel -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_backchannel -- --ignored --nocapture
 
 echo "==> run the layer-2 rate-limit loop (step 10.6)"
 AUTH_BASE="http://localhost:$AUTH_PORT" E2E_USER="$E2E_USER" \
-  cargo test -p authenticator --test e2e_ratelimit -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_ratelimit -- --ignored --nocapture
 
 echo "==> run the IdP background-refresher loop (step 10.4: outage + invalid_grant)"
 AUTH_BASE="http://localhost:$AUTH_PORT" \
-  cargo test -p authenticator --test e2e_refresher -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_refresher -- --ignored --nocapture
 
 echo "==> run the service-token loop (step 06)"
 # The token listener binds 8093 (config service_tokens.token_bind_addr); the dev
@@ -323,6 +323,6 @@ echo "==> run the service-token loop (step 06)"
 AUTH_BASE="http://localhost:$AUTH_PORT" \
   TOKEN_ENDPOINT="http://localhost:$TOKEN_PORT/internal/token" \
   SVC_KEY="$SVC_KEYS_DIR/testclient.key.pem" \
-  cargo test -p authenticator --test e2e_service_token -- --ignored --nocapture
+  cargo test --release -p authenticator --test e2e_service_token -- --ignored --nocapture
 
 echo "==> PASS (endpoint-coverage ledger: $E2E_COVERAGE_LEDGER)"

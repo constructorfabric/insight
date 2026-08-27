@@ -239,6 +239,18 @@
           "patch_truncated": {
             "type": "boolean"
           },
+          "post_image_oid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pre_image_oid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "previous_filename": {
             "type": [
               "string",

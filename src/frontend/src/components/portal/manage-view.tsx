@@ -20,6 +20,7 @@ import { IdentitiesView } from "@/components/portal/identities-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
+import { AiAssistantBody } from "@/screens/ai-assistant";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,7 @@ export function ManageView({ item }: { item: string | null }) {
         <PlatformUsage />
       </AdminGate>
     );
+  if (item === "ai-assistant") return <AiAssistantBody />;
   if (item === "whats-new") return <WhatsNewBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">

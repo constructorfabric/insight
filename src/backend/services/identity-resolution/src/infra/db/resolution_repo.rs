@@ -15,7 +15,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::domain::login_bootstrap::LOGIN_BOOTSTRAP_REASON;
+use crate::domain::provenance::Provenance;
 use crate::domain::resolution::{BINDING_VALUE_TYPE, BindingRow};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
 
@@ -141,7 +141,7 @@ pub async fn current_bindings(
         }
 
         let rows = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -186,7 +186,7 @@ pub async fn current_bindings_in_tenant(
     // truncation would then refuse a complete answer.
     let probe = ceiling.rows().saturating_add(1);
     let mut rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             current_bindings_sql(Scope::WholeTenant),
             [tenant_id.as_bytes().to_vec().into(), probe.into()],
@@ -231,7 +231,7 @@ fn collect_bindings(
             KnownBinding {
                 person_id: Uuid::from_slice(&person_id)?,
                 author_person_id: Uuid::from_slice(&author_person_id)?,
-                provisioned_at_login: reason.as_deref() == Some(LOGIN_BOOTSTRAP_REASON),
+                provenance: Provenance::of_reason(reason.as_deref()),
             },
         );
     }
@@ -271,7 +271,7 @@ pub async fn accounts_of_person(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -310,7 +310,7 @@ pub async fn person_exists(
         "SELECT 1 AS hit FROM persons WHERE insight_tenant_id = ? AND person_id = ? LIMIT 1";
 
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -421,7 +421,7 @@ pub async fn append_binding_if_unbound(
         ],
     );
 
-    let result = match txn.execute(statement).await {
+    let result = match txn.execute_raw(statement).await {
         Ok(result) => result,
         // A lock conflict here means another login is writing THIS account
         // right now. "We did not write" is the truthful answer, and the
@@ -492,7 +492,7 @@ pub async fn append_bindings(
         }
 
         let res = txn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -539,7 +539,7 @@ pub async fn binding_history(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -608,7 +608,7 @@ pub async fn present_rows(
         }
 
         let hits = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,

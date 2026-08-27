@@ -85,7 +85,10 @@ class TestFetchProject:
         walked = []
         stream._walk_ref = lambda pid, ref, **kw: iter(walked.append((pid, ref, kw)) or [])
         items, outcome = _drive(stream._fetch_project(self._task(stream)))
-        assert walked == [(1, "main", {}), (1, "H1..H2", {})]
+        assert walked == [
+            (1, "main", {"in_default": True}),
+            (1, "H1..H2", {"in_default": False}),
+        ]
         assert outcome["advances"] == [("default", "H1"), ("branch", "feat", "H2")]
         assert outcome["current_branches"] == {"main", "feat", "same-as-main"}
 
@@ -97,7 +100,7 @@ class TestFetchProject:
         walked = []
         stream._walk_ref = lambda pid, ref, **kw: iter(walked.append((pid, ref, kw)) or [])
         _, outcome = _drive(stream._fetch_project(self._task(stream)))
-        assert walked == [(1, "H1..H9", {"skip_404": False})]
+        assert walked == [(1, "H1..H9", {"skip_404": False, "in_default": True})]
         assert outcome["advances"] == [("default", "H9")]
 
     def test_unchanged_default_and_stored_branch_skipped(self):
@@ -120,7 +123,7 @@ class TestWalkRef:
             {"id": "sha1", "message": "m", "stats": {"additions": 1, "deletions": 2, "total": 3}},
         ])
         monkeypatch.setattr(concurrency, "walk_window", fake)
-        records = list(stream._walk_ref(1, "main"))
+        records = list(stream._walk_ref(1, "main", in_default=True))
         assert records[0]["unique_key"] == "T:S:1:sha1"
         assert records[0]["stats_total"] == 3
         assert fake.calls[0]["base_slice"]["since"] == "2026-06-01T00:00:00Z"
@@ -133,8 +136,20 @@ class TestWalkRef:
         stream = _commits()
         fake = fake_walk_window_yielding([])
         monkeypatch.setattr(concurrency, "walk_window", fake)
-        list(stream._walk_ref(1, "A..B", skip_404=False))
+        list(stream._walk_ref(1, "A..B", in_default=True, skip_404=False))
         assert fake.calls[0]["base_slice"]["skip_404"] is False
+
+    def test_commit_carries_the_membership_of_the_ref_it_was_walked_from(
+        self, monkeypatch
+    ):
+        stream = _commits()
+        for in_default in (True, False):
+            fake = fake_walk_window_yielding([{"id": "sha1"}])
+            monkeypatch.setattr(concurrency, "walk_window", fake)
+            records = list(stream._walk_ref(1, "ref", in_default=in_default))
+            assert records[0]["is_in_default_branch"] is in_default, (
+                f"should label the commit: in_default={in_default!r}"
+            )
 
 
 class TestApply:

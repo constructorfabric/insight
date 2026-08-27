@@ -12,6 +12,7 @@ import {
 import {
   buildMetricCollectionRequest,
   chunkEntityIds,
+  filterCollectionByKey,
   filterCollectionToAvailable,
   entityChunkSize,
   mergeNormalizedResults,
@@ -21,8 +22,28 @@ import {
   type NormalizedMetricResult,
 } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
+import { metricVisible } from "@/lib/portal/nav-policy";
+import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useAvailableMetricKeys } from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
+
+/**
+ * The install's metric gate, as a predicate over metric keys.
+ *
+ * Applied to every collection request, so a metric this install hides — or
+ * marks planned while the reader has planned sections off — reaches no surface
+ * at all: not a tile, not an attention row, not a heatmap column, not a
+ * drilldown block. Surfaces already render only the keys that came back, so
+ * they need no gate of their own; the ones that draw a shell around a missing
+ * metric (a section title, a card) gate their own composition instead.
+ */
+function useMetricGate(): (metricKey: string) => boolean {
+  const showPlanned = usePortalShowPlanned();
+  return useMemo(
+    () => (metricKey: string) => metricVisible(metricKey, showPlanned),
+    [showPlanned]
+  );
+}
 
 export interface MetricCollectionOptions {
   /**
@@ -45,11 +66,19 @@ export interface MetricCollectionResult {
 }
 
 function canonicalEntityIds(entity: MetricCollectionEntity): string[] {
-  const ids =
-    entity.type === "person"
-      ? entity.ids.map(normalizePersonId)
-      : entity.ids.map((id) => id.trim());
+  // The tenant entity names nobody: the backend derives the organization from
+  // the session, so there are no ids to canonicalize (or to gate `enabled` on).
+  if (entity.type === "tenant") return [];
+  const ids = entity.ids.map(normalizePersonId);
   return [...new Set(ids.filter(Boolean))].sort();
+}
+
+/** Whether the entity selection itself is answerable (see `enabled` below). */
+function entitySelected(
+  entity: MetricCollectionEntity,
+  ids: string[]
+): boolean {
+  return entity.type === "tenant" || ids.length > 0;
 }
 
 function queryKeyFor(
@@ -82,18 +111,20 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
-  const asked = filterCollectionToAvailable(collection, catalog.keys);
-  const request = buildMetricCollectionRequest(
-    asked,
-    { type: entity.type, ids },
-    range
+  const gate = useMetricGate();
+  const asked = filterCollectionByKey(
+    filterCollectionToAvailable(collection, catalog.keys),
+    gate
   );
+  const canonicalEntity: MetricCollectionEntity =
+    entity.type === "person" ? { type: "person", ids } : { type: "tenant" };
+  const request = buildMetricCollectionRequest(asked, canonicalEntity, range);
   // Neither an empty entity list nor an empty metric list is a request the
   // backend can answer — it rejects both with 400 invalid_argument. So the
   // query stays disabled, and because `refetch()` bypasses `enabled`, the
   // `refetch` and `isError` this hook returns have to respect the same flag.
   const enabled =
-    ids.length > 0 &&
+    entitySelected(entity, ids) &&
     request.metrics.length > 0 &&
     !catalog.isPending &&
     Boolean(range.from && range.to);
@@ -109,11 +140,7 @@ export function useMetricCollection(
     ? previousPeriodRange(range, options.previousPeriod)
     : null;
   const previousRequest = previousRange
-    ? buildMetricCollectionRequest(
-        asked,
-        { type: entity.type, ids },
-        previousRange
-      )
+    ? buildMetricCollectionRequest(asked, canonicalEntity, previousRange)
     : null;
   const previous = useQuery({
     // Sentinel key when no previous period is requested: the disabled twin
@@ -152,7 +179,9 @@ export function useMetricCollection(
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
     // a moment later.
-    isPending: (current.isPending && enabled) || (ids.length > 0 && catalog.isPending),
+    isPending:
+      (current.isPending && enabled) ||
+      (entitySelected(entity, ids) && catalog.isPending),
     isFetching: current.isFetching || (hasPrevious && previous.isFetching),
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
@@ -196,21 +225,33 @@ export function useMetricCollectionSet(
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const gate = useMetricGate();
   const enabled =
-    ids.length > 0 && !catalog.isPending && Boolean(range.from && range.to);
+    entitySelected(entity, ids) &&
+    !catalog.isPending &&
+    Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
   // never exceeds the backend's all-or-nothing projected-row limit; chunk
-  // results merge back into one collection result per key.
+  // results merge back into one collection result per key. A tenant entity
+  // names nobody, so it is always exactly one "chunk".
   const requests = collections.flatMap(({ key, collection: raw }) => {
-    // Same catalog gate as `useMetricCollection` — see the note there.
-    const collection = filterCollectionToAvailable(raw, catalog.keys);
+    // Same catalog and install gates as `useMetricCollection` — see the notes there.
+    const collection = filterCollectionByKey(
+      filterCollectionToAvailable(raw, catalog.keys),
+      gate
+    );
     const chunkSize = entityChunkSize(collection);
-    const chunks = chunkSize === null ? [ids] : chunkEntityIds(ids, chunkSize);
+    const chunks =
+      entity.type === "tenant" || chunkSize === null
+        ? [ids]
+        : chunkEntityIds(ids, chunkSize);
     return chunks.map((chunkIds) => {
       const request = buildMetricCollectionRequest(
         collection,
-        { type: entity.type, ids: chunkIds },
+        entity.type === "person"
+          ? { type: "person", ids: chunkIds }
+          : { type: "tenant" },
         range
       );
       return {
@@ -259,7 +300,7 @@ export function useMetricCollectionSet(
       isPending:
         (existing?.isPending ?? false) ||
         (query.isPending && active) ||
-        (ids.length > 0 && catalog.isPending),
+        (entitySelected(entity, ids) && catalog.isPending),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
       isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.

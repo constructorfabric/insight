@@ -24,48 +24,52 @@ export interface QueueCase {
   items: AttentionItem[];
 }
 
+/**
+ * The kind the console invents for a row that is NOT a queue item.
+ *
+ * The accounts mode reuses the case window to show a settled account, so its
+ * rows travel in the same shape as a queue row. Naming OUR kind rather than the
+ * server's is what keeps the test safe: the server's vocabulary is open, and a
+ * kind this build has never seen is a queue item.
+ */
+export const KIND_SEARCH_MATCH = "match";
+
+/** Whether this row is a real queue item, and so really leaves the queue. */
+export function isQueueItem(kind: string): boolean {
+  return kind !== KIND_SEARCH_MATCH;
+}
+
+/**
+ * Kinds where an operator's only question is "yes, that is right" — so the whole
+ * group can be ratified in one press.
+ *
+ * A contested account has no single answer to apply, a binding conflict is a
+ * disagreement to settle rather than to ratify, and an account with no evidence
+ * has no binding to re-assert.
+ */
+const CONFIRMABLE_KINDS: ReadonlySet<string> = new Set([
+  "provisioned_at_login",
+  "minted_from_roster",
+]);
+
+/** Whether a whole queue group can be confirmed in one press. */
+export function groupIsConfirmable(
+  kind: string,
+  items: AttentionItem[],
+): boolean {
+  return (
+    CONFIRMABLE_KINDS.has(kind) &&
+    items.length > 0 &&
+    // Every row must name the person it would confirm. A row with no holder has
+    // nothing to re-assert, and skipping it silently would make the count lie.
+    items.every((item) => Boolean(item.bound_to))
+  );
+}
+
 function caseKey(item: AttentionItem): string {
   if (item.candidates.length === 0) return `account:${itemKey(item)}`;
   const ids = item.candidates.map((c) => c.person_id).sort();
   return `people:${ids.join("|")}`;
-}
-
-function haystack(item: AttentionItem): string {
-  return [
-    item.email,
-    item.username,
-    item.account_id,
-    item.source,
-    ...item.candidates.flatMap((c) => [
-      c.display_name,
-      c.email,
-      c.username,
-      c.person_id,
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-/**
- * Narrow the queue to the rows a query names, all terms required.
- *
- * The candidates are part of what a row IS — an operator hunting the accounts
- * of one split person searches by that person, not by the addresses of the
- * accounts. The person id matches too, since that is what they can copy off
- * a card and paste back.
- */
-export function filterQueue(
-  items: AttentionItem[],
-  query: string,
-): AttentionItem[] {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return items;
-  return items.filter((item) => {
-    const text = haystack(item);
-    return terms.every((term) => text.includes(term));
-  });
 }
 
 /**

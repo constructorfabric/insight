@@ -13,6 +13,7 @@ import { GroupCardEmpty } from "@/components/widgets/group-card-empty";
 import { useSettings } from "@/hooks/use-settings";
 import { formatMetricValue } from "@/lib/format";
 import type { MetricGroup } from "@/lib/insight/groups";
+import { countableSignals } from "@/lib/insight/metric-containment";
 import { peerStatusToStatus } from "@/lib/insight/peer-status";
 import {
   forEntity,
@@ -123,7 +124,17 @@ export function MetricGroupCard({
     return [{ metric, value: entityData.value, rank, standing }];
   });
 
-  const counts = rankCounts(rows.map((row) => ({ row, rank: row.rank })));
+  // One fact, one vote. The stripe turns red on a PATTERN of weakness — two
+  // bottoms and more than a quarter of the rankable set — so a metric counted
+  // twice because a second one contains it moves the section's colour without
+  // anything about the person changing. Thinning the tally, not the rows: the
+  // list below still names every metric the group measures.
+  const counted = countableSignals(
+    rows,
+    (row) => row.metric.metric_key,
+    (row) => row.rank
+  );
+  const counts = rankCounts(counted.map((row) => ({ row, rank: row.rank })));
   const status = applyFocusStatus(gradeSectionStanding(counts), focusMode);
   const badgeText = sectionStandingPhrase(counts);
 
@@ -148,6 +159,19 @@ export function MetricGroupCard({
       : previewRows
   ).slice(0, 4);
   const isEmpty = !rows.some((row) => row.value != null);
+
+  // A failed computation must not render as silence: the server answered 200
+  // with the failure in the view's slot, and the message is written for the
+  // reader (admins get the underlying error). One note per distinct message —
+  // a group of metrics sharing a broken source repeats one cause, not N.
+  const errorNotes = [
+    ...new Set(
+      def.collection.metrics.flatMap((metricConfig) => {
+        const message = data.byKey.get(metricConfig.key)?.error?.message;
+        return message ? [message] : [];
+      })
+    ),
+  ];
 
   return (
     <Card
@@ -207,7 +231,7 @@ export function MetricGroupCard({
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-3">
         {isEmpty ? (
-          <GroupCardEmpty />
+          errorNotes.length > 0 ? null : <GroupCardEmpty />
         ) : (
           <>
             {preview.length > 0 ? (
@@ -269,6 +293,15 @@ export function MetricGroupCard({
             ) : null}
           </>
         )}
+        {errorNotes.length > 0 ? (
+          // A failed metric shows its message instead of silently rendering
+          // as empty; same subdued voice as the empty state.
+          <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {errorNotes.map((note) => (
+              <p key={note}>{note}</p>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

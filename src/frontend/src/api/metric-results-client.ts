@@ -14,13 +14,23 @@ export type MetricResultViewKind =
   | "timeseries"
   | "peer"
   | "breakdown"
+  | "rollup"
   | "histogram";
 export type MetricBucket = "day" | "week" | "month";
-export type MetricComputation = "sum" | "ratio" | "median" | "distinct_count";
-export type MetricEntityType = "person";
+export type MetricComputation =
+  | "sum"
+  | "ratio"
+  | "median"
+  | "percentile"
+  | "stddev"
+  | "distinct_count";
+export type MetricEntityType = "person" | "tenant";
+export type MetricResultsEntity =
+  | { type: "person"; ids: string[] }
+  | { type: "tenant" };
 
 export interface MetricResultsRequest {
-  entity: { type: MetricEntityType; ids: string[] };
+  entity: MetricResultsEntity;
   period: { from: string; to: string };
   metrics: MetricRequest[];
 }
@@ -42,7 +52,7 @@ export interface MetricDrilldownCapability {
 
 export interface MetricCanonicalSelection {
   metric_key: string;
-  entity: { type: MetricEntityType; ids: string[] };
+  entity: MetricResultsEntity;
   period: { from: string; to: string };
   filters: MetricDimensionFilter[];
 }
@@ -66,6 +76,11 @@ export type MetricViewRequest =
       view: "breakdown";
       dimensions: string[];
     }
+  | {
+      view: "rollup";
+      dimensions: string[];
+      group_limit?: MetricGroupLimit;
+    }
   | { view: "histogram" };
 
 export interface MetricDimension {
@@ -78,6 +93,8 @@ export type MetricResult =
   | SumMetricResult
   | RatioMetricResult
   | MedianMetricResult
+  | PercentileMetricResult
+  | StddevMetricResult
   | DistinctCountMetricResult;
 
 interface MetricResultBase {
@@ -108,6 +125,15 @@ export interface MedianMetricResult extends MetricResultBase {
   computation: "median";
 }
 
+export interface PercentileMetricResult extends MetricResultBase {
+  computation: "percentile";
+  q: number;
+}
+
+export interface StddevMetricResult extends MetricResultBase {
+  computation: "stddev";
+}
+
 interface DistinctCountMetricResult extends MetricResultBase {
   computation: "distinct_count";
 }
@@ -117,7 +143,9 @@ export type MetricResultView =
   | TimeseriesView
   | PeerView
   | BreakdownView
-  | HistogramView;
+  | RollupView
+  | HistogramView
+  | MetricErrorView;
 
 export interface PeriodView {
   view: "period";
@@ -162,6 +190,19 @@ export interface BreakdownView {
   }>;
 }
 
+export interface RollupView {
+  view: "rollup";
+  dimensions: string[];
+  values: Array<{
+    dimensions: MetricDimension[];
+    value: number | null;
+    contributing_entity_count: number;
+    rank?: number;
+    remainder?: boolean;
+    label?: string;
+  }>;
+}
+
 interface HistogramBin {
   lo: number;
   hi: number;
@@ -176,6 +217,25 @@ export interface HistogramView {
   }>;
 }
 
+export type MetricErrorCode =
+  | "SOURCE_RELATION_MISSING"
+  | "RESOURCE_EXHAUSTED"
+  | "QUERY_TIMEOUT"
+  | "RESULT_PARSE_FAILED"
+  | "QUERY_FAILED";
+
+/**
+ * A view whose computation failed. The request itself still answers 200:
+ * the failure arrives in the failed view's requested slot, and other views
+ * and metrics are unaffected. `message` is safe to render — admins get the
+ * underlying error text, everyone else a generic one.
+ */
+export interface MetricErrorView {
+  view: "error";
+  code: MetricErrorCode;
+  message: string;
+}
+
 export interface MetricResultsResponse {
   metrics: MetricResult[];
 }
@@ -188,7 +248,7 @@ export async function queryMetricResults(
   // "entity.ids must not be empty"). Callers are expected to keep the query
   // disabled until they have entities; failing here names the real cause
   // instead of surfacing a server validation error in the network log.
-  if (body.entity.ids.length === 0) {
+  if (body.entity.type === "person" && body.entity.ids.length === 0) {
     throw new Error(
       "metric-results: refusing to request an empty entity list — the caller should stay disabled until the roster resolves",
     );

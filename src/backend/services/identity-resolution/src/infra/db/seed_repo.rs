@@ -86,7 +86,7 @@ pub struct TenantPresence {
 pub async fn distinct_tenants(db: &DatabaseConnection, cap: u64) -> anyhow::Result<Vec<Uuid>> {
     const SQL: &str = "SELECT DISTINCT insight_tenant_id FROM persons LIMIT ?";
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [cap.into()],
@@ -118,7 +118,7 @@ pub async fn tenant_presence(
             EXISTS(SELECT 1 FROM persons WHERE insight_tenant_id <> ?) AS has_other
     ";
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -197,7 +197,7 @@ pub async fn latest_email_to_person(
         [tenant_id.as_bytes().to_vec().into()],
     );
 
-    let rows = db.query_all(stmt).await?;
+    let rows = db.query_all_raw(stmt).await?;
     let mut map = HashMap::with_capacity(rows.len());
     for row in rows {
         let email: String = row.try_get("", "email")?;
@@ -443,14 +443,14 @@ async fn rebuild_org_chart(
 
     // Rebuild org_chart for the tenant. The CTE binds the tenant six times, then
     // the author once — same order as INSERT_ORG_CHART's `?` markers.
-    txn.execute(Statement::from_sql_and_values(
+    txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         DELETE_ORG_CHART,
         [tenant_bytes.clone().into()],
     ))
     .await?;
     let org_chart = txn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             INSERT_ORG_CHART,
             [
@@ -521,7 +521,7 @@ pub async fn apply(
             params.push(r.created_at.into());
         }
         let res = txn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,

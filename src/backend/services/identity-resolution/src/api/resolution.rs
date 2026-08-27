@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo};
+use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -394,12 +394,42 @@ async fn apply_correction(
     )
     .await;
 
+    let applied = count_items(&items, OUTCOME_APPLIED);
+    if applied > 0 {
+        // Spawned: the correction is already durable in `persons`, so the
+        // response must not wait on ClickHouse.
+        let config = state.config.clone();
+        tokio::spawn(async move { publish_correction(&config).await });
+    }
+
     Ok(CorrectionResponse {
-        applied: count_items(&items, OUTCOME_APPLIED),
+        applied,
         already_decided: count_items(&items, OUTCOME_ALREADY_DECIDED),
         items,
         new_person_id: None,
     })
+}
+
+/// Publish the corrected log into the snapshot the metrics resolver reads.
+/// Never fails the verb: the runner waits for a busy lock, the lock holder's
+/// quiescence re-check covers rows it raced with, and the next publish is
+/// the catch-up path for everything else.
+async fn publish_correction(config: &crate::config::GearConfig) {
+    use crate::sync_runner::{self, SyncRunError};
+    match sync_runner::run(config, false).await {
+        Ok(outcome) => tracing::info!(?outcome, "persons-sync published the corrected log"),
+        Err(SyncRunError::LockBusy) => tracing::warn!(
+            "publish lock stayed busy past the wait; the correction reaches the resolver with \
+             the next publish"
+        ),
+        Err(SyncRunError::Guard(msg)) => {
+            tracing::warn!(%msg, "persons-sync refused the post-correction publish");
+        }
+        Err(SyncRunError::Failed(e)) => tracing::warn!(
+            error = %format!("{e:#}"),
+            "publishing the correction failed; the resolver snapshot is stale until the next publish"
+        ),
+    }
 }
 
 fn count_items(items: &[ItemResult], wanted: &str) -> usize {
@@ -648,7 +678,8 @@ pub struct AttentionParams {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct QueueItemResponse {
-    /// `contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.
+    /// `contested` | `binding_conflict` | `provisioned_at_login` |
+    /// `minted_from_roster` | `no_source_id` | `no_evidence`.
     pub kind: String,
     pub source: String,
     pub source_id: Uuid,
@@ -678,9 +709,10 @@ pub struct QueueItemResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonSummaryResponse {
     pub person_id: Uuid,
-    /// The journal holds nothing but a login-mint for this person: they exist
-    /// so somebody could sign in, and may duplicate one the roster knows. Not
-    /// a merge target — the history is on the other side.
+    /// The journal holds nothing but an automatic mint for this person — a
+    /// sign-in that needed somebody to enter as, or a roster listing an account
+    /// with no address. They may duplicate one the roster knows, so they are not
+    /// a merge target: the history is on the other side.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provisional: bool,
     pub email: Option<String>,
@@ -730,13 +762,18 @@ pub async fn mark_provisional(
     Ok(())
 }
 
-/// Share of observed accounts per resolution state — the operator-visible match
-/// rate.
+/// How the tenant's observed accounts are split across the resolution states.
+///
+/// Deliberately no person total. A journal-wide count answers "how many ids have
+/// we ever written", which after a merge never falls and after a detach only
+/// rises — so it read as a roster size while measuring something else. A figure
+/// that would have to be explained every time it is read is worse than none.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ResolutionRatesResponse {
     pub observed: usize,
     pub bound: usize,
     pub pending: usize,
+    pub no_source_id: usize,
     pub no_evidence: usize,
     pub excluded: usize,
 }
@@ -824,6 +861,7 @@ pub async fn attention(
             observed: review.rates.observed,
             bound: review.rates.bound,
             pending: review.rates.pending,
+            no_source_id: review.rates.no_source_id,
             no_evidence: review.rates.no_evidence,
             excluded: review.rates.excluded,
         },
@@ -1267,6 +1305,8 @@ fn kind_label(kind: ItemKind) -> &'static str {
         ItemKind::Contested => "contested",
         ItemKind::BindingConflict => "binding_conflict",
         ItemKind::ProvisionedAtLogin => "provisioned_at_login",
+        ItemKind::MintedFromRoster => "minted_from_roster",
+        ItemKind::NoSourceId => "no_source_id",
         ItemKind::NoEvidence => "no_evidence",
     }
 }
@@ -1306,11 +1346,19 @@ async fn build_review(state: &AppState, tenant: Uuid) -> Result<(Review, bool), 
             username: e.username,
             description: e.description,
             is_closed: e.is_closed,
+            states_binding_id: e.states_binding_id,
         })
         .collect();
 
+    // The seed's own map, not one derived from the evidence: an address stays
+    // claimed after the account that carried it closes, and the seed still
+    // attaches new accounts to that person. See `review_queue::build`.
+    let claimed_addresses = seed_repo::latest_email_to_person(&state.db, tenant)
+        .await
+        .map_err(|e| internal(&e, "failed to read claimed addresses"))?;
+
     Ok((
-        review_queue::build(observed, &bindings.by_account),
+        review_queue::build(observed, &bindings.by_account, &claimed_addresses),
         truncated,
     ))
 }
@@ -1348,4 +1396,26 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
         .accounts()
         .await
         .map_err(|e| internal(&e, "failed to read connector evidence"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
+        // The console groups by this exact string and drops anything it does not
+        // know into a catch-all "needs review" bucket, so a typo here is not a
+        // broken response — it is a queue that quietly stops explaining itself.
+        for (kind, expected) in [
+            (ItemKind::Contested, "contested"),
+            (ItemKind::BindingConflict, "binding_conflict"),
+            (ItemKind::ProvisionedAtLogin, "provisioned_at_login"),
+            (ItemKind::MintedFromRoster, "minted_from_roster"),
+            (ItemKind::NoSourceId, "no_source_id"),
+            (ItemKind::NoEvidence, "no_evidence"),
+        ] {
+            assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
+        }
+    }
 }

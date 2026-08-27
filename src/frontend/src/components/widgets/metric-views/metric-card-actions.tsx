@@ -13,13 +13,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 
 export function MetricCardActions({
   evidence,
   label,
+  placement = "overlay",
 }: {
   evidence: MetricEvidenceSelection | null | undefined;
   label: string;
+  // `overlay` takes the button out of flow, so the call site owes it clear space.
+  placement?: "overlay" | "inline";
 }) {
   const evidenceContext = useMetricEvidenceOptional();
   const scope = useEvidenceScope();
@@ -33,12 +37,14 @@ export function MetricCardActions({
             type="button"
             variant="ghost"
             size="icon-xs"
-            className="absolute top-4 right-4 z-10 text-muted-foreground"
+            className={cn(
+              "text-muted-foreground",
+              placement === "overlay" && "absolute top-4 right-4 z-10"
+            )}
             aria-label={`More actions for ${label}`}
             onClick={(event) => event.stopPropagation()}
-          >
-            <Ellipsis />
-          </Button>
+            icon={<Ellipsis />}
+          />
         }
       />
       <DropdownMenuContent align="end" className="w-48">

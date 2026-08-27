@@ -13,6 +13,7 @@ import type {
   MetricEvidenceRow,
 } from "@/api/metric-drilldown-client";
 import { CopyValueButton } from "@/components/copy-value-button";
+import { RecordLink } from "@/components/record-link";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -29,11 +30,16 @@ import {
   summaryLine,
   type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
+import {
+  evidenceRecordLinks,
+  evidenceRefText,
+} from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
+  if (column.key === "type") return { basisRem: 8, grow: 0 };
   if (column.key === "repository") return { basisRem: 12, grow: 0.5 };
   if (column.key === "author") return { basisRem: 10, grow: 0.25 };
   if (column.key === "date") return { basisRem: 8, grow: 0 };
@@ -42,6 +48,13 @@ function columnLayout(column: MetricEvidenceColumn) {
 }
 
 const EXPANDER_REM = 2.25;
+
+/**
+ * Columns whose link belongs to the summary line only. The full record shows a
+ * value entire, and a commit message carries its trailers — one link wrapped
+ * around all of that is a paragraph-sized target, not something to click.
+ */
+const SUMMARY_ONLY_LINKS: ReadonlySet<string> = new Set(["title"]);
 
 function SortIcon({ state }: { state: "asc" | "desc" | null }) {
   if (state === "asc") return <ArrowUp className="size-3.5 shrink-0" />;
@@ -52,6 +65,7 @@ function SortIcon({ state }: { state: "asc" | "desc" | null }) {
 }
 
 export function MetricEvidenceTable({
+  metricKey,
   rows,
   columns,
   sort,
@@ -62,6 +76,8 @@ export function MetricEvidenceTable({
   nextPageError,
   pageLimitReached,
 }: {
+  /** Null while the metric picker has yet to resolve one — links stay off. */
+  metricKey: string | null;
   rows: MetricEvidenceRow[];
   columns: MetricEvidenceColumn[];
   sort: EvidenceSort | null;
@@ -82,7 +98,10 @@ export function MetricEvidenceTable({
     overscan: 8,
     // INVARIANT: must match the row's React key — the measured height of an
     // expanded row is cached under it.
-    getItemKey: useCallback((index: number) => rowKeys[index] ?? index, [rowKeys]),
+    getItemKey: useCallback(
+      (index: number) => rowKeys[index] ?? index,
+      [rowKeys]
+    ),
   });
   const virtualRows = virtualizer.getVirtualItems();
   const virtualBodyHeight = virtualizer.getTotalSize();
@@ -121,7 +140,10 @@ export function MetricEvidenceTable({
     <div className="relative min-h-0 flex-1">
       <Table
         role="table"
-        aria-rowcount={rows.length}
+        // Counting the header row, which is row 1: `aria-rowindex` below starts
+        // the data at 2, so a total of `rows.length` would make the last row
+        // "n+1 of n".
+        aria-rowcount={rows.length + 1}
         containerRef={setViewport}
         containerClassName="h-full overflow-auto"
         className="grid min-w-full"
@@ -163,7 +185,9 @@ export function MetricEvidenceTable({
                   }
                   className={cn(
                     "flex h-10 min-w-0 items-center px-3 py-0",
-                    numeric ? "justify-end text-right" : "justify-start text-left"
+                    numeric
+                      ? "justify-end text-right"
+                      : "justify-start text-left"
                   )}
                   style={{
                     flex: `${layout.grow} 0 ${layout.basisRem}rem`,
@@ -205,6 +229,7 @@ export function MetricEvidenceTable({
             if (!row) return null;
             const key = rowKeys[virtualRow.index]!;
             const isOpen = expanded.has(key);
+            const links = evidenceRecordLinks(metricKey ?? "", row.values);
             return (
               <TableRow
                 role="row"
@@ -229,7 +254,9 @@ export function MetricEvidenceTable({
                     variant="ghost"
                     size="icon-xs"
                     aria-expanded={isOpen}
-                    aria-label={isOpen ? "Hide full record" : "Show full record"}
+                    aria-label={
+                      isOpen ? "Hide full record" : "Show full record"
+                    }
                     className="text-muted-foreground"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -243,7 +270,14 @@ export function MetricEvidenceTable({
                   const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
-                  const line = summaryLine(text);
+                  const full = summaryLine(text);
+                  // The ref column shows the issue number alone; the tooltip
+                  // keeps the repository, which is the only place a row states
+                  // it when the metric declares no `source` to link from.
+                  const line =
+                    column.key === "ref"
+                      ? evidenceRefText(metricKey ?? "", full)
+                      : full;
                   return (
                     <TableCell
                       role="cell"
@@ -255,11 +289,15 @@ export function MetricEvidenceTable({
                       style={{
                         flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                       }}
-                      title={line}
+                      title={full}
                     >
                       {column.key === "ref" && value != null ? (
                         <div className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 truncate">{line}</span>
+                          <span className="min-w-0 truncate">
+                            <RecordLink href={links[column.key]}>
+                              {line}
+                            </RecordLink>
+                          </span>
                           <CopyValueButton
                             value={String(value)}
                             title="Copy ref"
@@ -267,7 +305,7 @@ export function MetricEvidenceTable({
                           />
                         </div>
                       ) : (
-                        line
+                        <RecordLink href={links[column.key]}>{line}</RecordLink>
                       )}
                     </TableCell>
                   );
@@ -285,14 +323,25 @@ export function MetricEvidenceTable({
                         exceed the table's own height. */}
                     <dl className="grid max-h-96 gap-x-6 gap-y-2 overflow-y-auto overscroll-contain sm:grid-cols-[10rem_1fr]">
                       {columns.map((column) => {
-                        const text = cellText(row.values[column.key], column.type);
+                        const text = cellText(
+                          row.values[column.key],
+                          column.type
+                        );
                         return (
                           <Fragment key={column.key}>
                             <dt className="text-sm text-muted-foreground">
                               {column.label}
                             </dt>
                             <dd className="text-sm break-words whitespace-pre-wrap">
-                              {text}
+                              <RecordLink
+                                href={
+                                  SUMMARY_ONLY_LINKS.has(column.key)
+                                    ? undefined
+                                    : links[column.key]
+                                }
+                              >
+                                {text}
+                              </RecordLink>
                             </dd>
                           </Fragment>
                         );

@@ -232,10 +232,34 @@ impl ClickHouseIdentityPersonsWriter {
         .await?;
         Ok(())
     }
+
+    async fn probe_published_max_id(&self) -> anyhow::Result<Option<u64>> {
+        // A missing table/database (fresh install, sync running before the
+        // first publish) means "nothing published" — the copy path creates
+        // them and surfaces any real connectivity error loudly.
+        let probed: Result<Vec<Option<u64>>, _> = self
+            .client
+            .query(&format!(
+                "SELECT if(count() = 0, NULL, max(id)) FROM {DATABASE}.{TARGET}"
+            ))
+            .fetch_all()
+            .await;
+        match probed {
+            Ok(rows) => Ok(rows.into_iter().next().flatten()),
+            Err(e) => {
+                tracing::warn!(error = %e, "identity_persons probe failed; publishing");
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[async_trait]
 impl IdentityPersonsWriter for ClickHouseIdentityPersonsWriter {
+    async fn published_max_id(&self) -> anyhow::Result<Option<u64>> {
+        self.probe_published_max_id().await
+    }
+
     async fn replace(&self, rows: &[PersonsLogRow], synced_at: DateTime) -> anyhow::Result<()> {
         let synced_at = synced_at.and_utc();
         // Unique per run: concurrent syncs never touch each other's staging.

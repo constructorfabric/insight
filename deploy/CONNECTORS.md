@@ -32,7 +32,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 Every connector Secret needs three things for the reconcile loop to discover and wire it up:
 
 - **A label**, `app.kubernetes.io/part-of: insight` — the selector the reconcile loop uses to find connector Secrets.
-- **Two annotations**: `insight.cyberfabric.com/connector: <name>` identifies which connector definition to use, and `insight.cyberfabric.com/source-id: <id>` names this specific source instance (the convention is `<name>-main`).
+- **Two annotations**: `insight.cyberfabric.com/connector: <name>` identifies which connector definition to use, and `insight.cyberfabric.com/source-id: <id>` names this specific source instance (the convention is `<name>-main`). Two connectors that describe accounts of the SAME vendor instance must share one source id — an account is keyed on (source type, source id, account id), so a different id makes one account into two. `github` and `github-directory` are such a pair: both use `github-main`.
 - **`stringData`** holding the connector's required fields — credentials, base URLs, and similar settings specific to that tool.
 
 For example, the Jira connector Secret (`connectors/jira.yaml`) looks like this:
@@ -155,7 +155,10 @@ stringData:
 ```
 
 ```yaml
-# ⚠ CDK connector; baked url_base
+# Declarative Bitbucket Cloud connector on the git-cli-proxy: commit-level data
+# comes from a bare clone served by the proxy instead of one vendor API call per
+# commit. Needs a deployed git-cli-proxy (gitCliProxy.deploy); its address and
+# token are injected by reconcile, so this Secret carries neither.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -165,20 +168,26 @@ metadata:
   annotations: { insight.cyberfabric.com/connector: bitbucket-cloud, insight.cyberfabric.com/source-id: bitbucket-cloud-main }
 type: Opaque
 stringData:
-  bitbucket_token:      "CHANGE_ME"    # Atlassian ATCTT access token (NOT an ATATT API token)
-  bitbucket_workspaces: "workspace-a,workspace-b"
+  bitbucket_token:      "CHANGE_ME"    # workspace access token, or an App Password with bitbucket_username
+  bitbucket_username:   ""             # required only for an App Password / personal API token
+  bitbucket_workspaces: '["acme"]'     # JSON array of workspace slugs
+  bitbucket_start_date: "2026-01-01"
 ```
 
 ```yaml
 # GitHub org roster -> identity_inputs. Required for GitHub-brokered SSO:
 # without it a GitHub login resolves to no person and the callback returns 403.
+# source-id is `github-main`, NOT `github-directory-main`: this connector and
+# the `github` connector describe accounts of the same organization, and the
+# roster's member-id binding only meets the commit e-mails claimed against
+# that account when both carry one source id.
 apiVersion: v1
 kind: Secret
 metadata:
   name: insight-github-directory-main
   namespace: insight
   labels: { app.kubernetes.io/part-of: insight }
-  annotations: { insight.cyberfabric.com/connector: github-directory, insight.cyberfabric.com/source-id: github-directory-main }
+  annotations: { insight.cyberfabric.com/connector: github-directory, insight.cyberfabric.com/source-id: github-main }
 type: Opaque
 stringData:
   github_token:         "ghp_CHANGE_ME"   # read:org (+ user:email for member emails)

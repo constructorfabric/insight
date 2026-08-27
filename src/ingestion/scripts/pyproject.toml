@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "insight-ingestion-scripts"
 version = "0.1.0"
 description = "Deploy-time ClickHouse schema tooling shipped in the ingestion toolbox image"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 # Deliberately dependency-free: this runs in the migration Job, which talks to
 # ClickHouse over HTTP with nothing but the standard library.
 dependencies = []

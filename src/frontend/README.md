@@ -57,6 +57,27 @@ A yellow warning strip renders at the top of the page whenever mocks are active 
 
 Seeded mock people: `bob.park@example.com`, `carol.chen@example.com`, `alice.kim@example.com`, `frank.moss@example.com` (see [src/mocks/registry.ts](src/mocks/registry.ts)).
 
+### Running against a deployed backend
+
+`pnpm dev` proxies `/api` and `/auth` to `VITE_API_PROXY_TARGET` (default: the compose gateway). Pointing that at a deployed stand gets you its data, but **not** its login: the stand registers its OIDC `redirect_uri` on its own origin, so the IdP posts the code back to the stand and the dev server never receives a session.
+
+Hand it a session instead:
+
+1. Sign in to the stand in a browser.
+2. Copy the `__Host-sid` value from DevTools → Application → Cookies (it is `HttpOnly`, so DevTools is the only way).
+3. In `.env.local`:
+
+```
+VITE_API_PROXY_TARGET=https://<stand-host>
+VITE_API_PROXY_SESSION=<the __Host-sid value>
+```
+
+The dev server holds the token and attaches it to every proxied request; the browser never stores it. `/auth/refresh` rotation is absorbed automatically, so the session stays alive as long as the SPA keeps refreshing it — no re-paste. Add `VITE_API_PROXY_INSECURE=true` for a self-signed upstream certificate.
+
+Once the token is expired or revoked the SPA takes a `401` and heads for `/auth/login`, which the dev server answers with a `503` explaining how to refresh it rather than bouncing you onto the stand.
+
+`VITE_API_PROXY_SESSION` is a live session on a real stand. `.env.local` is gitignored — keep it there.
+
 ## Scripts
 
 | Script | Description |
@@ -106,6 +127,34 @@ Server-side cookie/BFF flow — the SPA holds no tokens.
 3. [src/api/fetch-with-auth.ts](src/api/fetch-with-auth.ts) sends `credentials: "include"` on every request — no `Authorization` header, no tenant header. The gateway injects the downstream JWT.
 4. A 401 bounces the whole page into `/auth/login?return_to=…` ([src/auth/use-auth.ts](src/auth/use-auth.ts)); there is no client-side token to refresh.
 5. The session is non-sliding: [src/auth/refresh.ts](src/auth/refresh.ts) drives `POST /auth/refresh` on the server-supplied `refresh_at`.
+
+## Per-Install Navigation Policy
+
+A deployment can hide navigation entries — at any nesting level — or mark
+them as still in development, with the `nav` chart value rendered into
+`/config.js` next to the Sentry DSN. Both lists take the same typed paths:
+
+```yaml
+nav:
+  hide:
+    - "zone:scorecard"
+    - "zone:aicost/item:idle-seats"
+    - "zone:directions/dir:sales"
+    - "zone:directions/dir:dev/lens:git-output"
+    - "zone:person/section:git_output"
+  planned:
+    - "zone:reports/item:report-builder"
+```
+
+A hidden entry disappears from every menu and from default/deep-link
+resolution. A `planned` entry is demoted to the "Planned" menu group and
+toggled by the viewer's "Show planned sections" switch. Planning is entirely
+deployment-owned: entries absent from `nav.planned` are treated as live. A path
+in both lists is hidden; a path that matches nothing is ignored (malformed ones
+warn in the browser console).
+This is presentation, not authorization — the API refuses on its own
+regardless of what the menu shows. Parsing and semantics live in
+[src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).
 
 ## Environment Variables
 

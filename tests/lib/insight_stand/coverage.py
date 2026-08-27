@@ -11,7 +11,7 @@ out at `pytest_sessionfinish`.
 stand) reads that ledger back and answers two questions:
 
   1. Did every operation the CATALOGUE names get exercised, by something other
-     than the anonymous sweep? `api/test_gateway.py` calls all 48 operations
+     than the anonymous sweep? `api/test_gateway.py` calls all 50 operations
      without a session, so every one has an observation — and a route whose only
      observed code is 401 was swept and never tested. Counting it as covered is
      precisely the mistake this gate exists to prevent.

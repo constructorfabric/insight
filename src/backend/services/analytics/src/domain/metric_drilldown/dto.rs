@@ -13,6 +13,11 @@ pub(super) const MAX_PAGE_LIMIT: usize = 250;
 pub(super) const MAX_PERIOD_DAYS: i64 = 400;
 pub(super) const MAX_FILTERS: usize = 10;
 pub(super) const MAX_DISPLAY_DIMENSIONS: usize = 10;
+/// People one selection may read at once. An org rollup card is the caller
+/// that needs more than one, and a roster is the size of a company, not of a
+/// tenant's whole history — a request past this is a client bug, not a bigger
+/// team.
+pub(super) const MAX_ENTITY_PERSONS: usize = 1_000;
 pub(super) const MAX_FILTER_VALUES: usize = 100;
 pub(super) const MAX_FILTER_VALUE_BYTES: usize = 512;
 pub const MAX_EXPORT_ROWS: usize = 50_000;
@@ -22,9 +27,48 @@ pub const EVIDENCE_QUERY_READ_BYTES: usize = 512 * 1024 * 1024;
 pub const EVIDENCE_QUERY_RESULT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
-pub struct MetricDrilldownEntity {
-    pub r#type: String,
-    pub id: String,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MetricDrilldownEntity {
+    Person {
+        id: String,
+    },
+    /// The records behind a figure a surface reports for a GROUP of people —
+    /// an org rollup card, a team total. Every id is authorized individually,
+    /// exactly as the single-person shape is.
+    Persons {
+        ids: Vec<String>,
+    },
+    Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
+
+impl MetricDrilldownEntity {
+    pub(crate) fn entity_type(&self) -> &'static str {
+        match self {
+            Self::Person { .. } | Self::Persons { .. } => "person",
+            Self::Tenant {} => "tenant",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub(crate) fn person_id(&self) -> Option<&str> {
+        match self {
+            Self::Person { id } => Some(id),
+            Self::Persons { .. } | Self::Tenant {} | Self::Unknown => None,
+        }
+    }
+
+    /// Every person this selection reads, one or many — what the query binds
+    /// and what the visibility gate checks. Empty for tenant evidence, which
+    /// keys on the tenant itself.
+    pub(crate) fn person_ids(&self) -> &[String] {
+        match self {
+            Self::Person { id } => std::slice::from_ref(id),
+            Self::Persons { ids } => ids,
+            Self::Tenant {} | Self::Unknown => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, utoipa::ToSchema)]
@@ -116,6 +160,49 @@ pub struct MetricDrilldownResponse {
 impl toolkit::api::api_dto::RequestApiDto for MetricDrilldownRequest {}
 impl toolkit::api::api_dto::RequestApiDto for MetricDrilldownExportRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for MetricDrilldownResponse {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::MetricDrilldownRequest;
+
+    #[test]
+    fn tenant_entity_needs_no_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "tenant" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_ok());
+    }
+
+    #[test]
+    fn tenant_entity_rejects_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "tenant", "id": "default" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricDrilldownRequest>(json!({
+            "metric_key": "ci.runs",
+            "entity": { "type": "team", "id": "team" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "limit": 100
+        }));
+
+        assert!(request.is_ok());
+    }
+}
 
 #[derive(Debug)]
 pub struct ValidatedMetricDrilldown {

@@ -4,29 +4,40 @@
  *
  * A triage surface, not a roster: the operator lands in what NEEDS a
  * decision, grouped by why it does, and works the backlog to zero — the
- * empty queue is the goal state and renders as one. The rates strip on top
- * counts binding states across the tenant; only its first figure, the queue's
- * own size, is work the operator can do.
+ * empty queue is the goal state and renders as one. The strip on top sizes the
+ * tenant — its people, its accounts, and how many of those accounts are the
+ * operator's own backlog.
+ *
+ * One layout for all three modes: the heading, the tabs and the mode's own
+ * search stay put, and only the list under them scrolls. A reader working a
+ * long list must not lose the field they are typing into, or the tabs that
+ * switch what they are looking at.
  *
  * The queue picks a case; the window decides it. Selection lives in `?acct=`
  * so an operator can hand a colleague a link to the exact account under
  * discussion — and that link answers whatever the queue looks like by then,
  * an emptied backlog included.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { AttentionItem, ResolutionRates } from "@/api/identity-client";
+import type {
+  AttentionItem,
+  PersonSummary,
+  ResolutionRates,
+} from "@/api/identity-client";
+import { QUEUE_FIRST_PAGE, QUEUE_MAX_ITEMS } from "@/api/identity-client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { AccountSearchView } from "@/components/portal/account-search-view";
 import { CaseDialog } from "@/components/portal/case-dialog";
+import { ConfirmGroupButton } from "@/components/portal/confirm-group-button";
+import { MergeCaseDialog } from "@/components/portal/merge-case-dialog";
 import { PersonAccountsView } from "@/components/portal/person-accounts-view";
 import { PersonCell } from "@/components/portal/person-cell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   Collapsible,
   CollapsibleContent,
@@ -40,84 +51,47 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { ScrollToEnds } from "@/components/widgets/scroll-to-ends";
 import {
   usePortalSearch,
   useSetPortalSearch,
 } from "@/lib/portal/portal-search";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { itemKey } from "@/lib/identities/account-key";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
+import { MODES, resolveMode } from "@/lib/portal/identity-modes";
 import { personDisplayName } from "@/lib/identities/person-display";
 import {
-  filterQueue,
   groupIntoCases,
+  groupIsConfirmable,
   type QueueCase,
 } from "@/lib/identities/cases";
 import { useAttention } from "@/queries/identity-resolution";
 import { TEXT_FIGURE, TEXT_LABEL } from "@/lib/type-scale";
 import { STATUS_SURFACE_CLASS, type Status } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import {
-  ChevronDown,
-  Info,
-  PartyPopper,
-  Search,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, PartyPopper, TriangleAlert } from "lucide-react";
 
 /** Queue groups in working order: conflicts first, then the unknowns. */
 const KIND_ORDER = [
   "contested",
   "binding_conflict",
   "provisioned_at_login",
+  "minted_from_roster",
+  "no_source_id",
   "no_evidence",
 ] as const;
-
-// Binding states, not workloads: every one of these counts accounts the
-// resolver has already placed or will place by itself. The only number an
-// operator can act on is the queue's own size, which is why it leads the strip
-// and is the only one carrying a status colour.
-const RATE_TILES: ReadonlyArray<{ key: keyof ResolutionRates; status: Status }> = [
-  { key: "observed", status: "neutral" },
-  { key: "bound", status: "good" },
-  { key: "pending", status: "neutral" },
-  { key: "no_evidence", status: "neutral" },
-  { key: "excluded", status: "neutral" },
-];
-
-/** A click selects the case — unless it pressed a control or ended a selection. */
-function opensTheCase(event: React.MouseEvent<HTMLElement>): boolean {
-  if (event.target instanceof Element && event.target.closest("button, a")) {
-    return false;
-  }
-  const selection = window.getSelection();
-  return !selection || selection.isCollapsed;
-}
-
-/**
- * The modes the console offers. A mode is a way IN to the same decisions —
- * the queue arrives at them from a problem, the person view from a name — so
- * adding one is an entry here and a component, nothing else.
- */
-const MODES = ["queue", "people", "accounts"] as const;
-const DEFAULT_MODE = MODES[0];
 
 export function IdentitiesView() {
   const { t } = useTranslation();
   const { mode } = usePortalSearch();
   const setSearch = useSetPortalSearch();
-  const active: string = MODES.find((m) => m === mode) ?? DEFAULT_MODE;
+  const active: string = resolveMode(mode);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <header>
+    <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-6 p-6">
+      <header className="shrink-0">
         <h1 className="text-lg font-semibold tracking-tight">
           {t("identities.title")}
         </h1>
@@ -126,12 +100,13 @@ export function IdentitiesView() {
         </p>
       </header>
       <Tabs
+        className="shrink-0"
         value={active}
-        // A mode change drops the open account: a case picked in one mode
-        // means nothing in another, and carrying it would open a window the
-        // list behind it does not contain.
+        // A mode change closes whatever was open: a case or a person picked in
+        // one mode means nothing in another, and carrying either would open a
+        // window over a list that does not contain it.
         onValueChange={(next) =>
-          setSearch({ mode: String(next), acct: undefined })
+          setSearch({ mode: String(next), acct: undefined, person: undefined })
         }
       >
         <TabsList>
@@ -142,7 +117,7 @@ export function IdentitiesView() {
           ))}
         </TabsList>
       </Tabs>
-      {active === "people" ? <PersonAccountsView /> : null}
+      {active === "person" ? <PersonAccountsView /> : null}
       {active === "accounts" ? <AccountSearchView /> : null}
       {active === "queue" ? <ReviewQueue /> : null}
     </div>
@@ -151,7 +126,17 @@ export function IdentitiesView() {
 
 function ReviewQueue() {
   const { t } = useTranslation();
-  const attention = useAttention();
+  // Asking for more is a longer read, not a next page: the service derives the
+  // queue from the whole tenant, so a cursor would cost the same as this and
+  // cut cases in half — the rows of one case are spread across sources.
+  const [limit, setLimit] = useState(QUEUE_FIRST_PAGE);
+  const attention = useAttention(limit);
+
+  // A longer read that fails takes its own answer down with it — the rows the
+  // operator was working are still cached under the shorter one, so the way
+  // out of the error is back to it, not another attempt at the read that just
+  // failed.
+  const askedForMore = limit > QUEUE_FIRST_PAGE;
 
   if (attention.isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
   if (attention.isError || !attention.data) {
@@ -160,8 +145,16 @@ function ReviewQueue() {
         <ComingSoon
           variant="card"
           state="error"
-          label={t("identities.queue.load_failed")}
-          onRetry={() => void attention.refetch()}
+          label={t(
+            askedForMore
+              ? "identities.queue.longer_read_failed"
+              : "identities.queue.load_failed",
+          )}
+          onRetry={() =>
+            askedForMore
+              ? setLimit(QUEUE_FIRST_PAGE)
+              : void attention.refetch()
+          }
         />
       </div>
     );
@@ -169,8 +162,12 @@ function ReviewQueue() {
 
   const { items, rates, truncated, items_truncated: itemsTruncated } =
     attention.data;
+  const loadMore =
+    itemsTruncated && limit < QUEUE_MAX_ITEMS
+      ? () => setLimit((asked) => Math.min(asked * 2, QUEUE_MAX_ITEMS))
+      : null;
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-6">
       {truncated ? (
         <Alert variant="destructive" role="status">
           <TriangleAlert />
@@ -178,9 +175,10 @@ function ReviewQueue() {
         </Alert>
       ) : null}
       {/* The list was cut by the server's item cap while the rates stay
-          whole-tenant — a different fact from `truncated`, and one an
-          operator working to zero has to know. */}
-      {itemsTruncated && !truncated ? (
+          whole-tenant — a different fact from `truncated`. Said only once the
+          reader can do nothing about it: while a longer read is still allowed,
+          the button at the end of the list is the answer. */}
+      {itemsTruncated && !truncated && (!loadMore || items.length === 0) ? (
         <Alert role="status">
           <TriangleAlert />
           <AlertDescription>
@@ -193,7 +191,14 @@ function ReviewQueue() {
         decisions={items.length}
         decisionsCapped={Boolean(itemsTruncated)}
       />
-      <Queue items={items} />
+      <Queue
+        items={items}
+        onLoadMore={loadMore}
+        // The LONGER read specifically, not any fetch: every decision
+        // invalidates this query, and a background refetch that greys the
+        // button out would read as "your press is working".
+        loadingMore={attention.isFetching && attention.isPlaceholderData}
+      />
     </div>
   );
 }
@@ -211,63 +216,48 @@ function RatesStrip({
 }) {
   const { t } = useTranslation();
   return (
-    <TooltipProvider>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-        <Tile
-          figure={decisionsCapped ? `${decisions}+` : String(decisions)}
-          label={t("identities.rates.decisions")}
-          hint={t("identities.rates.decisions_hint")}
-          status="warn"
-        />
-        {RATE_TILES.map(({ key, status }) => (
-          <Tile
-            key={key}
-            figure={String(rates[key])}
-            label={t(`identities.rates.${key}`)}
-            hint={t(`identities.rates.${key}_hint`)}
-            status={status}
-          />
-        ))}
-      </div>
-    </TooltipProvider>
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
+      <Tile
+        figure={String(rates.observed)}
+        label={t("identities.rates.observed")}
+        status="neutral"
+      />
+      {/* The one figure here that is the operator's own work, and the only one
+          carrying a status colour. */}
+      <Tile
+        figure={decisionsCapped ? `${decisions}+` : String(decisions)}
+        label={t("identities.rates.decisions")}
+        status="warn"
+      />
+      <Tile
+        figure={String(rates.excluded)}
+        label={t("identities.rates.excluded")}
+        status="neutral"
+      />
+    </div>
   );
 }
 
 function Tile({
   figure,
   label,
-  hint,
   status,
 }: {
   figure: string;
   label: string;
-  hint: string;
   status: Status;
 }) {
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className={TEXT_FIGURE}>{figure}</div>
-      <span className="mt-1 inline-flex items-center gap-1">
-        <span
-          className={cn(
-            TEXT_LABEL,
-            "inline-block rounded px-1.5 py-0.5",
-            STATUS_SURFACE_CLASS[status],
-          )}
-        >
-          {label}
-        </span>
-        <Tooltip>
-          {/* Focusable, or the hint — which carries the tile's actual
-              meaning — exists for mouse users only. */}
-          <TooltipTrigger
-            render={<span className="inline-flex text-muted-foreground" tabIndex={0} />}
-            aria-label={hint}
-          >
-            <Info className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipContent className="max-w-xs">{hint}</TooltipContent>
-        </Tooltip>
+      <span
+        className={cn(
+          TEXT_LABEL,
+          "mt-1 inline-block rounded px-1.5 py-0.5",
+          STATUS_SURFACE_CLASS[status],
+        )}
+      >
+        {label}
       </span>
     </div>
   );
@@ -291,18 +281,23 @@ function AllResolved() {
   );
 }
 
-function Queue({ items: everything }: { items: AttentionItem[] }) {
+function Queue({
+  items,
+  onLoadMore,
+  loadingMore,
+}: {
+  items: AttentionItem[];
+  /** Ask the service for a longer queue; absent when nothing more can come. */
+  onLoadMore: (() => void) | null;
+  loadingMore: boolean;
+}) {
   const { t } = useTranslation();
-  const { acct, filter } = usePortalSearch();
+  const { acct } = usePortalSearch();
   const { setAcct } = usePortalNavActions();
   const listRef = useRef<HTMLDivElement>(null);
   // Session-scoped on purpose: "have I looked at this one" is about the sitting
   // an operator is in, not a preference worth outliving it.
   const [visited, setVisited] = useState<ReadonlySet<string>>(new Set());
-  const items = useMemo(
-    () => filterQueue(everything, filter ?? ""),
-    [everything, filter],
-  );
   const groups: Array<{ kind: string; items: AttentionItem[] }> = KIND_ORDER.map(
     (kind) => ({ kind, items: items.filter((i) => i.kind === kind) }),
   ).filter((g) => g.items.length > 0);
@@ -312,12 +307,6 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   const other = items.filter((i) => !known.has(i.kind));
   if (other.length > 0) groups.push({ kind: "other", items: other });
 
-  // The rendered order, flattened: what "the next case" means to someone
-  // working down the queue, and it must not be re-derived differently here.
-  const ordered = groups.flatMap((group) =>
-    groupIntoCases(group.items).flatMap((c) => c.items.map(itemKey)),
-  );
-
   const select = (key: string | null) => {
     if (key) setVisited((seen) => new Set(seen).add(key));
     setAcct(key);
@@ -325,15 +314,23 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
 
   // Closing the window puts the operator back on the row they opened, not at
   // the top of the page — the queue is worked in one pass.
+  //
+  // INVARIANT: after a frame, never in the closing handler itself. A decision
+  // closes this window from inside the same batch that prunes its row, so the
+  // doomed row is still in the document — looking for it there finds it, focuses
+  // it, and React then unmounts it, dropping focus to `body` and killing arrow
+  // navigation. One frame later the list has settled and the fallback can fire.
   const returnFocus = (key: string) => {
-    const row =
-      listRef.current?.querySelector<HTMLElement>(
-        `[data-queue-row="${CSS.escape(key)}"]`,
-      ) ??
-      // The row an operator just decided is pruned by the time the window
-      // closes — fall to the top of the list rather than to nowhere.
-      listRef.current?.querySelector<HTMLElement>("[data-queue-row]");
-    row?.focus();
+    requestAnimationFrame(() => {
+      const row =
+        listRef.current?.querySelector<HTMLElement>(
+          `[data-queue-row="${CSS.escape(key)}"]`,
+        ) ??
+        // The row an operator just decided is pruned by the time the window
+        // closes — fall to the top of the list rather than to nowhere.
+        listRef.current?.querySelector<HTMLElement>("[data-queue-row]");
+      row?.focus();
+    });
   };
 
   // The queue is a list, so it moves like one. Enter and Space open a row;
@@ -356,42 +353,52 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
   // has to answer even then, and the backlog reaching zero is exactly when a
   // colleague opens the link they were sent.
   return (
-    <div
-      ref={listRef}
-      onKeyDown={onArrow}
-      className="flex min-w-0 flex-col gap-4"
-    >
-      {everything.length > 0 ? <QueueFilter /> : null}
-      {/* A filter that matches nothing is not an emptied backlog. Celebrating
-          there would tell an operator the work is done because they mistyped. */}
-      {items.length === 0 && everything.length > 0 ? (
-        <Empty className="rounded-lg border">
-          <EmptyHeader>
-            <EmptyTitle>{t("identities.queue.no_matches")}</EmptyTitle>
-            <EmptyDescription>
-              {t("identities.queue.no_matches_description")}
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
-      {items.length === 0 && everything.length === 0 ? <AllResolved /> : null}
-      {groups.map((group) => (
-        <QueueGroup
-          key={group.kind}
-          kind={group.kind}
-          items={group.items}
-          selectedKey={acct}
-          visited={visited}
-          onSelect={(key) => select(key === acct ? null : key)}
-        />
-      ))}
-      {/* Fed from the unfiltered set: a link stays answerable even when the
-          reader's own filter hides the row it points at. */}
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {/* Blocks, not a flex column: inside a bounded scroller a flex child
+          shrinks to fit, and a group card is `overflow-hidden` — so every group
+          would render its heading over a clipped stump of its own rows. */}
+      <div
+        ref={listRef}
+        onKeyDown={onArrow}
+        className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto"
+      >
+        {/* The goal state is an empty queue with nothing left to ask for. With
+            a longer read still on offer the emptiness is this page's, not the
+            tenant's, and the notice above says so instead. */}
+        {items.length === 0 && !onLoadMore ? <AllResolved /> : null}
+        {groups.map((group) => (
+          <QueueGroup
+            key={group.kind}
+            kind={group.kind}
+            items={group.items}
+            selectedKey={acct}
+            visited={visited}
+            onSelect={(key) => select(key === acct ? null : key)}
+          />
+        ))}
+        {/* Deliberate rather than loaded on scroll, unlike the searches: every
+            press re-derives the tenant's whole queue, and the count it would
+            add is not on the wire to promise. */}
+        {onLoadMore ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {t(
+              loadingMore
+                ? "identities.queue.loading_more"
+                : "identities.queue.load_more",
+            )}
+          </Button>
+        ) : null}
+      </div>
+      <ScrollToEnds scroller={listRef} rows={items.length} />
       <CaseDialog
         acct={acct}
-        items={everything}
-        ordered={ordered}
-        onSelect={select}
+        items={items}
         onClose={() => {
           const opened = acct;
           setAcct(null);
@@ -401,60 +408,6 @@ function Queue({ items: everything }: { items: AttentionItem[] }) {
     </div>
   );
 }
-
-/**
- * Narrow the queue by anything visible on a row — an address, a source, a
- * candidate's name, a person id pasted back from a card.
- *
- * The query rides in the URL like every other portal state, so a narrowed
- * queue is shareable; it is written on a pause in typing rather than per
- * keystroke, and replaces rather than pushes, so Back leaves the surface
- * instead of walking the operator backwards through their own typing.
- */
-function QueueFilter() {
-  const { t } = useTranslation();
-  const { filter } = usePortalSearch();
-  const setSearch = useSetPortalSearch();
-  const [query, setQuery] = useState(filter ?? "");
-  const debounced = useDebouncedValue(query, FILTER_DEBOUNCE_MS);
-  // What this component last wrote to the URL. Distinguishes its own write
-  // landing (ignore) from an external change — Back, a pasted link — which
-  // must reach the input, or the box shows a filter the list stopped using.
-  const lastWritten = useRef(filter ?? "");
-
-  useEffect(() => {
-    lastWritten.current = debounced.trim();
-    setSearch({ filter: debounced.trim() || undefined }, { replace: true });
-  }, [debounced, setSearch]);
-
-  useEffect(() => {
-    const external = filter ?? "";
-    if (external !== lastWritten.current) {
-      lastWritten.current = external;
-      setQuery(external);
-    }
-  }, [filter]);
-
-  return (
-    <div className="relative">
-      <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <Input
-        type="search"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={t("identities.queue.filter_placeholder")}
-        aria-label={t("identities.queue.filter_placeholder")}
-        className="ps-9"
-      />
-    </div>
-  );
-}
-
-
-/** Cases rendered before the group asks to be expanded further. */
-const CASE_PAGE = 10;
-
-const FILTER_DEBOUNCE_MS = 250;
 
 function QueueGroup({
   kind,
@@ -470,10 +423,9 @@ function QueueGroup({
   onSelect: (key: string) => void;
 }) {
   const { t } = useTranslation();
-  const [shownCases, setShownCases] = useState(CASE_PAGE);
+  // Every case the group holds, at once: the whole queue is already on the
+  // client, and a reader who does not want this group collapses its heading.
   const cases = useMemo(() => groupIntoCases(items), [items]);
-  const visible = cases.slice(0, shownCases);
-  const hidden = cases.length - visible.length;
 
   return (
     <Card className="overflow-hidden">
@@ -502,7 +454,13 @@ function QueueGroup({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <CardContent className="flex flex-col gap-2 p-2 pt-0">
-            {visible.map((queueCase) => (
+            {/* One decision for the whole group, above the cases it covers: a
+                roster sync adds people in batches, and confirming them one
+                window at a time is the same answer given a hundred times. */}
+            {groupIsConfirmable(kind, items) ? (
+              <ConfirmGroupButton items={items} className="self-start" />
+            ) : null}
+            {cases.map((queueCase) => (
               <CaseBlock
                 key={queueCase.key}
                 queueCase={queueCase}
@@ -511,17 +469,6 @@ function QueueGroup({
                 onSelect={onSelect}
               />
             ))}
-            {hidden > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="self-start"
-                onClick={() => setShownCases((n) => n + CASE_PAGE)}
-              >
-                {t("identities.queue.show_more", { count: hidden })}
-              </Button>
-            ) : null}
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
@@ -582,6 +529,11 @@ function CaseBlock({
 }) {
   const { t } = useTranslation();
   const disputed = queueCase.candidates.length > 0;
+  // Who the operator chose to keep. A merge needs somebody to absorb, so a case
+  // naming one person offers none — the evidence disagrees with a binding there,
+  // which is a question about the account, not about two people being one.
+  const [survivor, setSurvivor] = useState<PersonSummary | null>(null);
+  const mergeable = queueCase.candidates.length >= 2;
   return (
     <div className={cn(disputed && "rounded-lg border bg-muted/20 p-2")}>
       {disputed ? (
@@ -596,9 +548,39 @@ function CaseBlock({
             })}
           </div>
           {queueCase.candidates.map((candidate) => (
-            <PersonCell key={candidate.person_id} person={candidate} />
+            <div key={candidate.person_id} className="flex items-center gap-2">
+              <PersonCell person={candidate} className="min-w-0 flex-1" />
+              {/* The row's own button, so the choice IS the direction: this
+                  person is the one that survives, and the rest of the case
+                  merges into them. */}
+              {mergeable ? (
+                <div className="flex shrink-0 flex-col items-end gap-0.5">
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setSurvivor(candidate)}
+                  >
+                    {t("identities.actions.merge_into_person")}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {t("identities.queue.absorb_all")}
+                  </span>
+                </div>
+              ) : null}
+            </div>
           ))}
         </div>
+      ) : null}
+
+      {survivor ? (
+        <MergeCaseDialog
+          survivor={survivor}
+          absorbed={queueCase.candidates.filter(
+            (c) => c.person_id !== survivor.person_id,
+          )}
+          onClose={() => setSurvivor(null)}
+        />
       ) : null}
       <div className="flex flex-col gap-1">
         {queueCase.items.map((item) => {
@@ -642,11 +624,10 @@ function CaseBlock({
               tabIndex={0}
               data-queue-row={key}
               onClick={(event) => {
-                if (opensTheCase(event)) onSelect(key);
+                if (activatesRow(event)) onSelect(key);
               }}
               onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                if (event.target !== event.currentTarget) return;
+                if (!activatesRowByKey(event)) return;
                 event.preventDefault();
                 onSelect(key);
               }}

@@ -1,3 +1,5 @@
+const usageMocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
+
 import { useEffect } from "react";
 
 import { render, screen } from "@testing-library/react";
@@ -64,6 +66,11 @@ vi.mock("@/components/widgets/metric-views/metric-timeseries-table", () => ({
     return <div>table presentation</div>;
   },
 }));
+
+vi.mock("@/telemetry", async () => {
+  const actual = await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
+  return { ...actual, recordUsageEvent: usageMocks.recordUsageEvent };
+});
 
 vi.mock("@/components/widgets/metric-views/metric-timeseries-csv", () => ({
   downloadMetricTimeseriesCsv: mocks.csv,
@@ -263,6 +270,33 @@ describe("MetricTimeseriesView", () => {
     expect(mocks.csv.mock.calls[0]?.[0]).toBe("exp");
   });
 
+  it("reports which format a reader took the data out in", async () => {
+    const user = userEvent.setup();
+    usageMocks.recordUsageEvent.mockClear();
+    render(
+      <MetricTimeseriesView
+        id="exp"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits"]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(await screen.findByText("Excel (.xlsx)"));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith(
+      "export",
+      "timeseries:xlsx",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await user.click(await screen.findByText("CSV (.csv)"));
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith(
+      "export",
+      "timeseries:csv",
+    );
+  });
+
   it("switches the charted metric through the metric select", async () => {
     const user = userEvent.setup();
     render(
@@ -366,6 +400,24 @@ describe("MetricTimeseriesView", () => {
     expect(screen.queryByLabelText("Metric")).not.toBeInTheDocument();
   });
 
+  it("heads a grouped table with the grouping's curated wording, not its key", async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricTimeseriesView
+        id="by-scope"
+        entityId={ENTITY_ID}
+        range={RANGE}
+        metricKeys={["git.commits", "git.lines_added"]}
+        groupBy={{ default: "branch_scope" }}
+      />
+    );
+    await user.click(screen.getByRole("button", { name: "Table view" }));
+    const heading = screen.getByRole("heading", {
+      name: /Default branch vs other/,
+    });
+    expect(heading).not.toHaveTextContent("branch_scope");
+  });
+
   it("uses visible group controls and supports selecting multiple filters", async () => {
     const user = userEvent.setup();
     const options = timeseriesByKey();
@@ -460,9 +512,10 @@ describe("MetricTimeseriesView", () => {
     mocks.evidenceColumn = "total";
     const openEvidence = vi.fn();
     const openEvidenceTargets = vi.fn();
+    const openEvidencePeople = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence, openEvidenceTargets }}
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
       >
         <MetricTimeseriesView
           id="evidence"
@@ -513,7 +566,11 @@ describe("MetricTimeseriesView", () => {
     const openEvidenceTargets = vi.fn();
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
+        value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
       >
         <MetricTimeseriesView
           id="point-evidence"

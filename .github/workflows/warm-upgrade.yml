@@ -1,0 +1,205 @@
+name: warm-upgrade
+
+# Validates the one contract the fresh-install lanes cannot see: deploying
+# this branch onto an installation that ALREADY holds data.
+#
+# On a fresh install the committed connectors-ddl snapshot carries the new
+# relation shapes, so a gold model that references a new silver/staging
+# column always builds. On a warm installation the relations already exist,
+# `CREATE TABLE IF NOT EXISTS` never widens them, and the deploy hook builds
+# only `tag:gold` — so the same gold model fails the deploy with
+# UNKNOWN_IDENTIFIER unless the change also ships a numbered migration
+# (silver.class_*) or a guarded heal (staging.*): the "Warehouse contract
+# changes" rule in AGENTS.md, enforced here instead of at deploy time.
+#
+# The simulation runs the base commit's own deploy hook first (placeholders,
+# migrations, heals, base gold build — what an existing installation's last
+# deploy left behind), then this branch's apply-ch-migrations.sh end to end,
+# exactly like the Helm clickhouse-migrate hook.
+#
+# Built to be a required check: no `on: paths` filter — the `changes` job
+# decides relevance from the merge-base diff, the simulation runs only when
+# the warehouse path moved, and the `warm-upgrade-gate` job always reports
+# (green when there was nothing to prove, red when relevance is unknown or
+# the simulation failed). `merge_group` is a trigger for the same reason.
+#
+# The push run is not redundant: a PR is validated against its own base, so
+# two PRs green apart can still leave main uncovered, and only a run on the
+# merged tree — upgrading from the commit just before it — sees that.
+#
+# Needs no secrets; fork PRs validate like any other. The trigger is
+# `pull_request`, never `pull_request_target`.
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # PRs supersede per ref — cancelling an outdated run is free. Every main
+  # push and merge-group entry gets its OWN group: a shared group would let a
+  # newer queued run replace an older one, and the replaced A→B transition
+  # would never be validated — run B→C installs B's own fresh snapshot as the
+  # base, so B's missing migration is exactly what it cannot see.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Relevance from the merge-base diff, not `on: paths` — a required check
+  # must report on every PR, including ones that never touch the warehouse.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff needs both endpoints; the default shallow fetch has
+          # neither the base nor enough history to reach a merge base.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # No usable base (a manual dispatch, a forced or brand-new ref):
+          # assume relevant rather than skipping a required gate on a guess.
+          if [ -z "${BASE:-}" ] || [ "${BASE}" = "0000000000000000000000000000000000000000" ] \
+              || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no usable base sha — running"
+            exit 0
+          fi
+          # Diff from the MERGE BASE, not the base tip: a two-dot diff against
+          # the tip attributes everything that landed on main since the fork
+          # point to this PR, and the gate would never skip anything.
+          base_point="$(git merge-base "$BASE" "$HEAD" 2>/dev/null || true)"
+          if [ -z "$base_point" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "no merge base between $BASE and $HEAD — running"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base_point" "$HEAD")"
+          echo "$changed" | awk '{ print "  " $0 }'
+          if echo "$changed" | grep -qE '^(src/ingestion/(gold|silver|connectors|dbt|scripts)/|\.github/workflows/warm-upgrade\.yml|\.github/workflows/scripts/(warm-upgrade-sim|start-clickhouse)\.sh)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "nothing on the warehouse path changed"
+          fi
+
+  warm-upgrade:
+    name: deploy onto a warm installation
+    needs: changes
+    if: ${{ needs.changes.outputs.relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLICKHOUSE_CONTAINER: warm-upgrade-clickhouse
+      CLICKHOUSE_USER: insight
+      CLICKHOUSE_PASSWORD: insight
+      CLICKHOUSE_DATABASE: insight
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+          # The sim replays the base commit's tree as the installed release,
+          # so that commit's objects must be present.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Same major as the toolbox image that runs the real deploy hook.
+          # The sim builds one dbt venv per phase, pinned from that phase's
+          # own pins.env.
+          python-version: "3.12"
+
+      - name: Start an empty ClickHouse
+        run: |
+          set -euo pipefail
+          # pins.env is plain KEY=VALUE, so it doubles as a $GITHUB_ENV fragment.
+          cat src/ingestion/scripts/bootstrap-db/pins.env >> "$GITHUB_ENV"
+          source src/ingestion/scripts/bootstrap-db/pins.env
+          echo "CLICKHOUSE_URL=http://127.0.0.1:8123" >> "$GITHUB_ENV"
+          CLICKHOUSE_SERVER_IMAGE="$CLICKHOUSE_SERVER_IMAGE" \
+            .github/workflows/scripts/start-clickhouse.sh "${CLICKHOUSE_CONTAINER}"
+
+      - name: Resolve the installed-release commit
+        run: |
+          set -euo pipefail
+          # PR / merge group: the base the branch merges onto — the release a
+          # warm installation would be on when this change deploys.
+          # Push to main: the commit just before this one; after a force-push
+          # or on ref creation `event.before` is unusable, so fall back to
+          # the first parent of the pushed commit.
+          if [ -n "${PR_OR_MQ_BASE_SHA}" ]; then
+            echo "BASE_SHA=${PR_OR_MQ_BASE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ] \
+              && [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            echo "BASE_SHA=${PUSH_BEFORE_SHA}" >> "$GITHUB_ENV"
+          elif [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "BASE_SHA=$(git rev-parse HEAD^)" >> "$GITHUB_ENV"
+          else
+            echo "BASE_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+          fi
+        env:
+          PR_OR_MQ_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+
+      - name: Install the base release, then deploy this tree onto it
+        run: .github/workflows/scripts/warm-upgrade-sim.sh
+
+      - name: ClickHouse logs on failure
+        if: failure()
+        run: docker logs --tail 200 "${CLICKHOUSE_CONTAINER}" || true
+
+  warm-upgrade-gate:
+    # The required check the ruleset should name — always reports, so a
+    # PR that never touches the warehouse is not blocked and a skipped
+    # simulation cannot green a run whose relevance is unknown.
+    name: warm-upgrade gate
+    needs:
+      - changes
+      - warm-upgrade
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the simulation to have succeeded when relevant
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          SIM: ${{ needs.warm-upgrade.result }}
+        run: |
+          set -euo pipefail
+          echo "changes=$CHANGES relevant=$RELEVANT sim=$SIM"
+
+          # Fail closed. A `changes` job that did not succeed leaves
+          # `relevant` empty, which would otherwise read as "irrelevant" and
+          # green a required check that proved nothing.
+          if [ "$CHANGES" != "success" ]; then
+            echo "::error::the changes job did not succeed ($CHANGES) — relevance is unknown, so the warm upgrade is unproven."
+            exit 1
+          fi
+
+          if [ "$RELEVANT" != "true" ]; then
+            echo "nothing on the warehouse path changed — nothing to prove."
+            exit 0
+          fi
+
+          if [ "$SIM" != "success" ]; then
+            echo "::error::the warm-upgrade simulation did not succeed ($SIM)."
+            exit 1
+          fi
+          echo "warm upgrade proven."

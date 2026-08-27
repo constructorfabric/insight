@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MetricGroupCard } from "@/components/widgets/metric-views/metric-group-card";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import type { MetricResult } from "@/api/metric-results-client";
 
@@ -181,6 +182,56 @@ describe("MetricGroupCard", () => {
     expect(screen.getByText("1 of 2 behind peers")).toBeInTheDocument();
   });
 
+  it("shows a failed metric's message alongside the metrics that computed", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          {
+            ...aiMetric("ai.active_days", null),
+            views: [buildMetricErrorView({ message: "This metric could not be computed." })],
+          },
+          aiMetric("ai.cost", 3),
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("3 days")).toBeInTheDocument();
+    expect(
+      screen.getByText("This metric could not be computed."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the error message, not the generic empty state, when every metric failed", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          {
+            ...aiMetric("ai.active_days", null),
+            views: [buildMetricErrorView()],
+          },
+          {
+            ...aiMetric("ai.cost", null),
+            views: [buildMetricErrorView()],
+          },
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    // One note per distinct message — both metrics failed for the same cause.
+    expect(
+      screen.getByText(/could not be computed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No metrics with data for this period."),
+    ).not.toBeInTheDocument();
+    // Nothing to drill into — the card stays non-interactive.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("owns its error state with retry", () => {
     const refetch = vi.fn();
     render(
@@ -196,5 +247,76 @@ describe("MetricGroupCard", () => {
     ).toBeInTheDocument();
     screen.getByRole("button").click();
     expect(refetch).toHaveBeenCalled();
+  });
+
+  it("counts a contained metric once, so a pair cannot move the stripe", () => {
+    // The stripe turns red on a pattern — two bottoms and more than a quarter
+    // of the rankable set. A total and its default-branch part move together,
+    // so counting both would manufacture that pattern out of one weak fact.
+    const def: MetricGroup = {
+      ...DEF,
+      id: "git_output",
+      title: "Git output",
+      collection: {
+        metrics: [
+          { key: "git.commits", views: [{ view: "period" }, { view: "peer" }] },
+          {
+            key: "git.default_branch_commits",
+            views: [{ view: "period" }, { view: "peer" }],
+          },
+        ],
+      },
+      card: { preview: ["git.commits", "git.default_branch_commits"] },
+    };
+
+    render(
+      <MetricGroupCard
+        def={def}
+        entityId="me@x.com"
+        data={result([
+          aiMetric("git.commits", 1),
+          aiMetric("git.default_branch_commits", 1),
+        ])}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    // Two bottom-quartile readings of one fact: one row behind peers, not two.
+    expect(screen.getByText("1 of 1 behind peers")).toBeInTheDocument();
+  });
+
+  it("keeps a total's finding when its part has no comparison", () => {
+    // The part reached the response and says nothing — no value for this
+    // person. Letting it displace the total would delete the only real reading
+    // and leave the card claiming there is nothing to compare.
+    const def: MetricGroup = {
+      ...DEF,
+      id: "git_output",
+      title: "Git output",
+      collection: {
+        metrics: [
+          { key: "git.commits", views: [{ view: "period" }, { view: "peer" }] },
+          {
+            key: "git.default_branch_commits",
+            views: [{ view: "period" }, { view: "peer" }],
+          },
+        ],
+      },
+      card: { preview: ["git.commits"] },
+    };
+
+    render(
+      <MetricGroupCard
+        def={def}
+        entityId="me@x.com"
+        data={result([
+          aiMetric("git.commits", 1),
+          aiMetric("git.default_branch_commits", null),
+        ])}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("1 of 1 behind peers")).toBeInTheDocument();
   });
 });

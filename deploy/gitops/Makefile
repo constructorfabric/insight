@@ -167,6 +167,13 @@ ENVOY_GATEWAY_VERSION    ?= 1.8.3
 CERT_MANAGER_NAMESPACE   ?= $(shell yq -r '.namespaces.certManager   // "cert-manager"' $(INVENTORY) 2>/dev/null)
 CERT_MANAGER_RELEASE     ?= cert-manager
 CERT_MANAGER_VERSION     ?= 1.20.2
+# The gateway-shim needs the Gateway API CRDs already present to start, so an
+# env whose cluster has none must switch it off or the controller never comes
+# up. Defaults on — an env that terminates TLS at a Gateway wants the shim.
+# Which component ships those CRDs, and in what order: test-stand/INFRA.md.
+# Defaulted in make rather than yq's `//`, which falls through on an explicit
+# `false` as readily as on a missing key and would swallow every override.
+CERT_MANAGER_GATEWAY_SHIM ?= $(if $(filter false,$(shell yq -r '.bootstrap.certManagerGatewayShim' $(INVENTORY) 2>/dev/null)),false,true)
 
 SEALED_SECRETS_NAMESPACE ?= $(shell yq -r '.namespaces.sealedSecrets // "kube-system"' $(INVENTORY) 2>/dev/null)
 SEALED_SECRETS_RELEASE   ?= sealed-secrets-controller
@@ -409,7 +416,8 @@ keycloak-realm: kube-ctx values-present
 	echo "$(C_GRN)→$(C_RST) generating Keycloak realm (dev-lead $$DEV_EMAIL; redirects $$REDIRECT, $$LB_REDIRECT)"; \
 	TENANT_ID="$$(yq -r '.global.tenantDefaultId // ""' $(VALUES))"; \
 	[ -n "$$TENANT_ID" ] || { echo "$(C_RED)global.tenantDefaultId is required to generate the realm$(C_RST)"; exit 1; }; \
-	TENANT_DEFAULT_ID="$$TENANT_ID" uv run --project "$$SEED_DIR" insight-seed-realm --dev-email "$$DEV_EMAIL" \
+	[ -z "$$SEED_ORG_HEADCOUNT" ] || echo "$(C_GRN)→$(C_RST) realm sized for SEED_ORG_HEADCOUNT=$$SEED_ORG_HEADCOUNT people"; \
+	SEED_ORG_HEADCOUNT="$$SEED_ORG_HEADCOUNT" TENANT_DEFAULT_ID="$$TENANT_ID" uv run --project "$$SEED_DIR" insight-seed-realm --dev-email "$$DEV_EMAIL" \
 	  --authenticator-redirect "$$REDIRECT" \
 	  --authenticator-redirect "$$LB_REDIRECT" \
 	  --authenticator-secret "$$AUTH_SECRET" \
@@ -891,6 +899,7 @@ verify-ci-credential: vpn-up kube-ctx
 	check yes "create jobs in $(NS_APP) (seed stage renders a Job)"          create jobs -n $(NS_APP); \
 	check yes "get pods/log in $(NS_APP) (seed + diagnostics)"               get pods/log -n $(NS_APP); \
 	check yes "create secrets in $(NS_APP) (helm release storage)"          create secrets -n $(NS_APP); \
+	check yes "create configmaps in $(NS_APP) (seed-stand.sh publishes the manifest)" create configmaps -n $(NS_APP); \
 	check yes "update deployments in $(NS_APP) (helm upgrade, rollout)"     update deployments.apps -n $(NS_APP); \
 	check yes "create Roles in $(NS_APP) (chart renders its own RBAC)"      create roles.rbac.authorization.k8s.io -n $(NS_APP); \
 	check yes "create WorkflowTemplates in $(NS_APP)"                        create workflowtemplates.argoproj.io -n $(NS_APP); \
@@ -1121,14 +1130,22 @@ bootstrap-cert-manager: vpn-up kube-ctx
 		--namespace $(CERT_MANAGER_NAMESPACE) --create-namespace \
 		--version $(CERT_MANAGER_VERSION) $(HELM_EXTRA_FLAGS) \
 		--set crds.enabled=true \
-		--set config.enableGatewayAPI=true \
+		--set config.enableGatewayAPI=$(CERT_MANAGER_GATEWAY_SHIM) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
 	@kubectl --context $(KUBE_CTX) -n $(CERT_MANAGER_NAMESPACE) \
 		rollout status deploy/$(CERT_MANAGER_RELEASE)-webhook --timeout=60s
+	@# INVARIANT: bootstrap returns only once every issuer this file defines is
+	@# Ready — a CA issuer is not usable until its root Certificate is minted,
+	@# and a release whose leaf references one too early stalls on a missing
+	@# Secret until helm's atomic timeout instead of failing here by name.
 	@if [ -f $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml ]; then \
 		echo "applying $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml"; \
 		kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml; \
+		for issuer in $$(yq -N -r 'select(.kind == "ClusterIssuer") | .metadata.name' $(BOOTSTRAP_DIR)/selfsigned-issuer.yaml); do \
+			kubectl --context $(KUBE_CTX) wait clusterissuer/$$issuer \
+				--for=condition=Ready --timeout=120s; \
+		done; \
 	fi
 
 .PHONY: bootstrap-sealed-secrets

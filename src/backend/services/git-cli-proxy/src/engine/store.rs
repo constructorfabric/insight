@@ -29,6 +29,7 @@ const PURGE_ESCALATION_AFTER: u32 = 3;
 pub enum RefreshFailure {
     Auth,
     NotFound,
+    OriginUnavailable,
     PromisorRefused,
     AdmissionRejected,
     Throttled,
@@ -42,6 +43,7 @@ impl From<&GitError> for RefreshFailure {
         match error {
             GitError::AuthRejected => Self::Auth,
             GitError::NotFound => Self::NotFound,
+            GitError::OriginUnavailable => Self::OriginUnavailable,
             GitError::PromisorRefused => Self::PromisorRefused,
             GitError::AdmissionRejected | GitError::TransientlyOverCap => Self::AdmissionRejected,
             GitError::Throttled => Self::Throttled,
@@ -61,6 +63,8 @@ pub enum StoreError {
     AuthRejected,
     #[error("repository not found at origin")]
     NotFound,
+    #[error("origin declines to serve the repository")]
+    OriginUnavailable,
     #[error("origin refuses to serve explicitly requested objects")]
     PromisorRefused,
     #[error("repository is being prepared; retry in {}s", retry_after.as_secs())]
@@ -82,6 +86,7 @@ impl From<RefreshFailure> for StoreError {
         match failure {
             RefreshFailure::Auth => Self::AuthRejected,
             RefreshFailure::NotFound => Self::NotFound,
+            RefreshFailure::OriginUnavailable => Self::OriginUnavailable,
             RefreshFailure::PromisorRefused => Self::PromisorRefused,
             // §3.6: nothing could be freed, so the caller is asked to come
             // back rather than being served a half-prepared cache.
@@ -100,6 +105,16 @@ impl From<GitError> for StoreError {
     fn from(error: GitError) -> Self {
         RefreshFailure::from(&error).into()
     }
+}
+
+/// What a reclaim-path blob purge did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlobPurge {
+    Purged,
+    /// Nothing to purge, or the entry has readers right now.
+    Skipped,
+    /// The heavy permit is busy with a clone or fetch.
+    PermitBusy,
 }
 
 /// How a caller wants the snapshot resolved.
@@ -1327,33 +1342,27 @@ impl RepoStore {
 
         for step in plan {
             match step {
+                // A purge that cannot run or cannot finish must not leave the
+                // space unreclaimed: eviction frees it with no git involved.
                 Reclaim::PurgeBlobs { dir_name, frees } => {
                     match self.purge_blobs_by_dir(&dir_name).await {
-                        Ok(()) => {
+                        Ok(BlobPurge::Purged) => {
                             metrics::record_eviction(EvictionTier::Blob);
                             tracing::info!(dir = %dir_name, freed_bytes = frees, "purged blobs");
                         }
-                        Err(e) => tracing::warn!(error = %e, dir = %dir_name, "blob purge failed"),
+                        Ok(BlobPurge::Skipped) => {}
+                        Ok(BlobPurge::PermitBusy) => {
+                            tracing::info!(dir = %dir_name, "blob purge would wait for the heavy permit; evicting instead");
+                            self.evict_dir(&dir_name, frees).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, dir = %dir_name, "blob purge failed; evicting instead");
+                            self.evict_dir(&dir_name, frees).await;
+                        }
                     }
                 }
                 Reclaim::Evict { dir_name, frees } => {
-                    let path = self.data_dir.join("repos").join(&dir_name);
-                    let lock = self.lock_for_dir(&dir_name).await;
-                    // INVARIANT: only a writer may delete an entry — a reader
-                    // must never observe a partially deleted repository.
-                    let Ok(_write) = lock.try_write() else {
-                        continue;
-                    };
-                    match remove_tree_off_reactor(path.clone()).await {
-                        Ok(()) => {
-                            // A re-clone must not inherit the evicted entry's
-                            // drift throttle or escalation losses.
-                            self.drift.lock().await.remove(&dir_name);
-                            metrics::record_eviction(EvictionTier::Full);
-                            tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
-                        }
-                        Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
-                    }
+                    self.evict_dir(&dir_name, frees).await;
                 }
             }
         }
@@ -1376,6 +1385,28 @@ impl RepoStore {
             return None;
         }
         Some(self.reserve(want))
+    }
+
+    /// Evict one idle entry. A refused write lock means a reader or a writer
+    /// holds it — the entry is skipped, never deleted under a reader.
+    async fn evict_dir(&self, dir_name: &str, frees: u64) {
+        let path = self.data_dir.join("repos").join(dir_name);
+        let lock = self.lock_for_dir(dir_name).await;
+        // INVARIANT: only a writer may delete an entry — a reader must never
+        // observe a partially deleted repository.
+        let Ok(_write) = lock.try_write() else {
+            return;
+        };
+        match remove_tree_off_reactor(path).await {
+            Ok(()) => {
+                // A re-clone must not inherit the evicted entry's drift
+                // throttle or escalation losses.
+                self.drift.lock().await.remove(dir_name);
+                metrics::record_eviction(EvictionTier::Full);
+                tracing::info!(dir = %dir_name, freed_bytes = frees, "evicted repo");
+            }
+            Err(e) => tracing::warn!(error = %e, dir = %dir_name, "eviction failed"),
+        }
     }
 
     /// The most this operation can still add to the entry: everything between
@@ -1556,26 +1587,32 @@ impl RepoStore {
         entries.entry(dir_name.to_owned()).or_default().clone()
     }
 
-    pub(crate) async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<(), StoreError> {
+    pub(crate) async fn purge_blobs_by_dir(&self, dir_name: &str) -> Result<BlobPurge, StoreError> {
         let entry_dir = self.data_dir.join("repos").join(dir_name);
         if !entry_dir.join("repo.git").is_dir() {
-            return Ok(());
+            return Ok(BlobPurge::Skipped);
         }
 
         // A promoted entry has no promisor remote behind it: re-marking its
         // packs would make git tolerate blobs nothing can serve again.
         if RepoMeta::load(&entry_dir).is_none_or(|meta| meta.full_clone) {
-            return Ok(());
+            return Ok(BlobPurge::Skipped);
         }
 
         let lock = self.lock_for_dir(dir_name).await;
         // INVARIANT: repack DELETES packs — it must run with zero readers.
         let Ok(_write) = lock.try_write() else {
-            return Ok(());
+            return Ok(BlobPurge::Skipped);
         };
 
-        let permit = self.heavy_permit().await;
-        self.repack_blobless(&entry_dir, &permit).await.map(|_| ())
+        // Never wait: the only caller holds the admission lock, and a permit
+        // held by a clone would stall every admission behind that clone.
+        let Ok(permit) = self.heavy.try_acquire() else {
+            return Ok(BlobPurge::PermitBusy);
+        };
+        self.repack_blobless(&entry_dir, &permit)
+            .await
+            .map(|_| BlobPurge::Purged)
     }
 
     /// Current cache usage, as accounted per entry.
@@ -3215,6 +3252,24 @@ pub(crate) mod tests {
             guard.git_dir().is_dir(),
             "a repository with a live reader must never be deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn a_reclaim_purge_never_waits_for_the_heavy_permit() {
+        let f = fixture("permit-busy-purge");
+        let k = key(&f);
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        drop(guard);
+
+        // Clones or fetches elsewhere hold every heavy permit.
+        let Ok(_held) = f.store.heavy.try_acquire_many(2) else {
+            panic!("the fixture's heavy permits must be free")
+        };
+
+        match f.store.purge_blobs_by_dir(&k.dir_name()).await {
+            Ok(BlobPurge::PermitBusy) => {}
+            other => panic!("a busy permit must be reported, not waited on: {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -14,7 +14,11 @@
  */
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
-import { getMe, type MeResponse } from "@/api/identity-client";
+import {
+  getMe,
+  type MeResponse,
+  type VisibilityPolicy,
+} from "@/api/identity-client";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 
@@ -79,4 +83,28 @@ export function useIsAdmin(): AdminGate {
     isError: me.isError,
     retry: () => void me.refetch(),
   };
+}
+
+export interface VisibilityPolicyState {
+  policy: VisibilityPolicy;
+  /** The organisation has no reporting lines to derive sight from. */
+  isFlat: boolean;
+  isPending: boolean;
+}
+
+/**
+ * Which visibility rule this deployment runs.
+ *
+ * A leaf IC and a member of a hierarchy-less organisation are both served an
+ * empty `subordinates`, so the shell cannot tell them apart by looking at
+ * the tree — it asks here instead.
+ *
+ * Unknown reads as `org_chart`: pending, errored, and an older service that
+ * omits the field all keep the rail as narrow as it is today. Widening it on a
+ * failed check would open org zones to a viewer whose reach nobody confirmed.
+ */
+export function useVisibilityPolicy(): VisibilityPolicyState {
+  const me = useMe();
+  const policy: VisibilityPolicy = me.data?.visibility_policy ?? "org_chart";
+  return { policy, isFlat: policy === "flat", isPending: me.isPending };
 }

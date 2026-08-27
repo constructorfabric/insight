@@ -3,12 +3,13 @@
 GitHub-specific hazards under test: secondary rate limits arriving as 403
 (must retry, not skip), per-repository 403/404 skipping on repo-scoped
 streams, the issues endpoint returning PRs (filtered out), GraphQL errors
-arriving as HTTP 200 (must FAIL loudly), the proxy 429 retry loop, and the
-literal-"None" guard.
+arriving as HTTP 200 (a rate limit must retry, a query error must FAIL
+loudly), the proxy 429 retry loop, and the literal-"None" guard.
 
 Coverage matrix rows: full_refresh_single_page, incremental_state,
 tenant_source_stamping, schema_conformance, substream_partition,
-record_filter, error_retry (403-as-throttle, proxy 429), error_ignore (404),
+record_filter, error_retry (403-as-throttle, GraphQL rate limit in a 200,
+proxy 429), error_ignore (404),
 transformations (None-guard).
 """
 
@@ -17,16 +18,9 @@ from __future__ import annotations
 import json
 
 import freezegun
+import pytest
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
-
-from connector_tests import (
-    ANY_QUERY_PARAMS,
-    HttpMocker,
-    HttpRequest,
-    HttpResponse,
-    assert_records_conform,
-    read_stream,
-)
+from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
 
 _CONNECTOR = "git/github"
@@ -121,7 +115,12 @@ def test_secondary_rate_limit_403_retries_then_succeeds(http_mocker: HttpMocker)
             HttpResponse(
                 body=json.dumps({"message": "You have exceeded a secondary rate limit."}),
                 status_code=403,
-                headers={"Retry-After": "0"},
+                # A real secondary-limit 403 still reports hourly budget left.
+                # Without X-RateLimit-Remaining the api_budget layer reads a
+                # ratelimit-hit status as budget 0 and, with no reset header,
+                # sleeps out the rest of the fixed one-hour window — which
+                # hangs this test for an hour instead of retrying instantly.
+                headers={"Retry-After": "0", "X-RateLimit-Remaining": "4999"},
             ),
             _repos_page(),
         ],
@@ -252,11 +251,18 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
     def _pr(num: int, updated: str) -> dict:
         return {
-            "id": 900 + num, "number": num, "state": "open", "draft": False,
-            "title": "t", "body": "b", "user": {"login": "a"},
-            "head": {"ref": "f", "sha": "e" * 40}, "base": {"ref": "main"},
+            "id": 900 + num,
+            "number": num,
+            "state": "open",
+            "draft": False,
+            "title": "t",
+            "body": "b",
+            "user": {"login": "a"},
+            "head": {"ref": "f", "sha": "e" * 40},
+            "base": {"ref": "main"},
             "author_association": "MEMBER",
-            "created_at": "2019-01-01T00:00:00Z", "updated_at": updated,
+            "created_at": "2019-01-01T00:00:00Z",
+            "updated_at": updated,
         }
 
     http_mocker.get(
@@ -277,9 +283,7 @@ def test_data_feed_stops_at_start_date_but_boundary_page_tail_emits(http_mocker:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_pull_request_commits_carry_the_commit_email_and_its_account(
-    http_mocker: HttpMocker,
-) -> None:
+def test_pull_request_commits_carry_the_commit_email_and_its_account(http_mocker: HttpMocker) -> None:
     """A commit's e-mail and the GitHub account it belongs to appear together
     nowhere else, so both survive alongside the membership edge and the commit's
     own metadata — the proxy cannot see a fork's head commits at all."""
@@ -319,11 +323,7 @@ def test_pull_request_commits_carry_the_commit_email_and_its_account(
                         "node_id": "C_1",
                         "commit": {
                             "message": "feat: x",
-                            "author": {
-                                "name": "Alice",
-                                "email": "alice@example.com",
-                                "date": "2026-06-11T09:00:00Z",
-                            },
+                            "author": {"name": "Alice", "email": "alice@example.com", "date": "2026-06-11T09:00:00Z"},
                             "committer": {
                                 "name": "Alice",
                                 "email": "1234+alice@users.noreply.github.com",
@@ -397,11 +397,7 @@ def test_pull_request_diff_stats_come_from_the_list_node(http_mocker: HttpMocker
                                         "additions": 120,
                                         "deletions": 7,
                                         "changedFiles": 3,
-                                        "author": {
-                                            "login": "alice",
-                                            "databaseId": 4242,
-                                            "email": "alice@example.com",
-                                        },
+                                        "author": {"login": "alice", "databaseId": 4242, "email": "alice@example.com"},
                                         "mergedBy": {"login": "bob", "databaseId": 77},
                                         "reviewDecision": "APPROVED",
                                         "totalCommentsCount": 5,
@@ -496,15 +492,11 @@ def test_review_comments_carry_path_and_line(http_mocker: HttpMocker) -> None:
 
 
 def _pr_timeline_body(cursor: str | None = None) -> dict:
-    return _graphql_body(
-        "pull_request_timeline_events", {"owner": "acme", "name": "app", "number": 31}, cursor
-    )
+    return _graphql_body("pull_request_timeline_events", {"owner": "acme", "name": "app", "number": 31}, cursor)
 
 
 def _issue_timeline_body(cursor: str | None = None) -> dict:
-    return _graphql_body(
-        "issue_timeline_events", {"owner": "acme", "name": "app", "number": 7}, cursor
-    )
+    return _graphql_body("issue_timeline_events", {"owner": "acme", "name": "app", "number": 7}, cursor)
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -659,7 +651,7 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
                                             "id": "IF_1",
                                             "createdAt": "2026-06-12T00:00:00Z",
                                             "actor": {"login": "alice"},
-                                            "issueField": {"name": "Estimate"},
+                                            "issueField": {"id": "IFN_1", "name": "Estimate"},
                                             "previousValue": "3",
                                             "newValue": "5",
                                         },
@@ -668,8 +660,8 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
                                             "id": "IT_1",
                                             "createdAt": "2026-06-13T00:00:00Z",
                                             "actor": {"login": "alice"},
-                                            "issueType": {"name": "Bug"},
-                                            "prevIssueType": {"name": "Task"},
+                                            "issueType": {"id": "IT_bug", "name": "Bug"},
+                                            "prevIssueType": {"id": "IT_task", "name": "Task"},
                                         },
                                     ],
                                 }
@@ -692,6 +684,10 @@ def test_issue_timeline_carries_board_and_field_changes(http_mocker: HttpMocker)
     assert (field["field_name"], field["prev_value"], field["new_value"]) == ("Estimate", "3", "5")
     kind = by_type["IssueTypeChangedEvent"]
     assert (kind["prev_value"], kind["new_value"]) == ("Task", "Bug")
+    # Identifiers, not just labels: a rename must not orphan the history.
+    assert field["field_id"] == "IFN_1"
+    assert (kind["prev_value_id"], kind["new_value_id"]) == ("IT_task", "IT_bug")
+    assert board["field_id"] == "", "a board move changes no native issue field"
     assert all(r["item_number"] == 7 for r in by_type.values())
     assert board["unique_key"].endswith(":issue:7:PS_1")
     _no_literal_none(output.records)
@@ -733,8 +729,31 @@ def test_issues_filters_out_pull_requests(http_mocker: HttpMocker) -> None:
         HttpResponse(
             body=json.dumps(
                 [
-                    {"id": 1, "number": 10, "state": "open", "title": "real issue", "user": {"login": "alice"}, "assignees": [], "labels": [], "comments": 0, "created_at": "2026-06-10T00:00:00Z", "updated_at": "2026-06-20T00:00:00Z"},
-                    {"id": 2, "number": 11, "state": "open", "title": "a PR in disguise", "user": None, "assignees": [], "labels": [], "comments": 0, "created_at": "2026-06-10T00:00:00Z", "updated_at": "2026-06-20T00:00:00Z", "pull_request": {"url": "..."}},
+                    {
+                        "id": 1,
+                        "number": 10,
+                        "state": "open",
+                        "title": "real issue",
+                        "user": {"login": "alice"},
+                        "assignees": [],
+                        "labels": [],
+                        "comments": 0,
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                    },
+                    {
+                        "id": 2,
+                        "number": 11,
+                        "state": "open",
+                        "title": "a PR in disguise",
+                        "user": None,
+                        "assignees": [],
+                        "labels": [],
+                        "comments": 0,
+                        "created_at": "2026-06-10T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                        "pull_request": {"url": "..."},
+                    },
                 ]
             ),
             status_code=200,
@@ -762,7 +781,21 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
             body=json.dumps(
                 {
                     "workflow_runs": [
-                        {"id": 500, "run_attempt": 2, "name": "ci", "workflow_id": 9, "event": "push", "status": "completed", "conclusion": "success", "head_branch": "main", "head_sha": "e" * 40, "actor": {"login": "alice"}, "run_started_at": "2026-06-28T00:00:00Z", "created_at": "2026-06-28T00:00:00Z", "updated_at": "2026-06-28T01:00:00Z"}
+                        {
+                            "id": 500,
+                            "run_attempt": 2,
+                            "name": "ci",
+                            "workflow_id": 9,
+                            "event": "push",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "head_branch": "main",
+                            "head_sha": "e" * 40,
+                            "actor": {"login": "alice"},
+                            "run_started_at": "2026-06-28T00:00:00Z",
+                            "created_at": "2026-06-28T00:00:00Z",
+                            "updated_at": "2026-06-28T01:00:00Z",
+                        }
                     ]
                 }
             ),
@@ -776,6 +809,71 @@ def test_workflow_runs_key_carries_run_attempt(http_mocker: HttpMocker) -> None:
     rec = output.records[0].record.data
     assert rec["unique_key"].endswith(":run:500:2"), rec["unique_key"]
     _no_literal_none(output.records)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(
+            {"type": "RATE_LIMIT", "code": "graphql_rate_limit", "message": "API quota exhausted."},
+            id="typed_rate_limit",
+        ),
+        pytest.param(
+            {"type": "SERVICE_UNAVAILABLE", "message": "API rate limit already exceeded."}, id="untyped_message"
+        ),
+    ],
+)
+@freezegun.freeze_time(_FROZEN)
+def test_graphql_rate_limit_in_a_200_retries(http_mocker: HttpMocker, error: dict) -> None:
+    """An exhausted GraphQL budget arrives as HTTP 200. GitHub types it
+    RATE_LIMIT as well as RATE_LIMITED, so the throttle predicates match both
+    spellings and fall back to the message — otherwise a throttle is mistaken
+    for a query error and fails the stream."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_diff_stats_body()),
+        [
+            HttpResponse(body=json.dumps({"errors": [error]}), status_code=200, headers={"Retry-After": "0"}),
+            HttpResponse(
+                body=json.dumps(
+                    {
+                        "data": {
+                            "repository": {
+                                "pullRequests": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "number": 31,
+                                            "updatedAt": "2026-06-20T00:00:00Z",
+                                            "additions": 120,
+                                            "deletions": 7,
+                                            "changedFiles": 3,
+                                            "author": {
+                                                "login": "alice",
+                                                "databaseId": 4242,
+                                                "email": "alice@example.com",
+                                            },
+                                            "mergedBy": {"login": "bob", "databaseId": 77},
+                                            "reviewDecision": "APPROVED",
+                                            "totalCommentsCount": 5,
+                                            "isCrossRepository": False,
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                ),
+                status_code=200,
+            ),
+        ],
+    )
+
+    output = read_stream(_CONNECTOR, "pull_request_diff_stats", config)
+
+    assert not output.errors, "a rate-limit error must retry, not fail the stream"
+    assert len(output.records) == 1
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -800,8 +898,21 @@ def test_graphql_error_in_a_200_fails_loudly(http_mocker: HttpMocker) -> None:
 @freezegun.freeze_time(_FROZEN)
 def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) -> None:
     config = GithubConfigBuilder().build()
-    node = {"id": "PVT_1", "number": 1, "title": "Roadmap", "shortDescription": None, "public": True, "closed": False, "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-06-01T00:00:00Z"}
-    body = {"data": {"organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}}}
+    node = {
+        "id": "PVT_1",
+        "number": 1,
+        "title": "Roadmap",
+        "shortDescription": None,
+        "public": True,
+        "closed": False,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "updatedAt": "2026-06-01T00:00:00Z",
+    }
+    body = {
+        "data": {
+            "organization": {"projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": "c1"}, "nodes": [node]}}
+        }
+    }
     http_mocker.post(
         HttpRequest(f"{GH_URL}/graphql", body=_graphql_body("projects_v2", {"org": "acme"})),
         HttpResponse(body=json.dumps(body), status_code=200),
@@ -817,9 +928,7 @@ def test_projects_v2_graphql_pagination_cursor_in_body(http_mocker: HttpMocker) 
 
 
 def _authors_page(*rows: dict) -> HttpResponse:
-    return HttpResponse(
-        body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200
-    )
+    return HttpResponse(body=json.dumps({"items": list(rows), "next_page_token": None}), status_code=200)
 
 
 def _author(email: str, sha: str, name: str = "Dev") -> dict:
@@ -875,9 +984,7 @@ def test_commit_authors_resolve_a_proxy_author_to_an_account(http_mocker: HttpMo
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_commit_authors_drops_an_email_github_matches_to_nobody(
-    http_mocker: HttpMocker,
-) -> None:
+def test_commit_authors_drops_an_email_github_matches_to_nobody(http_mocker: HttpMocker) -> None:
     """GitHub answers `author: null` for an e-mail verified on no account — a
     CI or service identity. There is no account to claim the e-mail, so the
     row is dropped rather than stored as an unresolved one."""
@@ -910,9 +1017,7 @@ def test_commit_authors_drops_an_email_github_matches_to_nobody(
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_roster_skips_a_repository_untouched_since_the_start_date(
-    http_mocker: HttpMocker,
-) -> None:
+def test_roster_skips_a_repository_untouched_since_the_start_date(http_mocker: HttpMocker) -> None:
     """The proxy streams partition over this roster, so a repository whose last
     push predates the start date would be cloned for nothing: it has no commit,
     file change or author inside the window."""
@@ -970,7 +1075,7 @@ def test_every_dated_stream_floors_on_the_start_date() -> None:
         if isinstance(node, dict):
             if node.get("type") == "DeclarativeStream":
                 name = node.get("name", name)
-                start = ((node.get("incremental_sync") or {}).get("start_datetime") or {})
+                start = (node.get("incremental_sync") or {}).get("start_datetime") or {}
                 declared = start.get("datetime") if isinstance(start, dict) else start
                 if declared and "github_start_date" not in str(declared):
                     offenders.append(f"{name}: {declared}")
@@ -981,6 +1086,277 @@ def test_every_dated_stream_floors_on_the_start_date() -> None:
                 walk(item, name)
 
     walk(manifest)
-    assert not offenders, "streams flooring on something other than the start date: " + "; ".join(
-        offenders
+    assert not offenders, "streams flooring on something other than the start date: " + "; ".join(offenders)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_timeline_multi_select_keeps_both_option_sets(http_mocker: HttpMocker) -> None:
+    """A multi-select change states its whole option set on both sides and
+    leaves previousValue/newValue null. Reading only the scalars would record
+    the event with an empty before and after — a change that says nothing."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([{"number": 7, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200),
     )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "IssueFieldChangedEvent",
+                                            "id": "IF_MS",
+                                            "createdAt": "2026-06-12T00:00:00Z",
+                                            "actor": {"login": "alice"},
+                                            "issueField": {"id": "IFMS_1", "name": "Platforms"},
+                                            "previousValue": None,
+                                            "newValue": None,
+                                            "previousOptions": [{"name": "iOS"}],
+                                            "newOptions": [{"name": "iOS"}, {"name": "Android"}],
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert rec["field_id"] == "IFMS_1"
+    assert json.loads(rec["prev_options_json"]) == ["iOS"]
+    assert json.loads(rec["new_options_json"]) == ["iOS", "Android"]
+    assert (rec["prev_value"], rec["new_value"]) == ("", ""), "a multi-select states nothing in the scalars"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_timeline_events", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issues_hoist_the_native_field_values(http_mocker: HttpMocker) -> None:
+    """A native issue field set at creation and never changed produces no
+    timeline event, so this snapshot is the only statement of its value that
+    ever reaches bronze. The nested original stays out."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    values = [
+        {"issue_field": {"id": "IFN_1", "name": "Estimated Efforts m*d"}, "value": 5},
+        {"issue_field": {"id": "IFD_1", "name": "Target date"}, "value": "2026-07-01"},
+    ]
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps(
+                [
+                    {
+                        "id": 900,
+                        "number": 7,
+                        "state": "open",
+                        "title": "Ship it",
+                        "created_at": "2026-06-01T00:00:00Z",
+                        "updated_at": "2026-06-20T00:00:00Z",
+                        "type": {"node_id": "IT_bug", "name": "Bug"},
+                        "issue_field_values": values,
+                    }
+                ]
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issues", config)
+
+    assert not output.errors
+    rec = output.records[0].record.data
+    assert json.loads(rec["issue_field_values_json"]) == values
+    assert (rec["issue_type"], rec["issue_type_id"]) == ("Bug", "IT_bug")
+    assert "issue_field_values" not in rec, "the nested original is hoisted, not duplicated"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issues", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issues_without_native_fields_emit_an_empty_list(http_mocker: HttpMocker) -> None:
+    """An organization that defines no issue fields answers without the key at
+    all. That must read as "no values", not as a literal None."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS), _repos_page())
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([{"id": 901, "number": 8, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issues", config)
+
+    assert not output.errors
+    assert json.loads(output.records[0].record.data["issue_field_values_json"]) == []
+    _no_literal_none(output.records)
+
+
+def _issue_fields_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_fields", {"org": "acme"}, cursor)
+
+
+def _issue_types_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_types", {"org": "acme"}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_fields_catalogue_carries_identity_and_options(http_mocker: HttpMocker) -> None:
+    """History names a field by node id; without this catalogue that id
+    resolves to nothing and an operator binding a field to a metric role has
+    no list of real identifiers to bind against."""
+    config = GithubConfigBuilder().build()
+    nodes = [
+        {
+            "__typename": "IssueFieldSingleSelect",
+            "id": "IFSS_1",
+            "fullDatabaseId": 111,
+            "name": "Priority",
+            "dataType": "SINGLE_SELECT",
+            "options": [{"id": "o1", "name": "High"}, {"id": "o2", "name": "Low"}],
+        },
+        {
+            "__typename": "IssueFieldNumber",
+            "id": "IFN_1",
+            "fullDatabaseId": 222,
+            "name": "Estimated Efforts m*d",
+            "dataType": "NUMBER",
+        },
+        {
+            "__typename": "IssueFieldMultiSelect",
+            "id": "IFMS_1",
+            "name": "Platforms",
+            "dataType": "MULTI_SELECT",
+            "options": [{"id": "o3", "name": "iOS"}],
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "issueFields": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_fields", config)
+
+    assert not output.errors
+    by_id = {r.record.data["field_id"]: r.record.data for r in output.records}
+    assert set(by_id) == {"IFSS_1", "IFN_1", "IFMS_1"}
+    assert by_id["IFSS_1"]["data_type"] == "SINGLE_SELECT"
+    assert [o["name"] for o in json.loads(by_id["IFSS_1"]["options_json"])] == ["High", "Low"]
+    assert by_id["IFMS_1"]["is_multi"] is True
+    assert by_id["IFN_1"]["is_multi"] is False
+    assert json.loads(by_id["IFN_1"]["options_json"]) == [], "a number field admits no options"
+    # The REST issue payload names a field by its numeric id and the timeline
+    # by node id; both must resolve to this one catalogue row.
+    assert by_id["IFN_1"]["field_database_id"] == "222"
+    assert by_id["IFSS_1"]["field_database_id"] == "111"
+    assert by_id["IFN_1"]["unique_key"].endswith(":acme:issue_field:IFN_1")
+    assert by_id["IFN_1"]["tenant_id"] == config["insight_tenant_id"]
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_fields", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_fields_paginate_with_the_cursor_in_the_body(http_mocker: HttpMocker) -> None:
+    """A catalogue larger than one page must not truncate silently — the whole
+    point of the stream is that every identifier history can name is present."""
+    config = GithubConfigBuilder().build()
+    page1 = {
+        "data": {
+            "organization": {
+                "issueFields": {
+                    "pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [{"__typename": "IssueFieldText", "id": "IFT_1", "name": "Notes", "dataType": "TEXT"}],
+                }
+            }
+        }
+    }
+    page2 = {
+        "data": {
+            "organization": {
+                "issueFields": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": "c2"},
+                    "nodes": [
+                        {"__typename": "IssueFieldDate", "id": "IFD_1", "name": "Target date", "dataType": "DATE"}
+                    ],
+                }
+            }
+        }
+    }
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body()),
+        HttpResponse(body=json.dumps(page1), status_code=200),
+    )
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_fields_body(cursor="c1")),
+        HttpResponse(body=json.dumps(page2), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_fields", config)
+
+    assert not output.errors
+    assert {r.record.data["field_id"] for r in output.records} == {"IFT_1", "IFD_1"}
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_types_catalogue_gives_the_type_a_stable_key(http_mocker: HttpMocker) -> None:
+    """The issue payload states its type by display name only, so a rename
+    orphans every mapping built on the name alone."""
+    config = GithubConfigBuilder().build()
+    nodes = [
+        {"id": "IT_task", "name": "Task", "description": "A specific piece of work", "isEnabled": True},
+        {"id": "IT_bug", "name": "Bug", "description": None, "isEnabled": False},
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_types_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "issueTypes": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_types", config)
+
+    assert not output.errors
+    by_id = {r.record.data["issue_type_id"]: r.record.data for r in output.records}
+    assert by_id["IT_task"]["issue_type_name"] == "Task"
+    assert by_id["IT_task"]["is_enabled"] is True
+    assert by_id["IT_bug"]["is_enabled"] is False
+    assert by_id["IT_bug"]["description"] == "", "a null description is empty, never a literal None"
+    assert by_id["IT_bug"]["unique_key"].endswith(":acme:issue_type:IT_bug")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_types", strict=True)

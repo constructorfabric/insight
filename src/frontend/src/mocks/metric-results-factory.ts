@@ -1,4 +1,5 @@
 import type {
+  MetricErrorView,
   MetricResult,
   MetricResultView,
   MetricResultsRequest,
@@ -28,7 +29,7 @@ function valueFor(entityId: string, metricKey: string, salt = ""): number {
   return (hash(`${entityId}|${metricKey}|${salt}`) % 900) + 50;
 }
 
-function metaFor(metricKey: string): Omit<MetricResult, "views"> {
+export function metaFor(metricKey: string): Omit<MetricResult, "views"> {
   const fixture = metricResultFixtureByKey(metricKey);
   if (fixture) {
     const { views: _views, ...meta } = fixture;
@@ -64,10 +65,64 @@ const MOCK_TOOLS = [
   { key: "tool", value: "cursor", label: "Cursor" },
 ];
 
+/**
+ * Values a dimension breaks down into, so a mock answers the dimension it was
+ * ASKED for. Returning one fixed set meant a section reading any other
+ * dimension found nothing in its rows and rendered as absent — which reads as
+ * a broken screen rather than as a mock with no fixture.
+ */
+const MOCK_DIMENSION_VALUES: Record<
+  string,
+  { value: string; label: string }[]
+> = {
+  category: [
+    { value: "code", label: "Code" },
+    { value: "test", label: "Tests" },
+    { value: "docs", label: "Documentation" },
+    { value: "config", label: "Configuration" },
+    { value: "vendored", label: "Vendored / Generated" },
+  ],
+  branch_scope: [
+    { value: "default", label: "Default branch" },
+    { value: "non_default", label: "Other branches" },
+  ],
+  source: [
+    { value: "github", label: "GitHub" },
+    { value: "gitlab", label: "GitLab" },
+  ],
+};
+
+function mockDimensionValues(key: string): { value: string; label: string }[] {
+  return (
+    MOCK_DIMENSION_VALUES[key] ??
+    MOCK_TOOLS.map(({ value, label }) => ({ value, label }))
+  );
+}
+
+/**
+ * A failed-computation view, delivered in a requested view's slot the way the
+ * backend does since ClickHouse error isolation: the request still answers
+ * 200 and the other views/metrics are unaffected.
+ */
+export function buildMetricErrorView(
+  overrides: Partial<Omit<MetricErrorView, "view">> = {},
+): MetricErrorView {
+  return {
+    view: "error",
+    code: "QUERY_FAILED",
+    message:
+      "This metric could not be computed; the rest of the results are unaffected. An administrator can see the underlying error.",
+    ...overrides,
+  };
+}
+
 export function buildMetricResultsResponse(
   request: MetricResultsRequest,
 ): MetricResultsResponse {
-  const ids = request.entity.ids;
+  const ids =
+    request.entity.type === "person"
+      ? request.entity.ids
+      : ["00000000-0000-4000-8000-00000000c0de"];
   const metrics: MetricResult[] = request.metrics.map((metricRequest) => {
     const meta = metaFor(metricRequest.metric_key);
     const key = metricRequest.metric_key;
@@ -123,17 +178,39 @@ export function buildMetricResultsResponse(
             ),
           };
         }
-        case "breakdown":
+        case "breakdown": {
+          // One row per combination the caller asked for, keyed by the
+          // requested dimension rather than by a fixed one.
+          const axis = view.dimensions[0] ?? "tool";
           return {
             view: "breakdown",
             dimensions: view.dimensions,
             values: ids.flatMap((entityId) =>
-              MOCK_TOOLS.map((dimension) => ({
+              mockDimensionValues(axis).map((dimension) => ({
                 entity_id: entityId,
-                dimensions: [dimension],
+                dimensions: view.dimensions.map((dimensionKey) => ({
+                  key: dimensionKey,
+                  value: dimension.value,
+                  label: dimension.label,
+                })),
                 value: valueFor(entityId, key, dimension.value),
               })),
             ),
+          };
+        }
+        case "rollup":
+          return {
+            view: "rollup",
+            dimensions: view.dimensions,
+            values: MOCK_TOOLS.map((dimension) => ({
+              dimensions: view.dimensions.map((key) => ({
+                key,
+                value: dimension.value,
+                label: dimension.label,
+              })),
+              value: valueFor("rollup", key, dimension.value),
+              contributing_entity_count: ids.length,
+            })),
           };
         case "histogram":
           return {

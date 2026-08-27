@@ -1,0 +1,421 @@
+spec_version: 1
+description: >-
+  Git output split by branch scope. Three people whose per-metric numbers are
+  identical, but below the peer percentile disclosure threshold. Each arrives
+  at its default-branch total a different way:
+  alice by the connector's flag, bob by the flag too, carol by a merged pull
+  request into the default branch while her flag still says otherwise. Carol is
+  the case that matters: `is_default_branch` is reachability at sync time, and
+  the merged-request heal is what makes the split mean "did this work land".
+  Her second request merges into a release branch and must NOT promote its
+  commit.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_github.branches:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-release, repository: "https://github.com/constructor/insight.git", name: release/1.x, head_sha: head-release, is_default: false}
+  bronze_github.commits:
+    # One landed commit and one still in flight per person. Same numbers each
+    # time; only carol's landed one is flagged as outside the default branch.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-alice-d, sha: sha-alice-d, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-alice-n, sha: sha-alice-n, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-bob-d, sha: sha-bob-d, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-bob-n, sha: sha-bob-n, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-d, sha: sha-carol-d, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 10, deletions: 1, is_in_default_branch: false}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-n, sha: sha-carol-n, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 20, deletions: 2, is_in_default_branch: false}
+  bronze_github.file_changes:
+    # `.rs` under src/ classifies as code, so the category and code-lines
+    # assertions read off the same rows.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-alice-d, sha: sha-alice-d, filename: src/alice_d.rs, additions: 10, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-alice-n, sha: sha-alice-n, filename: src/alice_n.rs, additions: 20, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-d, sha: sha-bob-d, filename: src/bob_d.rs, additions: 10, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-bob-n, sha: sha-bob-n, filename: src/bob_n.rs, additions: 20, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-d, sha: sha-carol-d, filename: src/carol_d.rs, additions: 10, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-n, sha: sha-carol-n, filename: src/carol_n.rs, additions: 20, deletions: 2}
+  bronze_github.pull_requests:
+    # One request into the default branch and one into a release branch per
+    # person, both merged.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice-main, id: 11, number: 11, author_login: alice, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-alice-main}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-alice-rel, id: 12, number: 12, author_login: alice, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-alice-rel}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-main, id: 21, number: 21, author_login: bob, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-bob-main}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-bob-rel, id: 22, number: 22, author_login: bob, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-bob-rel}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-main, id: 31, number: 31, author_login: carol, base_ref: main, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-main}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-carol-rel, id: 32, number: 32, author_login: carol, base_ref: release/1.x, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-carol-rel}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else
+    # — bronze `pull_requests` carries only the login. Without a row per
+    # request the author does not resolve, and gold drops the request rather
+    # than attributing it to nobody.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-main, pull_number: 11, additions: 10, deletions: 1, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-alice-rel, pull_number: 12, additions: 20, deletions: 2, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-main, pull_number: 21, additions: 10, deletions: 1, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-bob-rel, pull_number: 22, additions: 20, deletions: 2, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-main, pull_number: 31, additions: 10, deletions: 1, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-carol-rel, pull_number: 32, additions: 20, deletions: 2, author_email: carol@example.com}
+  bronze_github.pull_request_commits:
+    # Carol only. Her default-branch request carries the commit whose flag says
+    # non-default — that link is the heal. Her release request carries the
+    # other one, and must leave it alone.
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-carol-d, sha: sha-carol-d, pull_number: 31, repo_full_name: constructor/insight, author_email: carol@example.com, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-carol-n, sha: sha-carol-n, pull_number: 32, repo_full_name: constructor/insight, author_email: carol@example.com, is_merge: false}
+
+cases:
+  - name: Branch-scope splits partition their totals
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.default_branch_commits
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+          - metric_key: git.non_default_branch_commits
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+          - metric_key: git.default_branch_code_lines
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+          - metric_key: git.non_default_branch_code_lines
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+          - metric_key: git.default_branch_lines_added
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.non_default_branch_lines_added
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.default_branch_lines_removed
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.non_default_branch_lines_removed
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.default_branch_prs_created
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [destination_branch]}
+          - metric_key: git.non_default_branch_prs_created
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [destination_branch]}
+          - metric_key: git.default_branch_prs_merged
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [destination_branch]}
+          - metric_key: git.non_default_branch_prs_merged
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [destination_branch]}
+          - metric_key: git.commits
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [branch_scope]}
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [branch_scope]}
+    expect:
+      - assert: "status == 200"
+
+      # Commits: one landed, one in flight, and the pair sums to the total.
+      - metric: git.default_branch_commits
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.default_branch_commits
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_commits
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.default_branch_commits
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 1}
+      - metric: git.non_default_branch_commits
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.non_default_branch_commits
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_commits
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.non_default_branch_commits
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 1}
+      - metric: git.commits
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 2}
+
+      # Code lines follow their commit, so the split matches the commits'.
+      - metric: git.default_branch_code_lines
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 10}
+      - metric: git.default_branch_code_lines
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 10, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_code_lines
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 10}}
+      - metric: git.default_branch_code_lines
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 10}
+      - metric: git.non_default_branch_code_lines
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 20}
+      - metric: git.non_default_branch_code_lines
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 20, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_code_lines
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 20}}
+      - metric: git.non_default_branch_code_lines
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}
+        equal: {value: 20}
+
+      - metric: git.default_branch_lines_added
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 10}
+      - metric: git.default_branch_lines_added
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 10, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_lines_added
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 10}}
+      - metric: git.default_branch_lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 10}
+      - metric: git.non_default_branch_lines_added
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 20}
+      - metric: git.non_default_branch_lines_added
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 20, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_lines_added
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 20}}
+      - metric: git.non_default_branch_lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 20}
+      - metric: git.lines_added
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 30}
+
+      - metric: git.default_branch_lines_removed
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.default_branch_lines_removed
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_lines_removed
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.default_branch_lines_removed
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 1}
+      - metric: git.non_default_branch_lines_removed
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 2}
+      - metric: git.non_default_branch_lines_removed
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 2, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_lines_removed
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 2}}
+      - metric: git.non_default_branch_lines_removed
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 2}
+
+      # Requests classify by destination, and that reading does not move later.
+      - metric: git.default_branch_prs_created
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.default_branch_prs_created
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_prs_created
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.default_branch_prs_created
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: destination_branch, value: main}}
+        equal: {value: 1}
+      - metric: git.non_default_branch_prs_created
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.non_default_branch_prs_created
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_prs_created
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.non_default_branch_prs_created
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: destination_branch, value: release/1.x}}
+        equal: {value: 1}
+
+      - metric: git.default_branch_prs_merged
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.default_branch_prs_merged
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.default_branch_prs_merged
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.default_branch_prs_merged
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: destination_branch, value: main}}
+        equal: {value: 1}
+      - metric: git.non_default_branch_prs_merged
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 1}
+      - metric: git.non_default_branch_prs_merged
+        view: peer
+        find: {entity_id: alice@example.com}
+        equal: {target_value: 1, p25: null, median: null, p75: null, min: null, max: null, n: 3}
+      - metric: git.non_default_branch_prs_merged
+        view: timeseries
+        find: {entity_id: alice@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 1}}
+      - metric: git.non_default_branch_prs_merged
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: destination_branch, value: release/1.x}}
+        equal: {value: 1}
+
+      # The dimension on the totals carries the same split the pairs do.
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: default}}
+        equal: {value: 1}
+      - metric: git.commits
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: non_default}}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: default}}
+        equal: {value: 10}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: non_default}}
+        equal: {value: 20}
+
+  - name: A merged request into the default branch promotes its commit
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [carol@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.default_branch_commits
+            views: [{view: period}]
+          - metric_key: git.non_default_branch_commits
+            views: [{view: period}]
+          - metric_key: git.default_branch_lines_added
+            views: [{view: period}]
+          - metric_key: git.non_default_branch_lines_added
+            views: [{view: period}]
+    expect:
+      - assert: "status == 200"
+      # Both of carol's commits are flagged outside the default branch. The one
+      # her merged request into `main` carries counts as landed anyway; the one
+      # her release-branch request carries does not.
+      - metric: git.default_branch_commits
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 1}
+      - metric: git.non_default_branch_commits
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 1}
+      - metric: git.default_branch_lines_added
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 10}
+      - metric: git.non_default_branch_lines_added
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 20}

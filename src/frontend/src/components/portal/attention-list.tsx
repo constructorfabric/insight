@@ -103,7 +103,9 @@ function Theme({
   const [all, setAll] = useState(false);
   const shown = all ? flags : flags.slice(0, PEOPLE_PER_THEME);
   return (
-    <div className="rounded-lg border bg-card">
+    // Clipping keeps the header fill inside the border's inner radius, which is
+    // the outer radius minus the border width.
+    <div className="overflow-hidden rounded-lg border bg-card">
       <button
         type="button"
         aria-expanded={open}

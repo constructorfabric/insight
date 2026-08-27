@@ -78,7 +78,7 @@ pub async fn get_by_id(
             visibility_id.as_bytes().to_vec().into(),
         ],
     );
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_visibility)
@@ -117,7 +117,7 @@ pub async fn list(
     params.push(limit.into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -163,7 +163,7 @@ pub async fn insert(
             reason.into(),
         ],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }
 
@@ -197,5 +197,5 @@ pub async fn soft_delete(
             visibility_id.as_bytes().to_vec().into(),
         ],
     );
-    Ok(db.execute(stmt).await?.rows_affected())
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }

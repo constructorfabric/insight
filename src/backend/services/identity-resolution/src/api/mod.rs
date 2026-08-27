@@ -98,9 +98,10 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
 /// + its OpenAPI spec + auth/error metadata).
 #[expect(clippy::too_many_lines)] // one flat block per route — readability over splitting
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
-    // Internal, SERVICE-ONLY S2S resolvers — TWO SEPARATE routes so the
-    // login-bootstrap (external id) and the authenticator's admin `__override`
-    // view-as feature (email) can never be confused for one another via a
+    // Internal, SERVICE-ONLY S2S resolvers — SEPARATE routes, one per question,
+    // so the login bootstrap (by external id, or by roster address where the
+    // IdP has no directory connector of its own) and the authenticator's admin
+    // `__override` view-as feature can never be confused for one another via a
     // shared dispatch parameter. Registered as raw routes so they stay out of
     // the generated OpenAPI; auth is still enforced by the host gateway and `SecurityContext` is
     // injected by the host authn pipeline, same as every other route. Each
@@ -108,6 +109,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = router.route(
         "/internal/persons/by-external-id",
         axum::routing::get(handlers::internal_person_by_external_id),
+    );
+    let router = router.route(
+        "/internal/persons/by-roster-email",
+        axum::routing::get(handlers::internal_person_by_roster_email),
     );
     let router = router.route(
         "/internal/persons/by-email-override",
@@ -156,10 +161,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             false,
             "Search terms, at most 8 (200 characters total); every \
              whitespace-separated term must match one of the person's current \
-             identity values — email, username, display/first/last name or \
-             employee id (case-insensitive substring). Titles and statuses are \
-             displayed on the card but not searched. Absent or blank lists \
-             every person of the tenant.",
+             identity values — email, username or display/first/last name \
+             (case-insensitive substring), the same five the row's own label is \
+             built from. Titles, statuses and the HR employee id are served on \
+             the profile but not searched. A term that parses as a UUID names a \
+             person id instead. Absent or blank lists every person of the \
+             tenant.",
         )
         .query_param_typed(
             "limit",
@@ -278,8 +285,12 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed(
             "q",
             false,
-            "Needle matched against the account's current address, handle, id \
-             and observed name. Absent or blank lists every open account.",
+            "Needle matched against every value the account's row shows, \
+             case-insensitively: a substring of the current address, handle, id \
+             or observed name (whole, or composed from parts). The source is the \
+             exception — it matches a whole `_`/`-` separated segment from its \
+             start, so `github` and `entra` list those connectors' accounts \
+             while `hub` lists none. Absent or blank lists every open account.",
             "string",
         )
         .query_param_typed(
@@ -610,6 +621,39 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(subchart::get_subchart)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/visible-persons")
+        .operation_id("identity_resolution.visible_persons.list")
+        .summary("List the org members the caller may see")
+        .description(
+            "The organisation's roster: persons a connector claims as an account \
+             holder. An address seen only in someone else's data — a commit author \
+             nobody here holds — is an identity the journal carries, not a member, \
+             and is left out. The POST sibling confirms visibility over any person \
+             id, so it answers for a wider set than this lists.",
+        )
+        .authenticated()
+        .query_param(
+            "q",
+            false,
+            "Whitespace-separated terms; absent browses the roster",
+        )
+        .query_param_typed("limit", false, "Page size (1..=500, default 50)", "integer")
+        .query_param("cursor", false, "Resume token from a previous page")
+        .no_license_required()
+        .json_response_with_schema::<visible_persons::VisiblePersonsPageResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of visible persons",
+        )
+        // Only what this operation can answer: a rejected `q`/`cursor` or an
+        // unresolved tenant (400), no identified caller (401), a failed read
+        // (500). It has no body to refuse, no resource to miss and no conflict.
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .handler(visible_persons::list_visible_persons)
         .register(router, openapi);
 
     OperationBuilder::post("/v1/visible-persons")

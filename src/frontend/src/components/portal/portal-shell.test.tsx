@@ -30,6 +30,11 @@ vi.mock("@/auth", () => ({
 }));
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
 }));
 vi.mock("@/lib/portal/use-viewer-is-manager", () => ({
   useViewerIsManager: () => ({ isManager: mocks.isManager, isPending: mocks.isPending }),

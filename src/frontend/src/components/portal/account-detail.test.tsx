@@ -74,32 +74,16 @@ beforeEach(() => {
 });
 
 describe("AccountDetail", () => {
-  it("shows the bound person as a card when the queue knows them", () => {
+  // The bound card and the verbs live in `AccountActions` now — see its suite.
+  // What stays this window's job is handing the queue's candidates down.
+  it("passes the queue's candidates to the decision surface", () => {
     binding.q.data = bound();
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
-    expect(screen.getByText(/currently bound to/i)).toBeInTheDocument();
-    expect(screen.getByText("Bob Park")).toBeInTheDocument();
     expect(screen.getByTestId("account-actions")).toHaveAttribute(
       "data-candidates",
       "1",
     );
-  });
-
-  it("keeps an unknown bound person an honest bare id", () => {
-    binding.q.data = bound({ person_id: "01900000-0000-7000-8000-00000000ffff" });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem({ candidates: [] })} />);
-
-    expect(
-      screen.getByText("01900000-0000-7000-8000-00000000ffff"),
-    ).toBeInTheDocument();
-  });
-
-  it("states an unbound account as a fact", () => {
-    binding.q.data = bound({ person_id: null });
-    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
-
-    expect(screen.getByText(/account is unresolved/i)).toBeInTheDocument();
   });
 
   it("names known verbs and passes unknown reasons through verbatim", () => {
@@ -139,7 +123,7 @@ describe("AccountDetail", () => {
   // The resolver writes no reason at all — as an empty string, which is not
   // null, so a nullish fallback left the badge blank on every automatic entry.
   // Machine decision versus human decision is the one thing the badge carries.
-  it("says a reasonless entry was automatic instead of rendering a blank badge", () => {
+  it("says what a reasonless entry did instead of rendering a blank label", () => {
     binding.q.data = bound({
       history: [
         {
@@ -153,7 +137,10 @@ describe("AccountDetail", () => {
     });
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
-    expect(screen.getByText(/automatic/i)).toBeInTheDocument();
+    expect(screen.getByText(/^linked$/i)).toBeInTheDocument();
+    // And who did it, on the other end of the same row: a blank there read as
+    // "unknown", when the answer is the resolver.
+    expect(screen.getByText(/by automation/i)).toBeInTheDocument();
   });
 
   // First-login provisioning mints the binding during the sign-in itself; an
@@ -176,16 +163,41 @@ describe("AccountDetail", () => {
     expect(screen.queryByText("login-bootstrap")).not.toBeInTheDocument();
   });
 
-  // The comment is the one thing no other record holds — why a human did
-  // this — and it was written to the operations journal from the first verb,
-  // never read back. The reach matters beside it: a merge lands one row here
-  // and one in every other account it moved.
-  it("shows the operator call behind a decision: who, why and how far", () => {
+  // The batch mints this binding because the roster lists the account, not
+  // because anything matched it. Same problem as above: a raw `roster-mint`
+  // tells an operator nothing about what they are being asked to confirm.
+  it("names the roster-mint reason", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "roster-mint",
+          recorded_at: "2026-08-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/added from the roster/i)).toBeInTheDocument();
+    expect(screen.queryByText("roster-mint")).not.toBeInTheDocument();
+  });
+
+  // The comment is the one thing no binding row holds — why a human did this —
+  // and it lives only on the call. The call is not a row of its own: it is
+  // journalled once and returned on every account it named, so beside the row
+  // it produced it said the same thing twice, with a reach counted over other
+  // accounts.
+  it("carries the comment onto the decision it explains, without a row for the call", () => {
     binding.q.data = bound({
       history: [
         {
           person_id: BOB.person_id,
           author_person_id: CAROL.person_id,
+          // The service hydrates the author on the binding row too, so losing
+          // the call's row loses no name.
+          author: CAROL,
           by_operator: true,
           reason: "operator-merge",
           recorded_at: "2026-08-01T10:15:00.000000",
@@ -207,13 +219,36 @@ describe("AccountDetail", () => {
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
     expect(screen.getByText(/same person — confirmed with HR/i)).toBeInTheDocument();
-    expect(screen.getByText(/12 accounts in this call/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Carol Chen/).length).toBeGreaterThan(0);
-    expect(screen.getByText("applied")).toBeInTheDocument();
+    // One event, one row — and nothing about the other eleven accounts the
+    // call moved, or about a call whose own outcome is not this account's.
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.queryByText(/12 accounts/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("applied")).not.toBeInTheDocument();
   });
 
   // The service resolves the people a trail names, so an entry pointing at
   // somebody who is not a candidate stops being a bare id.
+  // The seed writes this literal for a binding it made by matching the address;
+  // unmapped, the row rendered the raw code at the reader.
+  it("names the resolver's own link instead of printing its code", () => {
+    binding.q.data = bound({
+      history: [
+        {
+          person_id: BOB.person_id,
+          author_person_id: "00000000-0000-0000-0000-000000000000",
+          by_operator: false,
+          reason: "auto-seed-link",
+          recorded_at: "2026-07-01T10:15:00.000000",
+        },
+      ],
+    });
+    render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
+
+    expect(screen.getByText(/linked by address/i)).toBeInTheDocument();
+    expect(screen.queryByText("auto-seed-link")).not.toBeInTheDocument();
+  });
+
   it("names the person an entry points at, candidate or not", () => {
     binding.q.data = bound({
       history: [
@@ -245,10 +280,10 @@ describe("AccountDetail", () => {
     expect(screen.getByTestId("account-actions")).toBeInTheDocument();
   });
 
-  // The two records interleave by instant, newest first — an audit trail
-  // that reads backwards, or shuffles a call away from its decision, tells a
-  // false story. Ties keep the decision above its own call.
-  it("interleaves decisions and calls newest-first", () => {
+  // An audit trail that reads backwards tells a false story. And a call that
+  // moved nothing HERE — this one detached a different account of the same
+  // person — is not an event on this account's trail.
+  it("reads newest first, and lists no event for a call that moved nothing here", () => {
     binding.q.data = bound({
       history: [
         {
@@ -281,11 +316,13 @@ describe("AccountDetail", () => {
     });
     render(<AccountDetail accountRef={REF} queueItem={queueItem()} />);
 
-    const rows = screen.getAllByRole("listitem");
-    const texts = rows.map((row) => row.textContent ?? "");
+    const texts = screen
+      .getAllByRole("listitem")
+      .map((row) => row.textContent ?? "");
+    expect(texts).toHaveLength(2);
     expect(texts[0]).toMatch(/Bound/);
-    expect(texts[1]).toMatch(/Detached/);
-    expect(texts[2]).toMatch(/Automatic/);
+    expect(texts[1]).toMatch(/Linked/);
+    expect(texts.join(" ")).not.toMatch(/Detached/);
   });
 
   it("reads an off-queue empty journal as a stale link, offering no verbs", () => {

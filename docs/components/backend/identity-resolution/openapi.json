@@ -490,12 +490,16 @@
               "$ref": "#/components/schemas/MeRoleResponse"
             },
             "type": "array"
+          },
+          "visibility_policy": {
+            "$ref": "#/components/schemas/VisibilityPolicy"
           }
         },
         "required": [
           "person_id",
           "insight_tenant_id",
-          "roles"
+          "roles",
+          "visibility_policy"
         ],
         "type": "object"
       },
@@ -616,7 +620,7 @@
         "type": "object"
       },
       "PersonResponse": {
-        "description": "A person node in the org tree (subordinate of a profile). Unlike\n`ProfileResponse`, the attribute fields are plain\nstrings (empty when absent, not omitted) and the `supervisor_*`/`parent_*`\nfields serialize as `null` rather than being dropped.",
+        "description": "A person node in the org tree (subordinate of a profile). Carries\n`username` alongside the profile attributes — the UI labels a nameless\nperson by their handle (#2711). Unlike `ProfileResponse`, the attribute\nfields are plain strings (empty when absent, not omitted) and the\n`supervisor_*`/`parent_*` fields serialize as `null` rather than being\ndropped.",
         "properties": {
           "department": {
             "type": "string"
@@ -682,6 +686,9 @@
               "string",
               "null"
             ]
+          },
+          "username": {
+            "type": "string"
           }
         },
         "required": [
@@ -694,6 +701,7 @@
           "division",
           "job_title",
           "status",
+          "username",
           "subordinates"
         ],
         "type": "object"
@@ -799,7 +807,7 @@
             "type": "string"
           },
           "provisional": {
-            "description": "The journal holds nothing but a login-mint for this person: they exist\nso somebody could sign in, and may duplicate one the roster knows. Not\na merge target — the history is on the other side.",
+            "description": "The journal holds nothing but an automatic mint for this person — a\nsign-in that needed somebody to enter as, or a roster listing an account\nwith no address. They may duplicate one the roster knows, so they are not\na merge target: the history is on the other side.",
             "type": "boolean"
           },
           "status": {
@@ -1210,7 +1218,7 @@
             ]
           },
           "kind": {
-            "description": "`contested` | `binding_conflict` | `provisioned_at_login` | `no_evidence`.",
+            "description": "`contested` | `binding_conflict` | `provisioned_at_login` |\n`minted_from_roster` | `no_source_id` | `no_evidence`.",
             "type": "string"
           },
           "manager_email": {
@@ -1249,7 +1257,7 @@
         "type": "object"
       },
       "ResolutionRatesResponse": {
-        "description": "Share of observed accounts per resolution state — the operator-visible match\nrate.",
+        "description": "How the tenant's observed accounts are split across the resolution states.\n\nDeliberately no person total. A journal-wide count answers \"how many ids have\nwe ever written\", which after a merge never falls and after a detach only\nrises — so it read as a roster size while measuring something else. A figure\nthat would have to be explained every time it is read is worse than none.",
         "properties": {
           "bound": {
             "minimum": 0,
@@ -1260,6 +1268,10 @@
             "type": "integer"
           },
           "no_evidence": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "no_source_id": {
             "minimum": 0,
             "type": "integer"
           },
@@ -1276,6 +1288,7 @@
           "observed",
           "bound",
           "pending",
+          "no_source_id",
           "no_evidence",
           "excluded"
         ],
@@ -1456,6 +1469,13 @@
         ],
         "type": "object"
       },
+      "VisibilityPolicy": {
+        "enum": [
+          "org_chart",
+          "flat"
+        ],
+        "type": "string"
+      },
       "VisibilityResponse": {
         "description": "One visibility grant.",
         "properties": {
@@ -1508,6 +1528,28 @@
           "valid_from",
           "author_person_id",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "VisiblePersonsPageResponse": {
+        "description": "One page of the persons the caller may see.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PersonSummaryResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Pass back as `?cursor=` for the next page; absent on the last one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -1996,7 +2038,7 @@
         "operationId": "identity_resolution.persons.search",
         "parameters": [
           {
-            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username, display/first/last name or employee id (case-insensitive substring). Titles and statuses are displayed on the card but not searched. Absent or blank lists every person of the tenant.",
+            "description": "Search terms, at most 8 (200 characters total); every whitespace-separated term must match one of the person's current identity values — email, username or display/first/last name (case-insensitive substring), the same five the row's own label is built from. Titles, statuses and the HR employee id are served on the profile but not searched. A term that parses as a UUID names a person id instead. Absent or blank lists every person of the tenant.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -2656,7 +2698,7 @@
         "operationId": "identity_resolution.resolution.search_accounts",
         "parameters": [
           {
-            "description": "Needle matched against the account's current address, handle, id and observed name. Absent or blank lists every open account.",
+            "description": "Needle matched against every value the account's row shows, case-insensitively: a substring of the current address, handle, id or observed name (whole, or composed from parts). The source is the exception — it matches a whole `_`/`-` separated segment from its start, so `github` and `entra` list those connectors' accounts while `hub` lists none. Absent or blank lists every open account.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -4387,6 +4429,87 @@
       }
     },
     "/v1/visible-persons": {
+      "get": {
+        "description": "The organisation's roster: persons a connector claims as an account holder. An address seen only in someone else's data — a commit author nobody here holds — is an identity the journal carries, not a member, and is left out. The POST sibling confirms visibility over any person id, so it answers for a wider set than this lists.",
+        "operationId": "identity_resolution.visible_persons.list",
+        "parameters": [
+          {
+            "description": "Whitespace-separated terms; absent browses the roster",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page size (1..=500, default 50)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Resume token from a previous page",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisiblePersonsPageResponse"
+                }
+              }
+            },
+            "description": "One page of visible persons"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List the org members the caller may see"
+      },
       "post": {
         "operationId": "identity_resolution.visible_persons.create",
         "requestBody": {

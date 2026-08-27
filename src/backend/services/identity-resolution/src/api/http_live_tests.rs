@@ -27,7 +27,7 @@ use toolkit::api::OpenApiRegistryImpl;
 use toolkit_security::SecurityContext;
 
 use super::AppState;
-use crate::config::GearConfig;
+use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
 use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, fixture_or_skip};
 use crate::infra::db::{person_roles_repo, roles_repo};
@@ -42,20 +42,36 @@ struct Caller {
 }
 
 fn app(f: &Fixture, caller: Uuid) -> Router {
+    app_with(f, caller, GearConfig::default())
+}
+
+fn flat_app(f: &Fixture, caller: Uuid) -> Router {
+    app_with(
+        f,
+        caller,
+        GearConfig {
+            visibility_policy: VisibilityPolicy::Flat,
+            ..GearConfig::default()
+        },
+    )
+}
+
+fn app_with(f: &Fixture, caller: Uuid, config: GearConfig) -> Router {
     app_for(
         f,
         Caller {
             person_id: caller,
             tenant: f.tenant,
         },
+        config,
     )
 }
 
-fn app_for(f: &Fixture, caller: Caller) -> Router {
+fn app_for(f: &Fixture, caller: Caller, config: GearConfig) -> Router {
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(AppState {
         db: f.db.clone(),
-        config: GearConfig::default(),
+        config,
     });
     let api = super::build_operations(Router::new(), &openapi)
         .layer(from_fn_with_state(caller, inject_host_context))
@@ -107,6 +123,19 @@ async fn get(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
     let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
     let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     Ok((status, payload))
+}
+
+/// `person_id`s of a listing page, in the order it served them.
+fn listed_ids(payload: &Value) -> Vec<String> {
+    payload["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["person_id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn visible_ids(payload: &Value) -> Vec<String> {
@@ -778,5 +807,192 @@ async fn a_cut_page_offers_the_next_one_and_a_whole_answer_does_not() -> TestRes
         full["next_cursor"].is_null(),
         "a whole answer offers no next page: {full}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_resolves_a_profile_outside_the_reporting_line() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("flat-caller@http-live.test").await?;
+    let unrelated = f.person("flat-unrelated@http-live.test").await?;
+
+    let (org_chart, _) = post(app(&f, caller), "/v1/profiles", &by_person_id(unrelated)).await?;
+    let (flat, _) = post(
+        flat_app(&f, caller),
+        "/v1/profiles",
+        &by_person_id(unrelated),
+    )
+    .await?;
+
+    assert_eq!(
+        org_chart,
+        StatusCode::NOT_FOUND,
+        "reporting-line rule hides them"
+    );
+    assert_eq!(flat, StatusCode::OK, "flat policy resolves them");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flat_policy_keeps_another_tenants_profile_not_found() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("flat-boundary@http-live.test").await?;
+    let foreign = f
+        .in_another_tenant()
+        .person("flat-foreign@http-live.test")
+        .await?;
+
+    let (status, _) = post(flat_app(&f, caller), "/v1/profiles", &by_person_id(foreign)).await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_roster_lists_the_caller_and_everyone_the_policy_shows_them() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.account_holder("roster-caller@http-live.test").await?;
+    let other = f.account_holder("roster-other@http-live.test").await?;
+
+    let (status, body) = get(flat_app(&f, caller), "/v1/visible-persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let listed = listed_ids(&body);
+    for person in [caller, other] {
+        assert!(
+            listed.contains(&person.to_string()),
+            "missing {person}: {body}"
+        );
+    }
+    assert!(body["next_cursor"].is_null(), "one page held them all");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_roster_leaves_out_an_identity_nobody_claims() -> TestResult {
+    // The shape a git-only organisation is full of: an address a commit carried,
+    // which the journal turned into a person because that is what an observation
+    // log does. No connector ever claimed it as an account, so it is not a
+    // member, and a roster listing it is a directory of strangers.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let holder = f.account_holder("roster-holder@http-live.test").await?;
+    let observed_only = f.person("roster-observed@http-live.test").await?;
+
+    let (status, body) = get(flat_app(&f, holder), "/v1/visible-persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let listed = listed_ids(&body);
+    assert!(
+        listed.contains(&holder.to_string()),
+        "the account holder IS the roster: {body}"
+    );
+    assert!(
+        !listed.contains(&observed_only.to_string()),
+        "an address nobody claims is not a member: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_roster_cursor_resumes_after_the_page_it_was_issued_for() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let first_person = f.account_holder("roster-aaa@http-live.test").await?;
+    let second_person = f.account_holder("roster-bbb@http-live.test").await?;
+
+    let (status, first) = get(flat_app(&f, first_person), "/v1/visible-persons?limit=1").await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed_ids(&first), vec![first_person.to_string()]);
+
+    let cursor = first["next_cursor"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("a cut page must carry a cursor: {first}"))?;
+    let (status, next) = get(
+        flat_app(&f, first_person),
+        &format!("/v1/visible-persons?limit=1&cursor={cursor}"),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed_ids(&next),
+        vec![second_person.to_string()],
+        "the row after the last one served, never it again"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sign_in_minted_person_is_listed_by_their_login_and_marked() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("roster-named@http-live.test").await?;
+    let minted = f.login_minted_person("octocat-probe").await?;
+
+    let (status, body) = get(flat_app(&f, caller), "/v1/visible-persons").await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["person_id"].as_str() == Some(&minted.to_string()))
+        })
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("a login-minted person is still a person: {body}"))?;
+
+    assert_eq!(entry["provisional"], true, "offered, and marked as thin");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cursor_from_another_query_is_refused_rather_than_resumed() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.account_holder("roster-cursor@http-live.test").await?;
+    let _second = f.account_holder("roster-cursor-2@http-live.test").await?;
+
+    let (_, browsed) = get(flat_app(&f, caller), "/v1/visible-persons?limit=1").await?;
+    let cursor = browsed["next_cursor"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("expected a cursor: {browsed}"))?;
+
+    // The same position, presented under a narrowed query it never ordered.
+    let (status, _) = get(
+        flat_app(&f, caller),
+        &format!("/v1/visible-persons?q=roster&limit=1&cursor={cursor}"),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_over_long_roster_query_is_refused_rather_than_scanned() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("roster-q@http-live.test").await?;
+
+    let (status, _) = get(
+        flat_app(&f, caller),
+        &format!("/v1/visible-persons?q={}", "x".repeat(201)),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     Ok(())
 }

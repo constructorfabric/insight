@@ -196,7 +196,14 @@ def test_the_queue_reports_items_and_rates_over_observed_accounts(identity_svc, 
     rates = body["rates"]
     assert rates["observed"] >= rates["bound"] + rates["excluded"], rates
     for item in body["items"]:
-        assert item["kind"] in {"contested", "binding_conflict", "no_evidence"}, item
+        assert item["kind"] in {
+            "contested",
+            "binding_conflict",
+            "provisioned_at_login",
+            "minted_from_roster",
+            "no_source_id",
+            "no_evidence",
+        }, item
 
 
 def test_the_queue_honours_the_limit_without_narrowing_the_rates(identity_svc, api: httpx.Client) -> None:

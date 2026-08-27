@@ -4,7 +4,8 @@
 #   ${CONNECTOR}            — connector slug (e.g. "github", "ms-entra")
 #   ${CONNECTION_NAME}      — Airbyte connection name; pattern
 #                              {connector}-{source_id}-{tenant}-conn
-#   ${SCHEDULE}             — cron string; precedence resolved by caller
+#   ${SCHEDULES}            — YAML flow array of cron strings, one per
+#                              schedule; precedence resolved by caller
 #                              (Secret annotation > descriptor.schedule > default)
 #   ${TENANT}               — tenant slug
 #   ${INSIGHT_SOURCE_ID}    — secret annotation insight.cyberfabric.com/source-id
@@ -45,8 +46,7 @@ spec:
   # singular `schedule:` is rejected by the new CRD with a strict-decoding
   # `unknown field "spec.schedule"` error (same fix as the chart's
   # reconcile-cron.yaml, PR #549).
-  schedules:
-    - "${SCHEDULE}"
+  schedules: ${SCHEDULES}
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   workflowSpec:

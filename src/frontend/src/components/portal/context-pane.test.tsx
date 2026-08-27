@@ -17,6 +17,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  isFlat: false,
   zone: { activeZone: "overview", activePerson: "boss@x" },
   standings: [] as Array<{
     id: string;
@@ -36,6 +37,11 @@ vi.mock("@/components/org-tree", () => ({
 }));
 vi.mock("@/queries/identity-me", () => ({
   useIsAdmin: () => ({ isAdmin: mocks.isAdmin, isPending: false }),
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
 }));
 
 import {
@@ -103,6 +109,27 @@ describe("ContextPane", () => {
     expect(lens.result.current).toBe("Git output");
   });
 
+  it("expands a direction and its first lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Knowledge / Wiki"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+    expect(portalRouter.search).toMatchObject({ dir: "wiki", lens: "Overview" });
+  });
+
+  it("picks a lens in one navigation", async () => {
+    mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
+    pane();
+    portalRouter.navigations.length = 0;
+
+    await userEvent.click(screen.getByText("Git output"));
+
+    expect(portalRouter.navigations).toHaveLength(1);
+  });
+
   it("switches direction when another domain is clicked", async () => {
     mocks.zone = { activeZone: "directions", activePerson: "boss@x" };
     pane();
@@ -129,7 +156,8 @@ describe("ContextPane", () => {
     ["overview", "At a glance"],
     ["aicost", "Overview"],
     ["people", "People (roster)"],
-    ["reports", "Report builder"],
+    ["scorecard", "Fixed scorecard"],
+    ["reports", "Delivery trend"],
     ["manage", "Metric catalog"],
   ])("highlights the default item of %s when the URL names none", (zone, label) => {
     mocks.zone = { activeZone: zone, activePerson: "boss@x" };
@@ -149,12 +177,6 @@ describe("ContextPane", () => {
     act(() => portalRouter.set({ item: "trend" }));
     pane();
     expect(buttonFor("People (roster)")).toHaveAttribute("data-active");
-  });
-
-  it("highlights nothing in a zone with nothing built to open on", () => {
-    mocks.zone = { activeZone: "scorecard", activePerson: "boss@x" };
-    pane();
-    expect(document.querySelectorAll("[data-active]")).toHaveLength(0);
   });
 
   it("keeps admin-only Manage items away from a non-admin", () => {
@@ -261,5 +283,34 @@ describe("ContextPane", () => {
     // flight, so a tooltip that trusted them would announce the strongest
     // claim of the three on an answer the hook has not given.
     expect(button.getAttribute("title")).toBeNull();
+  });
+});
+
+describe("ContextPane on an organisation with no reporting lines", () => {
+  it("names the People views for an organisation with no reporting lines", () => {
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByText("Roster")).toBeInTheDocument();
+    expect(screen.queryByText("Employees")).toBeNull();
+    expect(screen.queryByText("People (roster)")).toBeNull();
+    expect(screen.queryByText("Median by Role")).toBeNull();
+  });
+
+  it("does not call the roster a chart", () => {
+    // "WorkChart" describes a structure a flat organisation does not have, and
+    // the list needs no heading of its own inside the People zone.
+    mocks.isFlat = true;
+    mocks.zone = { activeZone: "people", activePerson: "boss@x" };
+
+    pane();
+
+    expect(screen.queryByText("WorkChart")).toBeNull();
+    expect(
+      screen.getByLabelText("Find someone in the org"),
+    ).toBeInTheDocument();
   });
 });

@@ -50,14 +50,11 @@ impl Gear for AnalyticsApiGear {
         // Connect to MariaDB (self-managed pool — LOCKED DECISION).
         let db = infra::db::connect(&cfg.database_url).await?;
 
-        // Run pending migrations.
-        infra::db::run_migrations(&db).await?;
-
-        // Converge builtin metric definitions to the code registry before
-        // serving traffic. MySQL-only, so it does not violate the
-        // post-readiness ClickHouse rule; failure aborts startup because the
-        // registry state must be consistent before the first request.
-        crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
+        // INVARIANT: server boot stays read-only — migrations and the
+        // builtin-definition converge belong to the `migrate` entrypoint, so
+        // N replicas cannot race and an older image can be redeployed over a
+        // newer forward-only schema.
+        infra::db::assert_schema_compatible(&db).await?;
 
         // Refuse to start if any required CHECK constraint is missing. See
         // `infra/db/check_probe` and DESIGN §2.2
@@ -92,10 +89,18 @@ impl Gear for AnalyticsApiGear {
 
         let contract_ch = ch.clone();
 
+        let anthropic = infra::anthropic::AnthropicClient::new(
+            &cfg.ai_assist.api_base,
+            std::time::Duration::from_secs(cfg.ai_assist.request_timeout_secs),
+        )?;
+        let ai_calls = Arc::new(tokio::sync::Semaphore::new(cfg.ai_assist.max_concurrent));
+
         let state = api::AppState {
             db,
             ch,
             identity,
+            anthropic,
+            ai_calls,
             config: cfg,
         };
 
@@ -135,29 +140,45 @@ impl RestApiCapability for AnalyticsApiGear {
     }
 }
 
-/// `analytics migrate`: run migrations + the startup probe, then exit. Mirrors
-/// the old `main.rs::run_migrate`, reading the gear config out of the loaded
-/// `AppConfig` (toolkit owns config layering; the figment loader is gone).
+/// `analytics migrate`: run migrations + the builtin-definition converge + the
+/// startup probe, then exit.
+///
+/// This is the only path that writes schema or builtin registry rows. Both run
+/// inside one advisory-locked, single-connection session so that concurrent
+/// migrators cannot double-apply non-transactional DDL, and so the converge's
+/// read-then-write sequences cannot interleave.
 ///
 /// # Errors
 ///
-/// Returns an error if config extraction, DB connect, migrations, or the probe
-/// fails.
+/// Returns an error if config extraction, DB connect, the migration lock,
+/// migrations, the converge, or the probe fails.
 pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
     tracing::info!("running migrations");
 
     let cfg = extract_gear_config(app)?;
 
-    let db = infra::db::connect(&cfg.database_url).await?;
-    infra::db::run_migrations(&db).await?;
+    insight_migration::with_migration_session(
+        &cfg.database_url,
+        infra::db::MIGRATION_LOCK,
+        infra::db::MIGRATION_LOCK_TIMEOUT,
+        |db| async move {
+            use sea_orm_migration::MigratorTrait;
+            crate::migration::Migrator::up(&db, None).await?;
+            tracing::info!("migrations applied");
 
-    // Same convergence as `init`: `migrate` run as a standalone step must
-    // leave builtin metric definitions matching the code registry.
-    crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
+            // The converge owns builtin metric definitions: it upserts the code
+            // registry and disables rows the registry no longer carries. It
+            // must not run on a server boot — an older image would disable the
+            // definitions a newer release introduced.
+            crate::domain::metric_definitions::reconcile_builtin_definitions(&db).await?;
 
-    // Same probe as `init`. An operator running `migrate` standalone wants
-    // the integrity signal too (DESIGN §2.2).
-    infra::db::check_probe::assert_required_checks(&db).await?;
+            // Same probe as `init`. An operator running `migrate` standalone
+            // wants the integrity signal too (DESIGN §2.2).
+            infra::db::check_probe::assert_required_checks(&db).await?;
+            Ok(())
+        },
+    )
+    .await?;
 
     tracing::info!("migrations complete");
     Ok(())
@@ -199,6 +220,30 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
              APP__gears__analytics__config__clickhouse_url)"
         );
     }
+    if cfg.ai_assist.enabled {
+        if cfg.ai_assist.max_concurrent == 0 {
+            anyhow::bail!(
+                "gears.analytics.config.ai_assist.max_concurrent is 0, so no explain call \
+                 could ever run (set \
+                 APP__gears__analytics__config__ai_assist__max_concurrent to at least 1)"
+            );
+        }
+        if cfg.ai_assist.request_timeout_secs == 0 {
+            anyhow::bail!(
+                "gears.analytics.config.ai_assist.request_timeout_secs is 0, so every model \
+                 call would abort before it starts (set \
+                 APP__gears__analytics__config__ai_assist__request_timeout_secs to at least 1)"
+            );
+        }
+        cfg.ai_assist.encryption_key().map_err(|e| {
+            anyhow::anyhow!(
+                "gears.analytics.config.ai_assist is enabled but its \
+                 token_encryption_key is unusable: {e} (set \
+                 APP__gears__analytics__config__ai_assist__token_encryption_key \
+                 to base64 of 32 random bytes)"
+            )
+        })?;
+    }
     Ok(())
 }
 
@@ -227,6 +272,45 @@ mod tests {
         let c = cfg(json!({
             "database_url": "mysql://h:3306/db",
             "clickhouse_url": "http://h:8123",
+        }));
+        assert!(check_config(&c).is_ok());
+    }
+
+    #[test]
+    fn check_config_errs_when_ai_assist_is_on_without_a_usable_key() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+            "ai_assist": { "enabled": true },
+        }));
+        assert!(check_config(&c).is_err());
+    }
+
+    #[test]
+    fn check_config_errs_when_ai_assist_can_never_run_a_call() {
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        for bad in [
+            json!({ "enabled": true, "token_encryption_key": key, "max_concurrent": 0 }),
+            json!({ "enabled": true, "token_encryption_key": key, "request_timeout_secs": 0 }),
+        ] {
+            let c = cfg(json!({
+                "database_url": "mysql://h:3306/db",
+                "clickhouse_url": "http://h:8123",
+                "ai_assist": bad,
+            }));
+            assert!(
+                check_config(&c).is_err(),
+                "a zero must stop boot, not hang requests"
+            );
+        }
+    }
+
+    #[test]
+    fn check_config_ok_when_ai_assist_is_off_without_a_key() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+            "ai_assist": { "enabled": false },
         }));
         assert!(check_config(&c).is_ok());
     }

@@ -59,10 +59,17 @@ pub async fn get_forest(
     let valid_at = resolve_valid_at(params.valid_at.as_deref())?;
     let source = &state.config.org_chart_source_type;
 
-    let flat =
-        subchart_repo::get_forest_flat(&state.db, tenant, caller, source, max_depth, valid_at)
-            .await
-            .map_err(read_err)?;
+    let flat = subchart_repo::get_forest_flat(
+        &state.db,
+        tenant,
+        caller,
+        source,
+        max_depth,
+        valid_at,
+        state.config.visibility_policy,
+    )
+    .await
+    .map_err(read_err)?;
     Ok(Json(SubchartForestResponse {
         roots: assemble_forest(flat),
     }))
@@ -86,7 +93,13 @@ pub async fn get_subchart(
     let source = &state.config.org_chart_source_type;
 
     let can_see = subchart_repo::is_target_in_visible_set(
-        &state.db, tenant, caller, person_id, source, valid_at,
+        &state.db,
+        tenant,
+        caller,
+        person_id,
+        source,
+        valid_at,
+        state.config.visibility_policy,
     )
     .await
     .map_err(read_err)?;

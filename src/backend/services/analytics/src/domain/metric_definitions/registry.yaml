@@ -4,6 +4,9 @@ sources:
       kind: managed_observation
       source_ref: ai_metric_observations
       evidence_ref: ai_metric_evidence
+      # Longest lookback_window among the connectors feeding this source:
+      # claude-enterprise re-reads 3 days, claude-team and chatgpt-team 2.
+      revision_window_days: 3
     measures:
       - key: accepted_lines
         evidence_granularity: source_summary
@@ -42,10 +45,14 @@ sources:
       - key: commit_count
         evidence_granularity: event
       - key: commit_day
-        evidence_granularity: source_summary
+        evidence_granularity: derived_population
       - key: commit_change_size
         evidence_granularity: event
       - key: code_lines_added
+        evidence_granularity: source_summary
+      - key: test_lines_added
+        evidence_granularity: source_summary
+      - key: test_and_code_lines_added
         evidence_granularity: source_summary
       - key: lines_added
         evidence_granularity: source_summary
@@ -55,13 +62,56 @@ sources:
         evidence_granularity: event
       - key: pr_created_merged
         evidence_granularity: event
+      - key: pr_abandoned
+        evidence_granularity: event
+      - key: pr_reviewed
+        evidence_granularity: event
+      - key: pr_reviewer_count
+        evidence_granularity: event
+      - key: pr_multi_reviewed
+        evidence_granularity: event
       - key: pr_merged
+        evidence_granularity: event
+      - key: pr_merged_without_approval
         evidence_granularity: event
       - key: pr_cycle_hours
         evidence_granularity: event
       - key: pr_change_size
         evidence_granularity: event
+      - key: pr_first_review_hours
+        evidence_granularity: event
+      - key: pr_review_wait_share
+        evidence_granularity: event
+      - key: pr_review_to_merge_hours
+        evidence_granularity: event
+      - key: pr_approval_to_merge_hours
+        evidence_granularity: event
+      - key: default_commit_count
+        evidence_granularity: event
+      - key: non_default_commit_count
+        evidence_granularity: event
+      - key: default_code_lines_added
+        evidence_granularity: source_summary
+      - key: non_default_code_lines_added
+        evidence_granularity: source_summary
+      - key: default_lines_added
+        evidence_granularity: source_summary
+      - key: non_default_lines_added
+        evidence_granularity: source_summary
+      - key: default_lines_removed
+        evidence_granularity: source_summary
+      - key: non_default_lines_removed
+        evidence_granularity: source_summary
+      - key: default_pr_created
+        evidence_granularity: event
+      - key: non_default_pr_created
+        evidence_granularity: event
+      - key: default_pr_merged
+        evidence_granularity: event
+      - key: non_default_pr_merged
+        evidence_granularity: event
     dimensions:
+      - branch_scope
       - category
       - change_type
       - destination_branch
@@ -166,6 +216,7 @@ sources:
         evidence_granularity: event
     dimensions:
       - type
+      - source
   - source:
       key: wiki
       kind: managed_observation
@@ -186,15 +237,297 @@ sources:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
+      # The month in progress is revisable throughout, and 31 days is the
+      # longest such month.
+      revision_window_days: 31
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary
       - key: extra_usage_limit_usd
         evidence_granularity: source_summary
+      - key: seat_cost_usd
+        evidence_granularity: source_summary
+      - key: daily_extra_usage_usd
+        evidence_granularity: source_summary
     dimensions:
       - tool
       - seat_tier
+  - source:
+      key: ci
+      kind: managed_observation
+      source_ref: ci_metric_observations
+      evidence_ref: ci_metric_evidence
+    measures:
+      - key: runs
+        evidence_granularity: event
+      - key: gate_runs
+        evidence_granularity: event
+      - key: gate_passed
+        evidence_granularity: event
+      - key: gate_first_try_passed
+        evidence_granularity: event
+      - key: gate_retried
+        evidence_granularity: event
+      - key: run_duration_min
+        evidence_granularity: event
+      - key: run_hours
+        evidence_granularity: event
+      - key: deployments
+        evidence_granularity: event
+      - key: runs_matched_commit
+        evidence_granularity: event
+      - key: commits_observed
+        evidence_granularity: event
+    dimensions:
+      - repository
+      - pipeline
+      - trigger
+      - outcome
+      - environment
+      - env_kind
+      - hour_block
 metrics:
+  - metric_key: ci.runs
+    source_key: ci
+    subject: pipelines
+    tags:
+      - ci
+      - volume
+    label: CI runs
+    short_label: Runs
+    description: Pipeline runs with a decided outcome
+    explanation: Every CI pipeline run with a decided outcome, dated by the day the run started, whatever its trigger. Runs still in progress are not counted until they decide. History accumulates from when collection started; the source API retains only a bounded window, so earlier runs were never observable.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: runs
+    dimensions:
+      - repository
+      - pipeline
+      - trigger
+      - outcome
+      - hour_block
+  - metric_key: ci.gate_pass_rate
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: Gate pass rate
+    short_label: Pass rate
+    description: Share of commit-triggered runs that passed
+    explanation: Success share of gate runs — runs triggered by a push, a pull request, or the merge queue that reached a decided outcome (success, failure, or timeout). Cancelled and skipped runs decide nothing and stay out of both sides; runs waiting for a manual approval never executed and stay out as well.
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_passed
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+      - hour_block
+  - metric_key: ci.gate_first_try_pass_rate
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: First-try pass rate
+    short_label: First try
+    description: Share of gate runs green without a retry
+    explanation: Gate runs that passed on their first attempt, as a share of all gate runs. The gap to the plain pass rate is the retry tax — green that had to be bought with a re-run.
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_first_try_passed
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.gate_retry_share
+    source_key: ci
+    subject: reliability
+    tags:
+      - ci
+      - quality
+    label: Retried gate runs
+    short_label: Retried
+    description: Share of gate runs that were re-run
+    explanation: Gate runs whose final state came from a re-run, as a share of all gate runs. A retried run counts once, at its last attempt.
+    format: percent
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !ratio
+      scale: 100.0
+    inputs:
+      - input_role: numerator
+        measure_key: gate_retried
+      - input_role: denominator
+        measure_key: gate_runs
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_duration_min
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration
+    short_label: Duration
+    description: Typical minutes a gate run takes
+    explanation: Median wall-clock minutes from a gate run's start to its decision, over decided runs dated by the day they started. Wall clock, not billable compute. Instant failures that never really ran are excluded from durations while still counting toward rates.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: median
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+      - outcome
+  - metric_key: ci.run_duration_min_p90
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration p90
+    short_label: Duration p90
+    description: Minutes the slowest tenth of gate runs exceed
+    explanation: The 90th percentile of gate run duration — nine in ten runs finish faster. The gap to the median is the bad-day penalty a developer actually waits for.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !percentile
+      q: 0.9
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_duration_min_stddev
+    source_key: ci
+    subject: duration
+    tags:
+      - ci
+      - duration
+      - distribution
+    label: Gate run duration spread
+    short_label: Duration spread
+    description: How unevenly gate run durations vary
+    explanation: Sample standard deviation of gate run durations, in minutes. A pipeline whose duration swings wildly is harder to plan around than a slow but steady one.
+    unit: min
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: !stddev
+    inputs:
+      - input_role: value
+        measure_key: run_duration_min
+    dimensions:
+      - repository
+      - pipeline
+  - metric_key: ci.run_hours
+    source_key: ci
+    subject: compute
+    tags:
+      - ci
+      - volume
+    label: CI hours
+    short_label: CI hours
+    description: Wall-clock hours spent running CI
+    explanation: Wall-clock hours all decided runs spent executing, whatever the trigger. Not billable compute minutes — parallel jobs inside one run count as the run's elapsed time, not their sum. Filter by outcome to see hours burned on red runs.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: run_hours
+    dimensions:
+      - repository
+      - pipeline
+      - outcome
+  - metric_key: ci.runs_matched_commit
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Runs matching a collected commit
+    short_label: Runs matched
+    description: Decided runs whose head commit was collected
+    explanation: Decided runs whose head commit exists among the collected git commits. PR runs build synthetic merge refs and fork commits the commit stream never sees, so the gap between this and total runs is the honest ceiling for ANY analysis that joins CI to git history — chart it next to runs and collected commits to see how far the two streams can be trusted to join.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: runs_matched_commit
+    dimensions: []
+  - metric_key: ci.commits_observed
+    source_key: ci
+    subject: data_trust
+    tags:
+      - ci
+      - coverage
+    label: Commits collected
+    short_label: Commits
+    description: Git commits collected, by commit date
+    explanation: Commits the git connector collected, dated at their commit time — the other side of the run-to-commit join. Where runs far outnumber matched runs while commits stay high, CI is running on refs the commit stream does not see (PR merge refs, forks), not on missing history.
+    format: integer
+    direction: neutral
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: commits_observed
+    dimensions: []
+  - metric_key: ci.deployments
+    source_key: ci
+    subject: deployments
+    tags:
+      - ci
+      - delivery
+    label: Deployments
+    short_label: Deploys
+    description: Deployments created, by outcome
+    explanation: Deployments recorded in the period. The outcome is the latest status the deployment reached; one with no status yet shows as pending rather than being rounded away.
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    computation: sum
+    inputs:
+      - input_role: value
+        measure_key: deployments
+    dimensions:
+      - repository
+      - environment
+      - outcome
+      - env_kind
   - metric_key: ai.accepted_lines
     source_key: ai_usage
     subject: code
@@ -251,9 +584,10 @@ metrics:
   - metric_key: ai.cost
     source_key: ai_usage
     subject: cost
-    label: AI usage cost
-    description: AI usage priced at vendor token/usage rates
-    explanation: Person-attributed AI usage priced at the vendor's token or usage rates — what the consumption would cost if billed purely by usage. Includes usage a seat or subscription already covered, and excludes seat and subscription fees, so it is not the amount invoiced. Covers the tools whose connector prices usage per person. Overlaps ai.extra_usage_cost, which is the part of that same consumption the vendor actually billed on top of the seat fee — the two are served side by side and are never added, since adding them counts the billed part twice.
+    label: AI potential usage cost
+    short_label: Potential cost
+    description: Potential cost of all AI usage at vendor rates, never the actual invoice
+    explanation: Person-attributed AI usage priced at the vendor's token rates — what the consumption would cost if billed purely by usage. It includes usage a seat already covered and excludes seat fees, so it is not the invoiced amount, and only tools that price usage per person contribute. Never add it to actual usage cost, which is the billed part of this same consumption.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -264,13 +598,31 @@ metrics:
         measure_key: cost_usd
     dimensions:
       - tool
+  - metric_key: ai.seat_cost
+    source_key: ai_cost
+    subject: cost
+    label: AI seat cost
+    short_label: Seat cost
+    description: What a seat costs before any usage
+    explanation: The invoiced price of one seat for a billing month, from the invoice's per-seat amount. Dated at that month's first day, so a window must hold it to return the fee. The month comes from the read, not from the vendor. A seat whose tier the invoice does not price returns no value.
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: seat_cost_usd
+    dimensions:
+      - tool
+      - seat_tier
   - metric_key: ai.extra_usage_cost
     source_key: ai_cost
     subject: cost
-    label: AI extra usage
-    short_label: Extra usage
-    description: Spend above the usage included in the seat fee
-    explanation: What the vendor billed a person on top of their seat fee, once the usage included in that fee was exhausted, priced at API rates. A monthly fact reported against the day the seat snapshot was last read; a window covering part of a month returns that month in full rather than a fraction. Distinct from ai.cost, which prices all consumption including what the seat fee already covered — the two are never summed. Attribution mode is direct — the vendor reports this amount per seat.
+    label: AI actual usage cost
+    short_label: Actual cost
+    description: Monthly cost billed on top of the seat fee, as last read
+    explanation: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -282,13 +634,31 @@ metrics:
     dimensions:
       - tool
       - seat_tier
+  - metric_key: ai.daily_approximate_extra_usage_cost
+    source_key: ai_cost
+    subject: cost
+    label: AI actual usage cost — approximate distribution
+    short_label: Actual cost / day
+    description: The monthly billed cost spread across its days
+    explanation: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: daily_extra_usage_usd
+    dimensions:
+      - tool
+      - seat_tier
   - metric_key: ai.extra_usage_utilisation
     source_key: ai_cost
     subject: cost
     label: Extra-usage ceiling used
     short_label: Ceiling used
-    description: Share of the admin-set extra-usage ceiling consumed
-    explanation: Extra usage measured against the ceiling an administrator set on it. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste — room left under a ceiling was never purchased and costs nothing. A seat with no ceiling returns no value rather than a zero, the ratio having no denominator.
+    description: Share of the extra-usage ceiling consumed
+    explanation: Extra usage measured against the seat's ceiling. At 100% the vendor stops the seat, so this reads as proximity to being blocked, not waste. A seat with no ceiling returns no value, not zero. Above 100%, the ceiling was lowered below what the seat had spent. Its month comes from the read, not the vendor.
     format: percent
     direction: lower_is_better
     entity_type: person
@@ -472,6 +842,56 @@ metrics:
       - input_role: value
         measure_key: commit_count
     dimensions:
+      - branch_scope
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_commits
+    source_key: git
+    subject: commits
+    label: Commits on the default branch
+    short_label: Commits (default)
+    description: Authored commits that reached the default branch
+    explanation: >-
+      Authored commits reachable from the repository's default branch, or
+      carried onto it by a merged pull request. A commit joins this metric when
+      its branch lands, so a past period's figure rises as work merges. Merge
+      commits excluded.
+    unit: commits
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_commit_count
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_commits
+    source_key: git
+    subject: commits
+    label: Commits outside the default branch
+    short_label: Commits (other)
+    description: Authored commits that have not reached the default branch
+    explanation: >-
+      Authored commits not reachable from the repository's default branch —
+      work in flight, or abandoned. A commit leaves this metric when its branch
+      lands, so a past period's figure falls as work merges. A source that does
+      not report branch membership counts here rather than inventing an answer.
+      Merge commits excluded.
+    unit: commits
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_commit_count
+    dimensions:
       - project
       - repository
       - source
@@ -481,7 +901,11 @@ metrics:
     label: Code lines added
     short_label: Code lines
     description: Lines added to code files
-    explanation: Lines added to files classified as code — tests, configuration, and documentation excluded.
+    explanation: >-
+      Lines added to files classified as code — tests, configuration, and
+      documentation excluded. Each change counts once: when the same content
+      reaches a repository in more than one commit, the lines belong to the
+      commit that introduced them first.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -491,6 +915,58 @@ metrics:
     inputs:
       - input_role: value
         measure_key: code_lines_added
+    dimensions:
+      - branch_scope
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_code_lines
+    source_key: git
+    subject: code_changes
+    label: Code lines added on the default branch
+    short_label: Code lines (default)
+    description: Lines added to code files that reached the default branch
+    explanation: >-
+      Code lines whose commit is reachable from the repository's default
+      branch, or was carried onto it by a merged pull request. Lines follow
+      their commit, so this rises as work merges. Tests, configuration and
+      documentation excluded.
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_code_lines_added
+    dimensions:
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_code_lines
+    source_key: git
+    subject: code_changes
+    label: Code lines added outside the default branch
+    short_label: Code lines (other)
+    description: Lines added to code files that have not reached the default branch
+    explanation: >-
+      Code lines whose commit has not reached the repository's default branch —
+      work in flight, or abandoned. Lines follow their commit, so this falls as
+      work merges. Tests, configuration and documentation excluded.
+    unit: lines
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_code_lines_added
     dimensions:
       - change_type
       - file_extension
@@ -503,7 +979,11 @@ metrics:
     label: Lines added
     short_label: Lines +
     description: All lines added, by file category
-    explanation: 'Lines added across all files, split by file category: code, tests, configuration, documentation.'
+    explanation: >-
+      Lines added across all files, split by file category: code, tests,
+      configuration, documentation. Each change counts once: when the same
+      content reaches a repository in more than one commit, the lines belong
+      to the commit that introduced them first.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -514,7 +994,86 @@ metrics:
       - input_role: value
         measure_key: lines_added
     dimensions:
+      - branch_scope
       - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_lines_added
+    source_key: git
+    subject: code_changes
+    label: Lines added on the default branch
+    short_label: Lines + (default)
+    description: All lines added that reached the default branch
+    explanation: >-
+      Lines added whose commit is reachable from the repository's default
+      branch, or was carried onto it by a merged pull request. Lines follow
+      their commit, so this rises as work merges.
+    unit: lines
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_lines_added
+    dimensions:
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_lines_added
+    source_key: git
+    subject: code_changes
+    label: Lines added outside the default branch
+    short_label: Lines + (other)
+    description: All lines added that have not reached the default branch
+    explanation: >-
+      Lines added whose commit has not reached the repository's default branch —
+      work in flight, or abandoned. Lines follow their commit, so this falls as
+      work merges.
+    unit: lines
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_lines_added
+    dimensions:
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.test_change_share
+    source_key: git
+    subject: code_changes
+    tags:
+      - rate
+    label: Test change share
+    short_label: Test share
+    description: Share of implementation and test additions made in test files
+    explanation: Lines added to test files divided by lines added to code and test files. Documentation, configuration, and generated files do not affect the percentage. A result near zero can identify changes where tests are not evolving with implementation, but expected levels vary by repository and change type.
+    format: percent
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: test_lines_added
+      - input_role: denominator
+        measure_key: test_and_code_lines_added
+    dimensions:
       - change_type
       - file_extension
       - project
@@ -526,7 +1085,11 @@ metrics:
     label: Lines removed
     short_label: Lines −
     description: All lines removed, by file category
-    explanation: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available.
+    explanation: >-
+      Lines removed across all reported file changes, with file-category,
+      repository, and source breakdowns available. Each change counts once:
+      when the same removal reaches a repository in more than one commit, the
+      lines belong to the commit that made it first.
     unit: lines
     format: integer
     direction: neutral
@@ -536,6 +1099,59 @@ metrics:
     inputs:
       - input_role: value
         measure_key: lines_removed
+    dimensions:
+      - branch_scope
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_lines_removed
+    source_key: git
+    subject: code_changes
+    label: Lines removed on the default branch
+    short_label: Lines − (default)
+    description: All lines removed that reached the default branch
+    explanation: >-
+      Lines removed whose commit is reachable from the repository's default
+      branch, or was carried onto it by a merged pull request. Lines follow
+      their commit, so this rises as work merges.
+    unit: lines
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_lines_removed
+    dimensions:
+      - category
+      - change_type
+      - file_extension
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_lines_removed
+    source_key: git
+    subject: code_changes
+    label: Lines removed outside the default branch
+    short_label: Lines − (other)
+    description: All lines removed that have not reached the default branch
+    explanation: >-
+      Lines removed whose commit has not reached the repository's default
+      branch — work in flight, or abandoned. Lines follow their commit, so this
+      falls as work merges.
+    unit: lines
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_lines_removed
     dimensions:
       - category
       - change_type
@@ -560,6 +1176,56 @@ metrics:
       - input_role: value
         measure_key: pr_created
     dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_prs_created
+    source_key: git
+    subject: pull_requests
+    label: Pull requests created into the default branch
+    short_label: PRs opened (default)
+    description: Authored pull requests targeting the default branch
+    explanation: >-
+      Pull requests opened against the repository's default branch, dated by
+      creation. Unlike the commit and line splits this one is settled when the
+      request is opened and does not move afterwards.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_prs_created
+    source_key: git
+    subject: pull_requests
+    label: Pull requests created into another branch
+    short_label: PRs opened (other)
+    description: Authored pull requests targeting a branch other than the default
+    explanation: >-
+      Pull requests opened against something other than the repository's
+      default branch — a release branch, a stacked request, an integration
+      branch. A request whose destination the source does not report counts
+      here rather than inventing an answer.
+    unit: PRs
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_pr_created
+    dimensions:
       - destination_branch
       - project
       - repository
@@ -580,6 +1246,55 @@ metrics:
     inputs:
       - input_role: value
         measure_key: pr_merged
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.default_branch_prs_merged
+    source_key: git
+    subject: pull_requests
+    label: Pull requests merged into the default branch
+    short_label: PRs merged (default)
+    description: Authored pull requests merged into the default branch
+    explanation: >-
+      Pull requests that merged into the repository's default branch, dated by
+      the merge. This is the surface that also promotes a branch's commits and
+      lines into their default-branch metrics.
+    unit: PRs
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: default_pr_merged
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.non_default_branch_prs_merged
+    source_key: git
+    subject: pull_requests
+    label: Pull requests merged into another branch
+    short_label: PRs merged (other)
+    description: Authored pull requests merged into a branch other than the default
+    explanation: >-
+      Pull requests that merged into something other than the repository's
+      default branch, dated by the merge. Their commits do not count as having
+      reached the default branch on this evidence alone.
+    unit: PRs
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: non_default_pr_merged
     dimensions:
       - destination_branch
       - project
@@ -606,7 +1321,159 @@ metrics:
       - input_role: denominator
         measure_key: pr_created
     dimensions:
+      - branch_scope
       - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_abandonment_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+    label: PR abandonment rate
+    short_label: Abandoned
+    description: Share of created pull requests closed without merging
+    explanation: Of pull requests created in the period, the share now closed without merging. Open requests are not abandoned. Requests created near the period end can still change outcome later.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_abandoned
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_coverage
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Review coverage
+    short_label: Reviewed
+    description: Share of created pull requests with at least one acting reviewer
+    explanation: >-
+      Of pull requests created in the period, the share with at least one
+      submitted review or approval. Assigned reviewers who never act do not
+      count. Some sources provide approvals without review timestamps.
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_reviewed
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.reviewers_per_pr
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Reviewers per PR
+    description: Average number of acting reviewers per created pull request
+    explanation: Distinct reviewers who submitted a review or approval, divided by pull requests created in the period. Pull requests without review contribute zero, so read this with review coverage to separate breadth from coverage.
+    format: decimal
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 1.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_reviewer_count
+      - input_role: denominator
+        measure_key: pr_created
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.multi_reviewer_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Multi-reviewer rate
+    short_label: Multi-review
+    description: Share of reviewed pull requests with more than one acting reviewer
+    explanation: Of pull requests with at least one submitted review or approval, the share with two or more distinct acting reviewers. This measures review breadth without conflating it with unreviewed pull requests.
+    format: percent
+    direction: neutral
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_multi_reviewed
+      - input_role: denominator
+        measure_key: pr_reviewed
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.merges_without_approval_rate
+    source_key: git
+    subject: pull_requests
+    tags:
+      - rate
+      - review
+    label: Merges without approval
+    short_label: No approval
+    description: Share of merged pull requests with no reported approval
+    explanation: Of pull requests merged in the period, the share with no approval reported by the connected source. This can reveal missing approval gates, but source configuration and incomplete review history can also affect it.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: !ratio
+      scale: 100.0
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: numerator
+        measure_key: pr_merged_without_approval
+      - input_role: denominator
+        measure_key: pr_merged
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.active_days
+    source_key: git
+    subject: commits
+    label: Active commit days
+    short_label: Active days
+    description: Distinct days with at least one authored commit
+    explanation: Distinct calendar days with authored, non-merge commits. Repository breakdowns count active days independently; the total still counts each calendar day once across repositories.
+    unit: days
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: distinct_count
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: commit_day
+    dimensions:
       - project
       - repository
       - source
@@ -624,13 +1491,17 @@ metrics:
     entity_type: person
     computation: !ratio
       scale: 1.0
+      denominator_aggregation: distinct_count
     peer_cohort_key: org_unit
     inputs:
       - input_role: numerator
         measure_key: commit_count
       - input_role: denominator
         measure_key: commit_day
-    dimensions: []
+    dimensions:
+      - project
+      - repository
+      - source
   - metric_key: git.commit_size
     source_key: git
     subject: commits
@@ -638,7 +1509,11 @@ metrics:
       - distribution
     label: Commit size
     description: Typical diff size per commit
-    explanation: Median diff size of authored commits (lines added plus removed). Smaller commits are easier to review.
+    explanation: >-
+      Median diff size of authored commits (lines added plus removed),
+      counting only content a commit is the first to introduce — a commit
+      that repeats content already in the repository has a size of zero.
+      Smaller commits are easier to review.
     unit: lines
     format: integer
     direction: lower_is_better
@@ -649,6 +1524,7 @@ metrics:
       - input_role: value
         measure_key: commit_change_size
     dimensions:
+      - branch_scope
       - project
       - repository
       - source
@@ -670,6 +1546,7 @@ metrics:
       - input_role: value
         measure_key: pr_change_size
     dimensions:
+      - branch_scope
       - destination_branch
       - project
       - repository
@@ -693,6 +1570,106 @@ metrics:
     inputs:
       - input_role: value
         measure_key: pr_cycle_hours
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.first_review_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Time to first review
+    short_label: First review
+    description: Typical hours from pull request creation to first review
+    explanation: Median hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_first_review_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_wait_share
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Review wait share
+    short_label: Review wait
+    description: Typical share of pull request cycle time spent waiting for first review
+    explanation: Median percentage of open-to-merge time elapsed before the first submitted review, over merged pull requests in the period. Sources without review timestamps contribute no value. High values suggest first review is the main cycle-time constraint.
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_review_wait_share
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.review_to_merge_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Review-to-merge time
+    short_label: Review to merge
+    description: Typical hours from first review to merge
+    explanation: Median hours from first submitted review to merge, over merged pull requests in the period. Sources without review timestamps contribute no value. Read with time to first review to locate delay before or after review starts.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_review_to_merge_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.approval_to_merge_time_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Approval-to-merge time
+    short_label: Approval to merge
+    description: Typical hours from latest timestamped approval to merge
+    explanation: Median hours from the latest reported approval with a timestamp to merge, over merged pull requests in the period. Sources that expose approvals without per-approval timestamps contribute no value. High values can identify delay after review gates clear.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_approval_to_merge_hours
     dimensions:
       - destination_branch
       - project
@@ -1087,6 +2064,7 @@ metrics:
         measure_key: tasks_closed
     dimensions:
       - type
+      - source
   - metric_key: tasks.bugs_fixed
     source_key: task
     subject: quality
@@ -1142,7 +2120,9 @@ metrics:
     inputs:
       - input_role: value
         measure_key: dev_time_hours
-    dimensions: []
+    dimensions:
+      - type
+      - source
   - metric_key: tasks.resolution_time
     source_key: task
     subject: cycle_time
@@ -1162,7 +2142,9 @@ metrics:
     inputs:
       - input_role: value
         measure_key: resolution_days
-    dimensions: []
+    dimensions:
+      - type
+      - source
   - metric_key: tasks.pickup_time
     source_key: task
     subject: cycle_time
@@ -1182,7 +2164,9 @@ metrics:
     inputs:
       - input_role: value
         measure_key: pickup_days
-    dimensions: []
+    dimensions:
+      - type
+      - source
   - metric_key: tasks.flow_efficiency
     source_key: task
     subject: cycle_time

@@ -36,6 +36,9 @@ function offers(...keys: string[]) {
 // Echo the requested metrics/entities back as a valid response so merges and
 // pairing have real data to operate on.
 function respond(req: MetricResultsRequest): MetricResultsResponse {
+  if (req.entity.type !== "person") throw new Error("person request expected");
+  const ids = req.entity.ids;
+
   return {
     metrics: req.metrics.map((m) => ({
       metric_key: m.metric_key,
@@ -48,7 +51,7 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
         v.view === "peer"
           ? {
               view: "peer",
-              values: req.entity.ids.map((id) => ({
+              values: ids.map((id) => ({
                 entity_id: id,
                 target_value: 1,
                 p25: 0,
@@ -61,7 +64,7 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
             }
           : {
               view: "period",
-              values: req.entity.ids.map((id) => ({ entity_id: id, value: 1 })),
+              values: ids.map((id) => ({ entity_id: id, value: 1 })),
             },
       ),
     })),
@@ -237,6 +240,49 @@ describe("useMetricCollectionSet", () => {
     mock.mockClear();
     result.current.get("g")?.refetch();
     await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+  });
+
+  it("serves a tenant entity as one unchunked id-less request", async () => {
+    // The tenant lens fans its extra collections through this hook; a tenant
+    // names nobody, so the person-roster gates must not keep it disabled.
+    mock.mockImplementation(async (req) => ({
+      metrics: req.metrics.map((m) => ({
+        metric_key: m.metric_key,
+        label: m.metric_key,
+        unit: null,
+        format: "integer" as const,
+        direction: "higher_is_better" as const,
+        computation: "sum" as const,
+        views: [
+          {
+            view: "period" as const,
+            values: [{ entity_id: "tenant-1", value: 7 }],
+          },
+        ],
+      })),
+    }));
+    const { result } = renderHook(
+      () =>
+        useMetricCollectionSet(
+          [
+            {
+              key: "g",
+              collection: {
+                metrics: [{ key: "m", views: [{ view: "period" }] }],
+              },
+            },
+          ],
+          { type: "tenant" },
+          RANGE,
+        ),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.get("g")?.isPending).toBe(false));
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].entity).toEqual({ type: "tenant" });
+    expect(
+      result.current.get("g")?.byKey.get("m")?.period?.values,
+    ).toEqual([{ entity_id: "tenant-1", value: 7 }]);
   });
 });
 

@@ -22,6 +22,8 @@ sources:
       - name: pull_request_diff_stats
       - name: issues
       - name: projects_v2
+      - name: issue_fields
+      - name: issue_types
       - name: workflow_runs
       - name: deployments
       - name: deployment_statuses
@@ -38,6 +40,16 @@ models:
 
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"
+
+  - name: github__ci_runs
+    description: "GitHub Actions workflow runs -> staging, feeds class_git_ci_runs (one row per run attempt; gate + duration semantics live here)"
+
+  - name: github__deployments
+    description: "GitHub deployments -> staging, feeds class_git_deployments (no outcome — that is the events class)"
+
+  - name: github__deployment_events
+    description: "GitHub deployment statuses -> staging, feeds class_git_deployment_events"
+
 
   - name: github__repository_branches
     description: "GitHub branches -> staging, feeds class_git_repository_branches"
@@ -63,8 +75,8 @@ models:
   - name: github__account_emails
     description: "Every (GitHub account, e-mail) pair the connector observed, one row per pair"
     columns:
-      - name: login
-        description: "Lowercased GitHub login the e-mail was observed under (ADR-0002 account id)"
+      - name: account_id
+        description: "GitHub's immutable numeric account id the e-mail was observed under, stringified (ADR-0002 binding key)"
         data_tests:
           - not_null
       - name: email
@@ -98,11 +110,11 @@ models:
           - not_null
           - unique
       - name: insight_source_type
-        description: "`github` for a login-keyed account, `github-commit-email` for an unowned e-mail"
+        description: "`github` for an id-keyed account, `github-commit-email` for an unowned e-mail"
         data_tests:
           - accepted_values:
               values: ["github", "github-commit-email"]
       - name: source_account_id
-        description: "The lowercased GitHub login, or the e-mail itself when no account claims it"
+        description: "The account's numeric GitHub id as a string, or the e-mail itself when no account claims it"
       - name: value
         description: "The claimed e-mail address, or the git author name for a display_name row"

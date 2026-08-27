@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => ({
   counts: [] as number[],
   summary: null as unknown,
   asked: [] as Array<{ since: string; until: string }>,
+  feedbackAsked: [] as Array<{ since: string; until: string }>,
+  feedback: null as unknown,
 }));
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => {
@@ -75,6 +77,33 @@ vi.mock("@/queries/usage", () => ({
   },
 }));
 
+const FEEDBACK = {
+  since: "2026-08-01",
+  until: "2026-08-03",
+  items: [
+    {
+      feedback_id: "f-1",
+      ts: "2026-08-02 11:20:00",
+      person_id: "00000000-0000-0000-0000-0000000000aa",
+      display_name: "Alice Example",
+      username: "alice",
+      message: "The cohort control does not say what it compares against.",
+      path: "/portal/overview",
+    },
+  ],
+};
+
+vi.mock("@/queries/feedback", () => ({
+  useFeedbackList: (range: { since: string; until: string }) => {
+    mocks.feedbackAsked.push(range);
+    return {
+      data: mocks.feedback ?? FEEDBACK,
+      isPending: false,
+      isError: false,
+    };
+  },
+}));
+
 // The shared period control the rest of the portal uses; here it only has to
 // report what the page hands it.
 vi.mock("@/components/widgets/period-selector-bar", () => ({
@@ -104,8 +133,10 @@ import { PlatformUsage } from "./platform-usage";
 describe("PlatformUsage", () => {
   beforeEach(() => {
     mocks.summary = null;
+    mocks.feedback = null;
     mocks.counts.length = 0;
     mocks.asked.length = 0;
+    mocks.feedbackAsked.length = 0;
   });
 
   it("asks for a period with the same control every other zone uses", () => {
@@ -113,6 +144,27 @@ describe("PlatformUsage", () => {
 
     expect(screen.getByTestId("period-bar")).toHaveAttribute("data-period", "month");
     expect(mocks.asked.at(-1)?.since).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("names a visitor by handle when the identity rows carry no display name", () => {
+    mocks.summary = {
+      ...SUMMARY,
+      by_person: [
+        {
+          person_id: "4d1f0a6c-0000-4000-8000-0000000000aa",
+          display_name: "",
+          username: "ada",
+          visits: 2,
+          page_views: 3,
+          last_seen: "2026-08-02T10:00:00Z",
+        },
+      ],
+    };
+
+    render(<PlatformUsage />);
+
+    expect(screen.getByText("ada")).toBeInTheDocument();
+    expect(screen.queryByText("4d1f0a6c-0000-4000-8000-0000000000aa")).toBeNull();
   });
 
   it("counts today without stretching the period it names", () => {
@@ -172,5 +224,27 @@ describe("PlatformUsage", () => {
       "2026-08-02",
       "2026-08-03",
     ]);
+  });
+
+  it("reads feedback over the very window the numbers above it cover", () => {
+    render(<PlatformUsage />);
+
+    expect(mocks.feedbackAsked.at(-1)).toEqual(mocks.asked.at(-1));
+  });
+
+  it("names who sent each piece of feedback", () => {
+    render(<PlatformUsage />);
+
+    expect(screen.getByText("Alice Example")).toBeInTheDocument();
+    expect(
+      screen.getByText("The cohort control does not say what it compares against."),
+    ).toBeInTheDocument();
+  });
+
+  it("says so plainly when nobody sent anything in the period", () => {
+    mocks.feedback = { since: "2026-08-01", until: "2026-08-03", items: [] };
+    render(<PlatformUsage />);
+
+    expect(screen.getByText("No feedback in this period")).toBeInTheDocument();
   });
 });

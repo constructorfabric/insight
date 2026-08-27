@@ -40,9 +40,12 @@ ingestion:
 
 gateway:
   replicaCount: 1
-  # CI cluster has no Gateway controller or Gateway API CRDs; access is port-forward.
+  # Attaches to the `insight` Gateway from bootstrap/functional-ci/gateway.yaml
+  # (the chart's default parentRef). No hostname: the smoke reaches the edge by
+  # IP through the k3d load balancer, so the route matches whatever Host it is
+  # asked for.
   route:
-    enabled: false
+    enabled: true
 
 authenticator:
   replicaCount: 1
@@ -78,8 +81,9 @@ keycloak:
 
 keycloakConfig:
   enabled: true
-  # The roster realm is generated JSON (keycloak-realm target).
-  filesLocations: "/config/*.yaml,/config/*.json"
+  # The roster realm is generated JSON (keycloak-realm target), and JSON only:
+  # config-cli fails the import on a pattern that matches nothing.
+  filesLocations: "/config/*.json"
   # In-cluster hop over plain http — ephemeral CI cluster only.
   url: 'http://{{ .Release.Name }}-keycloak:8085/kc'
   allowInsecureUrl: true

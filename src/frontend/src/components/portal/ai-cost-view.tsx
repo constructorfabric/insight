@@ -4,6 +4,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { PANE_ITEM_COMING_SOON } from "@/lib/portal/aicost-configs";
 import { orgScopeGate } from "@/components/portal/org-scope-gate";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { MembersGrid } from "@/components/widgets/dashboard/members-grid";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -44,10 +45,19 @@ import { cn } from "@/lib/utils";
 
 const EMPTY_COLLECTION: MetricCollectionConfig = { metrics: [] };
 const COST_KEY = "ai.cost";
+// INVARIANT: the per-day metric. The cumulative one is anchored to the first day
+// of its billing month and returns nothing for a window inside a month.
+const ACTUAL_COST_KEY = "ai.daily_approximate_extra_usage_cost";
 const LINES_KEY = "ai.accepted_lines";
 const DAYS_KEY = "ai.active_days";
 /** Grid columns for the cost-leaders scan. */
-const GRID_KEYS = [COST_KEY, DAYS_KEY, LINES_KEY, "ai.dev_conversations"];
+const GRID_KEYS = [
+  COST_KEY,
+  ACTUAL_COST_KEY,
+  DAYS_KEY,
+  LINES_KEY,
+  "ai.dev_conversations",
+];
 
 const TOOL_LABEL: Record<string, string> = {
   claude_code: "Claude Code",
@@ -55,12 +65,35 @@ const TOOL_LABEL: Record<string, string> = {
   chatgpt: "ChatGPT",
 };
 
+/** One "By unit" row. `*Seen` says a reading existed, so a 0 is a measurement. */
+interface UnitRow {
+  unit: string;
+  people: number;
+  active: number;
+  cost: number;
+  costSeen: boolean;
+  actual: number;
+  actualSeen: boolean;
+  lines: number;
+}
+
 interface ToolRow {
   tool: string;
   users: number;
   lines: number;
   cost: number;
   costTracked: boolean;
+  actual: number;
+  actualTracked: boolean;
+}
+
+/** A person's reading of a metric, or null where they have none. */
+function reading(
+  r: NormalizedMetricResult | undefined,
+  id: string,
+): number | null {
+  const v = r ? forEntity(r, id).value : null;
+  return v != null && Number.isFinite(v) ? v : null;
 }
 
 /** Sum a breakdown metric across members, grouped by the `tool` dimension. */
@@ -93,7 +126,9 @@ const PLANNED_KEYS = new Set(PLANNED_SLICES.map((d) => d.key));
  * Honest data caveats surfaced in the UI:
  *  - only Claude Code is usage-metered → the cost total is Claude-only;
  *  - ChatGPT/Codex report usage but no per-user cost (subscription / token
- *    billing isn't ingested), so their cost reads "not tracked", never $0.
+ *    billing isn't ingested), so their cost reads "not tracked", never $0;
+ *  - actual cost is the vendor's monthly bill spread over the days it was
+ *    spent, so it is exact in sum over a month and approximate within it.
  */
 export function AiCostView({ item }: { item: string | null }) {
   const cohortLabel = useCohortLabel();
@@ -110,7 +145,7 @@ export function AiCostView({ item }: { item: string | null }) {
     () =>
       (roster ?? []).map((entry) => ({
         person_id: entry.person_id,
-        name: entry.display_name,
+        name: personDisplayName(entry),
       })),
     [roster],
   );
@@ -133,7 +168,7 @@ export function AiCostView({ item }: { item: string | null }) {
   );
   const toolCollection = useMemo<MetricCollectionConfig>(
     () => ({
-      metrics: [COST_KEY, LINES_KEY].map((key) => ({
+      metrics: [COST_KEY, ACTUAL_COST_KEY, LINES_KEY].map((key) => ({
         key,
         views: [{ view: "breakdown" as const, dimensions: ["tool"] }],
       })),
@@ -158,10 +193,13 @@ export function AiCostView({ item }: { item: string | null }) {
   const sum = (key: string) => {
     const r = grid.byKey.get(key);
     if (!r) return 0;
-    return memberIds.reduce((acc, id) => {
-      const v = forEntity(r, id).value;
-      return acc + (v != null && Number.isFinite(v) ? v : 0);
-    }, 0);
+    return memberIds.reduce((acc, id) => acc + (reading(r, id) ?? 0), 0);
+  };
+  // A metric can be served and still hold no reading for these people. A sum
+  // folds that to 0, and a printed $0 claims a measurement nobody made.
+  const observed = (key: string) => {
+    const r = grid.byKey.get(key);
+    return !!r && memberIds.some((id) => reading(r, id) != null);
   };
   const activeUsers = useMemo(() => {
     const r = grid.byKey.get(DAYS_KEY);
@@ -171,18 +209,30 @@ export function AiCostView({ item }: { item: string | null }) {
 
   const toolRows = useMemo<ToolRow[]>(() => {
     const cost = aggregateByTool(toolData.byKey.get(COST_KEY), memberIds);
+    // Claude Team bills the seat under `claude`; the coding usage that seat
+    // paid for arrives as `claude_code`. One card, not two.
+    const actual = new Map(
+      [...aggregateByTool(toolData.byKey.get(ACTUAL_COST_KEY), memberIds)].map(
+        ([tool, sums]) => [tool === "claude" ? "claude_code" : tool, sums] as const,
+      ),
+    );
     const lines = aggregateByTool(toolData.byKey.get(LINES_KEY), memberIds);
-    const tools = new Set([...cost.keys(), ...lines.keys()]);
+    const tools = new Set([...cost.keys(), ...actual.keys(), ...lines.keys()]);
     return [...tools]
       .map((tool) => {
         const c = cost.get(tool);
+        const a = actual.get(tool);
         const l = lines.get(tool);
         return {
           tool,
           users: (l?.users.size ?? 0) || (c?.users.size ?? 0),
           lines: l?.sum ?? 0,
           cost: c?.sum ?? 0,
-          costTracked: (c?.sum ?? 0) > 0,
+          // A bucket exists only where a reading did, so its absence is what
+          // "not tracked" means — a measured $0 stays $0.
+          costTracked: c != null,
+          actual: a?.sum ?? 0,
+          actualTracked: a != null,
         };
       })
       .sort((a, b) => b.lines - a.lines);
@@ -219,20 +269,39 @@ export function AiCostView({ item }: { item: string | null }) {
   const unitRows = useMemo(() => {
     if (!slice || PLANNED_KEYS.has(slice)) return [];
     const costR = grid.byKey.get(COST_KEY);
+    const actualR = grid.byKey.get(ACTUAL_COST_KEY);
     const linesR = grid.byKey.get(LINES_KEY);
     const daysR = grid.byKey.get(DAYS_KEY);
     const val = (r: NormalizedMetricResult | undefined, id: string) =>
-      r ? (forEntity(r, id).value ?? 0) : 0;
-    const map = new Map<
-      string,
-      { unit: string; people: number; active: number; cost: number; lines: number }
-    >();
+      reading(r, id) ?? 0;
+    const map = new Map<string, UnitRow>();
     for (const id of memberIds) {
       const unit = attrByEntity.get(id)?.[slice]?.value ?? "—";
-      const b = map.get(unit) ?? { unit, people: 0, active: 0, cost: 0, lines: 0 };
+      const b =
+        map.get(unit) ??
+        {
+          unit,
+          people: 0,
+          active: 0,
+          cost: 0,
+          costSeen: false,
+          actual: 0,
+          actualSeen: false,
+          lines: 0,
+        };
       b.people += 1;
       if (val(daysR, id) > 0) b.active += 1;
-      b.cost += val(costR, id);
+      // A unit whose members have no reading is not a unit that spent nothing.
+      const cost = reading(costR, id);
+      if (cost != null) {
+        b.cost += cost;
+        b.costSeen = true;
+      }
+      const actual = reading(actualR, id);
+      if (actual != null) {
+        b.actual += actual;
+        b.actualSeen = true;
+      }
       b.lines += val(linesR, id);
       map.set(unit, b);
     }
@@ -282,13 +351,27 @@ export function AiCostView({ item }: { item: string | null }) {
   if (gate) return gate;
 
   const costR = grid.byKey.get(COST_KEY);
+  const actualR = grid.byKey.get(ACTUAL_COST_KEY);
   const linesR = grid.byKey.get(LINES_KEY);
   const totalCost = sum(COST_KEY);
+  const totalActual = sum(ACTUAL_COST_KEY);
   const totalLines = sum(LINES_KEY);
   const adoptionPct = members.length
     ? Math.round((activeUsers / members.length) * 100)
     : 0;
   const avgCost = activeUsers ? totalCost / activeUsers : 0;
+  const avgActual = activeUsers ? totalActual / activeUsers : 0;
+  const actualMoney = (value: number) =>
+    formatMetricValue(
+      value,
+      actualR?.format ?? "currency",
+      actualR?.unit ?? "USD",
+    );
+  // Absent, not zero: a measured $0 is a reading and prints as one.
+  const hasActual = observed(ACTUAL_COST_KEY);
+  const hasCost = observed(COST_KEY);
+  const costMoney = (value: number) =>
+    formatMetricValue(value, costR?.format ?? "currency", costR?.unit ?? "USD");
 
   const shownGridKeys = GRID_KEYS.filter((k) => {
     const r = grid.byKey.get(k);
@@ -313,8 +396,9 @@ export function AiCostView({ item }: { item: string | null }) {
       {/* Headline */}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         <Tile
-          label="AI cost"
-          value={formatMetricValue(totalCost, costR?.format ?? "currency", costR?.unit ?? "USD")}
+          label="AI potential usage cost"
+          value={hasCost ? costMoney(totalCost) : "—"}
+          note={hasActual ? `actual cost ${actualMoney(totalActual)}` : null}
           sub="Claude Code only"
         />
         <Tile label="Active AI users" value={String(activeUsers)} sub={`${adoptionPct}% of ${members.length}`} />
@@ -324,12 +408,13 @@ export function AiCostView({ item }: { item: string | null }) {
           sub="org total"
         />
         <Tile
-          label="Avg cost / active user"
-          value={formatMetricValue(
-            avgCost,
-            costR?.format ?? "currency",
-            costR?.unit ?? null,
-          )}
+          label="Avg potential cost / active user"
+          value={hasCost ? costMoney(avgCost) : "—"}
+          note={
+            hasActual
+              ? `avg actual ${actualMoney(avgActual)} / active user`
+              : null
+          }
           sub="Claude Code"
         />
       </div>
@@ -340,6 +425,7 @@ export function AiCostView({ item }: { item: string | null }) {
         <UnitSection
           rows={unitRows}
           costR={costR}
+          actualR={actualR}
           linesR={linesR}
           dim={[...sliceDims, ...PLANNED_SLICES].find((d) => d.key === slice) ?? null}
         />
@@ -372,9 +458,12 @@ export function AiCostView({ item }: { item: string | null }) {
                       : "—"}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {t.costTracked ? "cost" : "cost not tracked"}
+                    {t.costTracked ? "potential cost" : "potential cost not tracked"}
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
+                    {t.actualTracked
+                      ? `actual cost ${formatMetricValue(t.actual, "currency", "USD")} · `
+                      : ""}
                     {t.users} users · {formatMetricValue(t.lines, "integer", null)} lines
                   </div>
                 </CardContent>
@@ -387,7 +476,8 @@ export function AiCostView({ item }: { item: string | null }) {
         <p className="text-xs text-muted-foreground">
           Only Claude Code is usage-metered. ChatGPT (per-seat subscription) and
           Codex (token-based) report usage but no per-user cost yet — shown as
-          “not tracked”, not $0.
+          “not tracked”, not $0. Actual cost is the vendor’s monthly bill spread
+          over the days it was spent — exact over a month, approximate on a day.
         </p>
       </section>
 
@@ -460,11 +550,13 @@ function FunnelSection({ funnel }: { funnel: { label: string; n: number }[] }) {
 function UnitSection({
   rows,
   costR,
+  actualR,
   linesR,
   dim,
 }: {
-  rows: { unit: string; people: number; active: number; cost: number; lines: number }[];
+  rows: UnitRow[];
   costR: NormalizedMetricResult | undefined;
+  actualR: NormalizedMetricResult | undefined;
   linesR: NormalizedMetricResult | undefined;
   dim: SliceDim | null;
 }) {
@@ -494,7 +586,8 @@ function UnitSection({
               <TableHead>{dimLabel}</TableHead>
               <TableHead className="text-right">People</TableHead>
               <TableHead className="text-right">AI users</TableHead>
-              <TableHead className="text-right">AI cost</TableHead>
+              <TableHead className="text-right">Potential cost</TableHead>
+              <TableHead className="text-right">Actual cost</TableHead>
               <TableHead className="text-right">Accepted lines</TableHead>
             </TableRow>
           </TableHeader>
@@ -509,7 +602,22 @@ function UnitSection({
                   {r.active}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatMetricValue(r.cost, costR?.format ?? "currency", costR?.unit ?? "USD")}
+                  {r.costSeen
+                    ? formatMetricValue(
+                        r.cost,
+                        costR?.format ?? "currency",
+                        costR?.unit ?? "USD",
+                      )
+                    : "—"}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {r.actualSeen
+                    ? formatMetricValue(
+                        r.actual,
+                        actualR?.format ?? "currency",
+                        actualR?.unit ?? "USD",
+                      )
+                    : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {formatMetricValue(r.lines, linesR?.format ?? "integer", linesR?.unit ?? null)}
@@ -522,19 +630,36 @@ function UnitSection({
       )}
       {dim && !dim.planned ? (
         <p className="text-xs text-muted-foreground">
-          Cost is Claude Code only (the usage-metered tool).
+          Costs are Claude Code only (the usage-metered tool); actual cost is
+          spread over the days it was spent.
         </p>
       ) : null}
     </section>
   );
 }
 
-function Tile({ label, value, sub }: { label: string; value: string; sub: string }) {
+function Tile({
+  label,
+  value,
+  note,
+  sub,
+}: {
+  label: string;
+  value: string;
+  /** A second figure held beside `value`, never added to it. */
+  note?: string | null;
+  sub: string;
+}) {
   return (
     <Card>
       <CardContent className="p-4">
         <div className="text-xs font-medium text-muted-foreground">{label}</div>
         <div className={cn("mt-1", TEXT_FIGURE)}>{value}</div>
+        {note ? (
+          <div className="text-xs font-medium tabular-nums text-muted-foreground">
+            {note}
+          </div>
+        ) : null}
         <div className="text-xs text-muted-foreground">{sub}</div>
       </CardContent>
     </Card>

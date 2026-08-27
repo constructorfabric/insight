@@ -46,6 +46,7 @@ from .analytics import (
     CustomMetricListResponse,
     CustomMetricSummary,
     ExportCustomMetricsResponse,
+    FeedbackListResponse,
     ImportCustomMetricsRequest,
     ImportCustomMetricsResponse,
     MetricDefinitionListResponse,
@@ -74,6 +75,7 @@ from .identity import (
     PersonAccountsResponse,
     PersonListResponse,
     SubchartNode,
+    VisibilityPolicy,
 )
 from .identity import (
     PersonRoleListResponse as PersonRoleList,
@@ -112,6 +114,9 @@ from .identity import (
     VisibilityResponse as Visibility,
 )
 from .identity import (
+    VisiblePersonsPageResponse as VisiblePersonsPage,
+)
+from .identity import (
     VisiblePersonsResponse as VisiblePersons,
 )
 from .identity_internal import IdentityValue
@@ -128,6 +133,7 @@ __all__: Sequence[str] = (
     "CustomMetricListResponse",
     "CustomMetricSummary",
     "ExportCustomMetricsResponse",
+    "FeedbackListResponse",
     "IdentityValue",
     "ImportCustomMetricsRequest",
     "ImportCustomMetricsResponse",
@@ -157,5 +163,7 @@ __all__: Sequence[str] = (
     "UsageSummaryResponse",
     "Visibility",
     "VisibilityList",
+    "VisibilityPolicy",
     "VisiblePersons",
+    "VisiblePersonsPage",
 )

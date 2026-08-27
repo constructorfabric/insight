@@ -6,4 +6,4 @@ metadata:
     {{- include "insight-frontend.labels" . | nindent 4 }}
 data:
   config.js: |
-    window.__INSIGHT_CONFIG__ = {{ toJson (dict "sentryDsn" .Values.sentry.dsn) }};
+    window.__INSIGHT_CONFIG__ = {{ toJson (dict "sentryDsn" .Values.sentry.dsn "nav" (dict "hide" ((.Values.nav | default dict).hide | default list) "planned" ((.Values.nav | default dict).planned | default list))) }};

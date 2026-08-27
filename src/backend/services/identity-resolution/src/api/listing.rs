@@ -117,6 +117,59 @@ pub(crate) fn decode_cursor<K: PagePosition>(
     Ok(envelope.k)
 }
 
+/// A typed query, not a batch filter.
+pub(crate) const MAX_TERMS: usize = 8;
+/// A ceiling on what each LIKE probe of the journal scan compares against.
+pub(crate) const MAX_QUERY_CHARS: usize = 200;
+
+/// Terms of `q`, capped in count and length. The refusal is returned as text,
+/// so each surface reports it under its own error domain.
+pub(crate) fn search_terms(q: &str) -> Result<Vec<String>, String> {
+    if q.chars().count() > MAX_QUERY_CHARS {
+        return Err(format!("at most {MAX_QUERY_CHARS} characters are accepted"));
+    }
+
+    let terms: Vec<String> = q.split_whitespace().map(str::to_owned).collect();
+
+    if terms.len() > MAX_TERMS {
+        return Err(format!("at most {MAX_TERMS} search terms are accepted"));
+    }
+    Ok(terms)
+}
+
+/// The position a cursor carries, or nothing when none was presented.
+pub(crate) fn resume_from<K: PagePosition>(
+    cursor: Option<&str>,
+    tenant: Uuid,
+    query: &str,
+) -> Result<Option<K>, CursorRejected> {
+    let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+    decode_cursor::<K>(cursor, tenant, query).map(Some)
+}
+
+/// One page out of `limit + 1` rows: the extra row means another page exists
+/// and is never served, so the cursor is minted from the last row that is.
+pub(crate) fn cut_to_page<Row, K: PagePosition>(
+    mut rows: Vec<Row>,
+    limit: u64,
+    tenant: Uuid,
+    query: &str,
+    position: impl Fn(&Row) -> K,
+) -> Result<(Vec<Row>, Option<String>), serde_json::Error> {
+    if rows.len() <= usize::try_from(limit).unwrap_or(usize::MAX) {
+        return Ok((rows, None));
+    }
+    rows.pop();
+
+    let next = rows
+        .last()
+        .map(|last| encode_cursor(tenant, query, &position(last)))
+        .transpose()?;
+    Ok((rows, next))
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error;

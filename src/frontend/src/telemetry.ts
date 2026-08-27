@@ -6,9 +6,9 @@ import type { Session } from "@/auth/types";
 const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
 
-const APP_NAME = "insight-frontend";
+export const APP_NAME = "insight-frontend";
 
-const APP_VERSION =
+export const APP_VERSION =
   (import.meta.env.VITE_APP_RELEASE as string | undefined) || "0.0.0";
 
 let service: TelemetryService | null = null;
@@ -70,8 +70,11 @@ function isIdentifier(segment: string): boolean {
   );
 }
 
+let lastPath = "";
+
 export function recordPageView(path: string): void {
-  emit("page_view", { path: screenPath(path) });
+  lastPath = screenPath(path);
+  emit("page_view", { path: lastPath });
 }
 
 /** The shape of a scope, never the person it is rooted at. */
@@ -86,5 +89,10 @@ export function scopeLabel(scope: {
 }
 
 export function recordUsageEvent(name: string, target: string): void {
-  emit(name, { target });
+  emit(name, { target, path: lastPath });
+}
+
+/** The screen the reader is on, named as the usage rows name it. */
+export function currentScreen(): string {
+  return lastPath;
 }

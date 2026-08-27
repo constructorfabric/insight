@@ -201,12 +201,15 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             "Lines removed".to_owned(),
             MetricDrilldownColumnType::Number,
         ),
-        "issue_type" => ("Issue type".to_owned(), MetricDrilldownColumnType::String),
         "billing_month" => (
             "Billing month".to_owned(),
             MetricDrilldownColumnType::String,
         ),
         "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
+        "env_kind" => (
+            "Environment type".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
         _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
     };
     MetricDrilldownColumn {
@@ -222,7 +225,13 @@ pub(super) fn evidence_presentation(
     granularity: EvidenceGranularity,
 ) -> EvidencePresentation {
     match (source_key, measure_key) {
-        ("git", "commit_count" | "commit_change_size") => EvidencePresentation {
+        (
+            "git",
+            "commit_count"
+            | "commit_change_size"
+            | "default_commit_count"
+            | "non_default_commit_count",
+        ) => EvidencePresentation {
             detail_keys: &[
                 "ref",
                 "title",
@@ -233,29 +242,45 @@ pub(super) fn evidence_presentation(
             ],
             show_value: false,
         },
-        ("git", "pr_created" | "pr_created_merged" | "pr_merged") => EvidencePresentation {
+        (
+            "git",
+            "pr_created"
+            | "pr_created_merged"
+            | "pr_merged"
+            | "default_pr_created"
+            | "non_default_pr_created"
+            | "default_pr_merged"
+            | "non_default_pr_merged",
+        ) => EvidencePresentation {
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: false,
         },
-        ("git", "pr_cycle_hours" | "pr_change_size") => EvidencePresentation {
+        (
+            "git",
+            "pr_cycle_hours"
+            | "pr_change_size"
+            | "pr_first_review_hours"
+            | "pr_review_wait_share"
+            | "pr_review_to_merge_hours"
+            | "pr_approval_to_merge_hours",
+        ) => EvidencePresentation {
             detail_keys: &["ref", "title", "repository", "author"],
             show_value: true,
         },
+        // A counting measure needs no value column — the row IS the one it
+        // counted; a duration or a page count is only readable with its number.
         (
             "task",
             "tasks_closed" | "bugs_fixed" | "closed_non_bug" | "due_date_on_time"
             | "due_date_with_due" | "late_count",
-        ) => EvidencePresentation {
-            detail_keys: &["ref", "issue_type"],
+        )
+        | ("wiki", "pages_created") => EvidencePresentation {
+            detail_keys: &["ref", "title"],
             show_value: false,
         },
         ("task", _) if granularity == EvidenceGranularity::Event => EvidencePresentation {
-            detail_keys: &["ref", "issue_type"],
-            show_value: true,
-        },
-        ("wiki", "pages_created") => EvidencePresentation {
             detail_keys: &["ref", "title"],
-            show_value: false,
+            show_value: true,
         },
         // A seat-month row is dated at the day its snapshot was last read, not
         // at the month it bills for, so the month has to be a column of its own
@@ -265,6 +290,24 @@ pub(super) fn evidence_presentation(
         ("ai_cost", _) => EvidencePresentation {
             detail_keys: &["billing_month", "ceiling_usd"],
             show_value: true,
+        },
+        // A counted run needs no value column — the row IS the run; a duration
+        // or an hour figure is only readable with its number.
+        ("ci", "runs" | "runs_matched_commit") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: false,
+        },
+        ("ci", "commits_observed") => EvidencePresentation {
+            detail_keys: &["repository"],
+            show_value: false,
+        },
+        ("ci", "run_duration_min" | "run_hours") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: true,
+        },
+        ("ci", "deployments") => EvidencePresentation {
+            detail_keys: &["repository", "environment", "outcome", "env_kind"],
+            show_value: false,
         },
         _ => EvidencePresentation {
             detail_keys: &[],
@@ -319,9 +362,135 @@ fn humanize_field_name(key: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::domain::metric_definitions::RatioDenominatorAggregation;
+    use crate::domain::metric_definitions::builtin::{
+        SeedComputation, builtin_metrics, builtin_sources,
+    };
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{input, plan, row, validated};
+
+    #[test]
+    fn every_event_measure_a_metric_reads_directly_declares_its_columns() {
+        // The dialog's columns come from this match rather than from the row, so
+        // a measure no arm names projects nothing and the reader gets a page of
+        // identical dates. Registering a measure is not enough — it has to be
+        // named here too, and nothing else enforces that.
+        //
+        // Read directly, because a ratio shows its numerator and denominator and
+        // `presentation` clears detail keys for it outright: a measure only
+        // ratios read needs no columns of its own, and demanding them would send
+        // the next such measure looking for an arm that changes nothing.
+        let read_directly: BTreeSet<&str> = builtin_metrics()
+            .iter()
+            .filter(|metric| !matches!(metric.computation, SeedComputation::Ratio { .. }))
+            .flat_map(|metric| &metric.inputs)
+            .map(|input| input.measure_key.as_str())
+            .collect();
+
+        let mut unnamed = Vec::new();
+        for builtin_source in builtin_sources() {
+            let source_key = builtin_source.source.key.as_str();
+            for measure in &builtin_source.measures {
+                if measure.evidence_granularity != EvidenceGranularity::Event
+                    || !read_directly.contains(measure.key.as_str())
+                {
+                    continue;
+                }
+                let presentation =
+                    evidence_presentation(source_key, &measure.key, EvidenceGranularity::Event);
+                if presentation.detail_keys.is_empty() {
+                    unnamed.push(format!("{source_key}/{}", measure.key));
+                }
+            }
+        }
+        assert!(
+            unnamed.is_empty(),
+            "event measures with no detail columns — their drilldown shows only a date: {unnamed:?}"
+        );
+    }
+
+    #[test]
+    fn ci_measures_declare_run_columns_and_the_env_kind_label_reads_as_prose() {
+        let runs = evidence_presentation("ci", "runs", EvidenceGranularity::Event);
+        assert_eq!(
+            runs.detail_keys,
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure in ["run_duration_min", "run_hours"] {
+            let p = evidence_presentation("ci", measure, EvidenceGranularity::Event);
+            assert!(p.show_value, "{measure} is unreadable without its number");
+        }
+
+        let deployments = evidence_presentation("ci", "deployments", EvidenceGranularity::Event);
+        assert_eq!(
+            deployments.detail_keys,
+            ["repository", "environment", "outcome", "env_kind"]
+        );
+
+        let value = input(MetricInputRole::Value, "deployments");
+        let deployments_plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: deployments,
+            }],
+        );
+        let column = presentation_column("env_kind", &deployments_plan);
+        assert_eq!(column.label, "Environment type");
+    }
+
+    #[test]
+    fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
+        // Absolute, because the split test below is relative: without this the
+        // whole arm could be trimmed and both would still pass.
+        for measure in [
+            "pr_created",
+            "pr_merged",
+            "default_pr_created",
+            "default_pr_merged",
+        ] {
+            let presentation = evidence_presentation("git", measure, EvidenceGranularity::Event);
+            assert_eq!(
+                presentation.detail_keys,
+                ["ref", "title", "repository", "author"],
+                "{measure} should read the request it counted"
+            );
+            // The row IS the request it counted, so a value column would be 1s.
+            assert!(!presentation.show_value, "{measure} should show no value");
+        }
+    }
+
+    #[test]
+    fn a_branch_scope_split_reads_the_same_columns_as_its_total() {
+        // The split measures count the same commits and requests the totals do,
+        // so a reader who drills into "landed" sees what they saw before, minus
+        // the rows that did not land.
+        for (total, split) in [
+            ("commit_count", "default_commit_count"),
+            ("commit_count", "non_default_commit_count"),
+            ("pr_created", "default_pr_created"),
+            ("pr_created", "non_default_pr_created"),
+            ("pr_merged", "default_pr_merged"),
+            ("pr_merged", "non_default_pr_merged"),
+        ] {
+            let expected = evidence_presentation("git", total, EvidenceGranularity::Event);
+            let actual = evidence_presentation("git", split, EvidenceGranularity::Event);
+            assert_eq!(
+                actual.detail_keys, expected.detail_keys,
+                "{split} should read the same columns as {total}"
+            );
+            assert_eq!(
+                actual.show_value, expected.show_value,
+                "{split} should show a value exactly when {total} does"
+            );
+        }
+    }
 
     #[test]
     fn event_presentation_projects_human_fields_and_dimensions() {
@@ -411,6 +580,7 @@ mod tests {
                 numerator: numerator.clone(),
                 denominator: denominator.clone(),
                 scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
             vec![
                 EvidenceInput {
@@ -503,9 +673,6 @@ mod tests {
     fn evidence_presentations_cover_domain_shapes() {
         assert!(!evidence_presentation("git", "pr_merged", EvidenceGranularity::Event).show_value);
         assert!(
-            evidence_presentation("git", "pr_cycle_hours", EvidenceGranularity::Event).show_value
-        );
-        assert!(
             evidence_presentation(
                 "task",
                 "average_slip",
@@ -522,6 +689,28 @@ mod tests {
             evidence_presentation("collab", "messages", EvidenceGranularity::SourceSummary)
                 .show_value
         );
+    }
+
+    #[test]
+    fn git_pull_request_values_keep_their_numeric_column() {
+        for measure_key in [
+            "pr_cycle_hours",
+            "pr_change_size",
+            "pr_first_review_hours",
+            "pr_review_wait_share",
+            "pr_review_to_merge_hours",
+            "pr_approval_to_merge_hours",
+        ] {
+            let presentation =
+                evidence_presentation("git", measure_key, EvidenceGranularity::Event);
+
+            assert!(presentation.show_value, "{measure_key}");
+            assert_eq!(
+                presentation.detail_keys,
+                &["ref", "title", "repository", "author"],
+                "{measure_key}"
+            );
+        }
     }
 
     #[test]

@@ -7,14 +7,14 @@ Subcommands:
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     analytics  The catalogue rows no endpoint can create — a
                tenant metric-definition override (MariaDB, analytics database).
-    gold       Rebuild the dbt gold models only (after persons-seed + sync).
+    gold       Rebuild the dbt gold models only (after a persons-seed run).
     all        Run every step (gold is part of silver's build, not repeated).
 
 A bare `silver` / `all` run leaves gold UNRESOLVED and still writes the
 manifest: observations gain rows only once the identity projection is
-refreshed (persons-seed + persons-sync) and gold is rebuilt over it.
-dev-compose.sh's cmd_seed runs all three after the seed; on Kubernetes the
-identity CronJobs and the next gold build do.
+refreshed (a persons-seed run, which publishes itself) and gold is rebuilt
+over it. dev-compose.sh's cmd_seed runs both after the seed; on Kubernetes
+the seed CronJob and the next gold build do.
 
 Run as a module from the tool directory:
 
@@ -50,12 +50,27 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("analytics", help="MariaDB analytics catalogue seed")
     sub.add_parser("gold", help="rebuild the dbt gold models over the current identity map")
     sub.add_parser("all", help="run every step")
+    sub.add_parser(
+        "manifest",
+        help="print the manifest this environment describes; touches no database",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+    if args.cmd == "manifest":
+        import os
+
+        from .manifest import assert_no_credentials, build_manifest, render_manifest
+
+        # No `seeded`: this command describes an environment, not a run.
+        doc = build_manifest(os.environ)
+        assert_no_credentials(doc)
+        print(render_manifest(doc))
+        return 0
 
     steps = STEPS if args.cmd == "all" else (args.cmd,)
 
@@ -74,7 +89,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     seeded: list[str] = []
-    catalogue: dict[str, object] | None = None
 
     if args.cmd in ("identity", "all"):
         from .identity import run as run_identity
@@ -94,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd in ("analytics", "all"):
         from .analytics import run as run_analytics
 
-        catalogue = run_analytics()
+        run_analytics()
         seeded.append("analytics")
 
     # Emit the manifest only after every requested step returned without
@@ -111,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         write_manifest,
     )
 
-    doc = build_manifest(os.environ, seeded=seeded, catalogue=catalogue)
+    doc = build_manifest(os.environ, seeded=seeded)
 
     # A cluster Job's filesystem dies with the pod, so the log is the only
     # record of what a run seeded. Printed before the write, so it survives even

@@ -303,15 +303,45 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
 
     let roles: Vec<MetricInputRole> = graph.inputs.iter().map(|input| input.role).collect();
     match graph.computation {
-        MetricComputation::Sum | MetricComputation::Median | MetricComputation::DistinctCount => {
+        MetricComputation::Sum
+        | MetricComputation::Median
+        | MetricComputation::Stddev
+        | MetricComputation::DistinctCount => {
             if roles != [MetricInputRole::Value] {
                 return Err(violation(
                     "inputs",
-                    "sum/median/distinct_count take exactly one value input",
+                    "sum/median/stddev/distinct_count take exactly one value input",
                 ));
             }
             if graph.scale.is_some() {
-                return Err(violation("scale", "only ratio metrics carry a scale"));
+                return Err(violation(
+                    "scale",
+                    "only ratio and percentile metrics carry a scale",
+                ));
+            }
+        }
+        MetricComputation::Percentile => {
+            if roles != [MetricInputRole::Value] {
+                return Err(violation(
+                    "inputs",
+                    "percentile takes exactly one value input",
+                ));
+            }
+            // `scale` doubles as the quantile for percentile metrics.
+            match graph.scale {
+                None => {
+                    return Err(violation(
+                        "scale",
+                        "percentile metrics require the quantile in scale",
+                    ));
+                }
+                Some(q) if !(0.0..=1.0).contains(&q) => {
+                    return Err(violation(
+                        "scale",
+                        "percentile quantile must be within [0, 1]",
+                    ));
+                }
+                Some(_) => {}
             }
         }
         MetricComputation::Ratio => {
@@ -469,7 +499,7 @@ async fn insert_graph<C: ConnectionTrait>(
     let source_id = Uuid::now_v7();
     let definition_id = Uuid::now_v7();
 
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO metric_sources \
             (id, tenant_id, source_key, source_kind, source_ref, observation_sql, origin, is_enabled, schema_status) \
@@ -491,7 +521,7 @@ async fn insert_graph<C: ConnectionTrait>(
     for measure in &graph.measures {
         let measure_id = Uuid::now_v7();
         measure_ids.insert(measure.as_str(), measure_id);
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "INSERT INTO metric_source_measures (id, source_id, measure_key, is_enabled) \
              VALUES (?, ?, ?, TRUE)",
@@ -508,7 +538,7 @@ async fn insert_graph<C: ConnectionTrait>(
     for (order, dimension) in graph.dimensions.iter().enumerate() {
         let dimension_id = Uuid::now_v7();
         dimension_ids.insert(dimension.as_str(), dimension_id);
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "INSERT INTO metric_source_dimensions (id, source_id, dimension_key, display_order) \
              VALUES (?, ?, ?, ?)",
@@ -522,7 +552,7 @@ async fn insert_graph<C: ConnectionTrait>(
         .await?;
     }
 
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, short_label, subject, description, explanation, unit, \
@@ -561,7 +591,7 @@ async fn insert_graph<C: ConnectionTrait>(
                 input.measure_key
             ))
         })?;
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "INSERT INTO metric_definition_inputs \
                 (id, metric_definition_id, input_role, source_measure_id) \
@@ -582,7 +612,7 @@ async fn insert_graph<C: ConnectionTrait>(
                 "dimension {dimension} missing from source dimensions"
             ))
         })?;
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "INSERT INTO metric_definition_dimensions \
                 (id, metric_definition_id, source_dimension_id, display_order) \
@@ -598,7 +628,7 @@ async fn insert_graph<C: ConnectionTrait>(
     }
 
     for (order, tag) in graph.tags.iter().enumerate() {
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "INSERT INTO metric_definition_tags \
                 (id, metric_definition_id, tag, display_order) \
@@ -636,14 +666,14 @@ async fn delete_graph<C: ConnectionTrait>(
         .await?
         .map(|source| source.source_id);
 
-    conn.execute(Statement::from_sql_and_values(
+    conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "DELETE FROM metric_definitions WHERE id = ?",
         [uuid_value(definition_id)],
     ))
     .await?;
     if let Some(source_id) = source_id {
-        conn.execute(Statement::from_sql_and_values(
+        conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "DELETE FROM metric_sources WHERE id = ? AND origin = 'custom'",
             [uuid_value(source_id)],
@@ -1008,7 +1038,7 @@ async fn exists<C: ConnectionTrait>(
     values: Vec<Value>,
 ) -> Result<bool, DbErr> {
     Ok(conn
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             sql,
             values,
@@ -1018,7 +1048,7 @@ async fn exists<C: ConnectionTrait>(
 }
 
 fn uuid_value(id: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))
+    Value::Bytes(Some(id.as_bytes().to_vec()))
 }
 
 fn order_value(idx: usize) -> i32 {
@@ -1182,6 +1212,45 @@ mod tests {
             measure_key: "num".to_owned(),
         }];
         assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn percentile_requires_a_probability_quantile_in_scale() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = None;
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(1.5);
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        graph.inputs.push(CustomMetricInput {
+            role: MetricInputRole::Numerator,
+            measure_key: "events".to_owned(),
+        });
+        assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn stddev_rejects_a_scale_like_every_single_value_computation() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        graph.scale = Some(0.9);
+        assert_eq!(rejected_field(&graph), "scale");
     }
 
     #[test]

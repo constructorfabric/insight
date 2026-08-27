@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { personName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { DashboardHeader } from "@/components/widgets/dashboard/dashboard-header";
 import { IcNeedsAttention } from "@/components/widgets/dashboard/ic-needs-attention";
@@ -108,7 +109,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
 
   // Never fall back to the raw id (a UUID) — a person outside the viewer's
   // cached tree resolves in a beat; the title stays blank until then.
-  const displayName = person?.display_name ?? "";
+  const displayName = person ? (personName(person) ?? "") : "";
   const role = person?.job_title;
 
   // The one loading gate: a single page spinner while any of the screen's

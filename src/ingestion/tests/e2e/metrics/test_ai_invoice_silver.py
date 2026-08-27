@@ -35,6 +35,7 @@ SOURCE = "claude-team-invoices-test"
 # recovery pair is only legible on its own.
 SOURCE_ONE_BUILD = "claude-team-invoices-recovered-one-build"
 SOURCE_TWO_BUILDS = "claude-team-invoices-recovered-two-builds"
+SOURCE_SECOND_INSTANCE = "claude-team-invoices-second-instance"
 
 # 2026-08-01 and 2026-09-01 UTC — the window a monthly line charges for.
 AUG_START, SEP_START = 1785542400, 1788220800
@@ -42,7 +43,7 @@ AUG_START, SEP_START = 1785542400, 1788220800
 # dating by this instead of by the period would file the row in July.
 RAISED_AT = 1785456000
 
-# Staging admits only rows read strictly after what it already holds, and that
+# Staging admits only rows read strictly after what it already holds, and THAT
 # watermark is table-wide. So every instant below is distinct and ascends in the
 # order the fixtures run: reuse one and the watermark, not the model, decides which
 # rows arrive — an assertion about the model would then hold with the model deleted.
@@ -51,6 +52,11 @@ ONE_BUILD_BROKEN_AT = "2026-09-03T00:00:00Z"
 ONE_BUILD_RECOVERED_AT = "2026-09-04T00:00:00Z"
 TWO_BUILDS_BROKEN_AT = "2026-09-05T00:00:00Z"
 TWO_BUILDS_RECOVERED_AT = "2026-09-06T00:00:00Z"
+
+# The class's own boundary is per source instance, so this one deliberately does
+# NOT ascend: it is read before every instant above, which is what a second
+# connector instance stamping `_version` from its own clock looks like.
+SECOND_INSTANCE_READ_AT = "2026-08-20T00:00:00Z"
 
 
 def _base(source_id: str, read_at: str) -> dict:
@@ -70,6 +76,7 @@ def _base(source_id: str, read_at: str) -> dict:
         "collected_at": read_at,
         "data_source": "insight_claude_team",
         "chain_status": "ok",
+        "invoice_ref": None,
         "invoice_status": "paid",
         "invoice_created_ts": RAISED_AT,
         "invoice_currency": "usd",
@@ -95,14 +102,29 @@ def _base(source_id: str, read_at: str) -> dict:
     }
 
 
-def _invoice_row(intent: str, total: int, net: int, *, source_id: str = SOURCE, read_at: str = READ_AT, **over) -> dict:
-    """An invoice's own row, keyed on what the wrapper reports on every sync."""
+def _invoice_row(
+    intent: str,
+    total: int,
+    net: int,
+    *,
+    ref: str | None = None,
+    source_id: str = SOURCE,
+    read_at: str = READ_AT,
+    **over,
+) -> dict:
+    """An invoice's own row.
+
+    Keyed on the identity decoded out of its hosted URL when the vendor offered
+    one: that identity reads the same on every sync, which is what lets a later
+    sync replace this row instead of adding a second one beside it. With no URL
+    there is no identity, so the key falls back to what the wrapper reports —
+    both branches are exercised by the fixture below.
+    """
     row = _base(source_id, read_at)
+    key = f"invoice-{ref}" if ref else f"invoice-{RAISED_AT}-{intent}-{total}-None"
     row.update(
-        # The key the connector builds when it has no invoice id to use, and keeps
-        # using once it has one — which is what lets a later sync replace this row.
-        # The chain outcome is deliberately absent from it.
-        unique_key=f"{TENANT}-{source_id}-invoice-{RAISED_AT}-{intent}-{total}-None",
+        unique_key=f"{TENANT}-{source_id}-{key}",
+        invoice_ref=ref,
         invoice_payment_intent=intent,
         invoice_total=total,
         invoice_total_excluding_tax=net,
@@ -111,11 +133,18 @@ def _invoice_row(intent: str, total: int, net: int, *, source_id: str = SOURCE, 
     return row
 
 
-def _line_row(invoice_id: str, line_id: str, *, source_id: str = SOURCE, read_at: str = READ_AT, **over) -> dict:
-    """One line's row: line money only, keyed on Stripe's own ids."""
+def _line_row(
+    invoice_id: str, line_id: str, *, ref: str | None = None, source_id: str = SOURCE, read_at: str = READ_AT, **over
+) -> dict:
+    """One line's row: line money only, keyed on Stripe's own ids.
+
+    It carries its invoice's identity too, so a line can be tied back to the
+    invoice's row without going through an id the chain may not have reached.
+    """
     row = _base(source_id, read_at)
     row.update(
         unique_key=f"{TENANT}-{source_id}-{invoice_id}-{line_id}",
+        invoice_ref=ref,
         invoice_id=invoice_id,
         line_id=line_id,
         category="subscriptions",
@@ -136,6 +165,7 @@ BRONZE_ROWS = [
         "pi_monthly",
         16_500,
         16_000,
+        ref="acct_EXAMPLE,_monthly",
         invoice_id="in_MONTHLY",
         invoice_num_seats=1,
         period_start_ts=AUG_START,
@@ -144,6 +174,7 @@ BRONZE_ROWS = [
     _line_row(
         "in_MONTHLY",
         "il_standard",
+        ref="acct_EXAMPLE,_monthly",
         tier_label="Standard",
         product_name="Example plan - Standard",
         description="1 x Example plan - Standard",
@@ -155,6 +186,7 @@ BRONZE_ROWS = [
     _line_row(
         "in_MONTHLY",
         "il_premium",
+        ref="acct_EXAMPLE,_monthly",
         tier_label="Premium",
         product_name="Example plan - Premium",
         description="5 x Example plan - Premium",
@@ -165,11 +197,18 @@ BRONZE_ROWS = [
     ),
     # A mid-period seat change: real money, no unit price.
     _invoice_row(
-        "pi_prorate", -1_500, -1_500, invoice_id="in_PRORATE", period_start_ts=AUG_START, period_end_ts=SEP_START
+        "pi_prorate",
+        -1_500,
+        -1_500,
+        ref="acct_EXAMPLE,_prorate",
+        invoice_id="in_PRORATE",
+        period_start_ts=AUG_START,
+        period_end_ts=SEP_START,
     ),
     _line_row(
         "in_PRORATE",
         "il_unused",
+        ref="acct_EXAMPLE,_prorate",
         description="Unused time on 5 x Example plan - Premium",
         amount=-1_500,
         quantity=5,
@@ -177,11 +216,18 @@ BRONZE_ROWS = [
     ),
     # Prepaid extra usage — the invoiced counterpart of used_credits.
     _invoice_row(
-        "pi_prepaid", 2_000, 2_000, invoice_id="in_PREPAID", period_start_ts=AUG_START, period_end_ts=SEP_START
+        "pi_prepaid",
+        2_000,
+        2_000,
+        ref="acct_EXAMPLE,_prepaid",
+        invoice_id="in_PREPAID",
+        period_start_ts=AUG_START,
+        period_end_ts=SEP_START,
     ),
     _line_row(
         "in_PREPAID",
         "il_prepaid",
+        ref="acct_EXAMPLE,_prepaid",
         category="overusage",
         description="Prepaid extra usage, Example plan",
         amount=2_000,
@@ -190,9 +236,10 @@ BRONZE_ROWS = [
     ),
     # An invoice whose chain never completed: the ledger survives, the price does
     # not, and with no line there is only the raise date to file it by.
-    _invoice_row("pi_broken", 999, 999, chain_status="failed", invoice_currency=None),
-    # A draft the vendor offered no hosted URL for — absence, not a format change.
-    _invoice_row("pi_draft", 750, 750, chain_status="no_hosted_url", invoice_status="draft"),
+    _invoice_row("pi_broken", 999, 999, ref="acct_EXAMPLE,_broken", chain_status="failed", invoice_currency=None),
+    # A finalised invoice the vendor offered no hosted URL for. Not a draft: the
+    # connector skips those, so one could never reach bronze in the first place.
+    _invoice_row("pi_no_url", 750, 750, chain_status="no_hosted_url", invoice_status="open"),
 ]
 
 COLUMNS = [
@@ -294,7 +341,7 @@ def test_a_failed_chain_keeps_the_invoice_and_no_line(invoice_silver):
 
 
 def test_an_invoice_with_no_hosted_url_reaches_the_class_as_its_own_state(invoice_silver):
-    """A draft carries no URL; reading that as a format change would fail the sync."""
+    """Reading a missing URL as a format change would fail the whole sync instead."""
     row = _by_status(invoice_silver, "no_hosted_url")
     assert row["invoice_net_cents"] == 750
     assert row["line_id"] is None and row["invoice_id"] is None
@@ -314,9 +361,16 @@ def test_an_invoice_with_no_line_falls_back_to_the_day_it_was_raised(invoice_sil
 # A recovery: the sync that failed and the sync that succeeded describe one
 # invoice, so the class has to end up with one row for it and not two. The pair
 # below is the same recovery twice — reached inside a single build, and reached
-# across two, which is the case an append-only staging model gets wrong.
+# across two, which is the case an append-only staging model gets wrong. Both
+# syncs read the same identity out of the URL; that is what makes them one row.
+RECOVERED_REF = "acct_EXAMPLE,_recovered"
+
+
 def _broken_row(source_id: str, read_at: str) -> dict:
-    return _invoice_row("pi_recovered", 16_500, 16_000, source_id=source_id, read_at=read_at, chain_status="failed")
+    """Carries the identity: a chain only fails once the URL has decoded."""
+    return _invoice_row(
+        "pi_recovered", 16_500, 16_000, ref=RECOVERED_REF, source_id=source_id, read_at=read_at, chain_status="failed"
+    )
 
 
 def _recovered_rows(source_id: str, read_at: str) -> list[dict]:
@@ -325,6 +379,7 @@ def _recovered_rows(source_id: str, read_at: str) -> list[dict]:
             "pi_recovered",
             16_500,
             16_000,
+            ref=RECOVERED_REF,
             source_id=source_id,
             read_at=read_at,
             invoice_id="in_RECOVERED",
@@ -334,6 +389,7 @@ def _recovered_rows(source_id: str, read_at: str) -> list[dict]:
         _line_row(
             "in_RECOVERED",
             "il_late",
+            ref=RECOVERED_REF,
             source_id=source_id,
             read_at=read_at,
             tier_label="Standard",
@@ -388,3 +444,35 @@ def test_a_recovery_across_two_builds_leaves_no_gap_behind(recovered_across_two_
     assert invoice["invoice_id"] == "in_RECOVERED", "the gap row became the enriched one"
     assert invoice["invoice_net_cents"] == 16_000
     assert recovered_across_two_builds[1]["invoice_net_cents"] is None, "counted once, not twice"
+
+
+@pytest.fixture
+def second_instance_silver(
+    ch_migrations_applied: SessionConfig, ch_seeder: CHSeeder, dbt_runner: DbtRunner, worker_ctx: WorkerContext
+) -> list[dict]:
+    """A second source instance, read BEFORE everything the class already holds."""
+    rows = [
+        _invoice_row(
+            "pi_second",
+            4_200,
+            4_000,
+            ref="acct_EXAMPLE,_second",
+            source_id=SOURCE_SECOND_INSTANCE,
+            read_at=SECOND_INSTANCE_READ_AT,
+            invoice_id="in_SECOND",
+            period_start_ts=AUG_START,
+            period_end_ts=SEP_START,
+        )
+    ]
+    _seed_and_build(ch_seeder, dbt_runner, worker_ctx, rows)
+    return _read_class(ch_migrations_applied, SOURCE_SECOND_INSTANCE)
+
+
+def test_a_second_source_instance_is_not_shut_out_by_the_first(second_instance_silver):
+    """The class is written by every connector feeding it, each stamping `_version`
+    from its own clock. A boundary taken over the whole table would leave this
+    instance's rows below whatever the first instance committed — forever, and
+    silently. The boundary is per instance, so an instance the class has never
+    seen has no boundary to clear."""
+    assert [r["invoice_id"] for r in second_instance_silver] == ["in_SECOND"]
+    assert second_instance_silver[0]["invoice_net_cents"] == 4_000

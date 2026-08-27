@@ -22,6 +22,7 @@ CONFIG = {
     "insight_source_id": "claude-team-invoices-1",
 }
 INVOICES_URL = f"https://proxy.example/api/stripe/{CONFIG['claude_org_id']}/invoices"
+HEALTH_URL = "https://proxy.example/health"
 STRIPE_PING = "https://api.stripe.com/v1"
 
 
@@ -33,6 +34,8 @@ def source() -> SourceClaudeTeamInvoices:
 @pytest.fixture
 def http() -> Iterator[rm_module.Mocker]:
     with rm_module.Mocker() as mocker:
+        # A ready proxy by default; the cases about readiness re-register it.
+        mocker.get(HEALTH_URL, json={"status": "ok", "ready": True})
         yield mocker
 
 
@@ -58,10 +61,67 @@ def test_an_empty_source_id_is_refused_before_any_request(
 
 
 def test_an_unreachable_proxy_names_the_url(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
-    http.get(INVOICES_URL, exc=requests.ConnectionError("no route"))
+    http.get(HEALTH_URL, exc=requests.ConnectionError("no route"))
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
     assert "proxy unreachable at https://proxy.example" in message
+
+
+def test_a_proxy_holding_no_session_key_is_named_before_the_listing_is_called(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker
+) -> None:
+    """The cookie lives in the proxy's memory, so a restart leaves the proxy up
+    and every `/api/` call refusing. Read from the listing alone that is a bare
+    503; `/health` says which of the two it is."""
+    http.get(HEALTH_URL, status_code=503, json={"status": "init", "ready": False})
+    listing = http.get(INVOICES_URL, json={"invoices": []})
+    ok, message = source.check_connection(None, CONFIG)
+    assert ok is False
+    assert "holds no claude.ai session key" in message
+    assert "POST /admin/session-key" in message, "the refusal carries the fix"
+    assert listing.call_count == 0, "a proxy that cannot answer is not asked"
+
+
+def test_the_readiness_probe_carries_no_credential(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
+    """`/health` is the one route the proxy leaves open, and it is reached before
+    the token is known to be good — so the token is not offered to it."""
+    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(STRIPE_PING, status_code=401)
+    source.check_connection(None, CONFIG)
+    probe = next(r for r in http.request_history if r.path == "/health")
+    assert "Authorization" not in probe.headers
+
+
+def test_a_proxy_build_without_the_route_lets_the_listing_decide(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker
+) -> None:
+    """An older proxy answers 404 there; that is not a reason to refuse a sync."""
+    http.get(HEALTH_URL, status_code=404, json={"error": "not found"})
+    http.get(INVOICES_URL, json={"invoices": []})
+    http.get(STRIPE_PING, status_code=401)
+    assert source.check_connection(None, CONFIG) == (True, None)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (401, "proxy_auth_token must match"),
+        (502, "could not reach claude.ai"),
+        (503, "holds no claude.ai session key"),
+        (504, "did not answer the proxy in time"),
+    ],
+    ids=["bad-token", "upstream-unreachable", "key-lost-after-the-probe", "upstream-timeout"],
+)
+def test_the_proxys_own_failures_are_named_rather_than_numbered(
+    source: SourceClaudeTeamInvoices, http: rm_module.Mocker, status: int, expected: str
+) -> None:
+    """These four come from the proxy, not from claude.ai through it. A bare code
+    sends an operator to the egress and Stripe-Version checks, which are never
+    the fault here."""
+    http.get(INVOICES_URL, status_code=status)
+    ok, message = source.check_connection(None, CONFIG)
+    assert ok is False
+    assert expected in message
 
 
 def test_a_forbidden_listing_names_the_rotation_it_needs(
@@ -75,10 +135,10 @@ def test_a_forbidden_listing_names_the_rotation_it_needs(
 
 
 def test_any_other_status_is_reported_with_its_code(source: SourceClaudeTeamInvoices, http: rm_module.Mocker) -> None:
-    http.get(INVOICES_URL, status_code=502)
+    http.get(INVOICES_URL, status_code=500)
     ok, message = source.check_connection(None, CONFIG)
     assert ok is False
-    assert "HTTP 502" in message
+    assert "HTTP 500" in message
 
 
 @pytest.mark.parametrize(

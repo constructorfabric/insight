@@ -5,6 +5,7 @@ subscription line, a proration credit from a mid-period seat change, and a
 prepaid extra-usage purchase.
 """
 
+import base64
 from collections.abc import Mapping
 from typing import Any
 
@@ -19,6 +20,8 @@ from source_claude_team_invoices.stripe_chain import (
     read_bootstrap,
     seat_unit_amount,
     shape_line,
+    stable_invoice_ref,
+    unreadable_seat_prices,
 )
 
 SUBSCRIPTION_LINE = {
@@ -53,6 +56,15 @@ EXTRA_USAGE_LINE = {
 }
 
 
+def _hosted_url(payload: bytes, acct: str = "acct_1ABC") -> str:
+    """A hosted URL whose path segment is base64url of `payload`, unpadded."""
+    return f"https://invoice.stripe.com/i/{acct}/live_{base64.urlsafe_b64encode(payload).decode().rstrip('=')}?s=ap"
+
+
+# The rotating part of a payload: a timestamp followed by bytes that are not text.
+BINARY_NONCE = b"1756771200\xff\xfe\x01"
+
+
 @pytest.mark.parametrize(
     "url, acct, token",
     [
@@ -83,6 +95,34 @@ def test_unparsable_url_is_absent_not_an_error(url: str) -> None:
     assert parse_hosted_invoice_url(url) is None, f"should not parse: {url!r}"
 
 
+def test_the_identity_is_read_past_a_nonce_that_is_not_text() -> None:
+    """Only the two leading fields identify the invoice, and they are ASCII; the
+    nonce behind them is raw bytes, so the payload is no single string."""
+    assert stable_invoice_ref(_hosted_url(b"acct_1ABC,_ent1ABC," + BINARY_NONCE)) == "acct_1ABC,_ent1ABC"
+
+
+def test_one_invoice_keeps_one_identity_as_its_nonce_rotates() -> None:
+    calls = [b"acct_1ABC,_ent1ABC,1756771200\xff\x01", b"acct_1ABC,_ent1ABC,1756800000\xff\x02"]
+    assert {stable_invoice_ref(_hosted_url(payload)) for payload in calls} == {"acct_1ABC,_ent1ABC"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"acct_1ABC",
+        b"acct_1ABC,," + BINARY_NONCE,
+        b"1ABC,_ent1ABC," + BINARY_NONCE,
+        b"acct_1ABC,_ent\xff1ABC," + BINARY_NONCE,
+    ],
+)
+def test_no_identity_unless_both_leading_fields_are_readable(payload: bytes) -> None:
+    assert stable_invoice_ref(_hosted_url(payload)) is None, f"should carry no identity: {payload!r}"
+
+
+def test_a_segment_that_is_not_base64_carries_no_identity() -> None:
+    assert stable_invoice_ref("https://invoice.stripe.com/i/acct_1ABC/live_ABCDE") is None
+
+
 def test_category_comes_from_the_parent_not_the_description() -> None:
     assert classify_line(SUBSCRIPTION_LINE) == CATEGORY_SUBSCRIPTIONS
     assert classify_line(EXTRA_USAGE_LINE) == CATEGORY_OVERUSAGE
@@ -111,6 +151,25 @@ def test_a_subscription_line_the_vendor_left_unpriced_yields_absence() -> None:
 def test_a_boolean_unit_amount_is_absence_not_a_price(value: bool) -> None:
     """`bool` is an `int` in Python, so an unguarded check prices a seat at 1."""
     assert seat_unit_amount(dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=value)) is None
+
+
+@pytest.mark.parametrize("value", [2500.0, "2500", True, [], {}])
+def test_a_unit_amount_of_another_type_is_reported_as_unreadable(value: object) -> None:
+    """Absence and a changed type look the same downstream; only one is a fault."""
+    lines = [dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=value)]
+    assert unreadable_seat_prices(lines) == [type(value).__name__]
+
+
+def test_an_unpriced_seat_line_is_absence_not_an_unreadable_type() -> None:
+    """The vendor leaving a subscription line unpriced is a state we report."""
+    assert unreadable_seat_prices([dict(SUBSCRIPTION_LINE, hosted_invoice_unit_amount=None)]) == []
+    assert unreadable_seat_prices([SUBSCRIPTION_LINE]) == []
+
+
+def test_only_seat_pricing_lines_are_judged_on_their_unit_amount() -> None:
+    """Extra usage and prorations never state a seat price, so their type is not ours."""
+    assert unreadable_seat_prices([dict(EXTRA_USAGE_LINE, hosted_invoice_unit_amount="2000")]) == []
+    assert unreadable_seat_prices([dict(PRORATION_CREDIT, hosted_invoice_unit_amount="1500")]) == []
 
 
 def test_proration_is_read_from_the_structural_flag() -> None:

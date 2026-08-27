@@ -37,5 +37,6 @@ pub enum MetricResultViewKind {
     Timeseries,
     Peer,
     Breakdown,
+    Rollup,
     Histogram,
 }

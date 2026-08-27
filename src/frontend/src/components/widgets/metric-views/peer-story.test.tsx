@@ -125,7 +125,11 @@ describe("PeerStory", () => {
     settings.focusMode = "neutral";
     render(
       <EvidenceDialogContext.Provider
-        value={{ openEvidence: vi.fn(), openEvidenceTargets }}
+        value={{
+        openEvidence: vi.fn(),
+        openEvidenceTargets,
+        openEvidencePeople: vi.fn(),
+      }}
       >
         <PeerStory
           entries={entriesFrom([

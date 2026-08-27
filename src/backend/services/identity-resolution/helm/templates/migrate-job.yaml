@@ -1,0 +1,78 @@
+{{/*
+Release-scoped hook Job: the only writer of the `identity` schema, applying
+pending MariaDB migrations and the first-admin bootstrap. Servers validate
+and never migrate (`assert_schema_compatible`).
+
+Migrations and the bootstrap run inside ONE advisory-locked session — the
+bootstrap's `INSERT … WHERE NOT EXISTS` has no unique constraint backing the
+active (tenant, person, role) triple, so it must not escape the critical
+section.
+
+Why a Job and not a per-pod initContainer, why `pre-*`, why the config is
+written inline instead of mounted, and why the `existingSecret` Secret must
+exist BEFORE `helm install` runs: see the analytics migrate-job, which
+carries the full rationale.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "insight-identity-resolution.fullname" . }}-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "10"
+    {{- /* Deliberately NOT hook-succeeded — that would discard the migration
+           and bootstrap log the moment the Job completes. */}}
+    helm.sh/hook-delete-policy: before-hook-creation
+  labels:
+    {{- include "insight-identity-resolution.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "insight-identity-resolution.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: migrate
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - bash
+            - -ec
+            - |
+              printf 'gears:\n  identity-resolution:\n    config: {}\n' > /tmp/migrate.yaml
+              exec /app/identity-resolution -c /tmp/migrate.yaml migrate
+          envFrom:
+            # Provides the APP__gears__identity-resolution__config__* leaf
+            # overrides (database_url, tenant_default_id,
+            # bootstrap_admin_person_id). Optional: on a fresh install this
+            # release resource does not exist yet when the pre-install hook
+            # runs; the migrate-env hook Secret below covers that case.
+            - secretRef:
+                name: {{ required "existingSecret is required (umbrella provides `insight-identity-resolution-config`; standalone installs supply their own)" .Values.existingSecret | quote }}
+                optional: true
+            {{- with .Values.migrateEnvSecret }}
+            # Hook-rendered twin carrying only the migrate leaves; listed last
+            # so its values win when both Secrets exist.
+            - secretRef:
+                name: {{ . | quote }}
+                optional: true
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

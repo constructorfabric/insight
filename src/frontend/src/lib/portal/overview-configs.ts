@@ -31,6 +31,9 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
           "tasks.closed",
           "collab.messages_sent",
           "ai.cost",
+          // The daily distribution: this row totals a period, and only the
+          // per-day steps add up to one. The month's running snapshot does not.
+          "ai.daily_approximate_extra_usage_cost",
         ],
       },
       // The old header's "N using AI" stat, now an honest participation card
@@ -54,7 +57,11 @@ export const OVERVIEW_ITEMS: Record<string, LensConfig> = {
     title: "Overview · Trend",
     tagline: "org totals over time",
     sections: [
-      { kind: "trend", metrics: ["git.commits", "git.prs_merged", "collab.messages_sent"] },
+      {
+        kind: "trend",
+        metrics: ["git.prs_merged", "git.code_lines"],
+        activeContributorsFor: "git.prs_merged",
+      },
     ],
   },
   attention: {

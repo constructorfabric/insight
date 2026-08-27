@@ -190,6 +190,40 @@ services:
   # Auth runs via Keycloak (real login form + generated realm): full cookie/BFF
   # auth, the authenticator does the OIDC flow.
 
+  # analytics owns the `analytics` schema but the server never migrates it — it
+  # validates that the schema carries its embedded migration set and refuses to
+  # boot otherwise. So compose must run `migrate` first, exactly like
+  # identity-resolution below. Exits 0 and stays exited; the server gates on it.
+  analytics-migrate:
+    # backend-common supplies the insight network (without it the migrator lands
+    # on the default network, can't resolve `mariadb`, and the server blocks
+    # forever on service_completed_successfully) + restart:no + init.
+    !!merge <<: *backend-common
+    image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
+    container_name: ${COMPOSE_PROJECT_NAME:-insight}-analytics-migrate
+    build:
+      context: src/backend
+      dockerfile: services/analytics/Dockerfile
+    depends_on:
+      mariadb: {condition: service_healthy, required: false}
+    environment:
+      APP__gears__analytics__config__database_url: "mysql://${MARIADB_USER:-insight}:${MARIADB_PASSWORD:-insight-local}@${MARIADB_HOST:-mariadb}:${MARIADB_INTERNAL_PORT:-3306}/analytics"
+    volumes:
+      - type: bind
+        source: ./deploy/compose/build/analytics/analytics
+        target: /app/analytics
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./deploy/compose/analytics-fullauth.yaml:/app/config/insight.yaml:ro
+    command:
+      - "/app/analytics" # <watched path — unused, one-shot>
+      - "--"
+      - "/app/analytics"
+      - "-c"
+      - "/app/config/insight.yaml"
+      - "migrate"
+
   analytics:
     !!merge <<: *backend-common
     image: ${ANALYTICS_IMAGE:-insight-analytics:dev}
@@ -203,6 +237,7 @@ services:
       mariadb: {condition: service_healthy, required: false}
       clickhouse: {condition: service_healthy, required: false}
       redis: {condition: service_healthy}
+      analytics-migrate: {condition: service_completed_successfully}
     environment:
       !!merge <<: *backend-env
       # analytics runs on the gears-rust host: structural config
@@ -219,6 +254,14 @@ services:
       APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       APP__gears__analytics__config__identity_url: "http://identity-resolution:8082"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"
+      # Explaining a metric with an LLM. Off unless .env.compose turns it on;
+      # enabled without a sealing key stops the service at boot, so the two
+      # move together.
+      APP__gears__analytics__config__ai_assist__enabled: "${AI_ASSIST_ENABLED:-false}"
+      APP__gears__analytics__config__ai_assist__token_encryption_key: "${AI_ASSIST_TOKEN_ENCRYPTION_KEY:-}"
+      APP__gears__analytics__config__ai_assist__api_key: "${AI_ASSIST_API_KEY:-}"
+      APP__gears__analytics__config__ai_assist__admin_only: "${AI_ASSIST_ADMIN_ONLY:-true}"
+      APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
       # cf-gears-oidc-authn-plugin. Its config is nested/list-shaped (not
       # env-injectable) and resolves the JWKS via OIDC discovery over HTTPS ONLY,
@@ -454,7 +497,11 @@ services:
       KC_HTTP_ENABLED: "true"
       KC_HTTP_PORT: "8085"
       JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
-    ports: ["8085:8085"]
+    # Host port is configurable like every other service's, so a second
+    # instance (or another stack already on 8085) does not block the edge.
+    # A changed port needs KEYCLOAK_HOSTNAME and AUTHENTICATOR_OIDC_ISSUER
+    # moved with it — the issuer is baked into the tokens.
+    ports: ["${KEYCLOAK_PORT:-8085}:8085"]
     volumes:
       - ./deploy/compose/keycloak/realm-insight.generated.json:/opt/keycloak/data/import/realm-insight.json:ro
     # `insight`, not `default` — every other service in this stack (see
@@ -734,6 +781,11 @@ services:
       # a test asking about "the seeded period" must clamp — see
       # tests/stand/api/analytics/query_window.
       SEED_DAYS: "${SEED_DAYS:-730}"
+      # Organisation size; empty is the committed 26-person roster. Listed
+      # because compose's `environment` is an allowlist.
+      SEED_ORG_HEADCOUNT: "${SEED_ORG_HEADCOUNT:-}"
+      # Preflight's documented escape hatch; unreachable unless listed here.
+      SEED_FORCE: "${SEED_FORCE:-}"
       # The issuer the authenticator resolved for this run. `test-stand up`
       # persists it after cmd_up so the manifest
       # records the real IdP instead of assuming the default.

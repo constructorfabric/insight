@@ -23,6 +23,25 @@ import { identityPerson, pid } from "@/test/identity";
 
 const mocks = vi.hoisted(() => ({
   definitions: { metrics: [] } as MetricDefinitionListResponse,
+  isFlat: false,
+}));
+
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: mocks.isFlat ? "flat" : "org_chart",
+    isFlat: mocks.isFlat,
+    isPending: false,
+  }),
+  useIsAdmin: () => ({ isAdmin: false, isPending: false }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: [],
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
 }));
 
 // Only the network is stubbed; the query hook itself is the real one.
@@ -148,5 +167,16 @@ describe("PortalTopBar · zones that filter nothing", () => {
     bar();
 
     await waitFor(() => expect(filters()).toBeInTheDocument());
+  });
+
+  it("drops the cohort control where there is one cohort", async () => {
+    // A flat organisation has no teams to compare within and no attributes on
+    // its roster: the control would offer a single choice, and its tooltip
+    // would describe a cut nobody can make.
+    mocks.isFlat = true;
+
+    bar();
+
+    expect(screen.queryByText("Cohort")).toBeNull();
   });
 });

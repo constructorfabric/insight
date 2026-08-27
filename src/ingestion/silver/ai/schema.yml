@@ -461,3 +461,86 @@ models:
         description: "When the record was collected (_airbyte_extracted_at)."
         tests:
           - not_null
+
+  - name: class_ai_overage_daily
+    description: >
+      Per-person readings of the month-to-date AI overage spend, across
+      vendors. Grain: one row per (tenant, source, seat, day the vendor was
+      read). Same monetary contract as class_ai_overage — minor units (cents)
+      plus ISO currency. Where class_ai_overage holds a month's closing state,
+      this holds the readings that led to it, so a vendor reporting only a
+      cumulative month-to-date figure can still be resolved to a day's spend:
+      the difference between consecutive readings, computed in gold. Readings
+      begin at claude-team 3.2.0, when Bronze started keying a seat by the day
+      it was read; earlier readings were overwritten within their month and are
+      not recoverable.
+    columns:
+      - name: insight_tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance identifier"
+        tests:
+          - not_null
+      - name: unique_key
+        description: "Composite dedup key: tenant-source-seat-YYYY-MM-DD (per source/day)"
+        tests:
+          - not_null
+          - unique
+      - name: email
+        description: "Seat work email (lowercased)."
+      - name: account_id
+        description: "Stable vendor seat/account id (Claude: account_uuid)."
+      - name: snapshot_date
+        description: "The day the vendor was read. The grain of this relation."
+        tests:
+          - not_null
+      - name: period_month
+        description: >
+          First day of the billing month the reading belongs to (UTC). The
+          cumulative figure resets with it, so a difference may only be taken
+          between readings that share it.
+        tests:
+          - not_null
+      - name: tool
+        description: "AI vendor discriminator."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude', 'chatgpt', 'openai']
+      - name: seat_tier
+        description: "Vendor plan/seat tier (free text per vendor). NULL when not exposed."
+      - name: currency
+        description: "ISO currency of the *_cents monetary columns."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['USD']
+      - name: credit_limit_cents
+        description: >
+          The spend ceiling in force on the seat that day, in minor units.
+          NULL when no limit applies or the limit is unknown for the source.
+      - name: used_amount_cents
+        description: >
+          Spend since the start of the billing month, in minor units, as the
+          vendor reported it that day. Cumulative — NOT that day's spend.
+        tests:
+          - not_null
+      - name: source
+        description: "Staging-model discriminator."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['claude_team', 'openai', 'chatgpt_team']
+      - name: data_source
+        description: "Framework source discriminator."
+        tests:
+          - not_null
+      - name: collected_at
+        description: "When the record was collected (_airbyte_extracted_at)."
+        tests:
+          - not_null

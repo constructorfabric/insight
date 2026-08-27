@@ -12,11 +12,23 @@ pub struct MetricResultsRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct MetricResultsEntity {
-    pub r#type: String,
-    /// Canonical person UUIDs (since the identity cutover; the
-    /// pre-cutover email shape is rejected with a 400).
-    pub ids: Vec<String>,
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MetricResultsEntity {
+    Person {
+        ids: Vec<String>,
+    },
+    Tenant {},
+    #[serde(other, skip_serializing)]
+    Unknown,
+}
+
+impl MetricResultsEntity {
+    pub(crate) fn is_tenant(&self) -> bool {
+        match self {
+            Self::Tenant {} => true,
+            Self::Person { .. } | Self::Unknown => false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -62,6 +74,10 @@ pub enum MetricViewRequest {
     Breakdown {
         dimensions: Vec<String>,
     },
+    Rollup {
+        dimensions: Vec<String>,
+        group_limit: Option<MetricGroupLimitRequest>,
+    },
     Histogram,
 }
 
@@ -72,6 +88,7 @@ impl MetricViewRequest {
             Self::Peer { .. } => MetricResultViewKind::Peer,
             Self::Timeseries { .. } => MetricResultViewKind::Timeseries,
             Self::Breakdown { .. } => MetricResultViewKind::Breakdown,
+            Self::Rollup { .. } => MetricResultViewKind::Rollup,
             Self::Histogram => MetricResultViewKind::Histogram,
         }
     }
@@ -112,11 +129,10 @@ pub struct MetricResultSelectionDto {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct MetricResultsEntityDto {
-    pub r#type: String,
-    /// Canonical person UUIDs (since the identity cutover; the
-    /// pre-cutover email shape is rejected with a 400).
-    pub ids: Vec<String>,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MetricResultsEntityDto {
+    Person { ids: Vec<String> },
+    Tenant {},
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -135,8 +151,16 @@ pub struct MetricDimensionFilterDto {
 #[serde(tag = "computation", rename_all = "snake_case")]
 pub enum ComputationDto {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+    },
     Median,
+    Percentile {
+        /// The quantile — a probability, matching the definition validation.
+        #[schema(minimum = 0, maximum = 1)]
+        q: f64,
+    },
+    Stddev,
     DistinctCount,
 }
 
@@ -157,9 +181,30 @@ pub enum MetricResultViewDto {
         dimensions: Vec<String>,
         values: Vec<BreakdownValueDto>,
     },
+    Rollup {
+        dimensions: Vec<String>,
+        values: Vec<RollupValueDto>,
+    },
     Histogram {
         values: Vec<HistogramValueDto>,
     },
+    /// This view's computation failed; sibling views and metrics are
+    /// unaffected. `message` detail depends on the caller's role: admins get
+    /// the underlying description, everyone else a generic one.
+    Error {
+        code: MetricViewErrorCode,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetricViewErrorCode {
+    SourceRelationMissing,
+    ResourceExhausted,
+    QueryTimeout,
+    ResultParseFailed,
+    QueryFailed,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -231,5 +276,83 @@ pub struct BreakdownValueDto {
     pub value: Option<f64>,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RollupValueDto {
+    pub dimensions: Vec<MetricDimensionDto>,
+    pub value: Option<f64>,
+    pub contributing_entity_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remainder: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 impl toolkit::api::api_dto::RequestApiDto for MetricResultsRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for MetricResultsResponse {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::MetricResultsRequest;
+
+    #[test]
+    fn tenant_entity_needs_no_client_supplied_identifier() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "tenant" },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_ok());
+    }
+
+    #[test]
+    fn tenant_entity_rejects_client_supplied_identifiers() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "tenant", "ids": ["default"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn unknown_entity_type_reaches_domain_validation() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": { "type": "team", "ids": ["team"] },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{ "metric_key": "ci.runs", "views": [{ "view": "period" }] }]
+        }));
+
+        assert!(request.is_ok());
+    }
+
+    #[test]
+    fn rollup_view_deserializes_with_an_optional_group_limit() {
+        let request = serde_json::from_value::<MetricResultsRequest>(json!({
+            "entity": {
+                "type": "person",
+                "ids": ["019e27bc-dec0-7626-81a9-c5524662a6a9"]
+            },
+            "period": { "from": "2026-01-01", "to": "2026-01-31" },
+            "metrics": [{
+                "metric_key": "git.commits",
+                "views": [{
+                    "view": "rollup",
+                    "dimensions": ["repository"],
+                    "group_limit": {
+                        "count": 25,
+                        "rank_by_metric": "git.commits",
+                        "include_remainder": true
+                    }
+                }]
+            }]
+        }));
+
+        assert!(request.is_ok());
+    }
+}

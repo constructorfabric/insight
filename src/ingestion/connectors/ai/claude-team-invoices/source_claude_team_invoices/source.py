@@ -27,10 +27,46 @@ logger = logging.getLogger("airbyte")
 
 _SCHEMAS = Path(__file__).parent / "schemas"
 
+_NO_SESSION_KEY = (
+    "the proxy holds no claude.ai session key (HTTP 503). It is kept in memory "
+    "only, so a proxy restart clears it and every /api/ call answers 503 until "
+    "one is installed with POST /admin/session-key on the proxy."
+)
+
+# What the proxy itself answers, as opposed to what claude.ai answers through
+# it. A bare status code sends an operator to the egress and Stripe-Version
+# checks, neither of which is the fault in any of these.
+_PROXY_STATUS_HELP = {
+    401: (
+        "the proxy rejected the bearer token (HTTP 401). proxy_auth_token must "
+        "match the PROXY_AUTH_TOKEN the proxy was deployed with."
+    ),
+    502: "the proxy could not reach claude.ai (HTTP 502)",
+    503: _NO_SESSION_KEY,
+    504: "claude.ai did not answer the proxy in time (HTTP 504)",
+}
+
 
 def load_stream_schema(name: str) -> Mapping[str, Any]:
     """Read a stream's JSON schema from the packaged `schemas/` directory."""
     return json.loads((_SCHEMAS / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def proxy_readiness_error(proxy_url: str) -> str | None:
+    """What the proxy says about itself, before any credential is spent.
+
+    `/health` is the one route the proxy leaves unauthenticated, so a proxy that
+    is up but holds no session key is named as that instead of being masked by an
+    authentication failure on the listing. A build that does not serve the route
+    answers something else and the listing decides.
+    """
+    try:
+        response = requests.get(f"{proxy_url}/health", timeout=15)
+    except requests.RequestException as error:
+        return f"proxy unreachable at {proxy_url}: {error}"
+    if response.status_code == 503:
+        return _NO_SESSION_KEY
+    return None
 
 
 class SourceClaudeTeamInvoices(AbstractSource):
@@ -60,6 +96,11 @@ class SourceClaudeTeamInvoices(AbstractSource):
 
         proxy_url = str(config["proxy_url"]).rstrip("/")
         org_id = config["claude_org_id"]
+
+        not_ready = proxy_readiness_error(proxy_url)
+        if not_ready:
+            return False, not_ready
+
         try:
             response = requests.get(
                 f"{proxy_url}/api/stripe/{org_id}/invoices?limit=1&page=",
@@ -75,6 +116,9 @@ class SourceClaudeTeamInvoices(AbstractSource):
                 "(HTTP 403). Rotate a billing-capable cookie in via the proxy's "
                 "POST /admin/session-key."
             )
+        proxy_fault = _PROXY_STATUS_HELP.get(response.status_code)
+        if proxy_fault:
+            return False, proxy_fault
         if response.status_code != 200:
             return False, f"invoice list returned HTTP {response.status_code}"
         try:

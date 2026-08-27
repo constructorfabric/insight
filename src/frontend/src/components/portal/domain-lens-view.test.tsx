@@ -59,6 +59,24 @@ vi.mock("@/queries/ic-dashboard", () => ({
     refetch: vi.fn(),
   }),
 }));
+// `useOrgScope` reads the deployment's visibility policy, and its flat branch
+// reads the roster. This suite is about the view, so both answer statically.
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: [],
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
 vi.mock("@/queries/member-grid", () => ({
   useMemberGridData: () => mocks.grid,
 }));
@@ -96,8 +114,22 @@ vi.mock("@/components/portal/section-trend", () => ({
     <div data-testid="section-trend" data-series={JSON.stringify(series ?? []).length} />
   ),
 }));
+// The sparkle reads the AI config through react-query; this suite renders the
+// view without a client, and what it explains is covered by its own tests.
+vi.mock("@/components/widgets/dashboard/explain-with-ai", () => ({
+  ExplainWithAi: () => null,
+}));
+// The drilldown fetches per member; this suite is about which drilldown the
+// view asks for, so the dialog reports the state it was handed instead.
+vi.mock("@/components/portal/trend-drilldown-dialog", () => ({
+  TrendDrilldownDialog: ({ state }: { state: unknown }) =>
+    state ? (
+      <div data-testid="drilldown" data-state={JSON.stringify(state)} />
+    ) : null,
+}));
 
 
+import { EvidenceDialogContext } from "@/components/metric-evidence-context";
 import type { LensConfig } from "@/lib/portal/lens-configs";
 import { DomainLensView } from "./domain-lens-view";
 
@@ -205,6 +237,69 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
   });
 });
 
+describe("headline cards open the records behind them", () => {
+  const openEvidenceTargets = vi.fn();
+  const openEvidence = vi.fn();
+  const openEvidencePeople = vi.fn();
+
+  function drawWithEvidence(config: LensConfig = HEADLINE_CONFIG) {
+    return render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
+      >
+        <DomainLensView config={config} />
+      </EvidenceDialogContext.Provider>
+    );
+  }
+
+  it("opens the roster's own records, not one person's", async () => {
+    const user = userEvent.setup();
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          IDS.map((id) => [id, 10] as [string, number]),
+          {
+            short_label: "Commits",
+            unit: "commits",
+            drilldown: { granularity: ["event"] },
+            selection: {
+              metric_key: "t.commits",
+              entity: { type: "person", ids: IDS },
+              period: { from: "2026-07-20", to: "2026-07-26" },
+              filters: [],
+            },
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+    drawWithEvidence();
+
+    await user.click(screen.getByRole("button", { name: /Commits|t.commits/ }));
+
+    expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+    const [targets, options] = openEvidenceTargets.mock.calls[0]!;
+    expect(options).toEqual({ activeMetricKey: "t.commits" });
+    // The card's figure is the roster's, so its records are the roster's too —
+    // asked for as one selection over every member.
+    expect(targets[0].selection.entity).toEqual({
+      type: "persons",
+      ids: [...IDS].sort(),
+    });
+  });
+
+  it("stays a plain card for a metric whose evidence cannot be read", () => {
+    drawWithEvidence();
+
+    // The seeded metric declares no drilldown: an affordance that opens an
+    // empty dialog is worse than none.
+    expect(
+      screen.queryByRole("button", { name: /Commits|t.commits/ })
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("rule 6: honest not-ingested gate", () => {
   it("renders the family not-ingested note when nothing was ever observed", () => {
     mocks.grid.byKey = new Map([
@@ -259,6 +354,132 @@ describe("stat-tiles (medians, never sums)", () => {
     // median of 10,20,30,40 = 25
     expect(screen.getByText("25")).toBeInTheDocument();
     expect(screen.getByText(/median \/ person/)).toBeInTheDocument();
+  });
+});
+
+describe("aggregate sections open the people behind them", () => {
+  const openEvidenceTargets = vi.fn();
+  const openEvidence = vi.fn();
+  const openEvidencePeople = vi.fn();
+
+  /** A metric with a real spread: 1, 2, 3 and 9 commits over the four members. */
+  function seedSpread({ drillable }: { drillable: boolean }) {
+    const evidence = drillable
+      ? {
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        }
+      : {};
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          [
+            [pid("a"), 1],
+            [pid("b"), 2],
+            [pid("c"), 3],
+            [pid("d"), 9],
+          ],
+          {
+            label: "Commits",
+            short_label: "Commits",
+            unit: "commits",
+            ...evidence,
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+    mocks.grid.previousByKey = new Map();
+  }
+
+  function drawWithEvidence(config: LensConfig) {
+    return render(
+      <EvidenceDialogContext.Provider
+        value={{ openEvidence, openEvidenceTargets, openEvidencePeople }}
+      >
+        <DomainLensView config={config} />
+      </EvidenceDialogContext.Provider>
+    );
+  }
+
+  const SPREAD_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      {
+        kind: "distribution",
+        metric: "t.commits",
+        title: "Spread",
+        caption: "spread",
+        unitLabel: "commits per person",
+      },
+    ],
+  };
+
+  const CONCENTRATION_CONFIG: LensConfig = {
+    title: "T",
+    sections: [
+      { kind: "concentration", metrics: ["t.commits"], framing: "bus-factor" },
+    ],
+  };
+
+  it("opens a band's own people, with the values the bars were drawn from", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(SPREAD_CONFIG);
+
+    // Step 1 over a maximum of 9 → unit-wide bands, and the top value is
+    // clamped into the last one, so the lone 9 is the whole "8–9" band.
+    await user.click(screen.getByRole("button", { name: /^8–9 commits/ }));
+
+    expect(openEvidencePeople).toHaveBeenCalledTimes(1);
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.title).toContain("8–9 commits per person");
+    expect(view.rows.map((row: { entityId: string }) => row.entityId)).toEqual([
+      pid("d"),
+    ]);
+    expect(view.rows[0].value).toBe(9);
+    // The roster's name and its route id, each from its own lookup: this is
+    // what makes the list about people rather than about ids.
+    expect(view.rows[0].name).toBe("d");
+    expect(view.rows[0].personId).toBe(pid("d"));
+    // Every row's records at once stays available, scoped to the same band.
+    expect(view.allRecords.selection.entity).toEqual({
+      type: "persons",
+      ids: [pid("d")],
+    });
+  });
+
+  it("lists the people of a metric whose records cannot be read", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: false });
+    drawWithEvidence(SPREAD_CONFIG);
+
+    await user.click(screen.getByRole("button", { name: /^8–9 commits/ }));
+
+    // The values are the surface's own, so who is in the band is answerable
+    // even where no source backs a record table.
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.rows[0].target).toBeNull();
+    expect(view.allRecords).toBeNull();
+  });
+
+  it("opens the busiest tenth from the concentration card, ranked", async () => {
+    const user = userEvent.setup();
+    seedSpread({ drillable: true });
+    drawWithEvidence(CONCENTRATION_CONFIG);
+
+    await user.click(screen.getByRole("button", { name: /carried by/ }));
+
+    const [view] = openEvidencePeople.mock.calls[0]!;
+    expect(view.title).toContain("busiest 1 of 4");
+    // Busiest tenth of 4 contributors = 1 person, and it is the busiest one.
+    expect(view.rows.map((row: { value: number }) => row.value)).toEqual([9]);
   });
 });
 
@@ -341,6 +562,44 @@ describe("composition (rule 7: only real server dimensions)", () => {
     expect(screen.getByText("docs")).toBeInTheDocument();
     // docs 120 of 160 total = 75%
     expect(screen.getByText(/75%/)).toBeInTheDocument();
+  });
+
+  it("explains a derived dimension under the bars, not above them", () => {
+    // A category label says nothing about how the bucket was decided, and the
+    // explanation belongs after the reading rather than in front of it.
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          { entity_id: id, dimensions: [{ key: "category", value: "docs" }], value: 30 },
+          { entity_id: id, dimensions: [{ key: "category", value: "code" }], value: 10 },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    render(
+      <DomainLensView
+        config={{
+          title: "T",
+          sections: [
+            { kind: "headline", metrics: ["t.commits"] },
+            {
+              kind: "composition",
+              metric: "t.commits",
+              dimension: "category",
+              title: "Lines by category",
+              notes: ["First rule that matches wins.", "Code — everything else."],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("First rule that matches wins."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Code — everything else.")).toBeInTheDocument();
   });
 
   it("shows a retryable error card when the breakdown request fails", () => {
@@ -513,5 +772,114 @@ describe("coverage section (#2408)", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /5 of 5/ })).toBeDisabled();
+  });});
+
+/* ── trend ───────────────────────────────────────────────────────────── */
+
+const TREND_CONFIG: LensConfig = {
+  title: "Dev · Test",
+  sections: [
+    { kind: "trend", metrics: ["t.commits"], activeContributorsFor: "t.commits" },
+  ],
+};
+
+function timeseries(
+  key: string,
+  byEntity: Record<string, Array<[string, number | null]>>,
+): NormalizedMetricResult {
+  return {
+    metric_key: key,
+    label: key,
+    unit: null,
+    computation: "sum",
+    format: "integer",
+    direction: "higher_is_better",
+    timeseries: {
+      view: "timeseries",
+      bucket: "day",
+      series: Object.entries(byEntity).map(([entity_id, points]) => ({
+        entity_id,
+        points: points.map(([bucket_start, value]) => ({ bucket_start, value })),
+      })),
+    },
+  } as unknown as NormalizedMetricResult;
+}
+
+/** Two buckets: one person contributes in the first, two in the second. */
+function trendWorld() {
+  const trend = emptyCollection();
+  trend.byKey = new Map([
+    [
+      "t.commits",
+      timeseries("t.commits", {
+        [pid("a")]: [
+          ["2026-07-20", 3],
+          ["2026-07-21", 4],
+        ],
+        [pid("b")]: [
+          ["2026-07-20", 0],
+          ["2026-07-21", 3],
+        ],
+      }),
+    ],
+  ]);
+  mocks.collections = [trend, emptyCollection(), emptyCollection()];
+}
+
+function openedDrilldown(): {
+  metricKey: string | null;
+  members: Array<{ person_id: string; name: string }>;
+  breakdown: Array<{ date: string; total: number; contributors: string[] }>;
+} {
+  const node = screen.getByTestId("drilldown");
+  return JSON.parse(node.getAttribute("data-state") ?? "{}");
+}
+
+describe("trend section", () => {
+  it("charts each trend measure on its own card, plus the derived contributors", () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    expect(
+      screen.getByRole("button", { name: "Open Commits details" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Open Active contributors · Commits details",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("drills a measure into its own catalog metric", async () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open Commits details" }),
+    );
+
+    const state = openedDrilldown();
+    expect(state.metricKey).toBe("t.commits");
+    expect(state.members.map((m) => m.name).length).toBe(4);
+    expect(state.breakdown.map((b) => b.total)).toEqual([3, 7]);
+  });
+
+  it("drills the derived card into periods only, having no records of its own", async () => {
+    trendWorld();
+    render(<DomainLensView config={TREND_CONFIG} />);
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Open Active contributors · Commits details",
+      }),
+    );
+
+    const state = openedDrilldown();
+    expect(state.metricKey).toBeNull();
+    // Still counted from the metric it is derived from.
+    expect(state.breakdown.map((b) => b.contributors)).toEqual([
+      ["a"],
+      ["a", "b"],
+    ]);
   });
 });

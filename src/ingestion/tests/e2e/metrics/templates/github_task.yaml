@@ -1,0 +1,177 @@
+# Reusable GitHub task-tracking rows. The GitHub path runs bronze to gold
+# entirely inside the rig — no enrich binary sits in the middle — so a fixture
+# exercises the real staging models rather than a hand-written silver row.
+#
+# The configuration rows are as much a part of the fixture as the bronze ones:
+# GitHub states no lifecycle category anywhere, so without a binding an issue
+# has no status a metric can read.
+templates:
+  # ── configuration ──────────────────────────────────────────────────────
+  role_state:
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    insight_source_id: github-test
+    data_source: github
+    field_id: state
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: gh-role-state
+    role: status
+    precedence: 0
+    value_unit: none
+    unit_multiplier: 1
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  role_assignees:
+    $ref: "#/templates/role_state"
+    field_id: assignees
+    unique_key: gh-role-assignees
+    role: assignee
+
+  role_type:
+    $ref: "#/templates/role_state"
+    field_id: type
+    unique_key: gh-role-type
+    role: issuetype
+
+  # `open` and every closure reason are distinct values an operator binds; a
+  # value with no binding is what the coverage test refuses.
+  value_open:
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    insight_source_id: github-test
+    data_source: github
+    field_id: state
+    value_id: open
+    valid_from: "1970-01-01 00:00:00.000"
+    recorded_at: "2026-01-01 00:00:00.000"
+    unique_key: gh-value-open
+    canonical_value: new
+    value_display: Open
+    is_deleted: 0
+    note: ""
+    recorded_by: fixture
+    _version: "2026-01-01 00:00:00.000"
+
+  value_closed_completed:
+    $ref: "#/templates/value_open"
+    value_id: "closed:completed"
+    unique_key: gh-value-closed-completed
+    canonical_value: done
+    value_display: Completed
+
+  value_closed_not_planned:
+    $ref: "#/templates/value_open"
+    value_id: "closed:not_planned"
+    unique_key: gh-value-closed-not-planned
+    canonical_value: done
+    value_display: Not planned
+
+  # ── catalogues ─────────────────────────────────────────────────────────
+  issue_type_task:
+    unique_key: gh-type-task
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-01-01T00:00:00Z"
+    org: acme
+    issue_type_id: IT_task
+    issue_type_name: Task
+    description: A specific piece of work
+    is_enabled: true
+    _airbyte_raw_id: gh-type-task
+    _airbyte_extracted_at: "2026-01-01T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  issue_type_bug:
+    $ref: "#/templates/issue_type_task"
+    unique_key: gh-type-bug
+    issue_type_id: IT_bug
+    issue_type_name: Bug
+    description: An unexpected problem
+    _airbyte_raw_id: gh-type-bug
+
+  # ── the identity bridge ────────────────────────────────────────────────
+  # Gold joins an issue's assignee to a person through an e-mail, so a GitHub
+  # fixture that seeds only issues attributes nothing: `github__task_users` is
+  # built from the (account, e-mail) pairs the commit data carries, and with no
+  # pair the inner join drops every issue.
+  commit_author:
+    unique_key: gh-author
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-01T00:00:00Z"
+    repo_full_name: acme/app
+    author_email: someone@example.com
+    author_login: someone
+    author_id: 1000
+    author_type: User
+    sample_sha: "0000000000000000000000000000000000000000"
+    _airbyte_raw_id: gh-author
+    _airbyte_extracted_at: "2026-03-01T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  # ── issues and their history ───────────────────────────────────────────
+  issue:
+    unique_key: gh-issue
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    id: 1
+    number: 1
+    repo_full_name: acme/app
+    state: closed
+    state_reason: completed
+    title: An issue
+    author_login: alice
+    author_id: 1001
+    assignee_logins: alice
+    assignee_ids: "1001"
+    label_names: "[]"
+    issue_type: Task
+    issue_type_id: IT_task
+    closed_by_login: alice
+    closed_by_id: 1001
+    created_at: "2026-03-01T09:00:00Z"
+    updated_at: "2026-03-25T09:00:00Z"
+    closed_at: "2026-03-25T09:00:00Z"
+    issue_field_values_json: "[]"
+    _airbyte_raw_id: gh-issue
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1
+
+  closed_event:
+    unique_key: gh-event
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: github
+    collected_at: "2026-03-31T00:00:00Z"
+    event_id: CE_1
+    event_type: ClosedEvent
+    event_at: "2026-03-25T09:00:00Z"
+    item_number: 1
+    repo_full_name: acme/app
+    actor_login: alice
+    actor_id: 1001
+    target_login: ""
+    target_id: 0
+    label_name: ""
+    state_reason: COMPLETED
+    field_id: ""
+    field_name: ""
+    prev_value: ""
+    new_value: ""
+    prev_value_id: ""
+    new_value_id: ""
+    prev_options_json: "[]"
+    new_options_json: "[]"
+    _airbyte_raw_id: gh-event
+    _airbyte_extracted_at: "2026-03-31T00:00:00Z"
+    _airbyte_meta: '{"changes":[]}'
+    _airbyte_generation_id: 1

@@ -18,6 +18,7 @@ export interface IdentityPerson {
   division?: string;
   job_title?: string;
   status?: string;
+  username?: string;
   parent_email?: string | null;
   parent_id?: string | null;
   parent_person_id?: string | null;
