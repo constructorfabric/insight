@@ -78,6 +78,28 @@ describe("validatePortalSearch", () => {
   });
 });
 
+describe("the ingestion drill-down key", () => {
+  it("keeps a connector slug", () => {
+    expect(validatePortalSearch({ conn: "bamboohr" }).conn).toBe("bamboohr");
+    expect(validatePortalSearch({ conn: "claude_enterprise" }).conn).toBe(
+      "claude_enterprise",
+    );
+  });
+
+  it("drops anything the endpoint would refuse as a scope", () => {
+    // A hand-edited value must degrade to the overview, not reach the API and
+    // come back a 400 the reader cannot act on.
+    for (const raw of ["Jira", "bronze jira", "jira;drop", "jira/../x", ""]) {
+      expect(validatePortalSearch({ conn: raw }).conn, raw).toBeUndefined();
+    }
+  });
+
+  it("is retained across navigation", () => {
+    // Without this the drill-down is lost the moment anything else navigates.
+    expect(PORTAL_SEARCH_KEYS).toContain("conn");
+  });
+});
+
 describe("applySearchPatch", () => {
   /** The real middleware the portal routes install, over the patched result. */
   function afterRetain(

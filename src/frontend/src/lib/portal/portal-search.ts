@@ -41,6 +41,14 @@ export interface PortalSearch {
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
+  /**
+   * Connector under inspection in the Ingestion surface, as a bronze slug
+   * without the `bronze_` prefix (e.g. `bamboohr`).
+   *
+   * In the URL because the drill-down IS the view: a reload and a shared link
+   * must both land on the same connector's streams.
+   */
+  conn?: string;
   /** Org-scope root: a manager's person id. Absent = the viewer's own subtree. */
   scope?: string;
   /** Narrow the scope to direct reports only. */
@@ -54,6 +62,9 @@ export interface PortalSearch {
 }
 
 const PERIODS = new Set<string>(["week", "month", "quarter", "year"]);
+/** A bronze connector slug: what the endpoint's `scope` validator accepts,
+ *  minus the `bronze_` prefix the URL does not need to carry. */
+const CONNECTOR_SLUG = /^[a-z0-9_]{1,120}$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function str(v: unknown): string | undefined {
@@ -90,6 +101,9 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     find: str(raw.find),
     dir: str(raw.dir),
     lens: str(raw.lens),
+    // Validated to the same slug shape the endpoint accepts as a `scope`, so a
+    // hand-edited value degrades to the overview instead of a 400.
+    conn: CONNECTOR_SLUG.test(str(raw.conn) ?? "") ? str(raw.conn) : undefined,
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
     // link, an identity record or a hand-edited URL, and the resolver compares
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
@@ -122,6 +136,7 @@ export const PORTAL_SEARCH_KEYS = [
   "period",
   "from",
   "to",
+  "conn",
 ] satisfies Array<keyof PortalSearch>;
 
 /** The validated portal params for the current route. */

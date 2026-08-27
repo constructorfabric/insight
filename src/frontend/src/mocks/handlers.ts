@@ -10,6 +10,7 @@ import { isPersonId } from "@/lib/metrics/entity";
 
 import { buildMetricDefinitions } from "./metric-definitions-factory";
 import { buildMetricResultsResponse } from "./metric-results-factory";
+import { buildIngestionIntensity } from "./ingestion-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
@@ -918,9 +919,54 @@ export const handlers = [
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
   ...usageHandlers(),
+  ...ingestionHandlers(),
   ...feedbackHandlers(),
   ...aiAssistHandlers(),
 ];
+
+// ── Ingestion intensity (`/v1/ingestion/intensity`) ────────────
+// The admin ops lens has no mock path otherwise: its data comes from a
+// merge() over every bronze database, which no seeded stand carries (compose
+// seeds silver/gold directly and runs no connector). Without this the surface
+// can only be seen against a warehouse that has actually ingested something.
+//
+// The grain/series sets are closed server-side, so they are refused here too —
+// a 200 for a value the service would reject would hide a client-side bug.
+const INGESTION_GRAINS = new Set(["15m", "1s"]);
+const INGESTION_SERIES = new Set(["connector", "stream", "total"]);
+const BRONZE_SLUG = /^bronze_[a-z0-9_]{1,120}$/;
+
+function ingestionHandlers() {
+  return [
+    http.get("/api/analytics/v1/ingestion/intensity", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const grain = params.get("grain") ?? "15m";
+      const series = params.get("series");
+      const scope = params.get("scope");
+
+      const bad =
+        !INGESTION_GRAINS.has(grain) ||
+        (series !== null && !INGESTION_SERIES.has(series)) ||
+        (scope !== null && scope !== "" && !BRONZE_SLUG.test(scope));
+      if (bad) {
+        return HttpResponse.json(
+          { status: 400, title: "Bad Request", detail: "unsupported ingestion parameter" },
+          { status: 400 },
+        );
+      }
+
+      return HttpResponse.json(
+        buildIngestionIntensity({
+          grain: grain as "15m" | "1s",
+          series: (series ?? undefined) as never,
+          scope,
+          from: params.get("from"),
+          to: params.get("to"),
+        }),
+      );
+    }),
+  ];
+}
 
 // ── Product feedback (`/v1/feedback`) ──────────────────────────
 // An in-memory store, so the dialog's send and the usage surface's listing

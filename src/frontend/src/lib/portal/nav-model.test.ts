@@ -77,6 +77,19 @@ describe("resolveZoneItem", () => {
  * The non-admin list must stay a strict subset — dropping a shared item or
  * reordering would silently reshape the pane every operator already knows.
  */
+describe("the ingestion lens", () => {
+  it("is admin-only: bronze rows carry no tenant to scope it by", () => {
+    const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
+    expect(item?.adminOnly).toBe(true);
+    expect(manageItemsFor(false).some((i) => i.id === "ingestion")).toBe(false);
+    expect(manageItemsFor(true).some((i) => i.id === "ingestion")).toBe(true);
+  });
+
+  it("is its own lens, not folded into metric data health", () => {
+    expect(MANAGE_ITEMS.some((i) => i.id === "data-health")).toBe(true);
+  });
+});
+
 describe("manageItemsFor", () => {
   it("gives an admin the full pane", () => {
     expect(manageItemsFor(true)).toEqual(MANAGE_ITEMS);
