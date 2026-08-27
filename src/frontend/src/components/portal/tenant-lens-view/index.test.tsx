@@ -21,6 +21,7 @@ import type {
 type HookResult = {
   byKey: Map<string, NormalizedMetricResult>;
   previousByKey: Map<string, NormalizedMetricResult> | null;
+  windowsByKey: Array<Map<string, NormalizedMetricResult>>;
   isPending: boolean;
   isFetching: boolean;
   isError: boolean;
@@ -31,6 +32,7 @@ function emptyResult(): HookResult {
   return {
     byKey: new Map(),
     previousByKey: null,
+    windowsByKey: [],
     isPending: false,
     isFetching: false,
     isError: false,
@@ -45,6 +47,7 @@ const mocks = vi.hoisted(() => ({
     collection: MetricCollectionConfig;
     entity: MetricCollectionEntity;
     range: DateRange;
+    windows: readonly DateRange[];
   }>,
   setCalls: [] as Array<{
     collections: ReadonlyArray<{ key: string; collection: MetricCollectionConfig }>;
@@ -69,11 +72,22 @@ vi.mock("@/queries/metric-results", () => ({
   useMetricCollection: (
     collection: MetricCollectionConfig,
     entity: MetricCollectionEntity,
-    range: DateRange
+    range: DateRange,
+    options?: { windows?: readonly DateRange[] }
   ) => {
-    mocks.calls.push({ collection, entity, range });
-    const half = mocks.rangeResults.get(`${range.from}..${range.to}`);
-    if (half) return half;
+    const windows = options?.windows ?? [];
+    mocks.calls.push({ collection, entity, range, windows });
+    // The half windows ride the primary range now, so a windowed call answers
+    // with one `windowsByKey` entry per window from the same fixtures.
+    if (windows.length > 0) {
+      const result = emptyResult();
+      result.windowsByKey = windows.map(
+        (window) =>
+          mocks.rangeResults.get(`${window.from}..${window.to}`)?.byKey ??
+          new Map()
+      );
+      return result;
+    }
     return range.from === PORTAL_RANGE.from && range.to === PORTAL_RANGE.to
       ? mocks.result
       : emptyResult();
@@ -264,13 +278,12 @@ describe("TenantLensView", () => {
   it("requests the lens over a tenant entity with per-section views", () => {
     render(<TenantLensView config={CONFIG} />);
 
-    // Main + the two half-window hooks (disabled: empty collections).
-    expect(mocks.calls).toHaveLength(3);
+    // Main + the halves hook (disabled: empty collection).
+    expect(mocks.calls).toHaveLength(2);
     for (const call of mocks.calls) {
       expect(call.entity).toEqual({ type: "tenant" });
     }
     expect(mocks.calls[1].collection.metrics).toHaveLength(0);
-    expect(mocks.calls[2].collection.metrics).toHaveLength(0);
     // No conflicting views → no extra collections.
     expect(mocks.setCalls[0].collections).toHaveLength(0);
 
@@ -906,9 +919,14 @@ describe("TenantLensView", () => {
     mocks.rangeResults.set(SECOND_HALF, secondHalf);
 
     render(<TenantLensView config={config} />);
-    // The month split at its midpoint, the odd day to the second half.
-    expect(mocks.calls[1].range).toEqual({ from: "2026-03-01", to: "2026-03-15" });
-    expect(mocks.calls[2].range).toEqual({ from: "2026-03-16", to: "2026-03-31" });
+    // Both halves are windows on ONE request, the month split at its midpoint
+    // with the odd day going to the second half.
+    expect(mocks.calls).toHaveLength(2);
+    expect(mocks.calls[1].range).toEqual(PORTAL_RANGE);
+    expect(mocks.calls[1].windows).toEqual([
+      { from: "2026-03-01", to: "2026-03-15" },
+      { from: "2026-03-16", to: "2026-03-31" },
+    ]);
     expect(mocks.calls[1].collection.metrics).toEqual([
       {
         key: "ci.gate_pass_rate",

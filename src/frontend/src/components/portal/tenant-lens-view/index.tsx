@@ -82,24 +82,30 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
     dateRange
   );
   // Halves stay disabled (empty collection) when the window is too short to
-  // split — the slope/momentum sections then suppress themselves.
+  // split — the slope/momentum sections then suppress themselves. Both halves
+  // are windows on ONE request: their breakdowns read the same rows, so the
+  // slope sections no longer cost a request each (#2651).
   const halvesCollection = halfRanges ? plan.halves : EMPTY_COLLECTION;
-  const firstHalf = useMetricCollection(
-    halvesCollection,
-    { type: "tenant" },
-    halfRanges?.first ?? dateRange
+  const halfWindows = useMemo(
+    () => (halfRanges ? [halfRanges.first, halfRanges.second] : []),
+    [halfRanges]
   );
-  const secondHalf = useMetricCollection(
+  const halves = useMetricCollection(
     halvesCollection,
     { type: "tenant" },
-    halfRanges?.second ?? dateRange
+    dateRange,
+    { windows: halfWindows }
   );
 
   const resolve: ResolveView = (need) => {
     const location = plan.locate(need);
     if (!location) return undefined;
-    if (location.at === "first-half") return firstHalf.byKey.get(need.metric);
-    if (location.at === "second-half") return secondHalf.byKey.get(need.metric);
+    if (location.at === "first-half") {
+      return halves.windowsByKey[0]?.get(need.metric);
+    }
+    if (location.at === "second-half") {
+      return halves.windowsByKey[1]?.get(need.metric);
+    }
     const byKey =
       location.index === 0
         ? main.byKey
@@ -107,12 +113,7 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
     return byKey?.get(need.metric);
   };
 
-  if (
-    main.isPending ||
-    collectionSetPending(extras) ||
-    firstHalf.isPending ||
-    secondHalf.isPending
-  ) {
+  if (main.isPending || collectionSetPending(extras) || halves.isPending) {
     return (
       <div className="flex flex-col gap-6 p-6">
         <Skeleton className="h-8 w-64" />
@@ -125,12 +126,9 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
       </div>
     );
   }
-  const failed = [
-    main,
-    ...extras.values(),
-    firstHalf,
-    secondHalf,
-  ].filter((result) => result.isError);
+  const failed = [main, ...extras.values(), halves].filter(
+    (result) => result.isError
+  );
   if (failed.length > 0) {
     return (
       <div className="mx-auto w-full max-w-md p-8">
