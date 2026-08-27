@@ -12,6 +12,7 @@ mod question;
 
 pub mod comparisons;
 pub mod distributions;
+pub mod rows;
 pub mod values;
 
 #[cfg(test)]

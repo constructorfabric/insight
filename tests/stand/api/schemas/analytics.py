@@ -64,6 +64,17 @@ class Bucket(StrEnum):
     month = 'month'
 
 
+class ColumnKind(StrEnum):
+    """
+    How a column's values read, so a caller renders a page without matching key
+    spellings.
+    """
+    text = 'text'
+    number = 'number'
+    date = 'date'
+    timestamp = 'timestamp'
+
+
 class CompareOffset(StrEnum):
     """
     How far back the compared window sits: `previous_period` shifts it by its
@@ -916,6 +927,27 @@ class RollupValueDto(BaseModel):
     value: float | None = None
 
 
+class RowColumn(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    key: str
+    kind: ColumnKind
+    label: str = Field(..., description="The column's name as a reader sees it, derived from its key.")
+
+
+class RowsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[RowColumn]
+    input: str = Field(..., description="The part of the metric's computation these rows were folded into.")
+    metric: str
+    next_cursor: str | None = Field(None, description='Absent when this page is the last one.')
+    provenance: Provenance
+    rows: list[list[Any]] = Field(..., description="One entry per row, holding one value per column, in the columns' order.")
+
+
 class RunResponse(BaseModel):
     """
     Result of `POST /v1/queries/{id}/run`.
@@ -1553,6 +1585,20 @@ class ResultBody2(BaseModel):
 
 class ResultBody(RootModel[ResultBody1 | ResultBody2]):
     root: ResultBody1 | ResultBody2 = Field(..., description="The answer's shape, decided by the question's grain: `total` answers with\nvalues, every other grain answers with series.")
+
+
+class RowsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cursor: str | None = Field(None, description='Where to resume, as the previous page reported it. Absent asks for the\nfirst page.')
+    display_dimensions: list[str] | None = Field(None, description="Dimension keys to report beyond the ones the metric's measure declares.")
+    filters: list[DimensionFilter] | None = Field(None, description='Narrows the scan exactly as it narrows the value. Absent means none.')
+    input: str | None = Field(None, description="Which input of the metric's computation to page. A metric composing one\ninput needs none; one composing several names which.")
+    metric: str = Field(..., description='The metric key the semantic definitions carry, such as `git.commits`.')
+    page_size: int | None = Field(None, description='Rows per page. Absent means 100.', ge=0)
+    subjects: Subjects
+    time: TimeRange
 
 
 class SavedQueryListResponse(BaseModel):

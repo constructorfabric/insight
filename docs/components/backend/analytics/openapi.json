@@ -93,6 +93,16 @@
         ],
         "type": "string"
       },
+      "ColumnKind": {
+        "description": "How a column's values read, so a caller renders a page without matching key\nspellings.",
+        "enum": [
+          "text",
+          "number",
+          "date",
+          "timestamp"
+        ],
+        "type": "string"
+      },
       "Compare": {
         "additionalProperties": false,
         "description": "Asks the same question again over an earlier window, and reports the change.",
@@ -2806,6 +2816,127 @@
         "required": [
           "dimensions",
           "contributing_entity_count"
+        ],
+        "type": "object"
+      },
+      "RowColumn": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ColumnKind"
+          },
+          "label": {
+            "description": "The column's name as a reader sees it, derived from its key.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "label"
+        ],
+        "type": "object"
+      },
+      "RowsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Where to resume, as the previous page reported it. Absent asks for the\nfirst page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_dimensions": {
+            "description": "Dimension keys to report beyond the ones the metric's measure declares.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "filters": {
+            "description": "Narrows the scan exactly as it narrows the value. Absent means none.",
+            "items": {
+              "$ref": "#/components/schemas/DimensionFilter"
+            },
+            "type": "array"
+          },
+          "input": {
+            "description": "Which input of the metric's computation to page. A metric composing one\ninput needs none; one composing several names which.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metric": {
+            "description": "The metric key the semantic definitions carry, such as `git.commits`.",
+            "type": "string"
+          },
+          "page_size": {
+            "description": "Rows per page. Absent means 100.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "subjects": {
+            "$ref": "#/components/schemas/Subjects"
+          },
+          "time": {
+            "$ref": "#/components/schemas/TimeRange"
+          }
+        },
+        "required": [
+          "metric",
+          "subjects",
+          "time"
+        ],
+        "type": "object"
+      },
+      "RowsResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/RowColumn"
+            },
+            "type": "array"
+          },
+          "input": {
+            "description": "The part of the metric's computation these rows were folded into.",
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "description": "Absent when this page is the last one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "rows": {
+            "description": "One entry per row, holding one value per column, in the columns' order.",
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metric",
+          "provenance",
+          "input",
+          "columns",
+          "rows"
         ],
         "type": "object"
       },
@@ -6702,6 +6833,100 @@
           }
         ],
         "summary": "Answer metric distribution questions"
+      }
+    },
+    "/v1/query/rows": {
+      "post": {
+        "operationId": "analytics_api.query.rows",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowsRequest"
+              }
+            }
+          },
+          "description": "The rows to page, and where to resume",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowsResponse"
+                }
+              }
+            },
+            "description": "One page of rows"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Page the rows behind a metric value"
       }
     },
     "/v1/query/values": {
