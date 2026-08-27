@@ -42,7 +42,7 @@ SERVED_KEYS = frozenset(
 )
 
 
-def entry(**overrides) -> dict:
+def entry(**overrides: object) -> dict[str, object]:
     """One entry of the mover's job listing, in the shape it serves.
 
     Flat, ISO-8601 stamps, an ISO-8601 duration, and the record count on the
@@ -65,7 +65,7 @@ def entry(**overrides) -> dict:
     return listing_entry
 
 
-def row(**overrides) -> dict:
+def row(**overrides: object) -> dict[str, object]:
     planned = plan.sync_row(entry(**overrides), CONNECTORS, TICK)
     assert not isinstance(planned, plan.Skipped), planned
     return planned

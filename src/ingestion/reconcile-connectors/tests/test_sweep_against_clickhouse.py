@@ -124,9 +124,12 @@ class _StubMover:
     all. This stub refuses the unknown name instead.
     """
 
-    def __init__(self, page_size: int = 100) -> None:
+    def __init__(self, page_size: int = 100, *, honours_filter: bool = True) -> None:
         self.oldest_first = [_closed_job(i) for i in range(7)] + [_running_job()]
         self.page_size = page_size
+        #: False imitates the real listing meeting a parameter name it does not
+        #: know: it answers 200 and serves the whole history unfiltered.
+        self.honours_filter = honours_filter
         self.requests: list[dict[str, str]] = []
         stub = self
 
@@ -144,7 +147,7 @@ class _StubMover:
                 assert set(flat) <= _LISTING_PARAMETERS, flat
 
                 entries = stub.oldest_first
-                since = flat.get("updatedAtStart")
+                since = flat.get("updatedAtStart") if stub.honours_filter else None
                 if since is not None:
                     # A real listing parses this. Comparing the two stamp forms
                     # as raw strings is what let a wrongly-formatted watermark
@@ -387,6 +390,40 @@ class SweptRowsLandAndResolve(unittest.TestCase):
                 0,
                 f"an unread tick must write no {event} row",
             )
+
+    def test_a_listing_that_ignores_the_watermark_records_nothing(self) -> None:
+        """An unapplied filter is a failed read, not a noisy one.
+
+        Two things follow from serving the whole history, and neither survives
+        a log line. Every terminal job below the watermark would be recorded
+        again on every tick — the closed-job read is bounded by that same
+        watermark, so it cannot filter them out. And a capped pass would stop
+        short of current jobs while still sealing, dating the page as freshly
+        checked on facts it never reached.
+        """
+        with _StubMover():
+            self._tick("tick-a")
+        before = _count(f"SELECT count() AS n FROM {TABLE}")
+        seals = _count(
+            f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'"
+        )
+
+        with _StubMover(honours_filter=False):
+            code = self._tick("tick-b")
+
+        self.assertEqual(code, 1, "the caller learns the tick was incomplete")
+        self.assertEqual(
+            _count(f"SELECT count() AS n FROM {TABLE}"),
+            before,
+            "an unfiltered listing must not re-record the history it served",
+        )
+        self.assertEqual(
+            _count(
+                f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'"
+            ),
+            seals,
+            "and must not seal, or the page reports itself freshly checked",
+        )
 
     def test_a_connector_awaiting_its_first_connection_is_still_configured(self) -> None:
         """Configured is the first thing the page answers, and it does not

@@ -245,9 +245,13 @@ asserted: the request's shape in the mover's tests, the response's shape in the 
 
 The mover also answers `200` and **ignores a query parameter it does not recognise** rather
 than refusing it. A filter renamed by a later release would therefore stop filtering
-silently: the read restarts at the beginning of history and a capped pass never reaches the
-newest jobs. Each tick counts the entries that came back older than the watermark it sent and
-says so — an ignored filter is otherwise only visible as a page that stopped advancing.
+silently, and the read would restart at the beginning of history. Each tick counts the
+entries that came back older than the watermark it sent, and **treats any as a failed read**
+— it plans nothing and does not seal. Logging it would not be enough: every terminal job
+below the watermark would be recorded again on every tick, because the closed-job read is
+bounded by that same watermark and so cannot filter them out; and a capped pass would stop
+short of the newest jobs while still sealing, leaving the page dated as freshly checked on
+facts it never reached.
 
 **`job_updated_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
 mover returns always carries one; the column is nullable only because snapshot and seal rows
@@ -490,8 +494,8 @@ The floor is sent in the listing's own stamp format, which differs from the ledg
 separator. Sending the ledger's form is silent rather than loud — the listing does not filter
 on it — so the conversion lives in one named function rather than at the call site. So is
 sending a parameter name the listing does not know: it answers `200` and drops it. Each tick
-therefore counts what came back below the floor it sent, which is the only signal that
-separates an ignored filter from a quiet mover.
+therefore counts what came back below the floor it sent and refuses the read if anything did,
+which is the only thing that separates an ignored filter from a quiet mover.
 
 Nothing richer is read. Per-job detail exists and is not contract-stable across mover
 upgrades; the value of this ledger is that it keeps saying what a changing source said.
