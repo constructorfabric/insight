@@ -17,7 +17,13 @@ export type MetricResultViewKind =
   | "rollup"
   | "histogram";
 export type MetricBucket = "day" | "week" | "month";
-export type MetricComputation = "sum" | "ratio" | "median" | "distinct_count";
+export type MetricComputation =
+  | "sum"
+  | "ratio"
+  | "median"
+  | "percentile"
+  | "stddev"
+  | "distinct_count";
 export type MetricEntityType = "person" | "tenant";
 export type MetricResultsEntity =
   | { type: "person"; ids: string[] }
@@ -87,6 +93,8 @@ export type MetricResult =
   | SumMetricResult
   | RatioMetricResult
   | MedianMetricResult
+  | PercentileMetricResult
+  | StddevMetricResult
   | DistinctCountMetricResult;
 
 interface MetricResultBase {
@@ -117,6 +125,15 @@ export interface MedianMetricResult extends MetricResultBase {
   computation: "median";
 }
 
+export interface PercentileMetricResult extends MetricResultBase {
+  computation: "percentile";
+  q: number;
+}
+
+export interface StddevMetricResult extends MetricResultBase {
+  computation: "stddev";
+}
+
 interface DistinctCountMetricResult extends MetricResultBase {
   computation: "distinct_count";
 }
@@ -127,7 +144,8 @@ export type MetricResultView =
   | PeerView
   | BreakdownView
   | RollupView
-  | HistogramView;
+  | HistogramView
+  | MetricErrorView;
 
 export interface PeriodView {
   view: "period";
@@ -197,6 +215,25 @@ export interface HistogramView {
     entity_id: string;
     bins: HistogramBin[];
   }>;
+}
+
+export type MetricErrorCode =
+  | "SOURCE_RELATION_MISSING"
+  | "RESOURCE_EXHAUSTED"
+  | "QUERY_TIMEOUT"
+  | "RESULT_PARSE_FAILED"
+  | "QUERY_FAILED";
+
+/**
+ * A view whose computation failed. The request itself still answers 200:
+ * the failure arrives in the failed view's requested slot, and other views
+ * and metrics are unaffected. `message` is safe to render — admins get the
+ * underlying error text, everyone else a generic one.
+ */
+export interface MetricErrorView {
+  view: "error";
+  code: MetricErrorCode;
+  message: string;
 }
 
 export interface MetricResultsResponse {

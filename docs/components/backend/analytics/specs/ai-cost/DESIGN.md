@@ -160,7 +160,8 @@ share it. Seat and token measures therefore live in one `ai_cost` family rather 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-constraint-monthly-facts`
 
 A seat's month is a fact about that month, not a rate to be sliced. Nothing is pro-rated; a
-partial window returns the month in full.
+window holding the month's first day returns it in full, and a window inside the month
+returns nothing.
 
 #### Silver cost rows require `_version`
 
@@ -198,7 +199,7 @@ platform-wide gap, tracked separately.
 |---|---|---|
 | **Priced token usage** | tokens consumed by an API key, valued at the rate in force that day | person × day × model × token type |
 | **Billing line item** | one charge the vendor made | day × line item × workspace or project |
-| **Seat extra-usage snapshot** | what a seat spent above its included usage in a billing month, and the ceiling set on that spend | person × month |
+| **Seat extra-usage snapshot** | what a seat spent above its included usage in a billing month, and the ceiling set on that spend | seat × month |
 | **Rate** | price per unit for a model and token type, valid over an interval, optionally tenant-specific | tenant × model × token type × tier × interval |
 | **Cost coverage** | whether a layer of cost is available for a provider | provider × layer |
 
@@ -293,8 +294,8 @@ drilldown.
 ##### Responsibility scope
 
 `insight.ai_cost_metric_evidence` and `insight.ai_cost_metric_observations`, carrying
-`token_cost_usd`, `extra_usage_usd`, `extra_usage_limit_usd`; and the `ai_cost`
-source plus its metric keys in `registry.yaml`.
+`token_cost_usd`, `extra_usage_usd`, `extra_usage_limit_usd`, `seat_cost_usd`,
+`daily_extra_usage_usd`; and the `ai_cost` source plus its metric keys in `registry.yaml`.
 
 ##### Responsibility boundaries
 
@@ -354,7 +355,7 @@ Describes `cpt-insightspec-aicost-component-metric-source`.
 
 ### 3.3 API Contracts
 
-No new endpoint. Four metric keys are added to the existing contract:
+No new endpoint. Five metric keys are added to the existing contract:
 
 | `metric_key` | inputs | computation | format | direction | dimensions |
 |---|---|---|---|---|---|
@@ -362,6 +363,7 @@ No new endpoint. Four metric keys are added to the existing contract:
 | `ai.extra_usage_cost` | `extra_usage_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 | `ai.extra_usage_utilisation` | `extra_usage_usd` (numerator), `extra_usage_limit_usd` (denominator) | `ratio`, scale 100 | `percent` | — | `tool`, `seat_tier` |
 | `ai.seat_cost` | `seat_cost_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
+| `ai.daily_approximate_extra_usage_cost` | `daily_extra_usage_usd` (value) | `sum` | `currency` | `lower_is_better` | `tool`, `seat_tier` |
 
 All carry `entity_type: person` and `peer_cohort_key: org_unit`. `ai.seat_cost` reads the
 per-seat amount on an invoice's non-proration `subscriptions` lines, which is the only place
@@ -445,17 +447,19 @@ Per-event usage with `chargedCents` and `isChargeable`, keyed by user email.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-seq-serve-seat-window`
 
-1. Each `(person, month)` snapshot is emitted once, dated at the day it was last read — not
-   the first of its billing month. A date pinned to the 1st falls outside short rolling
-   windows, so the current month would silently vanish.
+1. Each `(seat, month)` snapshot is emitted once, dated at the first day of its billing
+   month, so the date never moves with the sync schedule. A window inside a month therefore
+   returns nothing, and the per-day distribution is what such a window reads.
 2. A seat that spent nothing extra emits `0`; a seat with no ceiling emits no utilisation
    row, since the ratio has no denominator.
-3. `Sum` over the window adds whole months exactly; a partial window returns the month in
-   full, never a fraction.
+3. `Sum` over the window adds whole months exactly; a window holding a month's first day
+   returns that month in full, never a fraction.
 4. The billing month is derived from the read, never declared by the vendor: the endpoint
    reports period-to-date and resets at the boundary, so a month's value is as complete as
-   its last read before midnight. A fact's month and its read day therefore cannot disagree,
-   which is why the window filters on `metric_date` alone.
+   its last read before midnight. A fact's month and the vendor's period can therefore
+   disagree at a boundary, and nothing detects it: the money is right, the `covers_days` on
+   such a reading is not, and a month whose only reading precedes the rollover keeps a
+   figure belonging to the month before it.
 
 ### 3.7 Database schemas & tables
 
@@ -536,7 +540,7 @@ straight from bronze, where both are already present.
 
 - [ ] `p1` - **ID**: `cpt-insightspec-aicost-dbtable-overage-unchanged`
 
-Person × month, minor units plus currency, vendor extras in a JSON blob, assembled by tag.
+Seat × month, minor units plus currency, vendor extras in a JSON blob, assembled by tag.
 It needs gold models and registry entries, not a change to its shape.
 
 Its `overage_cents` column, `max(0, used − limit)`, is **not** what `ai.extra_usage_cost` reads:
@@ -565,8 +569,10 @@ macros, which own materialisation, storage keys and monthly partitioning.
 | measure | record | granularity |
 |---|---|---|
 | `token_cost_usd` | one row per `(person, day, model, token_type)` | `source_summary` |
-| `extra_usage_usd` | one row per `(person, month)` snapshot | `source_summary` |
-| `extra_usage_limit_usd` | one row per `(person, month)` snapshot | `source_summary` |
+| `extra_usage_usd` | one row per `(seat, month)` snapshot | `source_summary` |
+| `extra_usage_limit_usd` | one row per `(seat, month)` snapshot carrying a ceiling | `source_summary` |
+| `seat_cost_usd` | one row per `(seat, month)` snapshot the invoice priced | `source_summary` |
+| `daily_extra_usage_usd` | one row per `(seat, read day)` step | `source_summary` |
 
 `details` carries what a reader needs without leaving the drilldown: for token cost the
 model, token type, token count and rate applied; for seat rows the seat tier, the ceiling,
@@ -583,6 +589,7 @@ Registry entry:
       kind: managed_observation
       source_ref: ai_cost_metric_observations
       evidence_ref: ai_cost_metric_evidence
+      revision_window_days: 31
     measures:
       - key: token_cost_usd
         evidence_granularity: source_summary
@@ -590,10 +597,17 @@ Registry entry:
         evidence_granularity: source_summary
       - key: extra_usage_limit_usd
         evidence_granularity: source_summary
+      - key: seat_cost_usd
+        evidence_granularity: source_summary
+      - key: daily_extra_usage_usd
+        evidence_granularity: source_summary
     dimensions:
       - tool
       - seat_tier
 ```
+
+`token_cost_usd` is the deferred half — DECOMPOSITION 2.8 adds it and registers
+`ai.token_cost`; §4.4 says why this release does not build it.
 
 Metrics are authored in `registry.yaml`, embedded at compile time by `builtin.rs`
 (`include_str!`); there are no Rust metric constants to edit. `passports.md` is generated by
@@ -648,7 +662,8 @@ economics is the more urgent gap; the DECOMPOSITION takes that order.
   `claude-admin` connector along with `class_ai_api_usage`, and the `openai` connector whose
   model was the other feeder named for `class_ai_cost`. The sections that specify them are kept
   as written — they are the input to whoever revives the branch — but nothing in this release
-  builds them, and `ai.token_cost` is served by Cursor alone until then.
+  builds them. Cursor's existing cost data remains served through `ai.cost`; a separate
+  `ai.token_cost` path is future work.
 
 One adjacent defect is recorded rather than fixed here: the 3-day incremental window against
 ~30-day vendor revisions.

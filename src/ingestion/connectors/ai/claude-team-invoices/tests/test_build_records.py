@@ -26,20 +26,23 @@ from tests.test_stripe_chain import EXTRA_USAGE_LINE, SUBSCRIPTION_LINE
 EPHEMERAL_KEY = "ek_live_super_secret_value"
 
 
-def _hosted(entity: str, nonce: str = "n1", acct: str = "acct_1ABC") -> tuple[str, str]:
+def _hosted(entity: str, nonce: str = "n1", acct: str = "acct_1ABC", tail: bytes = b"") -> tuple[str, str]:
     """A hosted URL shaped the way the vendor's are, plus its path segment.
 
     The segment is base64 of `<acct>,_<entity>,<rotating>`; the vendor regenerates
     that trailing part on every list call, so two calls for one invoice differ in
-    the URL and still decode to the same identity.
+    the URL and still decode to the same identity. `tail` extends that rotating
+    part with the raw bytes the vendor's own nonce carries.
     """
-    payload = f"{acct},_{entity},{nonce}"
-    segment = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    payload = f"{acct},_{entity},{nonce}".encode() + tail
+    segment = base64.urlsafe_b64encode(payload).decode().rstrip("=")
     return f"https://invoice.stripe.com/i/{acct}/live_{segment}?s=ap", f"live_{segment}"
 
 
 GOOD_URL, _GOOD_TOKEN = _hosted("ent1ABC")
 FAILING_URL, FAILING_TOKEN = _hosted("entFAILS")
+# What the vendor's rotating nonce carries beyond its timestamp: bytes, not text.
+BINARY_NONCE = b"\xff\xfe\x01"
 
 
 def invoice(url: str | None = GOOD_URL, **over: Any) -> dict[str, Any]:
@@ -228,6 +231,26 @@ def test_the_drift_guard_is_a_majority_not_a_single_failure() -> None:
 
     with pytest.raises(UrlFormatDrift):
         list(build_records([invoice(url="bad")], lines_ok))
+
+
+def test_a_run_whose_nonces_are_not_text_is_not_drift() -> None:
+    """Every vendor nonce carries such bytes, so reading one payload as a single
+    string loses every identity at once and aborts the run before its first hop."""
+    invoices = [invoice(url=_hosted(f"ent{n}", tail=BINARY_NONCE)[0]) for n in range(3)]
+    records = list(build_records(invoices, lines_ok))
+    assert [r["chain_status"] for r in records] == [CHAIN_OK] * 9, "three invoices, each with two lines"
+    own = {unique_key_parts(r)[1] for r in records if r["line_id"] is None}
+    assert own == {"acct_1ABC,_ent0", "acct_1ABC,_ent1", "acct_1ABC,_ent2"}
+
+
+def test_a_run_whose_payloads_name_no_account_still_fails() -> None:
+    """The URL shape can match while the payload identifies nothing. Keying that
+    run on the wrapper's mutable fields would duplicate every invoice later."""
+    segment = base64.urlsafe_b64encode(b"nobody,_ent1ABC,n1").decode().rstrip("=")
+    nameless = invoice(url=f"https://invoice.stripe.com/i/acct_1ABC/live_{segment}?s=ap")
+    with pytest.raises(UrlFormatDrift) as raised:
+        list(build_records([nameless], lines_ok))
+    assert "no decodable invoice identity" in str(raised.value)
 
 
 def test_neither_a_record_nor_a_log_line_carries_the_ephemeral_key(caplog: pytest.LogCaptureFixture) -> None:

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MetricGroupCard } from "@/components/widgets/metric-views/metric-group-card";
 import type { MetricGroup } from "@/lib/insight/groups";
 import { normalizeMetricResults } from "@/lib/metrics/collection";
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 import type { MetricCollectionResult } from "@/queries/metric-results";
 import type { MetricResult } from "@/api/metric-results-client";
 
@@ -179,6 +180,56 @@ describe("MetricGroupCard", () => {
     // active_days 20 ≥ p75 15 → top; cost 2 ≤ p25 5 → bottom → 1 bottom wins
     // the phrase (behind beats ahead), single bottom below the red bar → amber.
     expect(screen.getByText("1 of 2 behind peers")).toBeInTheDocument();
+  });
+
+  it("shows a failed metric's message alongside the metrics that computed", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          {
+            ...aiMetric("ai.active_days", null),
+            views: [buildMetricErrorView({ message: "This metric could not be computed." })],
+          },
+          aiMetric("ai.cost", 3),
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("3 days")).toBeInTheDocument();
+    expect(
+      screen.getByText("This metric could not be computed."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the error message, not the generic empty state, when every metric failed", () => {
+    render(
+      <MetricGroupCard
+        def={DEF}
+        data={result([
+          {
+            ...aiMetric("ai.active_days", null),
+            views: [buildMetricErrorView()],
+          },
+          {
+            ...aiMetric("ai.cost", null),
+            views: [buildMetricErrorView()],
+          },
+        ])}
+        entityId="me@x.com"
+        onOpen={vi.fn()}
+      />,
+    );
+    // One note per distinct message — both metrics failed for the same cause.
+    expect(
+      screen.getByText(/could not be computed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No metrics with data for this period."),
+    ).not.toBeInTheDocument();
+    // Nothing to drill into — the card stays non-interactive.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("owns its error state with retry", () => {

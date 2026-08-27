@@ -45,6 +45,15 @@ pub enum ResolveTarget {
     /// Admin `__override` (view-as, #1941): an operator typed an email —
     /// resolve by email, NOT by external id.
     Email(String),
+    /// Normal login on an install configured with `idp.resolve_by = email`:
+    /// resolve by the token's address against the ROSTER's addresses.
+    ///
+    /// A variant of its own rather than reusing [`ResolveTarget::Email`],
+    /// because the two are different questions with different blast radii —
+    /// view-as may match an address any source stated, a login may not. Making
+    /// them one variant would leave the distinction to whoever remembers to
+    /// pick the right route at the call site.
+    RosterEmail(String),
 }
 
 /// The IdP-authenticated principal, distilled from the validated id_token.
@@ -129,7 +138,9 @@ struct ResolveProfile {
 fn provisionable_external_id(target: &ResolveTarget) -> Option<&str> {
     match target {
         ResolveTarget::ExternalId(external_id) => Some(external_id),
-        ResolveTarget::Email(_) => None,
+        // Neither address mode provisions: minting needs the source-native id
+        // the roster observed, and an address is not it.
+        ResolveTarget::Email(_) | ResolveTarget::RosterEmail(_) => None,
     }
 }
 
@@ -210,24 +221,53 @@ impl IdentityPersonResolver {
         Ok(profile.insight_source_id.filter(|id| !id.is_nil()))
     }
 
-    /// Login-bootstrap lookup: resolve by the configured IdP `source_type` +
-    /// the IdP's source-native external user id.
-    async fn lookup_person_id_by_external_id(
-        &self,
-        external_id: &str,
-        tenant_id: &str,
-    ) -> anyhow::Result<Option<Uuid>> {
-        self.resolve_query(
-            "/internal/persons/by-external-id",
-            tenant_id,
-            &[
-                ("source_type", &self.source_type),
-                ("external_id", external_id),
-            ],
-        )
-        .await
+    /// The route and query a target resolves through.
+    ///
+    /// Pure and separate from the call so the mapping itself is testable:
+    /// sending a login to the override route (or the override to the
+    /// roster-confined one) is precisely the confusion the split routes exist
+    /// to prevent, and no other test in this crate would notice two swapped
+    /// arms. Identity keeps the routes distinct for the same reason.
+    fn resolve_request<'a>(
+        &'a self,
+        target: &'a ResolveTarget,
+    ) -> (&'static str, Vec<(&'static str, &'a str)>) {
+        resolve_request(&self.source_type, target)
     }
+}
 
+/// See [`IdentityPersonResolver::resolve_request`]. Free so a test needs no
+/// resolver (and therefore no keystore) to pin the mapping.
+fn resolve_request<'a>(
+    source_type: &'a str,
+    target: &'a ResolveTarget,
+) -> (&'static str, Vec<(&'static str, &'a str)>) {
+    {
+        match target {
+            // Login bootstrap, scoped to the configured IdP's source_type and
+            // the IdP's source-native external user id.
+            ResolveTarget::ExternalId(external_id) => (
+                "/internal/persons/by-external-id",
+                vec![("source_type", source_type), ("external_id", external_id)],
+            ),
+            // Login bootstrap for `idp.resolve_by = email`: identity confines
+            // this one to its configured roster source and to the caller's
+            // tenant, and that confinement is the whole reason a login may use
+            // an address at all.
+            ResolveTarget::RosterEmail(email) => {
+                ("/internal/persons/by-roster-email", vec![("email", email)])
+            }
+            // Admin `__override` (view-as): an operator typed an address, which
+            // identity matches against any source in any tenant. Never a login.
+            ResolveTarget::Email(email) => (
+                "/internal/persons/by-email-override",
+                vec![("email", email)],
+            ),
+        }
+    }
+}
+
+impl IdentityPersonResolver {
     async fn provision_person_by_external_id(
         &self,
         external_id: &str,
@@ -264,36 +304,13 @@ impl IdentityPersonResolver {
         let profile: ResolveProfile = resp.json().await.context("decode ResolveProfile")?;
         Ok(profile.insight_source_id.filter(|id| !id.is_nil()))
     }
-
-    /// Admin `__override` (view-as) lookup: resolve by email — an operator
-    /// types an email, not an IdP external id. A DISTINCT route from the
-    /// login-bootstrap lookup above (never dispatched from the same call).
-    async fn lookup_person_id_by_email(
-        &self,
-        email: &str,
-        tenant_id: &str,
-    ) -> anyhow::Result<Option<Uuid>> {
-        self.resolve_query(
-            "/internal/persons/by-email-override",
-            tenant_id,
-            &[("email", email)],
-        )
-        .await
-    }
 }
 
 #[async_trait]
 impl PersonResolver for IdentityPersonResolver {
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
-        let person_id = match &id.resolve_by {
-            ResolveTarget::ExternalId(external_id) => {
-                self.lookup_person_id_by_external_id(external_id, &id.tenant_id)
-                    .await?
-            }
-            ResolveTarget::Email(email) => {
-                self.lookup_person_id_by_email(email, &id.tenant_id).await?
-            }
-        };
+        let (path, query) = self.resolve_request(&id.resolve_by);
+        let person_id = self.resolve_query(path, &id.tenant_id, &query).await?;
         let Some(person_id) = person_id else {
             return Ok(None);
         };
@@ -352,6 +369,54 @@ mod tests {
             None,
             "an operator's typed email must never mint the person it names",
         );
+        assert_eq!(
+            provisionable_external_id(&ResolveTarget::RosterEmail("ivan@vz.com".to_owned())),
+            None,
+            "a login resolved by address cannot mint either — minting needs the \
+             source-native id the roster observed, and an address is not it",
+        );
+    }
+
+    #[test]
+    fn each_target_resolves_through_its_own_route() {
+        // The one assertion the split routes exist for. Swap two arms in
+        // `resolve_request` and, without this, every other test in the change
+        // still passes while a login resolves through the override route —
+        // which matches an address stated by any source in any tenant.
+        let login = ResolveTarget::ExternalId("00000000-oid".to_owned());
+        let (path, query) = resolve_request("ms-entra", &login);
+        assert_eq!(path, "/internal/persons/by-external-id");
+        assert_eq!(
+            query,
+            vec![("source_type", "ms-entra"), ("external_id", "00000000-oid")]
+        );
+
+        let roster_login = ResolveTarget::RosterEmail("ivan@vz.com".to_owned());
+        let (path, query) = resolve_request("bamboohr", &roster_login);
+        assert_eq!(path, "/internal/persons/by-roster-email");
+        assert_eq!(query, vec![("email", "ivan@vz.com")]);
+
+        let override_target = ResolveTarget::Email("ops@vz.com".to_owned());
+        let (path, query) = resolve_request("bamboohr", &override_target);
+        assert_eq!(path, "/internal/persons/by-email-override");
+        assert_eq!(query, vec![("email", "ops@vz.com")]);
+    }
+
+    #[test]
+    fn no_address_target_carries_the_source_type() {
+        // `source_type` scopes the external-id resolve only. Leaking it into an
+        // address lookup would let identity narrow by a source the install's
+        // roster may not even be, silently changing who can sign in.
+        for target in [
+            ResolveTarget::RosterEmail("ivan@vz.com".to_owned()),
+            ResolveTarget::Email("ops@vz.com".to_owned()),
+        ] {
+            let (_, query) = resolve_request("bamboohr", &target);
+            assert!(
+                query.iter().all(|(k, _)| *k != "source_type"),
+                "{target:?} must not send source_type",
+            );
+        }
     }
 
     #[tokio::test]

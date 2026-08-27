@@ -241,6 +241,27 @@ for _git_source in github gitlab bitbucket_cloud; do
   heal_git_file_change_oids staging "${_git_source}__file_changes" _airbyte_extracted_at
 done
 
+echo "=== Healing git commit patch id column ==="
+# Same positional invariant: every projection feeding class_git_commits gained
+# patch_id at the tail (commit-content identity for counting an authored
+# change once, #2792). The silver side heals in migrations/*.sql; staging
+# heals here because these tables exist only after a connector has run.
+# Existing rows heal to NULL and carry a patch id from the first sync that
+# re-collects them. Idempotent.
+heal_git_commit_patch_id() {
+  local table="$1"
+  ch_table_is_real staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS patch_id Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE staging.${table} MODIFY COLUMN patch_id Nullable(String) AFTER _airbyte_extracted_at;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_commit_patch_id "${_git_source}__commits"
+done
+
 echo "=== Healing git pull-request author account column ==="
 # Same positional invariant: every projection feeding class_git_pull_requests
 # gained author_account_id after author_email (account-first person
@@ -260,6 +281,25 @@ SQL
 
 for _git_source in github gitlab bitbucket_cloud; do
   heal_git_pr_author_account "${_git_source}__pull_requests"
+done
+
+echo "=== Healing git repository default-branch column ==="
+# class_git_repositories gained `default_branch` at the projection tail; the
+# silver side heals in migrations/*.sql, the staging members heal here because
+# those tables exist only after their connector has run. Existing rows heal to
+# NULL and carry a branch from the next repositories sync. Idempotent.
+heal_git_repository_default_branch() {
+  local db="$1" table="$2"
+  ch_table_is_real "${db}" "${table}" || return 0
+  echo "  ${db}.${table}"
+  run_ch <<SQL
+ALTER TABLE ${db}.${table} ADD COLUMN IF NOT EXISTS default_branch Nullable(String) AFTER _airbyte_extracted_at;
+ALTER TABLE ${db}.${table} MODIFY COLUMN default_branch Nullable(String) AFTER _airbyte_extracted_at;
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  heal_git_repository_default_branch staging "${_git_source}__repositories"
 done
 
 echo "=== Healing jira task id column types (#1743) ==="

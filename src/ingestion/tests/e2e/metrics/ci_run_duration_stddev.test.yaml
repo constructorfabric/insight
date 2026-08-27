@@ -1,0 +1,114 @@
+description: >
+  Metric: ci.run_duration_min_stddev — sample standard deviation of gate run
+  duration, minutes (tenant-grain, issue #2803). First metric on the new
+  stddev computation.
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow run attempts with start and finish timestamps
+    • silver: duration = finish − start of the LAST attempt, minutes
+    • gold:   per-run duration rows kept at event grain; the value is the
+      sample stddev over runs in the period, org-wide
+
+  Seeded: eight gate runs of [2, 4, 4, 4, 5, 5, 7, 9] minutes — sample stddev = sqrt(32/7)
+  ≈ 2.138, pinned to (2.1, 2.2). A single-run window has no measurable spread
+  and must read null, never a fabricated zero.
+  Cases: spread over the eight-run set, single-run window is null.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-1-1
+      id: 1
+      run_number: 1
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:02:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-2-1
+      id: 2
+      run_number: 2
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:04:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-3-1
+      id: 3
+      run_number: 3
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:04:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-4-1
+      id: 4
+      run_number: 4
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:04:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-5-1
+      id: 5
+      run_number: 5
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:05:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-6-1
+      id: 6
+      run_number: 6
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:05:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-7-1
+      id: 7
+      run_number: 7
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:07:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-8-1
+      id: 8
+      run_number: 8
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:09:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-90-1
+      id: 90
+      run_number: 90
+      run_started_at: "2026-04-06T10:00:00Z"
+      updated_at: "2026-04-06T10:03:00Z"
+      collected_at: "2026-04-06T11:00:00Z"
+cases:
+  - name: duration spread is the sample stddev over runs
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.run_duration_min_stddev
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [repository] }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.run_duration_min_stddev
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) > 2.1 && double(it.value) < 2.2"
+      - metric: ci.run_duration_min_stddev
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-02' && double(p.value) > 2.1 && double(p.value) < 2.2))"
+      - metric: ci.run_duration_min_stddev
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'acme/app') && double(v.value) > 2.1 && double(v.value) < 2.2)"
+  - name: a single run has no measurable spread and reads null
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-04-01", to: "2026-04-07" }
+        metrics:
+          - metric_key: ci.run_duration_min_stddev
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.run_duration_min_stddev
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        equal: { value: null }

@@ -1,4 +1,5 @@
 import type {
+  MetricErrorView,
   MetricResult,
   MetricResultView,
   MetricResultsRequest,
@@ -96,6 +97,23 @@ function mockDimensionValues(key: string): { value: string; label: string }[] {
     MOCK_DIMENSION_VALUES[key] ??
     MOCK_TOOLS.map(({ value, label }) => ({ value, label }))
   );
+}
+
+/**
+ * A failed-computation view, delivered in a requested view's slot the way the
+ * backend does since ClickHouse error isolation: the request still answers
+ * 200 and the other views/metrics are unaffected.
+ */
+export function buildMetricErrorView(
+  overrides: Partial<Omit<MetricErrorView, "view">> = {},
+): MetricErrorView {
+  return {
+    view: "error",
+    code: "QUERY_FAILED",
+    message:
+      "This metric could not be computed; the rest of the results are unaffected. An administrator can see the underlying error.",
+    ...overrides,
+  };
 }
 
 export function buildMetricResultsResponse(

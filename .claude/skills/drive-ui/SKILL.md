@@ -112,7 +112,7 @@ playwright-cli console      # client-side errors behind a broken or empty widget
 playwright-cli requests     # then `request <n>` for the failing call's status and body
 ```
 
-Attach both to the report: the value on screen, and the value the API actually returned, pasted rather than characterised. Those two facts side by side are what a reader needs — leave what they imply to whoever picks the issue up. `metric-parity` collects the same question further down the medallion when you can reach it.
+Attach both to the report: the value on screen, and the value the API actually returned, pasted rather than characterised. Those two facts side by side are what a reader needs — leave what they imply to whoever picks the issue up.
 
 ## Explore a configurable surface
 

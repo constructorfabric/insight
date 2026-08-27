@@ -312,6 +312,8 @@ pub fn build_metric_result(
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
         ComputationSpec::Median { .. } => ComputationDto::Median,
+        ComputationSpec::Percentile { q, .. } => ComputationDto::Percentile { q: *q },
+        ComputationSpec::Stddev { .. } => ComputationDto::Stddev,
         ComputationSpec::DistinctCount { .. } => ComputationDto::DistinctCount,
     };
     MetricResultDto {
@@ -352,6 +354,7 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         MetricResultViewDto::Histogram { values } => {
             values.iter().map(|value| value.bins.len()).sum()
         }
+        MetricResultViewDto::Error { .. } => 0,
     }
 }
 
@@ -1069,6 +1072,15 @@ mod tests {
             .collect();
         let view = MetricResultViewDto::Period { values };
         assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_err());
+    }
+
+    #[test]
+    fn an_error_view_never_trips_the_row_limit() {
+        let view = MetricResultViewDto::Error {
+            code: crate::domain::metric_results::dto::MetricViewErrorCode::QueryFailed,
+            message: "generic".to_owned(),
+        };
+        assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_ok());
     }
 
     #[test]

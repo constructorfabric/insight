@@ -138,6 +138,8 @@ function YAxis({
 }
 const ReferenceArea = RechartsPrimitive.ReferenceArea;
 const ReferenceLine = RechartsPrimitive.ReferenceLine;
+const ScatterChart = RechartsPrimitive.ScatterChart;
+const ZAxis = RechartsPrimitive.ZAxis;
 const ResponsiveContainer = RechartsPrimitive.ResponsiveContainer;
 const ChartTooltip = RechartsPrimitive.Tooltip;
 
@@ -214,6 +216,15 @@ function ChartArea({
       type={type}
       {...props}
     />
+  );
+}
+
+function ChartScatter({
+  isAnimationActive = false,
+  ...props
+}: React.ComponentProps<typeof RechartsPrimitive.Scatter>) {
+  return (
+    <RechartsPrimitive.Scatter isAnimationActive={isAnimationActive} {...props} />
   );
 }
 
@@ -486,6 +497,7 @@ export {
   ChartLegend,
   ChartLegendContent,
   ChartLine,
+  ChartScatter,
   ChartStyle,
   ChartTooltip,
   ChartTooltipContent,
@@ -495,6 +507,8 @@ export {
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
+  ScatterChart,
+  ZAxis,
   XAxis,
   YAxis,
 };

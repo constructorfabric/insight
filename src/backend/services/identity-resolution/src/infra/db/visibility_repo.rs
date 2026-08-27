@@ -1,12 +1,11 @@
 //! `visibility` grants store (create / list / revoke).
 //!
-//! Ported from the .NET `VisibilityRepository` / `Sql.Visibility.cs` (ADR-0012).
-//! Tenant-scoped; a grant is active while `valid_to IS NULL`; revoke =
+//! ADR-0012. Tenant-scoped; a grant is active while `valid_to IS NULL`; revoke =
 //! soft-delete (set `valid_to`). `viewed_person_id IS NULL` = viewer sees the
 //! whole tenant tree.
 
 // `viewer_person_id` / `viewed_person_id` are the domain's own field names.
-#![allow(clippy::similar_names)]
+#![expect(clippy::similar_names)]
 
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
@@ -16,7 +15,7 @@ const COLUMNS: &str = "visibility_id, insight_tenant_id, viewer_person_id, viewe
      valid_from, valid_to, author_person_id, reason, created_at";
 
 /// One `visibility` grant.
-#[allow(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
+#[expect(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
 #[derive(Debug, Clone)]
 pub struct Visibility {
     pub visibility_id: Uuid,
@@ -57,7 +56,7 @@ fn row_to_visibility(r: &sea_orm::QueryResult) -> anyhow::Result<Visibility> {
     })
 }
 
-/// Fetch one grant by id (tenant-scoped). Ported from `SqlVisibility.GetById`.
+/// Fetch one grant by id (tenant-scoped).
 ///
 /// # Errors
 ///
@@ -79,7 +78,7 @@ pub async fn get_by_id(
             visibility_id.as_bytes().to_vec().into(),
         ],
     );
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_visibility)
@@ -118,7 +117,7 @@ pub async fn list(
     params.push(limit.into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -128,13 +127,12 @@ pub async fn list(
 }
 
 /// Insert a grant (`valid_to = NULL`). `valid_from` defaults to now when `None`;
-/// `viewed_person_id = None` grants whole-tree visibility. Ported verbatim from
-/// `SqlVisibility.Insert`.
+/// `viewed_person_id = None` grants whole-tree visibility.
 ///
 /// # Errors
 ///
 /// Returns an error if the insert fails.
-#[allow(clippy::too_many_arguments)] // mirrors the columns of one grant row
+#[expect(clippy::too_many_arguments)] // mirrors the columns of one grant row
 pub async fn insert(
     db: &DatabaseConnection,
     visibility_id: Uuid,
@@ -165,12 +163,12 @@ pub async fn insert(
             reason.into(),
         ],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }
 
 /// Revoke (soft-delete) an active grant. Returns rows affected (0 if already
-/// revoked). Ported verbatim from `SqlVisibility.SoftDelete`.
+/// revoked).
 ///
 /// # Errors
 ///
@@ -199,5 +197,5 @@ pub async fn soft_delete(
             visibility_id.as_bytes().to_vec().into(),
         ],
     );
-    Ok(db.execute(stmt).await?.rows_affected())
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }

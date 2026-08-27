@@ -344,7 +344,9 @@ SELECT
     -- a non-Nullable column and `union_by_tag` fails the shared relation for
     -- every source if one branch widens it.
     assumeNotNull(event_at)                                     AS event_at,
-    CAST(event_kind AS Enum8('changelog' = 1, 'synthetic_initial' = 2)) AS event_kind,
+    -- Superset enum: the jira arms of this union also emit 'availability' and
+    -- 'lifecycle' rows, and UNION ALL needs one common enum type across arms.
+    CAST(event_kind AS Enum8('changelog' = 1, 'synthetic_initial' = 2, 'availability' = 3, 'lifecycle' = 4)) AS event_kind,
     _seq                                                        AS _seq,
     CAST(nullIf(author_id, '0') AS Nullable(String))            AS author_id,
     CAST(nullIf(author_display, '') AS Nullable(String))        AS author_display,

@@ -63,11 +63,9 @@ seat_month_source AS (
         account_id,
         lower(email)                            AS entity_id,
         seat_tier,
-        -- Dated at the day the snapshot was last read, NOT period_month. The
-        -- vendor re-reads only the month in progress, so a month's row freezes
-        -- at its final read; a date pinned to the 1st would fall outside short
-        -- rolling windows and the current month would vanish from them.
-        toDate(collected_at)                    AS metric_date,
+        -- INVARIANT: month-anchored, not read-anchored — a read-day date moves
+        -- with the sync schedule. `observed_at` keeps the time of the reading.
+        toDate(period_month)                    AS metric_date,
         toDateTime64(collected_at, 3)           AS observed_at,
         period_month,
         CAST(
@@ -130,17 +128,39 @@ seat_day_source AS (
       AND email != ''
       AND snapshot_date IS NOT NULL
 ),
+-- INVARIANT: a reading on the month's last calendar day may raise the month,
+-- never lower it. No billing period is reported, so a drop there cannot be told
+-- from a rolled-over counter, and the suffix minimum would spread it monthwide.
+seat_day_held AS (
+    SELECT
+        *,
+        -- INVARIANT: the PRECEDING reading, never the largest. The suffix
+        -- minimum erases an earlier reading that was too high; a maximum over
+        -- them would restore it.
+        if(
+            metric_date = toLastDayOfMonth(period_month),
+            greatest(
+                used_amount_cents,
+                lagInFrame(used_amount_cents, 1, toUInt32(0)) OVER (
+                    PARTITION BY tenant_id, source, source_id, account_id, period_month
+                    ORDER BY metric_date
+                )
+            ),
+            used_amount_cents
+        )                                       AS held_cents
+    FROM seat_day_source
+),
 -- INVARIANT: the suffix minimum is what keeps every step non-negative and makes
 -- the steps add up to the month's final reading, which the monthly metric serves.
 seat_day_corrected AS (
     SELECT
         *,
-        min(used_amount_cents) OVER (
+        min(held_cents) OVER (
             PARTITION BY tenant_id, source, source_id, account_id, period_month
             ORDER BY metric_date
             ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
         )                                       AS corrected_cents
-    FROM seat_day_source
+    FROM seat_day_held
 ),
 seat_day_step AS (
     SELECT

@@ -9,7 +9,20 @@ name: jira
 # 2.0.2 (patch): widen jira_project_discovery cursor_datetime_formats so it can
 # parse child-stream cursor values carried in parent_state (was crashing with
 # "No format ['%Y-%m-%dT%H:%M:%S.%f%z'] matching 2026-06-15 02:00").
-version: "3.0.0"
+# 3.0.0 (major): declare jira_issue_history.items as a plain string so the
+# CDK's literal-eval render survives, and repair the rows already stored
+# double-encoded; the full refresh a major dispatches is what re-derives the
+# field-history journal from the repaired Bronze.
+# 4.0.0 (major): deletion/visibility + data-completeness scope (#2419).
+# New streams: jira_project_visibility, jira_issue_census (absence censuses),
+# jira_worklog_deleted (tombstones), jira_board_configuration; expand=lead on
+# jira_projects; story-points field id resolved from /field metadata instead
+# of a hardcoded default. MAJOR because the silver contract changes shape —
+# class_task_worklogs gains is_deleted and class_task_field_history's
+# event_kind gains the 'availability' and 'lifecycle' values — and per
+# ADR-0015 a major bump dispatches the one-shot sync with dbt --full-refresh
+# that rebuilds those tables; no ALTER migrations are shipped.
+version: "4.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is

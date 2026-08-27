@@ -63,6 +63,7 @@ mod m20260810_000002_metric_definition_tags;
 pub mod m20260822_000001_feedback;
 pub mod m20260822_000002_ai_assist;
 mod m20260823_000001_ratio_denominator_aggregation;
+mod m20260824_000001_metric_percentile_stddev_computation;
 mod m20260825_000001_metric_evidence_presentation;
 pub(crate) use m20260822_000001_feedback::feedback_schema;
 pub(crate) use m20260822_000002_ai_assist::ai_assist_schema;
@@ -138,6 +139,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260822_000001_feedback::Migration),
             Box::new(m20260822_000002_ai_assist::Migration),
             Box::new(m20260823_000001_ratio_denominator_aggregation::Migration),
+            Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
             Box::new(m20260825_000001_metric_evidence_presentation::Migration),
         ]
     }

@@ -56,6 +56,10 @@ pub enum SeedComputation {
         denominator_aggregation: RatioDenominatorAggregation,
     },
     Median,
+    Percentile {
+        q: f64,
+    },
+    Stddev,
     DistinctCount,
 }
 
@@ -65,14 +69,20 @@ impl SeedComputation {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
+            Self::Percentile { .. } => MetricComputation::Percentile,
+            Self::Stddev => MetricComputation::Stddev,
             Self::DistinctCount => MetricComputation::DistinctCount,
         }
     }
 
+    /// The definition's `scale` storage column: the ratio's scale factor, or
+    /// the percentile's quantile `q` — one numeric slot, meaning keyed by
+    /// `computation_type` (the table's CHECK constraint enforces the pairing).
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum | Self::Median | Self::DistinctCount => None,
+            Self::Sum | Self::Median | Self::Stddev | Self::DistinctCount => None,
             Self::Ratio { scale, .. } => Some(scale),
+            Self::Percentile { q } => Some(q),
         }
     }
 
@@ -82,7 +92,11 @@ impl SeedComputation {
                 denominator_aggregation,
                 ..
             } => denominator_aggregation,
-            Self::Sum | Self::Median | Self::DistinctCount => RatioDenominatorAggregation::Sum,
+            Self::Sum
+            | Self::Median
+            | Self::Percentile { .. }
+            | Self::Stddev
+            | Self::DistinctCount => RatioDenominatorAggregation::Sum,
         }
     }
 }
@@ -240,8 +254,8 @@ mod tests {
 
     #[test]
     fn registry_declares_the_expected_counts() {
-        assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 89, "builtin metric count");
+        assert_eq!(builtin_sources().len(), 7, "builtin source count");
+        assert_eq!(builtin_metrics().len(), 100, "builtin metric count");
     }
 
     #[test]
@@ -412,6 +426,42 @@ mod tests {
             .map(|column| column.key.clone())
             .collect::<Vec<_>>();
         assert_eq!(keys, ["billing_month", "month_to_date_usd", "covers_days"]);
+    }
+
+    #[test]
+    fn ci_run_measures_read_the_run_and_a_deployment_reads_its_environment() {
+        let runs = declared_presentation("ci", "runs");
+        assert_eq!(
+            runs.detail_columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure_key in ["run_duration_min", "run_hours"] {
+            assert!(
+                declared_presentation("ci", measure_key).show_value,
+                "{measure_key} is unreadable without its number"
+            );
+        }
+
+        let deployments = declared_presentation("ci", "deployments");
+        assert_eq!(
+            deployments
+                .detail_columns
+                .iter()
+                .map(|column| (column.key.as_str(), column.label.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("repository", "Repository"),
+                ("environment", "Environment"),
+                ("outcome", "Outcome"),
+                // Prose, because `env_kind` humanizes to "Env kind".
+                ("env_kind", "Environment type"),
+            ]
+        );
     }
 
     fn declared_presentation(source_key: &str, measure_key: &str) -> EvidencePresentation {

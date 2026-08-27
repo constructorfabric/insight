@@ -1,6 +1,6 @@
 {% macro metric_serving_query_settings(join_use_nulls=none) %}
     {% set settings = {
-        'max_memory_usage': 1610612736,
+        'max_memory_usage': 2147483648,
         'max_threads': 2,
         'max_block_size': 32768,
         'max_insert_block_size': 32768,

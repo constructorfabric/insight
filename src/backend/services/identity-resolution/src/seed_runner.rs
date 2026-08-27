@@ -34,14 +34,13 @@ use crate::infra::db::{self, ops_repo, seed_repo};
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 
 /// Author stamped on CLI-run operations and seed-minted observation rows.
-/// Continues the established convention: the legacy Python seed
-/// (`seed-persons-from-identity-input.py::SYSTEM_AUTHOR_UUID`) stamped
+/// Continues the established convention: the retired Python seed stamped
 /// system-written rows with the nil UUID, so existing installs already carry
 /// it. No FK constrains `author_person_id`, and the API-layer nil-caller
 /// check (`api::gate`) inspects the JWT subject, not data rows.
 pub const SYSTEM_AUTHOR: Uuid = Uuid::nil();
 
-/// The only seed mode the pipeline implements (parity with the .NET service).
+/// The only seed mode the pipeline implements.
 pub const LINK_BY_EMAIL_MODE: &str = "link-by-email";
 
 /// Upper bound on the read + pipeline — same ceiling the removed queue
@@ -115,6 +114,9 @@ pub async fn run(
     // reader filter returns, this becomes a loop over tenants — the runner is
     // already per-tenant everywhere below (lock name, journal row, writes).
     let db = db::connect(&config.database_url).await?;
+    // Same boot gate as the server: a seed against a schema behind this build
+    // would fail per-query mid-run instead of upfront.
+    db::assert_schema_compatible(&db).await?;
 
     // Tenant resolution: the configured tenant_default_id wins; when it is
     // EMPTY (existing installs whose pre-created config Secret predates the

@@ -435,13 +435,18 @@ fn validate_view_with_context(
             })
         }
         MetricViewRequest::Histogram => {
-            // Histograms bin per-event observation values; only median
-            // metrics have event-grain observations to bin.
-            if !matches!(def.spec, ComputationSpec::Median { .. }) {
+            // Histograms bin per-event observation values; only the
+            // event-grain computations (median family) have observations to bin.
+            if !matches!(
+                def.spec,
+                ComputationSpec::Median { .. }
+                    | ComputationSpec::Percentile { .. }
+                    | ComputationSpec::Stddev { .. }
+            ) {
                 return invalid(
                     "metrics.views",
                     format!(
-                        "metric {} does not support the histogram view; it requires a median computation",
+                        "metric {} does not support the histogram view; it requires an event-grain computation (median, percentile, or stddev)",
                         def.key()
                     ),
                 );

@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import unquote_plus
 
 import freezegun
+import pytest
 from airbyte_cdk.models import AirbyteMessage
 from config import BB_URL, PROXY_URL, BitbucketCloudConfigBuilder
 
@@ -143,6 +144,75 @@ def test_a_403_repository_is_skipped_not_fatal(http_mocker: HttpMocker) -> None:
 
     assert not output.errors
     assert len(output.records) == 0
+
+
+@freezegun.freeze_time(_FROZEN)
+@pytest.mark.parametrize(
+    ("stream", "endpoint", "body"),
+    [
+        (
+            "pull_request_comments",
+            "comments",
+            {"values": [{"id": 77, "user": None, "content": None, "deleted": False,
+                         "created_on": "2026-06-20T10:00:00.000000+00:00",
+                         "updated_on": "2026-06-20T10:00:00.000000+00:00"}]},
+        ),
+        (
+            "pull_request_commits",
+            "commits",
+            {"values": [{"type": "commit", "hash": "a" * 12,
+                         "date": "2026-06-19T10:00:00+00:00", "message": "feat: x",
+                         "author": {"raw": "Alice <alice@example.com>"},
+                         "parents": [{"hash": "b" * 12}]}]},
+        ),
+        (
+            "pull_request_diffstat",
+            "diffstat",
+            {"values": [{"type": "diffstat", "status": "modified", "lines_added": 1,
+                         "lines_removed": 0, "old": {"path": "src/a.py"},
+                         "new": {"path": "src/a.py"}}]},
+        ),
+        (
+            "pull_request_activity",
+            "activity",
+            {"values": [{"approval": {"date": "2026-06-21T10:00:00+00:00",
+                                      "user": {"uuid": "{u-1}", "display_name": "Alice"}}}]},
+        ),
+    ],
+)
+def test_a_403_repository_does_not_truncate_a_child_streams_walk(
+    http_mocker: HttpMocker, stream: str, endpoint: str, body: dict[str, Any]
+) -> None:
+    """The fan-out parents walk repositories in ascending updated_on order, so
+    a repository the vendor refuses (403) mid-walk must be skipped — failing
+    instead aborts partition generation and silently drops every repository
+    updated after it. The refused repository sorts FIRST here so the healthy
+    one is only reached if the walk survives."""
+    config = BitbucketCloudConfigBuilder().build()
+    dead = {"uuid": "{r-0}", "full_name": "acme/suspended",
+            "updated_on": "2026-06-01T10:00:00.000000+00:00"}
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [dead, _repo()]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/suspended/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body="Repository currently not available.", status_code=403),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps({"values": [_pr(9, author=None)]}), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{BB_URL}/repositories/acme/app/pullrequests/9/{endpoint}", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps(body), status_code=200),
+    )
+
+    output = read_stream(_CONNECTOR, stream, config)
+
+    assert not output.errors
+    assert output.records, "the walk stopped at the refused repository"
+    assert {r.record.data["repo_full_name"] for r in output.records} == {"acme/app"}
 
 
 @freezegun.freeze_time(_FROZEN)

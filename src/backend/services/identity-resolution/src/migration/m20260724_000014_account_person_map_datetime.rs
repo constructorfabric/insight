@@ -1,8 +1,3 @@
-//! The FIRST Rust-authored migration — deliberately NOT in the frozen .NET
-//! `DbUp` set (one applier for new DDL; see the module docs in
-//! `migration/mod.rs`). Converts `account_person_map`'s SCD2 columns to
-//! `DATETIME(6)`, aligning with 009's `persons`/`org_chart` conversion.
-
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]

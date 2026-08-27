@@ -46,7 +46,7 @@ to relax them per-resource for self-introspection.
 - Least-privilege default: hand out permissions only when a real use
   case asks for them.
 - Predictable shape: every OrgChart Visibility endpoint behaves
-  identically under the same `CallerAdminCheck` filter — easier to
+  identically under the same admin gate — easier to
   reason about, easier to integration-test.
 - Forward-compat: a future ADR can relax specific reads (e.g.
   `GET /v1/person-roles?person=<self>` without admin) without
@@ -68,7 +68,7 @@ to relax them per-resource for self-introspection.
 
 Implemented in `VisibilityEndpoints` / `RolesEndpoints` /
 `PersonRolesEndpoints` by passing every handler through
-`CallerAdminCheck.CheckAsync(HttpContext)`. The check returns one of
+the shared admin gate. The check returns one of
 four results (`NoCaller` / `NoTenant` / `NotAdmin` / `IsAdmin`)
 mapped to 401 / 400 / 403 / proceed by `EndpointHelpers.GateResult`.
 
@@ -93,7 +93,7 @@ helper so the same code path is covered.
 ### Admin-only on every OrgChart Visibility read (chosen)
 
 - **Pro:** single gate, single response shape — every OrgChart
-  Visibility endpoint behaves identically under `CallerAdminCheck`.
+  Visibility endpoint behaves identically under the admin gate.
 - **Pro:** default-closed — sloppy future relaxation can't accidentally
   open a new leak.
 - **Con:** blocks self-introspection (caller can't read their own
@@ -120,6 +120,6 @@ a per-endpoint policy combinator. That work is out of scope here.
 
 ## Traceability
 
-- Implementations: `src/backend/services/identity/src/Insight.Identity.Api/Endpoints/{Visibility,Roles,PersonRoles}Endpoints.cs`
-- Gate plumbing: `src/backend/services/identity/src/Insight.Identity.Api/Auth/CallerAdminCheck.cs`
-- Tests: `src/backend/services/identity/tests/Insight.Identity.Tests.Integration/OrgChartVisibilityEndpointsTests.cs`
+- Implementations: `src/backend/services/identity-resolution/src/api/{visibility,roles,person_roles}.rs`
+- Gate plumbing: `src/backend/services/identity-resolution/src/api/gate.rs`
+- Tests: the identity contract suite's admin cases

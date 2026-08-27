@@ -1,5 +1,5 @@
 //! Persons-seed orchestration: tie the reader → build → group → resolve →
-//! row-build → apply pipeline together. Ports the .NET `PersonsSeedService`.
+//! row-build → apply pipeline together.
 //! The input source and the store are behind traits so this is unit-testable
 //! with fakes (no `ClickHouse` / MariaDB).
 
@@ -53,13 +53,11 @@ pub struct ApplyCounts {
     pub org_chart_rows_rebuilt: u64,
 }
 
-/// Outcome of one persons-seed run (feeds the operation status). Mirrors the
-/// .NET `PersonsSeedSummary` (org-chart counter lands with that rebuild).
-// Serialized field names mirror the .NET `PersonsSeedSummary` wire shape
-// (`accounts_*` prefix, `accounts_minted_new`, `org_chart_rows_rebuilt`) so the
-// `summary` JSON stays contract-compatible. `known_binding_conflicts` is an
-// additive Insight-side field (observability of a silent identity merge; not in
-// .NET) — additive keys are ignored by conformant consumers.
+/// Outcome of one persons-seed run (feeds the operation status).
+// The serialized field names (`accounts_*` prefix, `accounts_minted_new`,
+// `org_chart_rows_rebuilt`) are the `summary` JSON contract.
+// `known_binding_conflicts` is additive (observability of a silent identity
+// merge) — additive keys are ignored by conformant consumers.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SeedSummary {
     pub accounts_read: usize,

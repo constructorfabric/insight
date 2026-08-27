@@ -239,7 +239,7 @@ async fn fetch_definition_rows(
     );
 
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
-    values.push(Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec()))));
+    values.push(Value::Bytes(Some(tenant_id.as_bytes().to_vec())));
 
     DefinitionRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -280,7 +280,7 @@ async fn fetch_input_rows(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     InputRow::find_by_statement(Statement::from_sql_and_values(
@@ -435,7 +435,7 @@ pub(super) async fn fetch_dimensions(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     DimensionRow::find_by_statement(Statement::from_sql_and_values(
@@ -475,7 +475,7 @@ pub(super) async fn fetch_tags(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     TagRow::find_by_statement(Statement::from_sql_and_values(
@@ -544,6 +544,27 @@ fn build_definition(
             }
         }
         MetricComputation::Median => ComputationSpec::Median {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
+        MetricComputation::Percentile => {
+            // The `scale` column doubles as the quantile for percentile
+            // metrics (see SeedComputation::scale); the CHECK constraint
+            // pairs it with the computation type.
+            let q = row.scale.ok_or_else(|| {
+                config_error(&format!("missing percentile q for {}", row.metric_key))
+            })?;
+            if !(0.0..=1.0).contains(&q) {
+                return Err(config_error(&format!(
+                    "percentile q must be within [0, 1] for {}",
+                    row.metric_key
+                )));
+            }
+            ComputationSpec::Percentile {
+                value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+                q,
+            }
+        }
+        MetricComputation::Stddev => ComputationSpec::Stddev {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
         MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
@@ -689,7 +710,7 @@ pub async fn update_evidence_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET evidence_schema_status = ?, \
@@ -726,7 +747,7 @@ pub async fn update_source_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET schema_status = ?, \
@@ -761,7 +782,7 @@ pub async fn update_definitions_for_source_status(
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -780,7 +801,7 @@ pub async fn update_definitions_for_source_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
-            Value::Bytes(Some(Box::new(source_id.as_bytes().to_vec()))),
+            Value::Bytes(Some(source_id.as_bytes().to_vec())),
         ],
     ))
     .await?;
@@ -802,7 +823,7 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -831,7 +852,7 @@ pub async fn update_definition_status(
 }
 
 fn uuid_value(value: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(value.as_bytes().to_vec())))
+    Value::Bytes(Some(value.as_bytes().to_vec()))
 }
 
 fn unavailable(metric_key: &str) -> CanonicalError {
@@ -1152,6 +1173,52 @@ mod tests {
         assert!(one_input("ai.x", &[], MetricInputRole::Value).is_err());
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
         assert!(one_input("ai.x", &[input.clone(), input], MetricInputRole::Value).is_err());
+    }
+
+    #[test]
+    fn percentile_and_stddev_specs_build_from_the_scale_slot() {
+        let value = MetricInput {
+            role: MetricInputRole::Value,
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ci_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
+            source_key: "ci".to_owned(),
+            measure_key: "run_duration_min".to_owned(),
+        };
+
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        row.scale = Some(0.9);
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a percentile row with q builds"));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
+        match built.spec {
+            ComputationSpec::Percentile { q, .. } => {
+                assert!((q - 0.9).abs() < f64::EPSILON);
+            }
+            other => panic!("expected a percentile spec, got {other:?}"),
+        }
+
+        // The quantile is mandatory and must be a probability.
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+        row.scale = Some(1.5);
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+
+        let mut row = definition_row("ci.run_duration_min_stddev", None, true, "ok");
+        row.computation_type = "stddev".to_owned();
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a stddev row builds"));
+        assert!(matches!(built.spec, ComputationSpec::Stddev { .. }));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
     }
 
     #[test]
