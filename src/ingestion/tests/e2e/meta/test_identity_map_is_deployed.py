@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 MAP_TAG = "identity:map"
@@ -20,23 +22,42 @@ DBT_DIR = INGESTION / "dbt"
 MIGRATIONS_SCRIPT = INGESTION / "scripts" / "apply-ch-migrations.sh"
 
 
-def _manifest() -> dict:
+@dataclass(frozen=True)
+class ModelNode:
+    """The manifest fields this contract reads, parsed at the boundary so a
+    changed manifest shape fails here rather than inside an assertion."""
+
+    name: str
+    schema: str
+    materialized: str
+    tags: frozenset[str]
+
+
+@cache
+def _models() -> tuple[ModelNode, ...]:
+    """Every model in the parsed manifest. Cached: `dbt parse` is a subprocess,
+    and each test would otherwise pay for its own."""
     subprocess.run(
         ["dbt", "parse", "--profiles-dir", ".", "--target", "local"],
         cwd=DBT_DIR,
         check=True,
         capture_output=True,
     )
-    return json.loads((DBT_DIR / "target" / "manifest.json").read_text())
+    manifest = json.loads((DBT_DIR / "target" / "manifest.json").read_text())
+    return tuple(
+        ModelNode(
+            name=node["name"],
+            schema=node["schema"],
+            materialized=node["config"]["materialized"],
+            tags=frozenset(node["config"]["tags"]),
+        )
+        for node in manifest["nodes"].values()
+        if node["resource_type"] == "model"
+    )
 
 
 def test_the_map_models_carry_the_deploy_selected_tag() -> None:
-    nodes = _manifest()["nodes"].values()
-    tagged = {
-        node["name"]
-        for node in nodes
-        if node["resource_type"] == "model" and MAP_TAG in node["config"]["tags"]
-    }
+    tagged = {model.name for model in _models() if MAP_TAG in model.tags}
 
     assert tagged == MAP_MODELS, (
         f"models tagged {MAP_TAG!r} are {sorted(tagged)}; an untagged map model "
@@ -45,16 +66,11 @@ def test_the_map_models_carry_the_deploy_selected_tag() -> None:
 
 
 def test_every_person_read_resolves_through_a_deploy_selected_model() -> None:
-    nodes = _manifest()["nodes"].values()
-    map_model = next(
-        node
-        for node in nodes
-        if node["resource_type"] == "model" and node["name"] == "person_map"
-    )
+    map_model = next(model for model in _models() if model.name == "person_map")
 
-    assert map_model["schema"] == "identity"
-    assert map_model["config"]["materialized"] == "view"
-    assert MAP_TAG in map_model["config"]["tags"]
+    assert map_model.schema == "identity"
+    assert map_model.materialized == "view"
+    assert MAP_TAG in map_model.tags
 
 
 def test_the_migrations_script_appends_the_map_tag_after_any_override() -> None:

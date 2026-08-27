@@ -338,15 +338,6 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             continue;
         }
 
-        if !row.measure_enabled
-            || !row.source_enabled
-            || schema_status_blocks(&row.measure_schema_status)
-            || schema_status_blocks(&row.source_schema_status)
-        {
-            *entry = ClassifiedInputs::Unavailable;
-            continue;
-        }
-
         let Some(alias_collapse) = AliasCollapse::from_db(&row.measure_alias_collapse) else {
             tracing::error!(
                 measure_key = %row.measure_key,
@@ -356,6 +347,15 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             *entry = ClassifiedInputs::Corrupt;
             continue;
         };
+
+        if !row.measure_enabled
+            || !row.source_enabled
+            || schema_status_blocks(&row.measure_schema_status)
+            || schema_status_blocks(&row.source_schema_status)
+        {
+            *entry = ClassifiedInputs::Unavailable;
+            continue;
+        }
 
         if let ClassifiedInputs::Available(inputs) = entry {
             inputs.push(MetricInput {

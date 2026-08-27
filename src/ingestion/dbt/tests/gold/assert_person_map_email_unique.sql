@@ -12,7 +12,7 @@ WITH claims AS (
     INNER JOIN {{ ref('account_assignment') }} AS assignment
         ON assignment.source_type = inputs.insight_source_type
        AND assignment.source_id = inputs.insight_source_id
-       AND assignment.account_id = trimBoth(inputs.source_account_id)
+       AND assignment.account_id = lower(trimBoth(inputs.source_account_id))
     WHERE inputs.value_type = 'email'
       AND inputs.operation_type = 'UPSERT'
       AND coalesce(inputs.value, '') != ''
