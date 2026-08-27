@@ -228,21 +228,21 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit commits
 - Notes: Distinct authored commits across connected git sources, excluding merge commits.
 
-## git.default_branch_commits — Commits on the default branch
+## git.default_branch_commits — Commits that reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: default_commit_count
 - Formula: sum(default_commit_count)
 - Shape: integer, higher_is_better, unit commits
-- Notes: Authored commits reachable from the repository's default branch, or carried onto it by a merged pull request. A commit joins this metric when its branch lands, so a past period's figure rises as work merges. Merge commits excluded.
+- Notes: Authored commits reachable from the repository's default branch, or carried onto it by a merged pull request. A commit joins this metric when its branch lands, so a past period's figure rises as work merges. Dated by the commit, so the request that merged it can fall in a later period. Merge commits excluded.
 
-## git.non_default_branch_commits — Commits outside the default branch
+## git.non_default_branch_commits — Commits that have not reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: non_default_commit_count
 - Formula: sum(non_default_commit_count)
 - Shape: integer, neutral, unit commits
-- Notes: Authored commits not reachable from the repository's default branch — work in flight, or abandoned. A commit leaves this metric when its branch lands, so a past period's figure falls as work merges. A source that does not report branch membership counts here rather than inventing an answer. Merge commits excluded.
+- Notes: Authored commits not reachable from the repository's default branch — work in flight, or abandoned. A commit leaves this metric when its branch lands, so a past period's figure falls as work merges. Dated by the commit, not by the merge. A source reporting no branch membership counts here. Merge commits excluded.
 
 ## git.code_lines — Code lines added
 
@@ -252,21 +252,21 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
-## git.default_branch_code_lines — Code lines added on the default branch
+## git.default_branch_code_lines — Code lines that reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: default_code_lines_added
 - Formula: sum(default_code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Code lines whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Tests, configuration and documentation excluded.
+- Notes: Code lines whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge. Tests, configuration and documentation excluded.
 
-## git.non_default_branch_code_lines — Code lines added outside the default branch
+## git.non_default_branch_code_lines — Code lines that have not reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: non_default_code_lines_added
 - Formula: sum(non_default_code_lines_added)
 - Shape: integer, neutral, unit lines
-- Notes: Code lines whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Tests, configuration and documentation excluded.
+- Notes: Code lines whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge. Tests, configuration and documentation excluded.
 
 ## git.lines_added — Lines added
 
@@ -276,21 +276,21 @@ this file and the registry disagree.
 - Shape: integer, higher_is_better, unit lines
 - Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
 
-## git.default_branch_lines_added — Lines added on the default branch
+## git.default_branch_lines_added — Lines added that reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: default_lines_added
 - Formula: sum(default_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges.
+- Notes: Lines added whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge.
 
-## git.non_default_branch_lines_added — Lines added outside the default branch
+## git.non_default_branch_lines_added — Lines added that have not reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: non_default_lines_added
 - Formula: sum(non_default_lines_added)
 - Shape: integer, neutral, unit lines
-- Notes: Lines added whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges.
+- Notes: Lines added whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge.
 
 ## git.test_change_share — Test change share
 
@@ -308,21 +308,21 @@ this file and the registry disagree.
 - Shape: integer, neutral, unit lines
 - Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
 
-## git.default_branch_lines_removed — Lines removed on the default branch
+## git.default_branch_lines_removed — Lines removed that reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: default_lines_removed
 - Formula: sum(default_lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges.
+- Notes: Lines removed whose commit is reachable from the repository's default branch, or was carried onto it by a merged pull request. Lines follow their commit, so this rises as work merges. Dated by the commit, not by the merge.
 
-## git.non_default_branch_lines_removed — Lines removed outside the default branch
+## git.non_default_branch_lines_removed — Lines removed that have not reached the default branch
 
 - Source: git (git_metric_observations)
 - Reads: non_default_lines_removed
 - Formula: sum(non_default_lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges.
+- Notes: Lines removed whose commit has not reached the repository's default branch — work in flight, or abandoned. Lines follow their commit, so this falls as work merges. Dated by the commit, not by the merge.
 
 ## git.prs_created — Pull requests created
 
@@ -346,7 +346,7 @@ this file and the registry disagree.
 - Reads: non_default_pr_created
 - Formula: sum(non_default_pr_created)
 - Shape: integer, neutral, unit PRs
-- Notes: Pull requests opened against something other than the repository's default branch — a release branch, a stacked request, an integration branch. A request whose destination the source does not report counts here rather than inventing an answer.
+- Notes: Pull requests opened against something other than the repository's default branch — a release branch, a stacked request, an integration branch. Dated by creation. A request whose destination the source does not report counts here rather than inventing an answer.
 
 ## git.prs_merged — Pull requests merged
 
@@ -354,7 +354,7 @@ this file and the registry disagree.
 - Reads: pr_merged
 - Formula: sum(pr_merged)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Authored pull requests that merged, dated by the merge.
+- Notes: Authored pull requests that merged, dated by the merge — so a request counts in the period it landed and can carry commits written in earlier ones. Under a branch-scope breakdown the split says where the request was aimed, not where its commits sit.
 
 ## git.default_branch_prs_merged — Pull requests merged into the default branch
 
@@ -362,7 +362,7 @@ this file and the registry disagree.
 - Reads: default_pr_merged
 - Formula: sum(default_pr_merged)
 - Shape: integer, higher_is_better, unit PRs
-- Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics.
+- Notes: Pull requests that merged into the repository's default branch, dated by the merge. This is the surface that also promotes a branch's commits and lines into their default-branch metrics. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
 ## git.non_default_branch_prs_merged — Pull requests merged into another branch
 
@@ -370,7 +370,7 @@ this file and the registry disagree.
 - Reads: non_default_pr_merged
 - Formula: sum(non_default_pr_merged)
 - Shape: integer, neutral, unit PRs
-- Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone.
+- Notes: Pull requests that merged into something other than the repository's default branch, dated by the merge. Their commits do not count as having reached the default branch on this evidence alone. A request counts in the period it merged, so it can carry commits written in earlier ones.
 
 ## git.merge_rate — PR merge rate
 

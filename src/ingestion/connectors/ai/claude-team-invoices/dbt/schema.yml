@@ -85,6 +85,8 @@ models:
                 values: ['subscriptions', 'overusage']
       - name: tier_label
         description: "Seat tier the line prices (hosted_invoice_tier_label). One invoice can carry several."
+      - name: tier_ref
+        description: "The vendor's own catalogue identifier for the tier this line prices (Stripe product). What config.ai_seat_tier_map binds to a seat's tier."
       - name: is_proration
         description: >
           1 when the line is a mid-period adjustment. Prorations are real money
@@ -113,7 +115,7 @@ models:
           NULL on every line row. Summing it over a tenant-month is therefore the
           invoice-level spend with no dedup needed.
       - name: invoice_metrics_json
-        description: "Raw vendor extras: product_name, description, num_seats, invoice_total, period_end_ts. The invoice-level ones are empty on a line row."
+        description: "Raw vendor extras: product_name, description, num_seats, invoice_total, period_end_ts, price_id. The invoice-level ones are empty on a line row."
       - name: source
         description: "Always 'claude_team'"
         tests:

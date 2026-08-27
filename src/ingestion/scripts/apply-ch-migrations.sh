@@ -109,12 +109,23 @@ ALTER TABLE staging.${table} DROP COLUMN IF EXISTS surface_label;
 SQL
 }
 
+heal_ai_invoice_staging() {
+  local table="$1"
+  ch_table_exists staging "${table}" || return 0
+  echo "  staging.${table}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} ADD COLUMN IF NOT EXISTS tier_ref Nullable(String) AFTER tier_label;
+ALTER TABLE staging.${table} MODIFY COLUMN tier_ref Nullable(String) AFTER tier_label;
+SQL
+}
+
 heal_ai_dev_staging cursor__ai_dev_usage
 heal_ai_dev_staging claude_enterprise__ai_dev_usage
 heal_ai_dev_staging claude_team__ai_dev_usage
 heal_ai_dev_staging chatgpt_team__ai_dev_usage
 heal_ai_assistant_staging claude_enterprise__ai_assistant_usage
 heal_ai_assistant_staging chatgpt_team__ai_assistant_usage
+heal_ai_invoice_staging claude_team__ai_invoice
 
 echo "=== Healing CRM staging contract schemas ==="
 # The CRM overflow blob left the contract — the connectors carry the
@@ -300,6 +311,34 @@ SQL
 
 for _git_source in github gitlab bitbucket_cloud; do
   heal_git_repository_default_branch staging "${_git_source}__repositories"
+done
+
+echo "=== Healing git size column types ==="
+# Every projection feeding the git classes wraps its size columns in
+# toNullable(), so the model's type is Nullable(Int64). A table created before
+# that keeps the narrower non-null type ClickHouse inferred from the values it
+# then held, and dbt aborts an incremental model whose source and target types
+# differ — freezing the relation at its last successful build. MODIFY converges
+# warm tables; non-null to Nullable is lossless. Type only, no AFTER anchor:
+# the columns already sit at their contract positions. Guarded: staging tables
+# exist only after the connector's first run. Idempotent.
+heal_git_size_column() {
+  local table="$1" column="$2"
+  ch_table_exists staging "$table" || return 0
+  echo "  staging.${table}.${column}"
+  run_ch <<SQL
+ALTER TABLE staging.${table} MODIFY COLUMN IF EXISTS ${column} Nullable(Int64);
+SQL
+}
+
+for _git_source in github gitlab bitbucket_cloud; do
+  for _size_column in files_changed lines_added lines_removed; do
+    heal_git_size_column "${_git_source}__commits" "${_size_column}"
+    heal_git_size_column "${_git_source}__pull_requests" "${_size_column}"
+  done
+  for _size_column in lines_added lines_removed; do
+    heal_git_size_column "${_git_source}__file_changes" "${_size_column}"
+  done
 done
 
 echo "=== Healing jira task id column types (#1743) ==="

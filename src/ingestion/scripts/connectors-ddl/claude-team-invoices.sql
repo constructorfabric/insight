@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS bronze_claude_team_invoices.claude_team_invoice_lines
     `description` Nullable(String),
     `product_name` Nullable(String),
     `tier_label` Nullable(String),
+    `price_id` Nullable(String),
+    `product_id` Nullable(String),
     `category` Nullable(String),
     `is_proration` Nullable(Bool),
     `amount` Nullable(Decimal(38, 9)),

@@ -916,6 +916,7 @@ export const handlers = [
   ),
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
+  ...connectorHealthHandlers(),
   ...usageHandlers(),
   ...feedbackHandlers(),
   ...aiAssistHandlers(),
@@ -1015,6 +1016,84 @@ function syntheticDays(count: number) {
     });
   }
   return days;
+}
+
+/**
+ * Connector health in mock mode.
+ *
+ * Deliberately not all-green: one failing connector, one queued, one never
+ * synced and one no longer configured, so the demo shows what the page is for
+ * rather than a wall of successes. `records_reported: 0` on the failed sync and
+ * a missing count on the queued one keep the absence-versus-zero distinction
+ * visible in the mock too.
+ */
+function connectorHealthHandlers() {
+  const now = new Date();
+  const minutesAgo = (minutes: number) =>
+    new Date(now.getTime() - minutes * 60_000).toISOString();
+
+  const sync = (
+    job_id: string,
+    status: string,
+    startedMinutesAgo: number | null,
+    duration_ms: number | null,
+    records_reported: number | null,
+  ) => ({
+    job_id,
+    status,
+    started_at: startedMinutesAgo === null ? null : minutesAgo(startedMinutesAgo),
+    duration_ms,
+    records_reported,
+  });
+
+  // One history per connector, newest first, so each connector's expansion
+  // agrees with the row above it. A demo whose drill-down contradicts its own
+  // summary teaches the reader to distrust both.
+  const histories: Record<string, ReturnType<typeof sync>[]> = {
+    "example-tracker": [
+      sync("8414", "failed", 18, 142_000, 0),
+      sync("8409", "succeeded", 78, 138_500, 12_400),
+    ],
+    "example-directory": [sync("8415", "pending", null, null, null)],
+    "example-messaging": [
+      sync("8402", "succeeded", 24, 41_000, 903),
+      sync("8388", "succeeded", 84, 39_100, 874),
+    ],
+    "example-warehouse": [],
+    "example-retired": [sync("7801", "succeeded", 60 * 26, 90_000, 55)],
+  };
+
+  const summaryRow = (connector: string, configured: boolean) => ({
+    connector,
+    configured,
+    last_sync: histories[connector]?.[0] ?? null,
+  });
+
+  return [
+    http.get("/api/analytics/v1/connector-health", () =>
+      HttpResponse.json({
+        as_of: now.toISOString(),
+        checked_at: minutesAgo(6),
+        typical_read_interval_ms: 15 * 60_000,
+        history_available: true,
+        connectors: [
+          summaryRow("example-tracker", true),
+          summaryRow("example-directory", true),
+          summaryRow("example-messaging", true),
+          summaryRow("example-warehouse", true),
+          summaryRow("example-retired", false),
+        ],
+      }),
+    ),
+    http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) => {
+      const connector = String(params.connector);
+      return HttpResponse.json({
+        connector,
+        window: 50,
+        syncs: histories[connector] ?? [],
+      });
+    }),
+  ];
 }
 
 function usageHandlers() {

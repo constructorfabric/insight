@@ -1,0 +1,75 @@
+spec_version: 1
+description: >
+  Metric: ai.seat_cost — the path an installation takes before an operator has
+  written any tier binding.
+
+  config.ai_seat_tier_map ships empty, so nothing says which seat tier an invoice
+  line prices. A month that prices exactly one tier needs nobody to say it: that
+  amount is the only per-seat price the vendor stated, so every billable seat
+  takes it whatever tier the seat carries. This is the path every install runs on
+  the day the binding table arrives, and it is why the table can arrive empty.
+
+    person   seat tier        seat cost
+    alice    team_tier_1        $18.00
+    bob      team_standard      $18.00   — a different tier, the same single price
+
+  One priced line only. A second priced tier would make the month ambiguous, and
+  with no binding to resolve it both seats would fall to absent — that case is
+  ai_seat_cost.test.yaml's subject, and this file is deliberately its opposite.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+
+  # Two seats on two different tiers, both billable.
+  bronze_claude_team.claude_team_overage_spend:
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50, monthly_credit_limit: 1000, seat_tier: team_tier_1 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-bob,   used_credits: 60, monthly_credit_limit: 1000, seat_tier: team_standard }
+
+  bronze_claude_team_invoices.claude_team_invoice_lines:
+    - $ref: templates/claude_team_invoice.yaml#/templates/december_invoice
+    # The month's only priced tier.
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-only, line_id: il_only, category: subscriptions, product_id: prod_EXAMPLE_ONE, product_name: "Example plan - Only", description: "2 x Example plan - Only", amount: 3600, quantity: 2, unit_amount: 1800, seat_unit_amount: 1800 }
+
+  # Deliberately empty: no operator has bound anything on this installation.
+  config.ai_seat_tier_map: []
+
+cases:
+  # ── The seat whose tier the single price does not name ────────────────────────
+  - name: AI seat cost with no binding takes the month's only price
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 18.0 }
+
+  # ── A seat on another tier takes the same price, because there is only one ───
+  - name: AI seat cost with no binding does not depend on the seat's tier
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [bob@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: bob@example.com }
+        equal: { value: 18.0 }

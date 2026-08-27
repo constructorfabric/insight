@@ -1,0 +1,87 @@
+spec_version: 1
+description: >
+  Metric: ai.seat_cost — two instances of one vendor's connectors in one tenant.
+
+  A tenant can hold several organisations of the same vendor, each with its own
+  invoice connector instance and its own seat connector instance. The invoice and
+  the seats arrive through separate connectors, so their insight_source_id never
+  matches and nothing in the data says which seats an invoice billed. The
+  operator's binding says it, by naming the seat instance its prices reach.
+
+  Both organisations price a tier of the same name at different amounts, which is
+  the case that goes wrong when the price grain forgets which instance produced
+  it: one seat population then takes the other's price, or the pair collapses to
+  two same-named tiers and every seat falls to absent.
+
+    person   seat instance     invoiced by        seat cost
+    alice    claude-team-a     invoices-a           $25.00
+    bob      claude-team-a     invoices-a           $25.00
+    carol    claude-team-b     invoices-b           $30.00
+    dave     claude-team-b     invoices-b           $30.00
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+
+  # Two seat populations, one per organisation, on the same tier name.
+  bronze_claude_team.claude_team_overage_spend:
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, source_id: claude-team-a, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   source_id: claude-team-a, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-bob,   used_credits: 60, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, source_id: claude-team-b, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-carol, used_credits: 70, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  source_id: claude-team-b, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-dave,  used_credits: 80, monthly_credit_limit: 1000, seat_tier: team_standard }
+
+  bronze_claude_team_invoices.claude_team_invoice_lines:
+    # Organisation A: its own invoice, its own catalogue, $25.00 a seat.
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_invoice, source_id: claude-team-invoices-a, unique_key: invoice-a, invoice_id: in_a, invoice_payment_intent: pi_a }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, source_id: claude-team-invoices-a, invoice_id: in_a, unique_key: line-a, line_id: il_a, category: subscriptions, product_id: prod_A, product_name: "Example plan - Standard", description: "2 x Example plan - Standard", amount: 5000, quantity: 2, unit_amount: 2500, seat_unit_amount: 2500 }
+
+    # Organisation B: same plan name, its own catalogue, $30.00 a seat.
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_invoice, source_id: claude-team-invoices-b, unique_key: invoice-b, invoice_id: in_b, invoice_payment_intent: pi_b }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, source_id: claude-team-invoices-b, invoice_id: in_b, unique_key: line-b, line_id: il_b, category: subscriptions, product_id: prod_B, product_name: "Example plan - Standard", description: "2 x Example plan - Standard", amount: 6000, quantity: 2, unit_amount: 3000, seat_unit_amount: 3000 }
+
+  # Each binding names the seat instance its organisation's prices reach.
+  config.ai_seat_tier_map:
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-a, source: claude_team, tier_ref: prod_A, unique_key: bind-a, seat_source_id: claude-team-a, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: claude-team-invoices-b, source: claude_team, tier_ref: prod_B, unique_key: bind-b, seat_source_id: claude-team-b, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
+
+cases:
+  # ── A seat of organisation A takes A's price, never B's ──────────────────────
+  - name: AI seat cost takes the price of the organisation that billed the seat
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: 25.0 }
+
+  # ── The other organisation's seat takes the other price ─────────────────────
+  - name: AI seat cost keeps the two organisations' prices apart
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 30.0 }

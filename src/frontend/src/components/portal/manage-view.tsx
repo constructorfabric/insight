@@ -16,13 +16,13 @@ import type {
   MetricDefinitionSchemaStatus,
   MetricDefinition,
 } from "@/api/metric-definitions-client";
+import { ConnectorHealthPane } from "@/components/portal/connector-health";
 import { IdentitiesView } from "@/components/portal/identities-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { AiAssistantBody } from "@/screens/ai-assistant";
 import { WhatsNewBody } from "@/screens/whats-new";
-import { TEXT_FIGURE } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
@@ -32,7 +32,8 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
 };
 
 /**
- * Manage-zone surfaces (Metric catalog, Data health, Identities, What's new).
+ * Manage-zone surfaces (Metric catalog, Connector health, Identities, What's
+ * new).
  *
  * The two catalog surfaces read the **unified** registry
  * (`GET /v1/metric-definitions`) — the set
@@ -43,7 +44,12 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  */
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
-  if (item === "data-health") return <DataHealth />;
+  if (item === "connector-health")
+    return (
+      <AdminGate>
+        <ConnectorHealthPane />
+      </AdminGate>
+    );
   if (item === "identities")
     return (
       <AdminGate>
@@ -196,59 +202,6 @@ function MetricCatalogTable() {
             ))}
           </TableBody>
         </Table>
-      </div>
-    </div>
-  );
-}
-
-function DataHealth() {
-  const { metrics, isLoading, isError, refetch } = useFlatDefinitions();
-  if (isLoading) return <CenteredSpinner className="min-h-[60vh]" />;
-  if (isError)
-    return (
-      <div className="mx-auto w-full max-w-md p-8">
-        <ComingSoon variant="card" state="error" onRetry={() => refetch()} />
-      </div>
-    );
-
-  const counts: Record<MetricDefinitionSchemaStatus, number> = {
-    ok: 0,
-    error: 0,
-    unchecked: 0,
-  };
-  for (const m of metrics) counts[m.schema_status] += 1;
-  // A definition whose schema checks out can still have never produced a row
-  // for this tenant — two separate questions, so show both answers.
-  const noData = metrics.filter((m) => m.last_observed_date == null).length;
-
-  return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">Data health</h1>
-        <p className="text-sm text-muted-foreground">
-          Schema-check status across {metrics.length} metrics
-        </p>
-      </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
-        {(["ok", "error", "unchecked"] as const).map((s) => (
-          <div key={s} className="rounded-lg border bg-card p-4">
-            <div className={TEXT_FIGURE}>{counts[s]}</div>
-            <div
-              className={cn(
-                "mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium",
-                STATUS_STYLE[s]
-              )}
-            >
-              {s}
-            </div>
-          </div>
-        ))}
-        <div className="rounded-lg border bg-card p-4">
-          <div className={TEXT_FIGURE}>{noData}</div>
-          <div className="mt-1 inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            no data yet
-          </div>
-        </div>
       </div>
     </div>
   );
