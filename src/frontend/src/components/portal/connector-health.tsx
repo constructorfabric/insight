@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 /** Tone carries emphasis; the word beside it carries the meaning. */
 const TONE_STYLE: Record<ConnectorTone, string> = {
   failing: "bg-destructive/15 text-destructive",
-  unknown: "bg-warning/15 text-warning-foreground",
+  unknown: "bg-warning/15 text-warning",
   active: "bg-primary/15 text-primary",
   ok: "bg-success/15 text-success",
   idle: "bg-muted text-muted-foreground",
@@ -39,7 +39,7 @@ const COLUMNS = 5;
 
 export function ConnectorHealthPane() {
   const { data, isPending, isError, refetch } = useConnectorHealth();
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   if (isPending) return <CenteredSpinner className="min-h-[60vh]" />;
   if (isError || data === undefined) {
@@ -58,26 +58,28 @@ export function ConnectorHealthPane() {
         <h1 className="text-lg font-semibold tracking-tight">
           Connector health
         </h1>
-        <p
+        <div
+          role="status"
+          aria-live="polite"
           className={cn(
             "text-sm",
-            recording.state === "stopped"
+            recording.state === "stopped" || recording.state === "unreadable"
               ? "text-destructive"
               : "text-muted-foreground",
           )}
-          role={recording.state === "stopped" ? "alert" : undefined}
         >
-          {recording.label}
-        </p>
-        {recording.detail !== "" && (
-          <p className="text-sm text-muted-foreground">{recording.detail}</p>
-        )}
+          <p>{recording.label}</p>
+          {/* Inside the region, not beside it: the warning's consequence is the
+              half a reader most needs announced. */}
+          {recording.detail !== "" && <p>{recording.detail}</p>}
+        </div>
       </div>
 
       {data.connectors.length === 0 ? (
         <div className="rounded-lg border p-6 text-sm text-muted-foreground">
-          No connector has been recorded yet. This page reports what has been
-          read from the data mover, and nothing has been read.
+          {recording.state === "never_read"
+            ? "No connector has been recorded yet. This page reports what has been read from the data mover, and nothing has been read."
+            : "The data mover was read and reported no connector. Nothing here says a connector is missing — only that none was recorded."}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
@@ -92,11 +94,15 @@ export function ConnectorHealthPane() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.connectors.map((row) => {
+              {data.connectors.map((row, index) => {
                 const state = describeConnector(row);
-                const open = expanded === row.connector;
+                // Keyed on position, not on the name: the name is the server's
+                // to choose and two rows carrying one name would expand
+                // together and share a React key.
+                const open = expanded === index;
+                const panelId = `connector-syncs-${index}`;
                 return [
-                  <TableRow key={row.connector} data-state-name={state.state}>
+                  <TableRow key={`row-${index}`} data-state-name={state.state}>
                     <TableCell>
                       {/* A real button rather than a role on the row: an
                           overridden role takes the row out of the table for a
@@ -105,9 +111,8 @@ export function ConnectorHealthPane() {
                         type="button"
                         className="text-left font-medium underline-offset-2 hover:underline"
                         aria-expanded={open}
-                        onClick={() =>
-                          setExpanded(open ? null : row.connector)
-                        }
+                        aria-controls={panelId}
+                        onClick={() => setExpanded(open ? null : index)}
                       >
                         {row.connector}
                       </button>
@@ -128,8 +133,8 @@ export function ConnectorHealthPane() {
                     </TableCell>
                   </TableRow>,
                   open ? (
-                    <TableRow key={`${row.connector}-syncs`}>
-                      <TableCell colSpan={COLUMNS} className="bg-muted/40">
+                    <TableRow key={`syncs-${index}`}>
+                      <TableCell colSpan={COLUMNS} id={panelId} className="bg-muted/40">
                         <RecentSyncs connector={row.connector} />
                       </TableCell>
                     </TableRow>
@@ -191,7 +196,7 @@ function SyncLine({ sync }: { sync: SyncFact }) {
       <span className="tabular-nums text-muted-foreground">
         {formatRecords(sync.records_reported)} records
       </span>
-      {sync.records_reported === null && (
+      {sync.records_reported == null && (
         <span className="sr-only">
           {UNMEASURED} means the mover reported no count, not a count of zero
         </span>

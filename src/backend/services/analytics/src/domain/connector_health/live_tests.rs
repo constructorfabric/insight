@@ -230,6 +230,81 @@ async fn the_ledger_reads_answer_from_real_rows() {
     two_rows_for_one_job_resolve_to_the_newer(&ch, &at).await;
     a_dropped_connector_stops_reading_configured(&ch, &at).await;
     one_connectors_window_is_newest_first(&ch).await;
+
+    truncate(&ch).await;
+    the_resolution_survives_every_way_it_used_to_be_wrong(&ch, &at).await;
+}
+
+/// Three answers the previous shape got wrong, each measured against a real
+/// server before the shape was replaced.
+///
+/// It sorted the relation and read the winner off the top, which meant: job ids
+/// compared as text so `"9"` beat `"10"`; a NULL creation stamp sorting last in
+/// BOTH directions so an older job won outright; and two rows of one job
+/// sharing a millisecond decided by physical row order. Each produced a
+/// confident wrong answer rather than an absence.
+async fn the_resolution_survives_every_way_it_used_to_be_wrong(
+    ch: &insight_clickhouse::Client,
+    at: &Stamps,
+) {
+    insert(
+        ch,
+        &[
+            // Same creation moment, ids 9 and 10: text order says 9 is newer.
+            sync("9", "numeric", "succeeded", &at.job_older),
+            Row {
+                ts: &at.tick_1,
+                ..sync("10", "numeric", "running", &at.job_older)
+            },
+            // The same job's terminal row, written in the SAME millisecond as
+            // its provisional one.
+            Row {
+                ts: &at.tick_1,
+                records_reported: Some(0),
+                ..sync("10", "numeric", "failed", &at.job_older)
+            },
+            // A newer job the mover gave no creation stamp for.
+            sync("1", "unplaced", "succeeded", &at.job_older),
+            Row {
+                ts: &at.tick_3,
+                job_created_at: None,
+                ..sync("2", "unplaced", "failed", &at.job_newer)
+            },
+        ],
+    )
+    .await;
+
+    let facts = read_health(ch).await.expect("read");
+
+    let numeric = summary_for(&facts.summaries, "numeric");
+    let resolved = numeric.last_sync.as_ref().expect("numeric has synced");
+    assert_eq!(
+        resolved.job_id, "10",
+        "job ids are numbers: compared as text, `9` outranks `10`"
+    );
+    assert_eq!(
+        resolved.status,
+        SyncStatus::Failed,
+        "a terminal row outranks a provisional one written in the same millisecond"
+    );
+    assert_eq!(
+        resolved.records_reported,
+        Some(0),
+        "the terminal row's own reported zero, not the provisional row's absence"
+    );
+
+    let unplaced = summary_for(&facts.summaries, "unplaced");
+    let resolved = unplaced.last_sync.as_ref().expect("unplaced has synced");
+    assert_eq!(
+        resolved.job_id, "2",
+        "a job with no creation stamp must not hand the answer to an older one"
+    );
+    assert!(
+        resolved.job_created_at.is_none(),
+        "the resolved row must be one real row, not a mix of two: job 2 has no \
+         creation stamp, so this must be absent rather than job 1's stamp"
+    );
+    assert_eq!(resolved.status, SyncStatus::Failed);
 }
 
 async fn an_empty_ledger_says_so(ch: &insight_clickhouse::Client) {

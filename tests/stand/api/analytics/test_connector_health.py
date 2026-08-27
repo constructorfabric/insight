@@ -1,7 +1,8 @@
 """The `/v1/connector-health` pair on analytics — what each connector recorded.
 
     GET /v1/connector-health                     200 admin · 403 everybody else
-    GET /v1/connector-health/{connector}/syncs   200 admin · 403 everybody else
+    GET /v1/connector-health/{connector}/syncs   200 admin · 400 unparseable name ·
+                                                 403 everybody else
 
 Both are `.authenticated()` at the edge with the operator gate inside the
 handler, the same shape `/v1/usage/summary` and the feedback listing use, so the
@@ -129,7 +130,7 @@ def test_a_name_the_route_cannot_parse_is_refused_as_a_bad_request(
     assert problem.status == 400
 
 
-@pytest.mark.reliability
+@pytest.mark.security
 def test_a_lead_is_refused_both_surfaces(lead_session: PersonaSession) -> None:
     """An ordinary authenticated caller, not an anonymous one.
 
@@ -144,7 +145,7 @@ def test_a_lead_is_refused_both_surfaces(lead_session: PersonaSession) -> None:
         assert response.parse(ProblemDocument).status == 403
 
 
-@pytest.mark.reliability
+@pytest.mark.security
 def test_a_realm_admin_without_the_operator_row_is_still_refused(
     realm_admin_session: PersonaSession,
 ) -> None:
@@ -160,7 +161,8 @@ def test_a_realm_admin_without_the_operator_row_is_still_refused(
     )
 
 
-@pytest.mark.reliability
+@pytest.mark.requires_seed("other_tenant_lead")
+@pytest.mark.security
 def test_a_caller_from_another_tenant_is_refused(
     other_tenant_session: PersonaSession,
 ) -> None:

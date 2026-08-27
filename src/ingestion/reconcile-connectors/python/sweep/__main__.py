@@ -28,7 +28,10 @@ class UnreadableWork(ValueError):
 
 class Connector(NamedTuple):
     name: str
-    connection_id: str
+    #: Absent for a connector the controller manages but the mover has no
+    #: connection for yet. It is still configured — that is the first thing the
+    #: page answers — it simply has nothing to read.
+    connection_id: str | None
 
 
 def _log(message: str) -> None:
@@ -51,14 +54,21 @@ def _read_work(stream: Any) -> tuple[str, list[Connector]]:
     if not isinstance(raw, list):
         raise UnreadableWork("work carries no connectors array")
 
+    # INVARIANT: every entry or none. Skipping a malformed one would seal a
+    # SHORT list as this tick's complete snapshot, and the read side treats a
+    # sealed snapshot as authoritative — so the connector that fell out would
+    # render as no longer configured rather than as unread.
     connectors = []
-    for item in raw:
+    for position, item in enumerate(raw):
         if not isinstance(item, dict):
-            continue
+            raise UnreadableWork(f"connector {position} is not an object")
         name = item.get("name")
+        if not isinstance(name, str) or not name:
+            raise UnreadableWork(f"connector {position} carries no name")
         connection_id = item.get("connection_id")
-        if isinstance(name, str) and name and isinstance(connection_id, str):
-            connectors.append(Connector(name, connection_id))
+        if connection_id is not None and not isinstance(connection_id, str):
+            raise UnreadableWork(f"connector {name!r} carries an unusable connection id")
+        connectors.append(Connector(name, connection_id or None))
     return tick_id.strip(), connectors
 
 
@@ -83,10 +93,17 @@ def run(stream: Any) -> int:
         _log(f"cannot reach the inputs: {error}")
         return 1
 
-    # The connection map is what turns a job into a connector. A job on a
-    # connection absent from it is skipped rather than guessed at.
-    by_connection = {c.connection_id: c.name for c in connectors}
+    # Two different sets, deliberately. The connection map turns a job into a
+    # connector, so it holds only connectors the mover has a connection for; a
+    # job on a connection absent from it is skipped rather than guessed at. The
+    # configured set is every connector the controller manages, whether or not
+    # the mover has caught up — a connector awaiting its first connection is
+    # configured and has never synced, which is a state the page must be able to
+    # show.
+    by_connection = {c.connection_id: c.name for c in connectors if c.connection_id}
+    configured = [c.name for c in connectors]
 
+    read_failed = False
     incomplete = False
     written = 0
     try:
@@ -105,21 +122,41 @@ def run(stream: Any) -> int:
             _log(f"skipped job {refusal.job_id or '<unnamed>'}: {refusal.reason}")
 
         written += ledger.insert(planned.rows)
-    except (LedgerError, MoverError) as error:
-        # The configured set is a fact about configuration, not about whether
-        # the listing answered, so it is still worth sealing — but the caller
-        # learns the tick was incomplete.
-        incomplete = True
-        _log(f"could not record this tick's syncs: {error}")
+
+        # The read start is floored, so a job open longer than that floor will
+        # never be asked about again. Say so, rather than leaving its last
+        # provisional word standing as the page's answer.
+        stranded = plan.plan_abandoned(ledger.abandoned_jobs(watermark), tick_id)
+        if stranded:
+            _log(
+                f"{len(stranded)} job(s) have fallen below the read start; "
+                "recording their state as unreadable"
+            )
+            written += ledger.insert(stranded)
+    # Every failure, not only the two typed ones: an unanticipated shape in the
+    # listing would otherwise escape and skip the seal by accident rather than by
+    # decision, which is the same outcome reached without the reasoning.
+    except Exception as error:  # noqa: BLE001
+        read_failed = True
+        _log(f"could not read this tick's syncs: {error!r}")
+
+    # INVARIANT: the seal is what dates the page — the read surface reports the
+    # newest sealed tick as "when the mover was last read". A tick that never
+    # read the mover must not seal, or an install whose mover is unreachable
+    # keeps reporting that it was just checked, and the page can never say
+    # recording has stopped.
+    if read_failed:
+        _log("the mover was not read; leaving this tick unsealed")
+        return 1
 
     try:
-        written += ledger.insert(plan.plan_snapshot(by_connection.values(), tick_id))
+        written += ledger.insert(plan.plan_snapshot(configured, tick_id))
         written += ledger.insert([plan.plan_seal(tick_id)])
     except LedgerError as error:
         _log(f"cannot seal this tick: {error}")
         return 1
 
-    _log(f"tick {tick_id}: {written} rows across {len(connectors)} connectors")
+    _log(f"tick {tick_id}: {written} rows across {len(configured)} connectors")
     return 1 if incomplete else 0
 
 

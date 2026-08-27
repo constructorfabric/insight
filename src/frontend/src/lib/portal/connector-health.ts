@@ -14,27 +14,43 @@ import type {
  * facts and never a verdict the record cannot back: nothing here says a
  * connector is delivering, because the ledger holds the mover's own account of
  * its syncs and nothing that corroborates it.
+ *
+ * Every function here is total over what the contract permits — which includes
+ * an absent key for any nullable field, and a status word this build has never
+ * heard of. A partial function would take the whole portal to its error
+ * boundary on a legal response.
  */
 export type ConnectorTone = "failing" | "unknown" | "active" | "ok" | "idle";
 
+export type ConnectorStateName =
+  | "no_longer_configured"
+  | "never_synced"
+  | "queued"
+  | "syncing"
+  | "sync_failed"
+  | "sync_incomplete"
+  | "sync_cancelled"
+  | "state_unknown"
+  | "sync_ok";
+
 export interface ConnectorStateView {
   /** Stable identifier, for tests and for the row's data attribute. */
-  state:
-    | "no_longer_configured"
-    | "never_synced"
-    | "syncing"
-    | "sync_failed"
-    | "sync_incomplete"
-    | "sync_cancelled"
-    | "state_unknown"
-    | "sync_ok";
+  state: ConnectorStateName;
   /** What the row says. Never colour alone. */
   label: string;
   tone: ConnectorTone;
 }
 
+/**
+ * One entry per word the mover uses, kept apart.
+ *
+ * `pending` and `running` are not merged. A queued job has no start time, so
+ * merging them makes the row say "syncing" beside a start of "—" — and erases
+ * the only signal that separates "queued and not picked up" from "running now",
+ * which is one of the states an operator opens this page for.
+ */
 const STATE: Record<SyncStatus, ConnectorStateView> = {
-  pending: { state: "syncing", label: "syncing", tone: "active" },
+  pending: { state: "queued", label: "queued", tone: "active" },
   running: { state: "syncing", label: "syncing", tone: "active" },
   failed: { state: "sync_failed", label: "sync failed", tone: "failing" },
   incomplete: {
@@ -63,6 +79,11 @@ const NEVER_SYNCED: ConnectorStateView = {
   tone: "idle",
 };
 
+/** A word outside this build's vocabulary is a state it cannot read. */
+function stateOf(status: string | undefined): ConnectorStateView {
+  return STATE[status as SyncStatus] ?? STATE.unknown;
+}
+
 /**
  * Configuration is read before the sync outcome, deliberately.
  *
@@ -72,8 +93,13 @@ const NEVER_SYNCED: ConnectorStateView = {
  */
 export function describeConnector(row: ConnectorHealth): ConnectorStateView {
   if (!row.configured) return NO_LONGER_CONFIGURED;
-  if (row.last_sync === null) return NEVER_SYNCED;
-  return STATE[row.last_sync.status] ?? STATE.unknown;
+  if (row.last_sync == null) return NEVER_SYNCED;
+  return stateOf(row.last_sync.status);
+}
+
+/** The status word for one sync in the expanded history. */
+export function describeSync(sync: SyncFact): ConnectorStateView {
+  return stateOf(sync.status);
 }
 
 /* ── what the page says about its own freshness ───────────────────────── */
@@ -82,18 +108,26 @@ export function describeConnector(row: ConnectorHealth): ConnectorStateView {
  * How many typical intervals may pass before the page stops presenting its
  * facts as current.
  *
- * One missed read is a hiccup; three in a row is a recorder that stopped. The
- * page cannot know the intended cadence — nothing on the read path does — so
- * the comparison is against the interval actually observed between recent
- * reads.
+ * One missed read is a hiccup; three in a row is a recorder that stopped.
  */
 export const STALE_AFTER_INTERVALS = 3;
 
+/**
+ * The band a measured interval is clamped into before it is multiplied.
+ *
+ * Both ends are load-bearing. Without a floor, a burst of closely spaced
+ * sweeps — a restart loop, a manual tick — drags the median down and the page
+ * then reports a live install as stopped. Without a ceiling, a long measured
+ * interval would let a genuinely stopped recorder sit unreported for days.
+ */
+const MIN_INTERVAL_MS = 5 * 60_000;
+const MAX_INTERVAL_MS = 60 * 60_000;
+
 export interface RecordingView {
-  state: "never_read" | "stopped" | "current";
+  state: "never_read" | "stopped" | "unmeasured" | "current" | "unreadable";
   /** The headline sentence. */
   label: string;
-  /** The reassurance or the warning under it, empty when there is nothing to add. */
+  /** The warning or reassurance under it; empty when there is nothing to add. */
   detail: string;
 }
 
@@ -103,7 +137,7 @@ export function describeRecording(
     "as_of" | "checked_at" | "typical_read_interval_ms" | "history_available"
   >,
 ): RecordingView {
-  if (!summary.history_available || summary.checked_at === null) {
+  if (!summary.history_available || summary.checked_at == null) {
     return {
       state: "never_read",
       label: "Nothing has been read from the connectors yet",
@@ -113,14 +147,31 @@ export function describeRecording(
   }
 
   const age = ageMs(summary.as_of, summary.checked_at);
-  const interval = summary.typical_read_interval_ms;
-  const stopped =
-    age !== null &&
-    interval !== null &&
-    interval > 0 &&
-    age > interval * STALE_AFTER_INTERVALS;
+  if (age === null) {
+    return {
+      state: "unreadable",
+      label: "Cannot tell when the connectors were last read",
+      detail: "Nothing below can be dated, so treat it as unverified.",
+    };
+  }
 
-  if (stopped) {
+  const threshold = staleAfter(summary.typical_read_interval_ms);
+
+  // No measured interval, so there is no cadence to be late against. The page
+  // states the age and says the cadence is unknown — rather than inventing a
+  // threshold and asserting that recording stopped, which is a conclusion
+  // nothing in the record supports.
+  if (threshold === null) {
+    return {
+      state: "unmeasured",
+      label: `Last checked ${describeAge(age)}`,
+      detail:
+        "Too few reads are recorded to know how often this should happen, so " +
+        "nothing here says whether that is normal.",
+    };
+  }
+
+  if (age > threshold) {
     return {
       state: "stopped",
       label: `Last checked ${describeAge(age)} — recording appears to have stopped`,
@@ -128,21 +179,54 @@ export function describeRecording(
     };
   }
 
-  return {
-    state: "current",
-    label:
-      age === null
-        ? "Last checked at an unreadable time"
-        : `Last checked ${describeAge(age)}`,
-    detail: "",
-  };
+  return { state: "current", label: `Last checked ${describeAge(age)}`, detail: "" };
 }
 
+/**
+ * How old a read may be before the page stops presenting its facts as current,
+ * or null where the record cannot say.
+ *
+ * The interval is clamped into a band first. Without a floor, a burst of
+ * closely spaced sweeps — a restart loop, a manual tick — drags the median down
+ * and a live install then reads as stopped. Without a ceiling, one unusually
+ * long gap would let a genuinely stopped recorder sit unreported for days.
+ */
+function staleAfter(interval: number | null | undefined): number | null {
+  if (interval == null || !Number.isFinite(interval) || interval <= 0) {
+    return null;
+  }
+  const clamped = Math.min(Math.max(interval, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
+  return clamped * STALE_AFTER_INTERVALS;
+}
+
+/**
+ * How long ago the mover was read, or null where the pair cannot say.
+ *
+ * A negative age is not clamped to zero: the two stamps come from clocks that
+ * are supposed to agree, and one ahead of the other means neither can date the
+ * page. Reporting "just now" there would be the page asserting a freshness it
+ * has no basis for.
+ */
 function ageMs(asOf: string, checkedAt: string): number | null {
-  const now = Date.parse(asOf);
-  const then = Date.parse(checkedAt);
-  if (Number.isNaN(now) || Number.isNaN(then)) return null;
-  return Math.max(0, now - then);
+  const now = parseStamp(asOf);
+  const then = parseStamp(checkedAt);
+  if (now === null || then === null) return null;
+  const age = now - then;
+  return age >= 0 ? age : null;
+}
+
+/**
+ * `Date.parse` alone is far too lenient to be a guard: it reads `"2026"` as a
+ * date and `"0"` as one too, so a truncated or garbage stamp would render as a
+ * confident absolute timestamp. The service emits RFC 3339, so requiring that
+ * shape costs nothing and refuses everything else.
+ */
+const RFC3339 = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
+
+function parseStamp(raw: string | null | undefined): number | null {
+  if (typeof raw !== "string" || !RFC3339.test(raw)) return null;
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 const MINUTE_MS = 60_000;
@@ -168,29 +252,37 @@ export function describeAge(ageInMs: number): string {
  */
 export const UNMEASURED = "—";
 
-export function formatDuration(durationMs: number | null): string {
-  if (durationMs === null) return UNMEASURED;
-  if (durationMs < 1_000) return `${durationMs} ms`;
-  const seconds = durationMs / 1_000;
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds % 60);
-  if (minutes < 60) return `${minutes}m ${rest}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+/**
+ * A duration, or absence.
+ *
+ * Rounding is done once, at the top, so no unit can carry 60 of the one below
+ * it — `1m 60s` and `60.0 s` are not durations. A negative value is malformed
+ * rather than measured, and prints as absence.
+ */
+export function formatDuration(durationMs: number | null | undefined): string {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
+    return UNMEASURED;
+  }
+  if (durationMs < 1_000) return `${Math.round(durationMs)} ms`;
+
+  const totalSeconds = Math.round(durationMs / 1_000);
+  if (totalSeconds < 60) return `${(durationMs / 1_000).toFixed(1)} s`;
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) return `${totalMinutes}m ${seconds}s`;
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 }
 
-export function formatRecords(records: number | null): string {
-  return records === null ? UNMEASURED : records.toLocaleString("en-US");
+export function formatRecords(records: number | null | undefined): string {
+  if (records == null || !Number.isFinite(records) || records < 0) {
+    return UNMEASURED;
+  }
+  return records.toLocaleString("en-US");
 }
 
-export function formatStarted(startedAt: string | null): string {
-  if (startedAt === null) return UNMEASURED;
-  const parsed = Date.parse(startedAt);
-  if (Number.isNaN(parsed)) return UNMEASURED;
-  return new Date(parsed).toISOString().replace("T", " ").slice(0, 19) + "Z";
-}
-
-/** The status word for one sync in the expanded history. */
-export function describeSync(sync: SyncFact): ConnectorStateView {
-  return STATE[sync.status] ?? STATE.unknown;
+export function formatStarted(startedAt: string | null | undefined): string {
+  const parsed = parseStamp(startedAt);
+  if (parsed === null) return UNMEASURED;
+  return `${new Date(parsed).toISOString().replace("T", " ").slice(0, 19)}Z`;
 }

@@ -26,6 +26,18 @@ SWEEP_COMPLETED = "sweep.completed"
 #: ClickHouse reads `DateTime64(3, 'UTC')` from this shape.
 _MOMENT_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
+#: What `DateTime64(3)` can hold. A stamp outside it is not rejected on insert —
+#: ClickHouse CLAMPS it silently, so a year 1000 stamp lands as 1900 and a year
+#: 9999 stamp as 2299. Either would make the page state a moment nobody
+#: recorded, and a clamped-low stamp would additionally pin the sweep's own
+#: watermark to 1900 and re-read the whole retained history every tick.
+_EARLIEST_MOMENT = datetime(1900, 1, 1, tzinfo=UTC)
+_LATEST_MOMENT = datetime(2299, 12, 31, tzinfo=UTC)
+
+#: `UInt64`. A larger value is not rejected either — it wraps, and the page
+#: would label the wrapped number as what the mover reported.
+_MAX_UINT64 = 2**64 - 1
+
 #: Columns inapplicable to a row class carry an empty string rather than NULL:
 #: they are `LowCardinality(String)`, and every read filters by `event` before
 #: touching them.
@@ -71,7 +83,10 @@ def moment(stamp: object) -> str | None:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).strftime(_MOMENT_FORMAT)[:-3]
+    parsed = parsed.astimezone(UTC)
+    if not _EARLIEST_MOMENT <= parsed <= _LATEST_MOMENT:
+        return None
+    return parsed.strftime(_MOMENT_FORMAT)[:-3]
 
 
 def entry_moment(entry: Mapping[str, Any]) -> str | None:
@@ -107,7 +122,10 @@ def duration_ms(duration: object) -> int | None:
     if isinstance(duration, bool):
         return None
     if isinstance(duration, (int, float)):
-        return int(float(duration) * 1000) if duration >= 0 else None
+        # A bare number is seconds, which is what the listing's own duration
+        # spells out; anything else would be this reading a unit into a field
+        # the mover documents as ISO-8601.
+        return _bounded(int(float(duration) * 1000)) if duration >= 0 else None
     if not isinstance(duration, str) or not duration.strip():
         return None
 
@@ -122,7 +140,16 @@ def duration_ms(duration: object) -> int | None:
         for name, seconds in _SECONDS_PER.items()
         if parts[name] is not None
     )
-    return round(total * 1000)
+    return _bounded(round(total * 1000))
+
+
+def _bounded(value: int) -> int | None:
+    """A magnitude the column can hold, or None.
+
+    `UInt64` wraps rather than rejects, so an out-of-range count would be stored
+    as a different number and labelled as the mover's own.
+    """
+    return value if 0 <= value <= _MAX_UINT64 else None
 
 
 def records_reported(entry: Mapping[str, Any]) -> int | None:
@@ -132,9 +159,17 @@ def records_reported(entry: Mapping[str, Any]) -> int | None:
     are different answers, and the page prints them differently.
     """
     value = entry.get("rowsSynced")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
         return None
-    return int(value) if value >= 0 else None
+    if isinstance(value, str):
+        # A count the listing sent as text is still a count.
+        try:
+            value = int(value)
+        except ValueError:
+            return None
+    if not isinstance(value, (int, float)):
+        return None
+    return _bounded(int(value)) if value >= 0 else None
 
 
 def sync_row(
@@ -197,6 +232,40 @@ def plan_syncs(
             continue
         rows.append(planned)
     return Plan(rows, skipped)
+
+
+def plan_abandoned(
+    jobs: Iterable[Mapping[str, str]], tick_id: str
+) -> list[dict[str, Any]]:
+    """Mark jobs the sweep can no longer read as unreadable.
+
+    A job that has fallen below the read start will not be asked about again, so
+    its last provisional word would otherwise stand as the page's answer for
+    ever — the page reporting a sync as running long after it stopped being
+    visible. `unknown` is the honest replacement: not a failure, not a success,
+    a state that can no longer be read.
+    """
+    rows = []
+    for job in jobs:
+        job_id = str(job.get("job_id", ""))
+        connector = str(job.get("connector", ""))
+        created = str(job.get("created", ""))
+        if not job_id or not connector or not created:
+            continue
+        rows.append(
+            {
+                "tick_id": tick_id,
+                "job_id": job_id,
+                "connector": connector,
+                "event": SYNC_COMPLETED,
+                "status": vocab.UNKNOWN,
+                "started_at": None,
+                "job_created_at": created,
+                "duration_ms": None,
+                "records_reported": None,
+            }
+        )
+    return rows
 
 
 def _bare_row(tick_id: str, event: str, connector: str) -> dict[str, Any]:

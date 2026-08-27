@@ -61,7 +61,7 @@ a connection in the mover and its job history goes with it; the ledger keeps six
   sweep and its job coverage.
 - History is bounded and survives the mover (FR-2) — drives retention and the decision to
   copy rather than proxy.
-- First sweep backfills retained history (FR-3) — drives the frontier, whose empty state is
+- First sweep backfills retained history (FR-3) — drives the watermark, whose empty state is
   what makes the first sweep read the mover's whole retained window.
 - The configured set is recorded (FR-4) — drives the sealed per-tick snapshot.
 - Facts, not verdicts (FR-7) — drives a wire shape that ships observations and no state enum.
@@ -72,9 +72,11 @@ a connection in the mover and its job history goes with it; the ledger keeps six
 #### NFR Allocation
 
 - **NFR-1 interactive read** — one relation, a sort key whose leading column every read
-  filters on, and no measurement taken while the operator waits.
-- **NFR-2 recording never breaks reconciliation** — every sweep path returns success to its
-  caller; the tick around it cannot abort because observability broke.
+  filters on, aggregates rather than sorts, and no measurement taken while the operator waits.
+  Measured at 42 ms and 5 MiB over two million recorded syncs.
+- **NFR-2 recording never breaks reconciliation** — the sweep's own entry point reports a
+  failed or partial tick, and the shell that calls it swallows that deliberately, so the tick
+  around it cannot abort because observability broke.
 - **NFR-3 idempotent sweep** — coverage is keyed on the mover's own job identity, so
   re-reading the same history adds nothing.
 - **NFR-4 bounded storage** — its own database, outside anything customer-facing, with a TTL.
@@ -152,16 +154,16 @@ construction — a repeated sweep can only add rows that resolve to the same ans
 
 The read-only query-path role gains exactly one thing: `SELECT` on the ledger database. It is
 not a read-only role in general — other databases are create/insert-only for it, which that
-role's own test pins — but on the ledger it reads and nothing more, and a static test over
-the migration fails the moment that changes.
+role's own test pins — but on the ledger it reads and nothing more, and a static test over the
+role definition fails the moment that changes.
 
 #### No compose-stand behaviour beyond degradation
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-constraint-no-compose`
 
 Compose stands run no mover, so nothing records and the ledger stays empty. The surface is
-required only to degrade honestly there (FR-10). Stand tests that need recorded syncs carry
-the ingestion capability and skip with a reason rather than passing over an empty list.
+required only to degrade honestly there (FR-10), and the stand tests assert that degradation
+rather than any recorded figure.
 
 ## 3. Technical Architecture
 
@@ -190,9 +192,15 @@ column the reader and the writer will disagree about.
 | `duration_ms` | between the mover's own two stamps; NULL until terminal | NULL | NULL |
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
 
-Empty rather than NULL where a column is inapplicable to a row class: those columns are
-`LowCardinality(String)`, and every read filters by `event` before touching them, so an
-absent-value type would buy nothing and cost a nullable read on the hot path.
+Empty rather than NULL where a column is inapplicable to a row class. Those columns are
+`String` and `LowCardinality(String)`, and every read filters by `event` before touching
+them, so an absent-value type would buy nothing and cost a nullable read on the hot path.
+
+**Every value is range-checked before it is written.** ClickHouse does not reject an
+out-of-range one — it clamps a `DateTime64` and wraps a `UInt64`. A year-1000 stamp lands as
+1900 and a count above 2^64 lands as a different number, and the page would label both as
+what the mover reported. A stamp or a count the column cannot hold is therefore treated as
+absent, and a job whose creation stamp is unusable is not recorded at all.
 
 **Resolution.** The summary takes, per connector, the newest `sync.completed` by the mover's
 job creation time; the configured set is the membership of the newest *sealed* tick. Sealing
@@ -213,7 +221,7 @@ a status the sweep could not read is one it keeps re-reading until it becomes on
 **Two timestamps, kept apart.** `started_at` is when the mover says the sync began, and is
 absent for a job it has not started. `job_created_at` is when the job was created, which is
 the field the mover's listing is ordered and filtered by — and therefore the axis the sweep's
-own frontier moves along. Substituting one for the other would report a start that never
+own watermark moves along. Substituting one for the other would report a start that never
 happened and still leave the cursor on the wrong axis.
 
 **`job_created_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
@@ -221,16 +229,33 @@ mover returns always carries one; the column is nullable only because snapshot a
 are not about a job at all. A job the mover returns without a creation time is one the planner
 cannot place in time, so it is skipped and logged rather than written with a NULL.
 
-**The resolution is two `LIMIT 1 BY` steps, not `argMax`.** The inner step takes the newest
-ROW per job and the outer step the newest JOB per connector, and the split is load-bearing in
-both directions.
+**The resolution is one aggregate over an ordering tuple.** Per connector the newest row wins
+by `argMax` over
+`(coalesce(job_created_at, ts), toUInt64OrZero(job_id), status IN (terminal), ts)`.
 
-A job seen mid-flight and later seen finished leaves two rows that share one creation time, so
-resolving straight to the newest job would tie between them — and could answer `running` for a
-sync that ended. And `argMax` ignores rows whose value argument is NULL, so a sync row that
-somehow carried no creation time would not merely lose the comparison but take its whole
-connector out of the answer, rendering as absence rather than as unknown. `LIMIT 1 BY` still
-returns a row when every candidate is NULL, which is the failure mode worth preferring.
+Every component earns its place, and each closes a wrong answer that was measured first:
+
+- **`coalesce(job_created_at, ts)`** — NULLs sort last in ClickHouse in BOTH directions, so a
+  job the mover gave no creation stamp for does not merely lose the comparison: a different,
+  older job wins it, and the page presents a stale success as the current state. Falling back
+  to when the row was recorded places the job by a real recorded moment instead.
+- **`toUInt64OrZero(job_id)`** — the mover's ids are numbers stored as text, so comparing them
+  as text makes `"9"` newer than `"10"`.
+- **the terminal flag** — within one job a final row outranks a provisional one whatever the
+  clocks say. Two rows of one job can share a millisecond, and without this the answer is
+  decided by physical row order.
+- **`ts`** — the last resort, newest recorded wins.
+
+**One tuple, not one `argMax` per column.** `argMax` ignores rows whose value argument is
+NULL, so six independent calls answer from six independently-chosen rows: one column from the
+newest job beside another from an older one whose value happened not to be NULL, producing a
+row that never existed. The tuple is never NULL, so one row wins all six.
+
+**An aggregate rather than a sort, for a measured reason.** Ordering the relation by a column
+outside its sort key reads and sorts the whole retention window to answer with one row per
+connector. At two million rows that was 259 MiB and 541 ms against 5 MiB and 42 ms for the
+aggregate — and the service caps its own query memory, so the page whose reason for existing
+is answering during an incident would be the thing that fails first.
 
 ### 3.2 Component Model
 
@@ -246,7 +271,7 @@ the reconcile loop already authenticates to the mover and ticks.
 
 ##### Responsibility scope
 
-Each tick: resolve the frontier from the ledger, page the mover's job listing forward from
+Each tick: resolve the watermark from the ledger, page the mover's job listing forward from
 it, map each job's connection to a connector, plan one row per job the ledger does not
 already hold with a terminal outcome, plan the configured-set snapshot, write the rows, then
 write the seal.
@@ -257,9 +282,10 @@ cover, which recorded rows already close a job, which jobs cannot be placed in t
 
 ##### Responsibility boundaries
 
-Records; never reads back for the page. Cannot abort the reconcile tick around it: every path
-returns success to its caller, and a failure to read any input means the tick records nothing
-rather than sealing a partial picture.
+Records; never reads back for the page. Cannot abort the reconcile tick around it: the shell
+that calls it returns 0 on every path, and a failure to read any input means the tick records
+nothing rather than sealing a partial picture. The sweep itself reports the failure, so the
+swallow is visible at the call site rather than hidden in the worker.
 
 ##### Related components (by ID)
 
@@ -408,16 +434,17 @@ Shape rules that the generated contract enforces:
 - The portal's Manage-zone navigation: the `data-health` item is replaced by this pane; the
   admin-gate wrapper is reused as-is.
 - The reconcile loop's existing mover authentication and tick scheduling.
-- The deployed-stand suite's endpoint coverage gate: contract tests accompany the routes, and
-  the ones needing recorded syncs carry the ingestion capability rather than passing over an
-  empty list.
+- The deployed-stand suite's endpoint coverage gate: contract tests accompany the routes. They
+  assert the shape, the gate and the two honesty properties, and no figure — a compose stand
+  runs no mover, so the ledger is legitimately empty there and a count would pin the suite to
+  a stand that happened to have been seeded.
 
 ### 3.5 External Dependencies
 
 #### Data mover job listing
 
-The sweep reads the mover's public job listing, paged, with four query parameters: the job
-type, ascending creation order, the page, and a creation-time floor. Per entry it takes the
+The sweep reads the mover's public job listing, paged, with five query parameters: the job
+type, ascending creation order, the page's size and offset, and a creation-time floor. Per entry it takes the
 job's identity, its connection, its status, its creation and start stamps, its duration and
 its reported record count — all flat on the entry, all as the listing spells them.
 
@@ -453,8 +480,9 @@ sequenceDiagram
     participant M as Data mover
     participant L as Sync ledger
 
-    R->>L: oldest job still open, else the newest recorded
+    R->>L: oldest job still open (floored), or the newest recorded
     L-->>R: watermark (empty ⇒ backfill everything)
+    R->>L: jobs already closed at or after the watermark
     R->>M: list sync jobs from the watermark, oldest first, paged
     M-->>R: jobs with status, stamps, duration, reported records
     R->>R: map each job's connection to a connector
@@ -474,7 +502,35 @@ runs. No assumption about how many jobs the mover runs at once is needed for tha
 A job the ledger already holds with a terminal status is planned away rather than re-recorded,
 so the re-read costs rows only for jobs that are genuinely still open.
 
-The seal is written last, so a snapshot read never names a tick whose rows are still arriving.
+**The watermark is floored a bounded distance behind the newest recorded job.** Without a
+floor one job that can never close pins the read start for ever, and three inputs produce one:
+a connection deleted while a job was running, so the mover drops the job and its last recorded
+word stays provisional; a status word a later mover release adds, stored as `unknown`, which
+is deliberately non-terminal; and a creation stamp the column cannot hold. Once the start is
+pinned and more jobs than one tick may read sit above it, the newest syncs stop being read at
+all and the page freezes on stale data with only a log line to say so.
+
+**The floor's cost is paid explicitly.** A job open longer than the floor will never be asked
+about again, so its last provisional word would stand as the page's answer indefinitely — the
+page reporting a sync as running long after it stopped being visible. Each tick therefore
+names the jobs that have fallen below its own read start and records their state as `unknown`:
+not a failure, not a success, a state that can no longer be read. That marker also takes the
+job out of the search, so it is written once rather than once a tick.
+
+**The read is bounded in time as well as in pages.** The page cap alone bounds nothing in
+wall-clock: enough slow pages outlive the tick's own deadline, and a tick killed part-way
+never reaches its summary — so the run reads as aborted and the next one is skipped by the
+concurrency policy. Returning success from every sweep path does not protect a tick from a
+sweep that simply takes too long.
+
+**A tick that did not read the mover does not seal.** The seal is what dates the page, so
+sealing anyway would keep an install whose mover is unreachable reporting that it was just
+checked — and the page could then never say recording had stopped (FR-12). The configured-set
+snapshot goes unwritten with it: an unsealed snapshot is unreadable by construction, so
+writing one would be recording nothing anybody reads.
+
+Otherwise the seal is written last, so a snapshot read never names a tick whose rows are still
+arriving.
 
 #### Page read
 
@@ -487,7 +543,8 @@ sequenceDiagram
     participant L as Sync ledger
 
     P->>A: GET /v1/connector-health
-    A->>L: newest sealed tick, and the gaps between the recent ones
+    A->>L: newest sealed tick
+    A->>L: gaps between the recent sealed ticks
     A->>L: newest sync per connector
     A->>L: configured set at that tick
     A-->>P: one row per connector, ordered by attention
@@ -496,9 +553,13 @@ sequenceDiagram
     A-->>P: bounded window, newest first
 ```
 
-The sealed tick is resolved once and bound into the snapshot reads. Resolving it per statement
-would let a sweep landing between two of them answer with the newer configured set beside the
-older facts — a state that never existed on any tick.
+The sealed tick is resolved first and bound into the configured-set read. Resolving it per
+statement would let a sweep landing between two of them answer with the newer configured set
+beside the older facts — a state that never existed on any tick.
+
+The remaining three run concurrently once the tick is known. The gap measurement is bound to
+nothing, which is correct: it describes the recorder's own cadence rather than any tick's
+facts.
 
 ### 3.7 Database schemas & tables
 
@@ -519,7 +580,7 @@ customer extracts, which must never carry service rows.
 | `event` | `LowCardinality(String)` | `sync.completed` \| `connector.configured` \| `sweep.completed` |
 | `status` | `LowCardinality(String)` | on a sync row, the mover's own word or `unknown`; empty elsewhere |
 | `started_at` | `Nullable(DateTime64(3, 'UTC'))` | when the mover says the sync began; NULL for a job it has not started |
-| `job_created_at` | `Nullable(DateTime64(3, 'UTC'))` | when the job was created — the axis the frontier moves along; never NULL on a sync row |
+| `job_created_at` | `Nullable(DateTime64(3, 'UTC'))` | when the job was created — the axis the watermark moves along; never NULL on a sync row |
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
 
@@ -531,8 +592,9 @@ have nothing to say to each other:
 
 | Read | Narrowed by |
 |---|---|
-| the newest sealed tick | `event` |
-| the newest sync per connector | `event`, grouped along `connector` |
+| the newest sealed tick | `event`, then one row off the top |
+| the gaps between the recent sealed ticks | `event`, then twenty rows off the top |
+| the newest sync per connector | `event`, then aggregated by `connector` |
 | one connector's recent syncs | `event`, `connector` |
 | the configured set of a given tick | `event`; `tick_id` is filtered, not indexed |
 
@@ -540,11 +602,16 @@ Only the last falls back to a filter. Leading with `tick_id` instead would narro
 cost of the per-connector expansion — the one read an operator actually waits on — so the
 filter stays, bounded by the size below rather than by the key.
 
-**Size.** Sync rows arrive at one or two per sync: one when a job is first seen in flight,
-one when it ends. They grow with sync activity, not with time. Snapshot rows arrive at one
-per configured connector per tick plus one seal, so at the chart's default reconcile cadence
-of every fifteen minutes that is 96 × (connectors + 1) rows a day, against roughly 17,500
-ticks inside a six-month retention. The snapshot class therefore dominates the table and is
+**Size.** Two row classes, and neither grows without a bound.
+
+Sync rows arrive at one or two per sync — one when a job is first seen in flight, one when it
+ends — plus one per tick for as long as a job stays open. A job that never closes would
+therefore accrue a row per tick indefinitely, which is what the sweep's read floor exists to
+bound rather than the table.
+
+Snapshot rows arrive at one per configured connector per tick plus one seal, so at the chart's
+default reconcile cadence of every fifteen minutes that is 96 × (connectors + 1) rows a day,
+against roughly 17,500 ticks inside a six-month retention. The snapshot class dominates and is
 what retention is sized against. If it ever stops being negligible, writing the snapshot only
 when the managed set changes removes the class without changing what any read resolves.
 
@@ -572,9 +639,10 @@ user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUN
 
 | Change | Where it lands |
 |---|---|
-| ledger table and grant | ClickHouse migration, applied by the post-upgrade hook |
+| ledger table | ClickHouse migration, applied by the post-upgrade hook |
+| ledger grant | the query-path role's definition, applied by the same hook before the migrations |
 | sweep | the reconcile loop's existing image and CronWorkflow |
-| horizon-free configuration | none — the sweep needs no new chart value |
+| configuration | none — the sweep reuses the credentials the reconcile loop already holds |
 | two routes | analytics service |
 | pane | portal bundle |
 
@@ -593,9 +661,9 @@ and the read surface is two more routes on a service that already serves the por
   not worth carrying that hazard for a first iteration.
 - **Transform outcome.** Same reason: only the pipeline knows it.
 - **How a sync was started.** The mover's listing does not say, and inferring it means
-  correlating against the workflow layer's own records — a second uncertain source, with a
-  trust horizon of its own, to answer a question the page cannot act on without the transform
-  outcome anyway.
+  correlating against the workflow layer's own records — a second uncertain source, needing its
+  own rules about how far back an absence counts as evidence, to answer a question the page
+  cannot act on without the transform outcome anyway.
 - **Per-stream volume.** Reading it means either granting the reader bronze access, which the
   constraint above forbids, or recording it per tick, which grows the table with streams
   rather than with syncs.

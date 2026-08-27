@@ -28,7 +28,7 @@ import threading
 import unittest
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Self
@@ -50,8 +50,18 @@ DAY = "2026-08-27"
 
 
 def _stamp(hour_offset: int) -> str:
-    """An ISO-8601 stamp, the shape the listing sends."""
-    return f"{DAY}T{BASE_HOUR + hour_offset:02d}:00:00Z"
+    """An ISO-8601 stamp, the shape the listing sends.
+
+    Anchored to a fixed day and offset in hours, so a test can name a moment
+    before the fixtures (a negative offset) without arithmetic at the call site.
+    """
+    moment = datetime(2026, 8, 27, BASE_HOUR, tzinfo=UTC) + timedelta(hours=hour_offset)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ch_stamp(iso: str) -> str:
+    """The ledger's own stamp form, for a direct INSERT."""
+    return iso.replace("T", " ").replace("Z", "") + ".000"
 
 
 def _parse_iso(stamp: str) -> datetime:
@@ -341,12 +351,128 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         self.assertEqual(_count(f"SELECT count() AS n FROM {TABLE}"), 0)
 
     def test_an_unreachable_mover_records_nothing_and_does_not_seal(self) -> None:
-        # No stub server running: every listing call fails.
+        """The seal dates the page, so an unread tick must not place one.
+
+        Sealing anyway would keep `checked_at` advancing on an install whose
+        mover is unreachable — the page would report that it was just checked
+        for ever, and could never say recording had stopped.
+        """
+        # No stub server running: the listing call fails.
         code = self._tick("tick-y")
         self.assertEqual(code, 1, "the caller learns the tick was incomplete")
+        for event in ("sync.completed", "connector.configured", "sweep.completed"):
+            self.assertEqual(
+                _count(
+                    f"SELECT count() AS n FROM {TABLE} WHERE event = '{event}'"
+                ),
+                0,
+                f"an unread tick must write no {event} row",
+            )
+
+    def test_a_connector_awaiting_its_first_connection_is_still_configured(self) -> None:
+        """Configured is the first thing the page answers, and it does not
+        depend on whether the mover has caught up yet."""
+        work = json.dumps(
+            {
+                "tick_id": "tick-w",
+                "connectors": [
+                    {"name": CONNECTOR, "connection_id": CONNECTION},
+                    {"name": "awaiting-connection"},
+                ],
+            }
+        )
+        with _StubMover():
+            self.assertEqual(self.entry.run(io.StringIO(work)), 0)
+
+        configured = {
+            row["connector"]
+            for row in _rows(
+                f"SELECT connector FROM {TABLE} WHERE event = 'connector.configured'"
+            )
+        }
+        self.assertEqual(configured, {CONNECTOR, "awaiting-connection"})
+
+    def test_a_job_that_fell_below_the_read_start_stops_reading_as_running(self) -> None:
+        """The floor's own cost, paid honestly.
+
+        A job open longer than the floor will never be asked about again, so its
+        last provisional word would otherwise stand as the page's answer for
+        ever — the page reporting a sync as running long after it stopped being
+        visible. The sweep records what is true instead: its state can no longer
+        be read.
+        """
+        stale = _stamp(-24 * 60)
+        _query(
+            f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
+            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            f"(now64(3), 'old', 'stranded', '{CONNECTOR}', 'sync.completed', 'running', "
+            f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
+        )
+        with _StubMover():
+            # Two ticks: the read start is resolved before this tick's rows
+            # land, so the floor only moves past the stranded job once newer
+            # jobs are recorded. One tick of delay, and it settles itself.
+            self._tick("tick-a")
+            self._tick("tick-b")
+
+        resolved = _rows(
+            f"SELECT status FROM {TABLE} WHERE event = 'sync.completed' "
+            "AND job_id = 'stranded' ORDER BY ts DESC LIMIT 1"
+        )
         self.assertEqual(
-            _count(f"SELECT count() AS n FROM {TABLE} WHERE event = 'sync.completed'"),
-            0,
+            resolved[0]["status"],
+            "unknown",
+            "a job the sweep can no longer see must not keep reading as running",
+        )
+
+    def test_a_stranded_job_is_marked_once_and_not_every_tick(self) -> None:
+        """`unknown` is what stops the job being named again.
+
+        The marker is a row like any other, so without excluding an
+        already-marked job from the search the sweep would write one per tick for
+        ever. `unknown` earns its place in that exclusion here and nowhere else:
+        it stays NON-terminal for coverage, because an unreadable status is one
+        to keep re-reading while the job is still in the window.
+        """
+        stale = _stamp(-24 * 60)
+        _query(
+            f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
+            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            f"(now64(3), 'old', 'stranded', '{CONNECTOR}', 'sync.completed', 'running', "
+            f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
+        )
+        with _StubMover():
+            self._tick("tick-a")
+            self._tick("tick-b")
+            self._tick("tick-c")
+
+        markers = _count(
+            f"SELECT count() AS n FROM {TABLE} WHERE job_id = 'stranded' "
+            "AND status = 'unknown'"
+        )
+        self.assertEqual(markers, 1, "the marker must settle, not repeat")
+
+    def test_a_stuck_open_job_does_not_pin_the_watermark_for_ever(self) -> None:
+        """One job that can never close would otherwise drag the read start back
+        to its own creation time on every tick, until more jobs than a tick may
+        read sit above it and the newest syncs stop being read at all."""
+        stale = _stamp(-24 * 60)  # a month back, in the same shape the mover sends
+        _query(
+            f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
+            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            f"(now64(3), 'old', 'stuck', '{CONNECTOR}', 'sync.completed', 'running', "
+            f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
+        )
+        with _StubMover() as mover:
+            self._tick("tick-a")
+            mover.requests.clear()
+            self._tick("tick-b")
+
+        since = _parse_iso(mover.requests[0]["createdAtStart"])
+        self.assertGreater(
+            since,
+            _parse_iso(stale),
+            "the stuck job must not hold the read start at its own creation time",
         )
 
 

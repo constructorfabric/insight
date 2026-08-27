@@ -49,8 +49,9 @@ current Data health pane and the sketch in
 ### 1.1 Purpose
 
 Give the instance operator one admin surface that answers, per connector: is it configured,
-when did its last sync run, how did that sync end, and how often has it been failing. The
-surface reports recorded facts about syncs; it never infers a verdict it cannot back.
+when did its last sync run, and how did that sync end — and, on expanding the row, how often
+it has been failing. The surface reports recorded facts about syncs; it never infers a verdict
+it cannot back.
 
 ### 1.2 Background / Problem Statement
 
@@ -93,9 +94,8 @@ Two failure classes are invisible today even to a diligent operator reading dash
 | **Connector** | one ingestion source type configured on the install; its raw data lands in a per-connector bronze schema |
 | **Sync** | one execution of the data mover for one connector's connection |
 | **Sync ledger** | the append-only record of sync outcomes this PRD introduces |
-| **Sweep** | the periodic reconciliation that copies sync outcomes from the mover's job history into the ledger |
-| **Configured connector** | a connector present in the reconcile controller's latest recorded snapshot of the set it manages; absence from the latest snapshot means no longer configured |
-| **Honest unknown** | a value the system does not know rendered as unknown, never as zero or as healthy |
+| **Sweep** | the periodic reconciliation that copies sync outcomes from the mover's job history into the ledger, and records which connectors it manages |
+| **Configured connector** | a connector present in the controller's newest COMPLETE snapshot of the set it manages; absence from that snapshot means no longer configured. A snapshot still being written is not one |
 | **Reported records** | the record count the mover states for a sync. It describes what the mover sent, not what storage kept |
 
 ## 2. Actors
@@ -216,9 +216,10 @@ reachable.
 - [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-all-syncs-recorded`
 
 Sync outcome, start time, duration and the mover's reported record count are recorded for
-every job in the mover's history, whatever started it. Each record carries the mover's job
-identity, so re-reading the same history changes nothing. A sync appears in the ledger no
-later than one sweep interval after the mover reports it.
+every sync job in the mover's history, whatever started it. Each record carries the mover's
+job identity, so re-reading the same history changes nothing. In steady state a sync appears
+in the ledger no later than one sweep interval after the mover reports it; while a backfill is
+still catching up it appears within the passes that backfill takes (FR-3).
 
 A job the mover has not finished is recorded with the outcome it has, and re-recorded on a
 later tick once it ends: a provisional state never closes a job.
@@ -324,7 +325,8 @@ stopped and the connector states shown may no longer be current.
 
 Both the age and the interval are recorded facts, so the page asserts nothing about a
 schedule it cannot see. Where too few reads are recorded to establish an interval, the page
-shows the age alone.
+shows the age and says the cadence is unmeasured — it does not conclude that recording
+stopped, because with no cadence recorded there is nothing for the age to be late against.
 
 ## 6. Non-Functional Requirements
 
@@ -448,6 +450,13 @@ it; listing it would mean reading storage the reader deliberately holds no acces
 - [ ] The page dates itself by when the mover was last read; with recording stopped long
       enough to stand out against the preceding reads, it says so rather than presenting the
       last picture as current (FR-12).
+- [ ] Rows sort worst-first: failing, then unreadable, then quiet, with never-ran and
+      no-longer-configured last, and most recent activity first inside a band (FR-8).
+- [ ] Before any tick has sealed, the page states that nothing has been read rather than
+      rendering an empty install as healthy (FR-10).
+- [ ] The summary answers within its budget with a full retention window recorded (NFR-1).
+- [ ] Ledger growth is bounded by retention, and no connector's history can grow it without
+      bound (NFR-4).
 - [ ] A sweep failure does not abort connector reconciliation (NFR-2); a repeated sweep does
       not change reported state (NFR-3).
 

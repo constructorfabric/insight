@@ -11,6 +11,10 @@ import { useAuth } from "@/auth/use-auth";
 
 const KEY = ["connector-health"] as const;
 
+/** How often the open page asks again. Well inside the reconcile cadence, so
+ * the age it prints is never more than a minute behind the truth. */
+const RECHECK_MS = 60_000;
+
 export function useConnectorHealth(): UseQueryResult<ConnectorHealthSummary> {
   const { session } = useAuth();
   return useQuery({
@@ -21,6 +25,11 @@ export function useConnectorHealth(): UseQueryResult<ConnectorHealthSummary> {
     // recorded when they last looked.
     staleTime: 0,
     refetchOnMount: "always",
+    // INVARIANT: the page's own freshness line is the gap between two stamps
+    // the SERVER sent, so it does not move on its own. Without this the age
+    // freezes the moment the page renders, and an operator watching an incident
+    // would never see recording stop.
+    refetchInterval: RECHECK_MS,
   });
 }
 

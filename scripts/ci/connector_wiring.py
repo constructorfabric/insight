@@ -25,14 +25,15 @@ Checks
                   silver models drop out of any regenerated DDL snapshot.
   3. depends_on — that same connector MUST be declared in class_people.sql's
                   `depends_on` list, per the convention stated in that file.
-  4. name-shape — a connector name MUST NOT contain an underscore. The
-                  connector-health surface parses the name out of a URL path
-                  and accepts lowercase letters, digits and hyphens, so a name
-                  carrying an underscore makes that connector's sync history
-                  unreachable — a 400 on a row the page has already drawn.
-                  (Bronze schemas are named `bronze_<name with - turned into
-                  _>`, so the hyphen-only shape also keeps that mapping
-                  reversible.)
+  4. name-shape — a connector name MUST be non-empty, at most 64 characters,
+                  built only of lowercase letters, digits and hyphens, and must
+                  neither start nor end with a hyphen. That is the vocabulary
+                  the connector-health route's own parser accepts
+                  (`domain/connector_health/name.rs`), and it parses the name
+                  out of a URL path — so a name outside it makes that
+                  connector's sync history unreachable behind a row the page
+                  has already drawn. (The hyphen-only shape also keeps the
+                  `bronze_<name with - turned into _>` mapping reversible.)
   5. cast-types — contributors MUST NOT explicitly cast the same class_people
                   column to different types; `union_by_tag` UNION ALLs the
                   branches and ClickHouse raises Code 386 NO_COMMON_TYPE.
@@ -86,6 +87,30 @@ def _class_people_models(connector_dir: Path) -> list[Path]:
     return [p for p in sorted(dbt_dir.glob("*.sql")) if CLASS_PEOPLE_TAG in p.read_text()]
 
 
+#: The route's parser budget, in characters.
+MAX_CONNECTOR_NAME = 64
+
+
+def _name_complaints(name: str) -> list[str]:
+    """Every way this name differs from what the read surface will accept."""
+    if not name:
+        return ["is empty"]
+
+    complaints = []
+    if len(name) > MAX_CONNECTOR_NAME:
+        complaints.append(f"is longer than {MAX_CONNECTOR_NAME} characters")
+    if name.startswith("-") or name.endswith("-"):
+        complaints.append("starts or ends with a hyphen")
+
+    bad = sorted({c for c in name if not (c.isascii() and (c.islower() or c.isdigit()) or c == "-")})
+    if bad:
+        spelled = ", ".join(repr(c) for c in bad)
+        complaints.append(
+            f"carries {spelled} — use lowercase letters, digits and hyphens only"
+        )
+    return complaints
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--connectors-root", default="src/ingestion/connectors")
@@ -125,16 +150,12 @@ def main(argv: list[str]) -> int:
         images = descriptor.get("images") or {}
 
         # ── name shape ───────────────────────────────────────────────────────
-        # INVARIANT: the connector-health route's own parser accepts lowercase
-        # letters, digits and hyphens. See check 4 above.
+        # INVARIANT: mirrors `ConnectorName::parse` exactly. See check 4 above.
+        # Every rule it enforces is enforced here, or a descriptor passes CI and
+        # then draws a page row whose drill-down answers 400 for ever.
         name = str(descriptor.get("name", ""))
-        if "_" in name:
-            errors.append(
-                f"{rel}: connector name {name!r} carries an underscore. Use "
-                "hyphens: the connector-health route parses the name from a "
-                "URL path and refuses one, so this connector's sync history "
-                "would be unreachable."
-            )
+        for complaint in _name_complaints(name):
+            errors.append(f"{rel}: connector name {name!r} {complaint}")
 
         # ── 1. semver ────────────────────────────────────────────────────────
         if not SEMVER_RE.match(version):

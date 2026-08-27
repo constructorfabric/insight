@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +31,16 @@ PAGE_SIZE = 100
 #: A termination backstop, not a coverage bound. Ascending order makes a stop
 #: resumable, so this caps one tick and never what the ledger ends up holding.
 MAX_PAGES = 50
+
+#: The whole listing read's budget, across every page.
+#:
+#: INVARIANT: must stay well under the workflow pod's own deadline. `MAX_PAGES`
+#: alone bounds nothing in time — fifty pages at the per-request timeout is
+#: longer than the tick is allowed to live, and a tick killed part-way never
+#: reaches its own summary line, so the run reads as aborted and the next one is
+#: skipped. `sweep_run` returning 0 on every path does not protect a tick from a
+#: sweep that simply takes too long.
+BUDGET_SECS = 300
 
 
 class MoverError(RuntimeError):
@@ -57,17 +68,28 @@ class Mover:
     def sync_jobs(self, created_at_start: str | None) -> tuple[list[dict[str, Any]], bool]:
         """Every sync job created at or after the watermark, oldest first.
 
-        Returns the entries and whether the page cap stopped the read.
+        Returns the entries and whether the read stopped short — of the page cap
+        or of the time budget. Either way what was collected is contiguous from
+        the watermark, so a short read is a delay rather than a gap.
         """
+        deadline = time.monotonic() + BUDGET_SECS
         collected: list[dict[str, Any]] = []
         for page in range(MAX_PAGES):
-            entries = self._page(page * PAGE_SIZE, created_at_start)
+            entries, served = self._page(page * PAGE_SIZE, created_at_start)
             collected.extend(entries)
-            if len(entries) < PAGE_SIZE:
+            # INVARIANT: measured against what the server SERVED, not what
+            # survived filtering. A full page carrying one unusable element
+            # would otherwise look like a short page, and a read that stopped
+            # half way would report itself complete.
+            if served < PAGE_SIZE:
                 return collected, False
+            if time.monotonic() >= deadline:
+                return collected, True
         return collected, True
 
-    def _page(self, offset: int, created_at_start: str | None) -> list[dict[str, Any]]:
+    def _page(
+        self, offset: int, created_at_start: str | None
+    ) -> tuple[list[dict[str, Any]], int]:
         query = {
             "jobType": "sync",
             "orderBy": "createdAt|ASC",
@@ -82,7 +104,8 @@ class Mover:
         entries = payload.get("data")
         if not isinstance(entries, list):
             raise MoverError("job listing carries no data array")
-        return [entry for entry in entries if isinstance(entry, dict)]
+        usable = [entry for entry in entries if isinstance(entry, dict)]
+        return usable, len(entries)
 
     def _get(self, path: str) -> dict[str, Any]:
         request = urllib.request.Request(self._url + path, method="GET")

@@ -50,7 +50,7 @@ function row(over: Partial<ConnectorHealth> = {}): ConnectorHealth {
 describe("what a row says", () => {
   it("gives every recorded status its own word", () => {
     const words: Record<SyncStatus, string> = {
-      pending: "syncing",
+      pending: "queued",
       running: "syncing",
       incomplete: "sync incomplete",
       succeeded: "sync ok",
@@ -109,11 +109,59 @@ describe("what a row says", () => {
     expect(murky.tone).not.toBe("idle");
   });
 
+  it("keeps queued apart from syncing", () => {
+    // Merging them makes a row say "syncing" beside a start of "—", and erases
+    // the only signal separating "not picked up" from "running now".
+    const queued = describeConnector(row({ last_sync: sync({ status: "pending" }) }));
+    const running = describeConnector(row({ last_sync: sync({ status: "running" }) }));
+    expect(queued.state).not.toBe(running.state);
+    expect(queued.label).not.toBe(running.label);
+  });
+
+  it("reads a status this build has never heard of as unreadable", () => {
+    // The contract types status as a bare string, so the mover's vocabulary can
+    // grow without this build changing. That must not crash and must not be
+    // filed as quiet.
+    const view = describeConnector(
+      row({ last_sync: sync({ status: "materialising" as never }) }),
+    );
+    expect(view.state).toBe("state_unknown");
+    expect(view.tone).toBe("unknown");
+  });
+
   it("carries a word for every tone, so colour is never the only signal", () => {
     const statuses: SyncStatus[] = ["succeeded", "failed", "running", "unknown"];
     for (const status of statuses) {
       expect(describeSync(sync({ status })).label.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("a contract-legal response with absent keys", () => {
+  // Every nullable field is optional in the generated contract, so the key can
+  // be missing rather than null. Typing them as `T | null` let `tsc` believe
+  // otherwise, and the page threw on a legal response.
+  it("a row with no last_sync key reads as never synced", () => {
+    const view = describeConnector({ connector: "a", configured: true });
+    expect(view.state).toBe("never_synced");
+  });
+
+  it("absent measurements print as absence rather than throwing", () => {
+    expect(formatRecords(undefined)).toBe(UNMEASURED);
+    expect(formatDuration(undefined)).toBe(UNMEASURED);
+    expect(formatStarted(undefined)).toBe(UNMEASURED);
+  });
+
+  it("a summary with no checked_at key says nothing has been read", () => {
+    const view = describeRecording({
+      as_of: "2026-01-15T12:00:00.000Z",
+      history_available: true,
+    });
+    expect(view.state).toBe("never_read");
+  });
+
+  it("a sync with no status at all is unreadable, not quiet", () => {
+    expect(describeSync({ job_id: "1" } as never).state).toBe("state_unknown");
   });
 });
 
@@ -139,6 +187,29 @@ describe("an unmeasured value is not a zero", () => {
     expect(formatDuration(90_000)).toBe("1m 30s");
     expect(formatDuration(3_930_000)).toBe("1h 5m");
   });
+
+  it("never carries sixty of the unit below", () => {
+    // Rounding each unit independently produces `1m 60s` and `60.0 s`, neither
+    // of which is a duration.
+    expect(formatDuration(119_600)).toBe("2m 0s");
+    expect(formatDuration(59_950)).toBe("1m 0s");
+    expect(formatDuration(3_599_600)).toBe("1h 0m");
+  });
+
+  it("prints a malformed measurement as absence, not as a number", () => {
+    expect(formatDuration(-5_000)).toBe(UNMEASURED);
+    expect(formatRecords(-1)).toBe(UNMEASURED);
+    expect(formatDuration(Number.NaN)).toBe(UNMEASURED);
+  });
+
+  it("refuses a stamp that is not a real timestamp", () => {
+    // `Date.parse` reads "2026" and "0" as dates, so a truncated stamp would
+    // render as a confident absolute time.
+    for (const junk of ["2026", "0", "yesterday", "2026-13-45T99:99:99Z"]) {
+      expect(formatStarted(junk)).toBe(UNMEASURED);
+    }
+    expect(formatStarted("2026-01-15T09:00:00.000Z")).toBe("2026-01-15 09:00:00Z");
+  });
 });
 
 describe("what the page says about its own freshness", () => {
@@ -150,56 +221,99 @@ describe("what the page says about its own freshness", () => {
     ...over,
   });
 
+  const checkedAgo = (ms: number) =>
+    new Date(Date.parse("2026-01-15T12:00:00.000Z") - ms).toISOString();
+
   it("says nothing has been read rather than implying health", () => {
     const view = describeRecording(summary({ history_available: false }));
     expect(view.state).toBe("never_read");
     expect(view.label).not.toMatch(/healthy|ok|fine/i);
   });
 
-  it("says nothing has been read when no tick has sealed", () => {
-    expect(describeRecording(summary({ checked_at: null })).state).toBe(
-      "never_read",
-    );
-  });
-
   it("presents recent facts as current", () => {
     expect(describeRecording(summary()).state).toBe("current");
   });
 
-  it("tolerates one missed read", () => {
+  it("tolerates one missed read but not three", () => {
+    const interval = 15 * MINUTE;
+    // Just inside the threshold, and just past it — the boundary the multiplier
+    // actually decides, rather than a value nowhere near it.
+    expect(
+      describeRecording(
+        summary({ checked_at: checkedAgo(interval * STALE_AFTER_INTERVALS) }),
+      ).state,
+    ).toBe("current");
+    expect(
+      describeRecording(
+        summary({ checked_at: checkedAgo(interval * STALE_AFTER_INTERVALS + 1) }),
+      ).state,
+    ).toBe("stopped");
+  });
+
+  it("states the age without claiming a stop it cannot support", () => {
+    // With no measured interval there is no cadence to be late against.
+    // Inventing a threshold here would have the page conclude something
+    // nothing in the record says — so it reports the age and says the cadence
+    // is unknown.
     const view = describeRecording(
-      summary({ checked_at: "2026-01-15T11:40:00.000Z" }),
+      summary({ typical_read_interval_ms: null, checked_at: checkedAgo(6 * 60 * MINUTE) }),
+    );
+    expect(view.state).toBe("unmeasured");
+    expect(view.label).toMatch(/last checked 6 h ago/i);
+    expect(view.label).not.toMatch(/stopped/i);
+    expect(view.detail).toMatch(/too few reads/i);
+  });
+
+  it("treats a zero measured interval as no measurement at all", () => {
+    // Two ticks inside one millisecond make the median zero, which is not a
+    // cadence either.
+    const view = describeRecording(
+      summary({ typical_read_interval_ms: 0, checked_at: checkedAgo(6 * 60 * MINUTE) }),
+    );
+    expect(view.state).toBe("unmeasured");
+  });
+
+  it("still says the age is long, so the fact is not hidden", () => {
+    const view = describeRecording(
+      summary({ typical_read_interval_ms: null, checked_at: checkedAgo(200 * 24 * 60 * MINUTE) }),
+    );
+    expect(view.label).toMatch(/200 d ago/);
+  });
+
+  it("does not cry stopped because a burst shortened the interval", () => {
+    // A restart loop or a manual tick drags the median down; multiplying that
+    // by three would flag a live install.
+    const view = describeRecording(
+      summary({ typical_read_interval_ms: 1_000, checked_at: checkedAgo(5 * MINUTE) }),
     );
     expect(view.state).toBe("current");
   });
 
-  it("stops presenting its facts as current once recording has plainly stopped", () => {
-    // Past STALE_AFTER_INTERVALS of the measured interval.
-    const age = 15 * MINUTE * (STALE_AFTER_INTERVALS + 1);
-    const checked = new Date(
-      Date.parse("2026-01-15T12:00:00.000Z") - age,
-    ).toISOString();
-    const view = describeRecording(summary({ checked_at: checked }));
-    expect(view.state).toBe("stopped");
-    expect(view.detail).toMatch(/may no longer be current/i);
-  });
-
-  it("claims nothing about a cadence it has not measured", () => {
-    // With no measured interval there is nothing to compare an age against, so
-    // the page reports the age and stops there.
+  it("does not let a long measured interval hide a stopped recorder", () => {
+    // Clamped to an hour, so three of them is three hours.
     const view = describeRecording(
       summary({
-        typical_read_interval_ms: null,
-        checked_at: "2026-01-01T00:00:00.000Z",
+        typical_read_interval_ms: 30 * 24 * 60 * MINUTE,
+        checked_at: checkedAgo(4 * 60 * MINUTE),
       }),
     );
-    expect(view.state).toBe("current");
-    expect(view.label).toMatch(/last checked/i);
+    expect(view.state).toBe("stopped");
   });
 
-  it("survives an unreadable stamp without asserting a time", () => {
-    const view = describeRecording(summary({ checked_at: "nope" }));
-    expect(view.label).toMatch(/unreadable/i);
+  it("dates nothing when the two clocks disagree", () => {
+    // `checked_at` after `as_of` means neither stamp can date the page.
+    // Reporting "just now" there asserts a freshness with no basis.
+    const view = describeRecording(
+      summary({ checked_at: "2026-01-16T00:00:00.000Z" }),
+    );
+    expect(view.state).toBe("unreadable");
+    expect(view.label).not.toMatch(/just now/i);
+  });
+
+  it("dates nothing when a stamp will not parse", () => {
+    expect(describeRecording(summary({ checked_at: "nope" })).state).toBe(
+      "unreadable",
+    );
   });
 });
 

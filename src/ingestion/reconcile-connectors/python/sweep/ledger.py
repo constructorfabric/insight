@@ -21,9 +21,27 @@ TABLE = "ingestion_history.sync_events"
 
 _TIMEOUT_SECS = 30
 
+#: How far behind the newest recorded job the watermark may be dragged by a job
+#: that never closes. Long enough that no real sync is missed by it; short
+#: enough that a stuck job costs one bounded re-read per tick rather than the
+#: whole retention window.
+LOOKBACK_DAYS = 7
+
 #: `LowCardinality(String)` and quoted into SQL below, so the vocabulary is
 #: rendered rather than bound. Everything here is a literal from this module.
 _TERMINAL_LIST = ", ".join(f"'{word}'" for word in sorted(vocab.TERMINAL_STATUSES))
+
+#: What stops a job counting as open for the read start.
+#:
+#: `UNKNOWN` joins the terminal words here and only here. It stays NON-terminal
+#: for coverage, because an unreadable status is one to keep re-reading while the
+#: job is still in the window. What this list adds is that an already-marked job
+#: is neither searched for again — the marker would otherwise be written once a
+#: tick for ever — nor allowed to drag the read start back to its own creation
+#: time.
+_OPEN_EXCLUDED = ", ".join(
+    f"'{word}'" for word in sorted({*vocab.TERMINAL_STATUSES, vocab.UNKNOWN})
+)
 
 
 class LedgerError(RuntimeError):
@@ -86,25 +104,35 @@ class Ledger:
 
         Not the newest job recorded: that is the one most likely still running,
         and a watermark standing on it would never let a later tick see how it
-        ended — the page would show a sync running forever.
+        ended — the page would show a sync running for ever. So it stands on the
+        oldest job still open, and only when nothing is open does it move up to
+        the newest job recorded.
 
-        So the watermark is the oldest job still open, and only when nothing is
-        open does it move up to the newest job recorded. Every unfinished job
-        therefore stays at or above the line and is re-read until it closes,
-        which costs one duplicate row per tick while it runs. No assumption
-        about how many jobs the mover runs at once is needed for that to hold.
+        INVARIANT: floored at `LOOKBACK_DAYS` behind the newest recorded job.
+        Without a floor, one job that can never close pins the read start for
+        ever — and three inputs produce one: a connection deleted while a job
+        was running (the mover drops the job, so its last recorded word stays
+        provisional), a status word a later mover release adds (stored as
+        `unknown`, which is deliberately non-terminal), and a creation stamp the
+        column cannot hold. Once the start is pinned and more jobs than one tick
+        may read sit above it, the newest syncs stop being read at all and the
+        page freezes on stale data with only a log line to say so.
 
         None means nothing is recorded yet, and the first sweep reads the whole
         retained history.
         """
         rows = self._select(
-            "SELECT toString(coalesce(min(if(open, job_created_at, NULL)), "
-            "max(job_created_at))) AS watermark FROM ("
-            "  SELECT job_created_at, "
-            f"    status NOT IN ({_TERMINAL_LIST}) AS open "
-            f"  FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
-            "    AND job_created_at IS NOT NULL "
-            "  ORDER BY job_id, ts DESC LIMIT 1 BY job_id)"
+            "SELECT toString(if(open_count > 0, "
+            f"    greatest(oldest_open, newest - INTERVAL {LOOKBACK_DAYS} DAY), "
+            "    newest)) AS watermark "
+            "FROM (SELECT countIf(open) AS open_count, "
+            "             min(if(open, job_created_at, NULL)) AS oldest_open, "
+            "             max(job_created_at) AS newest "
+            "      FROM (SELECT job_created_at, "
+            f"                   status NOT IN ({_OPEN_EXCLUDED}) AS open "
+            f"            FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
+            "              AND job_created_at IS NOT NULL "
+            "            ORDER BY job_id, ts DESC LIMIT 1 BY job_id))"
         )
         if not rows:
             return None
@@ -127,6 +155,30 @@ class Ledger:
             f"AND status IN ({_TERMINAL_LIST}){window}"
         )
         return frozenset(str(row["job_id"]) for row in rows)
+
+    def abandoned_jobs(self, watermark: str | None) -> list[dict[str, str]]:
+        """Jobs still recorded as open that have fallen below the read start.
+
+        The read start is floored so one job that never closes cannot pin it for
+        ever. The cost of that floor is these jobs: the mover will not be asked
+        about them again, so their last recorded word — a provisional one — would
+        stand as the page's answer indefinitely, and the page would report a sync
+        as running years after it stopped being visible.
+
+        Naming them lets the sweep record what is actually true: their state can
+        no longer be read.
+        """
+        if watermark is None:
+            return []
+        return self._select(
+            "SELECT job_id, connector, toString(job_created_at) AS created FROM ("
+            "  SELECT job_id, connector, job_created_at, status "
+            f"  FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
+            "    AND job_created_at IS NOT NULL "
+            "  ORDER BY job_id, ts DESC LIMIT 1 BY job_id) "
+            f"WHERE status NOT IN ({_OPEN_EXCLUDED}) "
+            f"  AND job_created_at < {_quote(watermark)}"
+        )
 
     def insert(self, rows: Iterable[dict[str, Any]]) -> int:
         """Append rows. Returns how many were written."""

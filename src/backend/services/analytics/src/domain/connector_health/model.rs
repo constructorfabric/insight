@@ -37,6 +37,17 @@ impl SyncStatus {
         }
     }
 
+    /// The statuses that will not change again. A job carrying one of these has
+    /// said its last word, so within a job a terminal row outranks a
+    /// provisional one however the clocks compare — a provisional state never
+    /// closes a job, and never reopens one either.
+    pub(crate) const TERMINAL: [Self; 4] = [
+        Self::Succeeded,
+        Self::Failed,
+        Self::Cancelled,
+        Self::Incomplete,
+    ];
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",

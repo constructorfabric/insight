@@ -82,9 +82,10 @@ sweep_run() {
 # Emits the JSON the sweep reads on stdin:
 #   {"tick_id": "...", "connectors": [{"name": ..., "connection_id": ...}]}
 #
-# A connector with no connection yet is left out rather than reported with an
-# empty id: it is configured but has nothing to read, and the snapshot below
-# still records it as managed.
+# A connector the mover has no connection for yet is reported WITHOUT a
+# connection id rather than dropped. It is configured — which is the first thing
+# the page answers — and simply has nothing to read yet; dropping it would make
+# "configured and never ran" a state the page could not show.
 # ---------------------------------------------------------------------------
 sweep__build_work() {
   local tick_id="$1"
@@ -102,9 +103,12 @@ sweep__build_work() {
     conn_id="$(printf '%s' "${connections}" \
       | python3 "${_SWEEP_PY_DIR}/filter_connection_by_name.py" --name "${conn_name}" \
       | head -1)"
-    [[ -n "${conn_id}" ]] || continue
-    entries+=("$(jq -cn --arg n "${name}" --arg c "${conn_id}" \
-      '{name: $n, connection_id: $c}')")
+    if [[ -n "${conn_id}" ]]; then
+      entries+=("$(jq -cn --arg n "${name}" --arg c "${conn_id}" \
+        '{name: $n, connection_id: $c}')")
+    else
+      entries+=("$(jq -cn --arg n "${name}" '{name: $n}')")
+    fi
   done < <(disc_load_descriptors | tr '\t' '\037')
 
   local joined

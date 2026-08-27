@@ -49,6 +49,8 @@ vi.mock("@/components/portal/connector-health", () => ({
   ConnectorHealthPane: () => <div data-testid="connector-health-pane" />,
 }));
 
+import { MANAGE_ITEMS } from "@/lib/portal/nav-model";
+
 import { ManageView } from "./manage-view";
 
 function def(over: Partial<MetricDefinition>): MetricDefinition {
@@ -74,6 +76,14 @@ beforeEach(() => {
   mocks.q.refetch.mockClear();
   mocks.q.isLoading = false;
   mocks.q.isError = false;
+  // The gate is hoisted module state, so a test that flips it leaves it flipped
+  // for every test below — order-dependent today, wrong tomorrow.
+  adminGate.value = {
+    isAdmin: false,
+    isPending: false,
+    isError: false,
+    retry: () => undefined,
+  };
   mocks.q.data = [
     {
       prefix: "git",
@@ -162,6 +172,9 @@ describe("Manage · Connector health", () => {
     expect(
       screen.queryByTestId("connector-health-pane"),
     ).not.toBeInTheDocument();
+    // A gate rendering nothing at all would satisfy the line above, and would
+    // leave a non-admin on a blank screen with nothing to act on.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
   it("opens for an operator", () => {
@@ -171,11 +184,13 @@ describe("Manage · Connector health", () => {
     expect(screen.getByTestId("connector-health-pane")).toBeInTheDocument();
   });
 
-  it("no longer answers to the pane it replaced", () => {
-    adminGate.value = { ...adminGate.value, isAdmin: true };
-    render(<ManageView item="data-health" />);
-
-    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
+  it("no longer offers the pane it replaced", () => {
+    // Asserting what `ManageView` does with `item="data-health"` would be
+    // unfalsifiable: `item` is always the output of `resolveZoneItem`, and
+    // `data-health` is no longer a manage item, so the app can never pass it.
+    // What is reachable — and what a stale bookmark meets — is the nav model.
+    expect(MANAGE_ITEMS.map((entry) => entry.id)).toContain("connector-health");
+    expect(MANAGE_ITEMS.map((entry) => entry.id)).not.toContain("data-health");
   });
 });
 

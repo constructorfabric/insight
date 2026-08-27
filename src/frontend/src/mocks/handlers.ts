@@ -916,6 +916,7 @@ export const handlers = [
   ),
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
+  ...connectorHealthHandlers(),
   ...usageHandlers(),
   ...feedbackHandlers(),
   ...aiAssistHandlers(),
@@ -1015,6 +1016,87 @@ function syntheticDays(count: number) {
     });
   }
   return days;
+}
+
+/**
+ * Connector health in mock mode.
+ *
+ * Deliberately not all-green: one failing connector, one queued, one never
+ * synced and one no longer configured, so the demo shows what the page is for
+ * rather than a wall of successes. `records_reported: 0` on the failed sync and
+ * a missing count on the queued one keep the absence-versus-zero distinction
+ * visible in the mock too.
+ */
+function connectorHealthHandlers() {
+  const now = new Date();
+  const minutesAgo = (minutes: number) =>
+    new Date(now.getTime() - minutes * 60_000).toISOString();
+
+  const syncs = [
+    {
+      job_id: "8414",
+      status: "failed",
+      started_at: minutesAgo(18),
+      duration_ms: 142_000,
+      records_reported: 0,
+    },
+    {
+      job_id: "8409",
+      status: "succeeded",
+      started_at: minutesAgo(78),
+      duration_ms: 138_500,
+      records_reported: 12_400,
+    },
+  ];
+
+  return [
+    http.get("/api/analytics/v1/connector-health", () =>
+      HttpResponse.json({
+        as_of: now.toISOString(),
+        checked_at: minutesAgo(6),
+        typical_read_interval_ms: 15 * 60_000,
+        history_available: true,
+        connectors: [
+          { connector: "example-tracker", configured: true, last_sync: syncs[0] },
+          {
+            connector: "example-directory",
+            configured: true,
+            last_sync: { job_id: "8415", status: "pending" },
+          },
+          {
+            connector: "example-messaging",
+            configured: true,
+            last_sync: {
+              job_id: "8402",
+              status: "succeeded",
+              started_at: minutesAgo(24),
+              duration_ms: 41_000,
+              records_reported: 903,
+            },
+          },
+          { connector: "example-warehouse", configured: true, last_sync: null },
+          {
+            connector: "example-retired",
+            configured: false,
+            last_sync: {
+              job_id: "7801",
+              status: "succeeded",
+              started_at: minutesAgo(60 * 26),
+              duration_ms: 90_000,
+              records_reported: 55,
+            },
+          },
+        ],
+      }),
+    ),
+    http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) =>
+      HttpResponse.json({
+        connector: String(params.connector),
+        window: 50,
+        syncs: String(params.connector) === "example-warehouse" ? [] : syncs,
+      }),
+    ),
+  ];
 }
 
 function usageHandlers() {

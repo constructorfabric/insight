@@ -63,29 +63,25 @@ beforeEach(() => {
 
 describe("the pane prints what it was served", () => {
   it("keeps the served order rather than sorting again", () => {
+    // Deliberately an order no local rule reproduces: not alphabetical, not
+    // severity-first, not by job id. A two-row fixture whose served order also
+    // happens to be the severity order proves nothing.
     mocks.summary.data = summary({
       connectors: [
         {
-          connector: "broken",
+          connector: "zulu",
           configured: true,
-          last_sync: {
-            job_id: "2",
-            status: "failed",
-            started_at: NOW,
-            duration_ms: 1_000,
-            records_reported: 0,
-          },
+          last_sync: { job_id: "1", status: "succeeded", started_at: NOW },
         },
         {
           connector: "alpha",
           configured: true,
-          last_sync: {
-            job_id: "1",
-            status: "succeeded",
-            started_at: NOW,
-            duration_ms: 2_000,
-            records_reported: 5,
-          },
+          last_sync: { job_id: "9", status: "failed", started_at: NOW },
+        },
+        {
+          connector: "mike",
+          configured: true,
+          last_sync: { job_id: "5", status: "running", started_at: NOW },
         },
       ],
     });
@@ -94,7 +90,24 @@ describe("the pane prints what it was served", () => {
     const names = screen
       .getAllByRole("button", { expanded: false })
       .map((button) => button.textContent);
-    expect(names).toEqual(["broken", "alpha"]);
+    expect(names).toEqual(["zulu", "alpha", "mike"]);
+  });
+
+  it("expands only the row that was clicked, even when two share a name", async () => {
+    // The name is the server's to choose. Keying expansion on it opens both.
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "alpha", configured: true, last_sync: null },
+        { connector: "alpha", configured: false, last_sync: null },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const toggles = screen.getAllByRole("button", { name: "alpha" });
+    await userEvent.click(toggles[0]);
+
+    expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
+    expect(toggles[1]).toHaveAttribute("aria-expanded", "false");
   });
 
   it("prints an unmeasured number as absence, not as a zero", () => {
@@ -159,6 +172,19 @@ describe("the pane prints what it was served", () => {
     // exactly the claim it was written to disclaim.
     expect(screen.queryByText(/healthy|up to date|fine/i)).not.toBeInTheDocument();
   });
+
+  it("does not say nothing has been read when something has", () => {
+    // An empty table and a never-read ledger are different states. Keying the
+    // copy on the row count makes the body contradict the header one line up.
+    mocks.summary.data = summary({ connectors: [], history_available: true });
+    render(<ConnectorHealthPane />);
+
+    expect(screen.getByText(/last checked/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/nothing has been read/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/reported no connector/i)).toBeInTheDocument();
+  });
 });
 
 describe("the pane dates itself", () => {
@@ -167,14 +193,23 @@ describe("the pane dates itself", () => {
     expect(screen.getByText(/last checked 1 min ago/i)).toBeInTheDocument();
   });
 
-  it("raises a stopped recorder as an alert, not as prose", () => {
-    mocks.summary.data = summary({
-      checked_at: "2026-01-15T10:00:00.000Z",
-    });
+  it("announces a stopped recorder together with its consequence", () => {
+    mocks.summary.data = summary({ checked_at: "2026-01-15T04:00:00.000Z" });
     render(<ConnectorHealthPane />);
 
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent(/recording appears to have stopped/i);
+    // One permanently mounted region, so the announcement does not depend on a
+    // role appearing on a node that already existed — and it holds the
+    // consequence as well as the headline, which is the half a reader needs.
+    const region = screen.getByRole("status");
+    expect(region).toHaveTextContent(/recording appears to have stopped/i);
+    expect(region).toHaveTextContent(/may no longer be current/i);
+  });
+
+  it("says it cannot date the page when the two clocks disagree", () => {
+    mocks.summary.data = summary({ checked_at: "2026-01-16T00:00:00.000Z" });
+    render(<ConnectorHealthPane />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(/cannot tell when/i);
   });
 });
 

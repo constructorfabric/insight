@@ -8,8 +8,8 @@
 -- defined value on every class — see the design's domain model. Columns are
 -- nullable only where "nobody measured" and "measured zero" are different
 -- answers; `job_created_at` is nullable because snapshot rows are not about a
--- job at all, and is never NULL on a sync row (the summary resolves with
--- argMax over it, and argMax ignores NULL value arguments).
+-- job at all, and is never NULL on a sync row — the read surface orders jobs
+-- along it, and a row without it cannot be placed among them.
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
