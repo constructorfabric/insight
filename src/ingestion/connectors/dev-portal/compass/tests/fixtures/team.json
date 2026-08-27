@@ -1,0 +1,9 @@
+{
+  "id": "ari:cloud:identity::team/t1",
+  "displayName": "Platform",
+  "description": "Owns shared services.",
+  "state": "ACTIVE",
+  "organizationId": "ari:cloud:platform::org/99999999-8888-7777-6666-555555555555",
+  "memberCount": null,
+  "isVerified": false
+}
