@@ -1,31 +1,5 @@
 CREATE DATABASE IF NOT EXISTS `identity`;
 
-CREATE TABLE IF NOT EXISTS identity.aliases
-(
-    `id` UUID DEFAULT generateUUIDv7(),
-    `insight_tenant_id` UUID,
-    `person_id` UUID,
-    `value_type` LowCardinality(String),
-    `value` String,
-    `value_field_name` String DEFAULT '',
-    `insight_source_id` UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
-    `insight_source_type` LowCardinality(String) DEFAULT '',
-    `source_account_id` String DEFAULT '',
-    `confidence` Float32 DEFAULT 1.,
-    `is_active` UInt8 DEFAULT 1,
-    `effective_from` DateTime64(3, 'UTC') DEFAULT now64(3),
-    `effective_to` DateTime64(3, 'UTC') DEFAULT toDateTime64('1970-01-01 00:00:00.000', 3, 'UTC'),
-    `first_observed_at` DateTime64(3, 'UTC') DEFAULT now64(3),
-    `last_observed_at` DateTime64(3, 'UTC') DEFAULT now64(3),
-    `created_at` DateTime64(3, 'UTC') DEFAULT now64(3),
-    `updated_at` DateTime64(3, 'UTC') DEFAULT now64(3),
-    `is_deleted` UInt8 DEFAULT 0
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (insight_tenant_id, value_type, value, insight_source_id, id)
-SETTINGS index_granularity = 8192
-;
-
 CREATE TABLE IF NOT EXISTS identity.identity_inputs
 (
     `unique_key` String,
@@ -67,30 +41,56 @@ ORDER BY id
 SETTINGS index_granularity = 8192
 ;
 
-CREATE TABLE IF NOT EXISTS identity.seed_aliases_from_cursor
+CREATE OR REPLACE VIEW identity.account_assignment
 (
-    `id` UUID,
-    `insight_tenant_id` String,
+    `source_type` String,
+    `source_id` UUID,
+    `account_id` String,
     `person_id` UUID,
-    `value_type` String,
-    `value` Nullable(String),
-    `value_field_name` String,
-    `insight_source_id` UUID,
-    `insight_source_type` String,
-    `source_account_id` Nullable(String),
-    `confidence` Float32,
-    `is_active` UInt8,
-    `effective_from` DateTime64(3),
-    `effective_to` DateTime64(3, 'UTC'),
-    `first_observed_at` DateTime64(3),
-    `last_observed_at` DateTime64(3),
-    `created_at` DateTime64(3),
-    `updated_at` DateTime64(3),
-    `is_deleted` UInt8,
-    `_version` Int64
+    `created_at` DateTime64(6, 'UTC')
 )
-ENGINE = MergeTree
-ORDER BY id
-SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+AS SELECT
+    insight_source_type AS source_type,
+    insight_source_id AS source_id,
+    lower(trimBoth(assumeNotNull(value_effective))) AS account_id,
+    person_id,
+    created_at
+FROM identity.identity_persons
+WHERE (value_type = 'id') AND (value_effective IS NOT NULL) AND (trimBoth(value_effective) != '')
+ORDER BY
+    source_type ASC,
+    source_id ASC,
+    account_id ASC,
+    created_at DESC,
+    id DESC
+LIMIT 1 BY
+    source_type,
+    source_id,
+    account_id
+;
+
+CREATE OR REPLACE VIEW identity.person_map
+(
+    `email` Nullable(String),
+    `person_id` UUID
+)
+AS WITH account_emails AS
+    (
+        SELECT DISTINCT
+            insight_source_type AS source_type,
+            insight_source_id AS source_id,
+            lower(trimBoth(source_account_id)) AS account_id,
+            lower(trimBoth(value)) AS email
+        FROM identity.identity_inputs
+        WHERE (value_type = 'email') AND (operation_type = 'UPSERT') AND (coalesce(value, '') != '') AND (coalesce(source_account_id, '') != '')
+    )
+SELECT
+    account_emails.email AS email,
+    any(assignment.person_id) AS person_id
+FROM account_emails
+INNER JOIN identity.account_assignment AS assignment ON (assignment.source_type = account_emails.source_type) AND (assignment.source_id = account_emails.source_id) AND (assignment.account_id = account_emails.account_id)
+WHERE (account_emails.email != '') AND (assignment.person_id != toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff'))
+GROUP BY account_emails.email
+HAVING uniqExact(assignment.person_id) = 1
 ;
 

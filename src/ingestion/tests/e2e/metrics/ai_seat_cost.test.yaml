@@ -8,22 +8,29 @@ description: >
     • silver: invoice lines keep their own per-seat amount and the billing month they
               charge for; seat snapshots keep the latest state per seat per month
     • gold:   the seat price is read ONLY from a non-proration subscription line, and
-              reaches a person through the tier their seat carries. Dated at the first
-              day of the billing month it charges for, so the date never moves with the
-              sync schedule. A seat with no tier gets no price, and neither does a
-              seat whose tier the invoice never priced — a share of the invoice total
-              would be an invention.
+              reaches a person through the tier their seat carries. An invoice line
+              names its tier with the vendor's catalogue identifier and a seat names
+              its tier with an identifier from another API, so the two are joined
+              through config.ai_seat_tier_map, which an operator writes. Dated at the
+              first day of the billing month it charges for, so the date never moves
+              with the sync schedule. A seat with no tier gets no price, and neither
+              does a seat whose tier no priced line binds to — a share of the invoice
+              total would be an invention.
+
+  The two vocabularies deliberately do not resemble each other here, exactly as they
+  do not at the vendor: nothing in either payload says prod_EXAMPLE_STD and
+  team_standard are one tier, and the invoice states no tier_label at all.
 
   Department: 6 Engineering members, plus a seventh seat holder outside the HR feed.
   December prices two tiers, so the tier a seat carries decides its fee:
 
     person   seat tier      ceiling   seat cost
-    alice    Standard         1000¢     $12.00
-    bob      Standard         1000¢     $12.00
-    carol    Standard         1000¢     $12.00
-    dave     Premium          1000¢     $25.00
-    erin     Premium          1000¢     $25.00
-    heidi    team_tier_1      1000¢     absent — the invoice priced no such tier
+    alice    team_standard    1000¢     $12.00
+    bob      team_standard    1000¢     $12.00
+    carol    team_standard    1000¢     $12.00
+    dave     team_tier_1      1000¢     $25.00
+    erin     team_tier_1      1000¢     $25.00
+    heidi    team_legacy      1000¢     absent — no priced line binds to that tier
     frank    unassigned        none     absent — no tier, so no seat was billed
 
   Five values [12, 12, 12, 25, 25]: median 12.00 against a mean of 17.20, so the
@@ -37,7 +44,7 @@ description: >
   extra-usage line at another. Either one counted would leave the Standard tier priced
   twice, and every Standard seat would fall to absent.
 
-  Cases: the two tiers · a tier the invoice never priced · a seat with no tier ·
+  Cases: the two bound tiers · a tier no priced line binds to · a seat with no tier ·
   breakdown by seat tier · empty window.
 
 bronze:
@@ -51,13 +58,13 @@ bronze:
 
   # Which seats carry a tier, and which tier. Read once, on Dec 10.
   bronze_claude_team.claude_team_overage_spend:
-    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50,  monthly_credit_limit: 1000, seat_tier: Standard }
-    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-bob,   used_credits: 100, monthly_credit_limit: 1000, seat_tier: Standard }
-    - { $ref: templates/claude_team_overage.yaml#/templates/carol, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-carol, used_credits: 150, monthly_credit_limit: 1000, seat_tier: Standard }
-    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-dave,  used_credits: 200, monthly_credit_limit: 1000, seat_tier: Premium }
-    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin,  used_credits: 250, monthly_credit_limit: 1000, seat_tier: Premium }
-    # ── heidi — a tier the December invoice never priced ─────────────────────────
-    - { $ref: templates/claude_team_overage.yaml#/templates/heidi, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-heidi, used_credits: 300, monthly_credit_limit: 1000, seat_tier: team_tier_1 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50,  monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/bob,   _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-bob,   used_credits: 100, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-carol, used_credits: 150, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/dave,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-dave,  used_credits: 200, monthly_credit_limit: 1000, seat_tier: team_tier_1 }
+    - { $ref: templates/claude_team_overage.yaml#/templates/erin,  _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-erin,  used_credits: 250, monthly_credit_limit: 1000, seat_tier: team_tier_1 }
+    # ── heidi — a tier no priced line binds to ──────────────────────────────────
+    - { $ref: templates/claude_team_overage.yaml#/templates/heidi, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-heidi, used_credits: 300, monthly_credit_limit: 1000, seat_tier: team_legacy }
     # ── frank — no ceiling, so no tier and no seat the invoice billed ────────────
     - { $ref: templates/claude_team_overage.yaml#/templates/frank, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-frank, used_credits: 350, monthly_credit_limit: null, seat_tier: unassigned, limit_type: null }
 
@@ -65,13 +72,18 @@ bronze:
     # The invoice's own row: money, no line, no seat price.
     - $ref: templates/claude_team_invoice.yaml#/templates/december_invoice
 
-    # The two priced tiers.
-    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-standard, line_id: il_standard, category: subscriptions, tier_label: Standard, product_name: "Example plan - Standard", description: "3 x Example plan - Standard", amount: 3600, quantity: 3, unit_amount: 1200, seat_unit_amount: 1200 }
-    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-premium,  line_id: il_premium,  category: subscriptions, tier_label: Premium,  product_name: "Example plan - Premium",  description: "2 x Example plan - Premium",  amount: 5000, quantity: 2, unit_amount: 2500, seat_unit_amount: 2500 }
+    # The two priced tiers. The vendor states no tier_label on any of them.
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-standard, line_id: il_standard, category: subscriptions, product_id: prod_EXAMPLE_STD,  price_id: price_EXAMPLE_STD,  product_name: "Example plan - Standard", description: "3 x Example plan - Standard", amount: 3600, quantity: 3, unit_amount: 1200, seat_unit_amount: 1200 }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-premium,  line_id: il_premium,  category: subscriptions, product_id: prod_EXAMPLE_PREM, price_id: price_EXAMPLE_PREM, product_name: "Example plan - Premium",  description: "2 x Example plan - Premium",  amount: 5000, quantity: 2, unit_amount: 2500, seat_unit_amount: 2500 }
 
     # ── Excluded, and load-bearing: counted, either would price Standard twice ───
-    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-proration, line_id: il_proration, category: subscriptions, tier_label: Standard, description: "Unused time on 1 x Example plan - Standard", amount: -900, quantity: 1, unit_amount: 900, seat_unit_amount: 900, is_proration: true }
-    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-extra,     line_id: il_extra,     category: overusage,     tier_label: Standard, description: "Prepaid extra usage, Example plan", amount: 5000, quantity: 1, unit_amount: 5000, seat_unit_amount: 5000 }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-proration, line_id: il_proration, category: subscriptions, product_id: prod_EXAMPLE_STD, description: "Unused time on 1 x Example plan - Standard", amount: -900, quantity: 1, unit_amount: 900, seat_unit_amount: 900, is_proration: true }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, unique_key: line-extra,     line_id: il_extra,     category: overusage,     product_id: prod_EXAMPLE_STD, description: "Prepaid extra usage, Example plan", amount: 5000, quantity: 1, unit_amount: 5000, seat_unit_amount: 5000 }
+
+  # ── The operator's binding: two tiers bound, team_legacy deliberately absent ──
+  config.ai_seat_tier_map:
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_STD,  unique_key: tier-std,  seat_source_id: claude-team-test, seat_tier: team_standard, is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
+    - { tenant_id: "11111111-1111-1111-1111-111111111111", insight_source_id: "claude-team-invoices-test", source: claude_team, tier_ref: prod_EXAMPLE_PREM, unique_key: tier-prem, seat_source_id: claude-team-test, seat_tier: team_tier_1,   is_deleted: 0, note: "", recorded_by: "", _version: "2026-12-01T00:00:00.000Z" }
 
 cases:
   # ── A Standard seat, and the peer spread across both tiers ───────────────────
@@ -104,7 +116,7 @@ cases:
         assert: "items.exists(s, s.entity_id == 'alice@example.com' && s.points.exists(p, p.bucket_start == '2026-12-01' && double(p.value) == 12.0))"
       - metric: ai.seat_cost
         view: breakdown
-        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'Standard') && double(v.value) == 12.0)"
+        assert: "items.exists(v, v.entity_id == 'alice@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'team_standard') && double(v.value) == 12.0)"
 
   # ── The other priced tier costs the other amount ─────────────────────────────
   - name: AI seat cost on the Premium tier
@@ -125,8 +137,8 @@ cases:
         find: { entity_id: dave@example.com }
         equal: { value: 25.0 }
 
-  # ── A tier the invoice never priced: absent, not a share of the total ────────
-  - name: AI seat cost for a tier the invoice never priced
+  # ── A tier no priced line binds to: absent, not a share of the total ─────────
+  - name: AI seat cost for a tier no priced line binds to
     request:
       url: /v1/metric-results
       method: POST

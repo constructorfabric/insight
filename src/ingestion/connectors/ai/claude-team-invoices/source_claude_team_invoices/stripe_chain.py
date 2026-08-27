@@ -180,6 +180,27 @@ def unreadable_seat_prices(lines: Sequence[Mapping[str, Any]]) -> list[str]:
     return sorted(set(offenders))
 
 
+@dataclass(frozen=True)
+class PriceRef:
+    """The catalogue ids a line's `pricing.price_details` resolves to.
+
+    These name the tier the way the vendor's own catalogue does: they survive a
+    renamed or localised `hosted_invoice_product_name`, which the display fields
+    do not. Either field is absent on a line that prices nothing.
+    """
+
+    price: str | None
+    product: str | None
+
+
+def price_details(line: Mapping[str, Any]) -> PriceRef:
+    """The line's price and product ids, absent where it names no tier."""
+    pricing = line.get("pricing") or {}
+    details = pricing.get("price_details") or {}
+    price, product = details.get("price"), details.get("product")
+    return PriceRef(str(price) if price else None, str(product) if product else None)
+
+
 def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
     """Project one Stripe line onto the columns bronze keeps.
 
@@ -187,12 +208,15 @@ def shape_line(line: Mapping[str, Any], invoice_key: str) -> dict[str, Any]:
     the window the invoice was issued in.
     """
     period = line.get("period") or {}
+    price = price_details(line)
     return {
         "invoice_key": invoice_key,
         "line_id": line.get("id"),
         "description": line.get("description"),
         "product_name": line.get("hosted_invoice_product_name"),
         "tier_label": line.get("hosted_invoice_tier_label"),
+        "price_id": price.price,
+        "product_id": price.product,
         "category": classify_line(line),
         "is_proration": is_proration(line),
         "amount": line.get("amount"),
@@ -237,6 +261,8 @@ _EMPTY_LINE: Mapping[str, Any] = {
     "description": None,
     "product_name": None,
     "tier_label": None,
+    "price_id": None,
+    "product_id": None,
     "category": None,
     "is_proration": None,
     "amount": None,

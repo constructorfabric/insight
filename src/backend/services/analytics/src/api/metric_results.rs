@@ -18,11 +18,12 @@ use crate::domain::metric_drilldown::load_capabilities;
 use crate::domain::metric_results::{
     BatchItem, BreakdownQueryRow, CompiledQuery, HistogramQueryRow, MetricResultViewDto,
     MetricResultsRequest, MetricResultsResponse, PeerPopulation, PeerWideRow, PeriodWideRow,
-    PlannedQuery, RankingQueryRow, RankingResults, RollupQueryRow, TimeseriesQueryRow,
-    UnbatchedView, ValidatedMetricResultsRequest, ViewFailure, build_breakdown_view,
-    build_histogram_view, build_metric_result, build_peer_view, build_period_view,
-    build_ranked_groups, build_rollup_view, build_timeseries_view, demux_peer_rows,
-    demux_period_rows, enforce_view_row_limit, plan_queries, plan_rankings, validate_request,
+    PlannedQuery, PooledHistogramQueryRow, RankingQueryRow, RankingResults, RollupQueryRow,
+    TimeseriesQueryRow, UnbatchedView, ValidatedMetricResultsRequest, ViewFailure,
+    build_breakdown_view, build_histogram_view, build_metric_result, build_peer_view,
+    build_period_view, build_pooled_histogram_view, build_ranked_groups, build_rollup_view,
+    build_timeseries_view, demux_peer_rows, demux_period_rows, enforce_view_row_limit,
+    plan_queries, plan_rankings, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
 
@@ -309,7 +310,8 @@ async fn build_single_view(
         UnbatchedView::Breakdown { dimensions } => {
             let comment = format!("metric-results:breakdown:{}", def.key());
             let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
-            build_breakdown_view(req, &dimensions, rows).map_err(|e| assembly_failure(&e, &comment))
+            build_breakdown_view(req, &dimensions, rows, &state.external_links)
+                .map_err(|e| assembly_failure(&e, &comment))
         }
         UnbatchedView::Rollup { dimensions } => {
             let comment = format!("metric-results:rollup:{}", def.key());
@@ -320,6 +322,12 @@ async fn build_single_view(
             let comment = format!("metric-results:histogram:{}", def.key());
             let rows = fetch_rows::<HistogramQueryRow>(state, query, &comment).await?;
             Ok(build_histogram_view(req, rows))
+        }
+        UnbatchedView::PooledHistogram { dimensions } => {
+            let comment = format!("metric-results:pooled-histogram:{}", def.key());
+            let rows = fetch_rows::<PooledHistogramQueryRow>(state, query, &comment).await?;
+            build_pooled_histogram_view(rows, &dimensions)
+                .map_err(|e| assembly_failure(&e, &comment))
         }
     }
 }

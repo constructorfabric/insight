@@ -190,16 +190,6 @@
 {% endmacro %}
 
 {#-
-  The reserved person meaning "not a human" (bots, CI, service accounts). One
-  global constant, unmintable — UUIDv7 never produces an all-ones value — and
-  the service binds excluded accounts to it. Every consumer reads it as no
-  person; here that means such an account claims no email.
--#}
-{% macro excluded_person_id() %}
-    toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff')
-{% endmacro %}
-
-{#-
   Companions for the models that join the map directly (the evidence wrappers
   and the cohort relation): the join and the resolved-check read identically
   across consumers, so grep finds one shape.

@@ -20,8 +20,8 @@ use super::failure::ViewFailure;
 use super::validation::{ValidatedEntitySelection, ValidatedMetricResultsRequest};
 use super::view::Bucket;
 use crate::domain::metric_definitions::definition::{
-    ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition, MetricDirection,
-    MetricFormat, MetricInput, MetricInputRole, ObservationSource,
+    AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition,
+    MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
 };
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
@@ -92,6 +92,7 @@ fn nullable_date_metric() -> MetricDefinition {
                 )),
                 source_key: "custom_repro".to_owned(),
                 measure_key: "repro_value".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
             },
         },
     }

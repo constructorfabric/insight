@@ -3,7 +3,7 @@
 //! An async operation (persons-seed) moves `queued → running → completed/failed`.
 //! The POST handler enqueues a row; the worker flips it to `running`
 //! (`try_start`, so two workers can't double-run), then `complete`s or `fail`s
-//! it. GETs poll status. SQL ported from the .NET `Sql.Operations.cs`.
+//! it. GETs poll status.
 //!
 //! Raw SQL on the self-managed pool (like the rest of `infra::db`): the atomic
 //! `queued→running` transition (`try_start`) and the cross-tenant startup
@@ -53,9 +53,9 @@ impl OperationStatus {
 }
 
 /// One row of the `operations` table.
-// Field names mirror the DB columns (`operation_id` / `operation_type`) and the
-// .NET record, so keep the shared prefix.
-#[allow(clippy::struct_field_names)]
+// Field names mirror the DB columns (`operation_id` / `operation_type`), so
+// keep the shared prefix.
+#[expect(clippy::struct_field_names)]
 #[derive(Debug, Clone)]
 pub struct Operation {
     pub operation_id: Uuid,
@@ -287,7 +287,7 @@ pub async fn corrections_for_account(
 /// `older_than`. Run once at worker startup so a pod restart cannot leave a row
 /// stuck in `running` forever (its in-memory job is gone). Intentionally NOT
 /// tenant-scoped — the single-process worker owns all in-flight operations
-/// across tenants. Mirrors `Sql.Operations.cs::SweepZombies`. Returns the number
+/// across tenants. Returns the number
 /// of rows reclaimed.
 ///
 /// # Errors

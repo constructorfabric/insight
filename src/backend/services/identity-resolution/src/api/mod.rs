@@ -33,7 +33,7 @@ use crate::domain::profile;
 /// Shared application state, injected into handlers via `Extension`.
 #[derive(Clone)]
 pub struct AppState {
-    /// MariaDB connection pool (SeaORM) — reads `persons` / `account_person_map`.
+    /// MariaDB connection pool (SeaORM) — reads the `persons` journal.
     pub db: DatabaseConnection,
     /// Gear config (`org_chart_source_type`, `clickhouse_*`, …).
     pub config: GearConfig,
@@ -96,15 +96,14 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
 
 /// Declare each operation via the toolkit `OperationBuilder` (records the route
 /// + its OpenAPI spec + auth/error metadata).
-#[allow(clippy::too_many_lines)] // one flat block per route — readability over splitting
+#[expect(clippy::too_many_lines)] // one flat block per route — readability over splitting
 fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     // Internal, SERVICE-ONLY S2S resolvers — SEPARATE routes, one per question,
     // so the login bootstrap (by external id, or by roster address where the
     // IdP has no directory connector of its own) and the authenticator's admin
     // `__override` view-as feature can never be confused for one another via a
     // shared dispatch parameter. Registered as raw routes so they stay out of
-    // the generated OpenAPI (matching the .NET `.ExcludeFromDescription()`);
-    // auth is still enforced by the host gateway and `SecurityContext` is
+    // the generated OpenAPI; auth is still enforced by the host gateway and `SecurityContext` is
     // injected by the host authn pipeline, same as every other route. Each
     // handler itself gates on `subject_type == "service"`.
     let router = router.route(

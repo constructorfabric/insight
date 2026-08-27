@@ -118,16 +118,6 @@ class GatewayAuth:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
-        # Plain-HTTP twin of the discovery front, same documents. The .NET
-        # identity service fetches its JWKS from an EXPLICIT URL with
-        # RequireHttpsMetadata=false (it never does https discovery), so it can
-        # consume this listener without any CA trust plumbing. The gears
-        # oidc-authn-plugin keeps using the TLS front above (https-only).
-        self._http_server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
-        self._http_port = self._http_server.server_address[1]
-        self.http_jwks_url = f"http://127.0.0.1:{self._http_port}/.well-known/jwks.json"
-        self._http_thread = threading.Thread(target=self._http_server.serve_forever, daemon=True)
-        self._http_thread.start()
         # Bind the doc bodies now that the issuer/port are known.
         _ = auth.issuer
 
@@ -204,9 +194,8 @@ class GatewayAuth:
         return {"Authorization": f"Bearer {self.mint(tenant_id)}"}
 
     def stop(self) -> None:
-        for server in (getattr(self, "_server", None), getattr(self, "_http_server", None)):
-            if server is None:
-                continue
+        server = getattr(self, "_server", None)
+        if server is not None:
             try:
                 server.shutdown()
                 server.server_close()

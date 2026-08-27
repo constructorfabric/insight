@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS silver.class_ai_invoice
     `chain_status` Nullable(String),
     `category` Nullable(String),
     `tier_label` Nullable(String),
+    `tier_ref` Nullable(String),
     `is_proration` UInt8,
     `currency` String,
     `period_month` Date,
@@ -556,6 +557,31 @@ CREATE TABLE IF NOT EXISTS silver.class_git_item_events
     `delta_value_display` String,
     `prev_value_id` Nullable(String),
     `prev_value_display` Nullable(String),
+    `data_source` String,
+    `_version` Int64,
+    `_airbyte_extracted_at` DateTime64(3)
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS silver.class_git_pr_review_events
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `unique_key` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `pr_id` Int64,
+    `pr_number` Int64,
+    `event_kind` String,
+    `review_state` String,
+    `actor_login` String,
+    `actor_name` String,
+    `actor_account_id` String,
+    `actor_email` String,
+    `created_at` Nullable(DateTime),
     `data_source` String,
     `_version` Int64,
     `_airbyte_extracted_at` DateTime64(3)

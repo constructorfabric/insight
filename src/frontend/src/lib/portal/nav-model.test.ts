@@ -63,7 +63,7 @@ describe("resolveZoneItem", () => {
   });
 
   it("keeps a Manage item the URL names, and falls back for one it does not", () => {
-    expect(resolveZoneItem("manage", "data-health")).toBe("data-health");
+    expect(resolveZoneItem("manage", "connector-health")).toBe("connector-health");
     expect(resolveZoneItem("manage", "trend")).toBe("metric-catalog");
   });
 

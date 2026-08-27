@@ -1,6 +1,6 @@
 {{- if .Values.seed.enabled }}
 # Scheduled persons-seed (#1690): rebuilds the identity org projection
-# (`persons` / `account_person_map` / `org_chart`) from ClickHouse
+# (`persons` / `org_chart`) from ClickHouse
 # `identity.identity_inputs` so ingested manager/org changes reach the Team
 # view — the projection is materialized and only a seed run refreshes it.
 # The run publishes the refreshed log into ClickHouse

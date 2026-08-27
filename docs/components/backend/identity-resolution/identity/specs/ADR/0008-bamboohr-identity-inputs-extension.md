@@ -27,8 +27,8 @@
 
 `bamboohr__identity_inputs.sql` initially emits three fields:
 `workEmail` (email), `employeeNumber` (employee_id), and
-`displayName` (display_name). The C# service projects every BambooHR
-person attribute onto the `Person` response (first/last name,
+`displayName` (display_name). The service projects every BambooHR
+person attribute onto the profile response (first/last name,
 department, division, job title, status, parent email, parent id),
 so the dbt model must emit them too — otherwise the response shape
 stays empty for everything beyond email + display_name.
@@ -69,7 +69,7 @@ resolves `parent_email` / `parent_id` to a stable Insight
 
 - The seed pipeline's column-routing constants must include the new
   `value_type`s (handled in
-  `seed-persons-from-identity-input.py`).
+  the persons-seed).
 - BambooHR sync time grows slightly (more rows per employee), but
   the observation log is append-only and steady-state increases are
   bounded by attribute change frequency, not by employee count.
@@ -109,7 +109,7 @@ ADR-0007 table.
 ### Post-seed enrichment step
 
 - Good, because dbt stays minimal and the enrichment lives where
-  the C# code already does.
+  the service code already does.
 - Bad, because adding a second writer to `persons` complicates the
   ownership story (see ADR-0006 service-owned migrations).
 - Bad, because enrichment failures become a separate operational
@@ -119,7 +119,7 @@ ADR-0007 table.
 
 - `src/ingestion/connectors/hr-directory/bamboohr/dbt/bamboohr__identity_inputs.sql`
   is the canonical model.
-- `src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`
+- The persons-seed (`src/backend/services/identity-resolution/src/domain/seed.rs`)
   carries the matching routing constants.
 
 ## Traceability

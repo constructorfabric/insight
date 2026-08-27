@@ -1,6 +1,7 @@
 //! HTTP API layer — routes and handlers.
 
 pub(crate) mod ai;
+mod connector_health;
 pub(crate) mod error;
 mod feedback;
 mod metric_definitions;
@@ -36,6 +37,8 @@ use tokio::sync::Semaphore;
 
 use crate::config::GearConfig;
 use crate::domain::ai::dto as ai_dto;
+use crate::domain::connector_health as connector_health_domain;
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
@@ -52,6 +55,7 @@ pub struct AppState {
     /// Caps explain calls in flight in this process.
     pub ai_calls: Arc<Semaphore>,
     pub config: GearConfig,
+    pub external_links: ExternalSourceRegistry,
 }
 
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {
@@ -206,6 +210,38 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(usage::get_usage_summary)
+        .register(router, openapi);
+
+    // Connector health: the operator's view of what the mover reports about
+    // every connector's syncs. Admin-gated inside the handler, like every other
+    // instance-wide read here.
+    router = OperationBuilder::get("/v1/connector-health")
+        .operation_id("analytics_api.connector_health.summary")
+        .summary("Recorded sync state of every connector")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<connector_health_domain::ConnectorHealthResponse>(
+            openapi,
+            StatusCode::OK,
+            "One row per connector, ordered by what needs acting on",
+        )
+        .standard_errors(openapi)
+        .handler(connector_health::get_connector_health)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/connector-health/{connector}/syncs")
+        .operation_id("analytics_api.connector_health.syncs")
+        .summary("Recent syncs of one connector, newest first")
+        .authenticated()
+        .no_license_required()
+        .path_param("connector", "Connector name, as the descriptors spell it")
+        .json_response_with_schema::<connector_health_domain::SyncHistoryResponse>(
+            openapi,
+            StatusCode::OK,
+            "A bounded window of recorded syncs",
+        )
+        .standard_errors(openapi)
+        .handler(connector_health::get_connector_syncs)
         .register(router, openapi);
 
     // Sending is open to any signed-in caller; the listing is admin-gated

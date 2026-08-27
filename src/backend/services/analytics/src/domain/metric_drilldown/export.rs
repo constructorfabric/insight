@@ -409,6 +409,7 @@ mod tests {
                 ("value".to_owned(), json!(12.5)),
                 ("active".to_owned(), json!(true)),
             ]),
+            links: BTreeMap::new(),
         }
     }
 
@@ -503,6 +504,7 @@ mod tests {
         ];
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("object".to_owned(), json!({"key": "value"}))]),
+            links: BTreeMap::new(),
         };
         assert_eq!(
             export_values(&columns, &row)
@@ -520,6 +522,7 @@ mod tests {
         }];
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("value".to_owned(), json!("x".repeat(MAX_CELL_BYTES + 1)))]),
+            links: BTreeMap::new(),
         };
         assert!(export_values(&columns, &row).is_err());
     }
@@ -615,6 +618,7 @@ mod tests {
                 ("numeric_date".to_owned(), json!(20_260_728)),
                 ("numeric_text".to_owned(), json!(7)),
             ]),
+            links: BTreeMap::new(),
         };
 
         let bytes = build_xlsx(&columns, &[row], far_deadline())
@@ -631,6 +635,7 @@ mod tests {
         }];
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("date".to_owned(), json!("not-a-date"))]),
+            links: BTreeMap::new(),
         };
         let bytes = build_xlsx(&columns, &[row], far_deadline()).unwrap_or_else(|error| {
             panic!("unparseable warehouse dates must not fail the export: {error}")
@@ -660,6 +665,7 @@ mod tests {
 
         let row = MetricDrilldownRow {
             values: BTreeMap::from([("count".to_owned(), value)]),
+            links: BTreeMap::new(),
         };
         assert!(build_xlsx(&columns, &[row], far_deadline()).is_ok());
     }

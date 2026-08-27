@@ -5,8 +5,4 @@
 //! bytes) — SeaORM does not auto-map `binary(16)` ↔ `Uuid`, so we keep the raw
 //! bytes here and convert to `Uuid` at the response boundary.
 
-// Generated entities expose items (e.g. the empty `Relation` enums, and models
-// not yet read) that aren't all directly referenced — standard for SeaORM codegen.
-#![allow(dead_code)]
-
 pub mod persons;

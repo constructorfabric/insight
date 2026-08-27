@@ -7,7 +7,7 @@ export interface TeamMember {
   name: string;
 }
 
-/** Lightweight projection of the C# PersonResponse shape. */
+/** Lightweight projection of the identity profile shape. */
 export interface IdentityPerson {
   person_id: string;
   email: string;

@@ -225,8 +225,78 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
       ],
     },
     {
+      key: "git.lines_removed",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    // The pre-split keys back the Repositories lens headline, where the
+    // question is "did it land on the trunk", not the pair's ratio.
+    // `git.default_branch_prs_merged` is already above — a key may appear
+    // once per request, and the API rejects the WHOLE request otherwise.
+    {
+      key: "git.default_branch_code_lines",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.non_default_branch_code_lines",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
       key: "git.pr_cycle_time_h",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
+    },
+    {
+      key: "git.pr_cycle_time_p75_h",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    // Review hygiene and timing, read by the Quality lens.
+    { key: "git.review_coverage", views: [{ view: "period" }, { view: "peer" }] },
+    {
+      key: "git.reviewers_per_pr",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.multi_reviewer_rate",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.merges_without_approval_rate",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.first_review_time_h",
+      views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
+    },
+    {
+      key: "git.first_review_time_p75_h",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.review_wait_share",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.review_to_merge_time_h",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.approval_to_merge_time_h",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.pr_abandonment_rate",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.reviews_performed",
+      views: [{ view: "period" }, { view: "peer" }],
+    },
+    {
+      key: "git.pr_comments",
+      views: [
+        { view: "period" },
+        { view: "peer" },
+        { view: "breakdown", dimensions: ["comment_target"] },
+      ],
     },
     {
       key: "git.pr_size",
@@ -234,6 +304,10 @@ const GIT_OUTPUT_COLLECTION: MetricCollectionConfig = {
     },
     {
       key: "git.commit_size",
+      views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
+    },
+    {
+      key: "git.pr_commits",
       views: [{ view: "period" }, { view: "peer" }, { view: "histogram" }],
     },
     {

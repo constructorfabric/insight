@@ -206,7 +206,8 @@ pub async fn run_sync_until_quiescent(
     Ok(SyncOutcome::Published(summary))
 }
 
-/// ISO-8601 with a `T` separator (same rationale as the seed API's `fmt_ts`).
+/// ISO-8601 with a `T` separator: this lands in the persisted `operations`
+/// summary, so it must not reach up into the api layer's formatter.
 fn fmt_iso(dt: DateTime) -> String {
     dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
 }

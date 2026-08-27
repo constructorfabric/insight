@@ -392,6 +392,62 @@ definitions:
         values: "{{ config['github_organizations'] }}"
         cursor_field: org
 
+  # Lightweight board enumerator the Projects V2 substreams partition over.
+  # Closed boards are kept: they hold history and never change again, so
+  # dropping them would lose the record without saving a sync.
+  projects_all_parent: &projects_all_parent
+    type: DeclarativeStream
+    name: projects_all
+    primary_key:
+      - id
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          id: {type: [string, "null"]}
+          number: {type: [integer, "null"]}
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($org: String!, $cursor: String) {
+              organization(login: $org) {
+                projectsV2(first: 100, after: $cursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes { id number }
+                }
+              }
+            }
+          variables:
+            org: "{{ stream_partition.org }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, organization, projectsV2, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ response['data']['organization']['projectsV2']['pageInfo']['endCursor'] }}"
+          stop_condition: "{{ not response['data']['organization']['projectsV2']['pageInfo']['hasNextPage'] }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: ListPartitionRouter
+        values: "{{ config['github_organizations'] }}"
+        cursor_field: org
+
 check:
   type: CheckStream
   # branches is the cheapest proxy-backed stream, and it is checked so a wrong
@@ -2380,6 +2436,421 @@ streams:
             value: >-
               {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.org | replace(':', '%3A') }}:project:{{ (record.get('id') or '') | replace(':', '%3A') }}
 
+  # ── Projects V2 field catalogue (GitHub GraphQL) ─────────────────────────
+  # Every board's own field definitions. A board field is NOT shared: two
+  # projects' same-named `Status` are different fields with different ids, and
+  # `ProjectV2FieldType` has no STATUS member — a status is an ordinary
+  # SINGLE_SELECT. Which select field means the lifecycle is therefore an
+  # operator's binding, and this catalogue is the list of real ids to bind to.
+  #
+  # It is also the bridge history needs: a status change event names its value
+  # by display name only, so resolving that name to an option id happens
+  # through the options of the board's own field.
+  #
+  # `snapshot_date` is part of the key on purpose. GitHub keeps no history of a
+  # field or an option rename, so the only record of one is a succession of
+  # snapshots — a re-collection inside one day replaces its row, a new day adds
+  # one. Without it a rename erases the name every earlier event carries.
+  - type: DeclarativeStream
+    name: project_fields
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          snapshot_date: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          project_number: {type: [integer, "null"]}
+          field_id: {type: [string, "null"]}
+          field_database_id: {type: [string, "null"]}
+          field_name: {type: [string, "null"]}
+          data_type: {type: [string, "null"]}
+          is_multi: {type: [boolean, "null"]}
+          is_mirror: {type: [boolean, "null"]}
+          is_issue_field: {type: [boolean, "null"]}
+          options_json: {type: [string, "null"]}
+          configuration_json: {type: [string, "null"]}
+          field_updated_at: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($project: ID!, $cursor: String) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  fields(first: 100, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      __typename
+                      ... on ProjectV2Field { id databaseId name dataType updatedAt isIssueField }
+                      ... on ProjectV2SingleSelectField { id databaseId name dataType updatedAt isIssueField options { id name } }
+                      # A multi-select names its options `multiSelectOptions`,
+                      # not `options` — hoisted to `options_json` all the same.
+                      ... on ProjectV2MultiSelectField { id databaseId name dataType updatedAt isIssueField multiSelectOptions { id name } }
+                      ... on ProjectV2IterationField {
+                        id databaseId name dataType updatedAt isIssueField
+                        configuration {
+                          duration startDay
+                          iterations { id title startDate duration }
+                          completedIterations { id title startDate duration }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_id }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, node, fields, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((response.get('data') or {}).get('node') or {}).get('fields') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not (((response.get('data') or {}).get('node') or {}).get('fields') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            extra_fields:
+              - [number]
+            stream: *projects_all_parent
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [snapshot_date]
+            value: "{{ now_utc().strftime('%Y-%m-%d') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_number]
+            value: "{{ stream_slice.extra_fields['number'] }}"
+          - type: AddedFieldDefinition
+            path: [field_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_database_id]
+            value: "{{ record.get('databaseId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_name]
+            value: "{{ record.get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [data_type]
+            value: "{{ record.get('dataType') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_multi]
+            value: "{{ record.get('dataType') == 'MULTI_SELECT' }}"
+            value_type: boolean
+          # A board field is either authored on the board or a projection of an
+          # issue property (TITLE, ASSIGNEES, LABELS, …). Only the authored
+          # types carry board data; a mirror read as a value would compete with
+          # the issue's own field for the same fact. Stated as an allow-list so
+          # a mirror type added later defaults to excluded, not to competing.
+          - type: AddedFieldDefinition
+            path: [is_mirror]
+            value: "{{ record.get('dataType') not in ['TEXT', 'SINGLE_SELECT', 'MULTI_SELECT', 'NUMBER', 'DATE', 'ITERATION'] }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [is_issue_field]
+            value: "{{ record.get('isIssueField') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [options_json]
+            value: "{{ (record.get('options') or record.get('multiSelectOptions') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [configuration_json]
+            value: "{{ (record.get('configuration') or {}) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:field:{{ (record.get('id') or '') | replace(':', '%3A') }}:{{ now_utc().strftime('%Y-%m-%d') }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [__typename]
+          - [id]
+          - [databaseId]
+          - [name]
+          - [dataType]
+          - [updatedAt]
+          - [isIssueField]
+          - [options]
+          - [multiSelectOptions]
+          - [configuration]
+
+  # ── Projects V2 cards (GitHub GraphQL) ──────────────────────────────────
+  # One row per (card x day the card changed), carrying the card's current
+  # field values. Two reasons this stream exists rather than riding the issue
+  # streams:
+  #
+  # 1. Moving a card does NOT bump the issue's `updated_at`, and the timeline
+  #    stream is a substream of an issue window cursored on exactly that. Board
+  #    movement on an otherwise untouched issue is invisible without a
+  #    board-side cursor.
+  # 2. No API exposes the history of a non-status board field. `updatedAt` says
+  #    when a value was last touched, never what it was before, so the only
+  #    record is a succession of snapshots — hence the day in the key. The day
+  #    comes from the card's own `updatedAt`, so re-reading an unchanged card
+  #    inside the overlap window rewrites its row instead of adding one.
+  #
+  # INVARIANT: the incremental filter is built from a DATE and nothing else.
+  # `items(query:)` filters server-side on the card's update date, but its
+  # granularity is a day: a full ISO timestamp returns zero rows, and an
+  # unparseable qualifier returns zero rows with NO GraphQL error — a green
+  # sync with no data, indistinguishable from a quiet one. `datetime_format`
+  # renders the cursor as a bare date so a timestamp cannot reach the string.
+  - type: DeclarativeStream
+    name: project_items
+    primary_key:
+      - unique_key
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        type: object
+        $schema: http://json-schema.org/schema#
+        properties:
+          unique_key: {type: string}
+          tenant_id: {type: [string, "null"]}
+          source_id: {type: [string, "null"]}
+          data_source: {type: [string, "null"]}
+          collected_at: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          project_number: {type: [integer, "null"]}
+          item_id: {type: [string, "null"]}
+          item_database_id: {type: [string, "null"]}
+          item_type: {type: [string, "null"]}
+          content_type: {type: [string, "null"]}
+          content_number: {type: [integer, "null"]}
+          content_repo_full_name: {type: [string, "null"]}
+          is_archived: {type: [boolean, "null"]}
+          creator_login: {type: [string, "null"]}
+          creator_id: {type: [integer, "null"]}
+          created_at: {type: [string, "null"]}
+          updated_at: {type: [string, "null"]}
+          field_values_json: {type: [string, "null"]}
+        required:
+          - unique_key
+        additionalProperties: true
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *rest_requester
+        path: /graphql
+        http_method: POST
+        error_handler: *graphql_error_handler
+        request_body_json:
+          query: |
+            query($project: ID!, $q: String!, $cursor: String) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  items(first: 50, after: $cursor, query: $q) {
+                    totalCount
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      id fullDatabaseId type createdAt updatedAt isArchived
+                      creator { login ... on User { databaseId } }
+                      content {
+                        __typename
+                        ... on Issue { number repository { nameWithOwner } }
+                        ... on PullRequest { number repository { nameWithOwner } }
+                      }
+                      fieldValues(first: 50) {
+                        nodes {
+                          __typename
+                          ... on ProjectV2ItemFieldSingleSelectValue { optionId name updatedAt field { ... on ProjectV2SingleSelectField { id name dataType } } }
+                          ... on ProjectV2ItemFieldMultiSelectValue { value options { id name } updatedAt field { ... on ProjectV2MultiSelectField { id name dataType } } }
+                          ... on ProjectV2ItemFieldTextValue { text updatedAt field { ... on ProjectV2Field { id name dataType } } }
+                          ... on ProjectV2ItemFieldNumberValue { number updatedAt field { ... on ProjectV2Field { id name dataType } } }
+                          ... on ProjectV2ItemFieldDateValue { date updatedAt field { ... on ProjectV2Field { id name dataType } } }
+                          ... on ProjectV2ItemFieldIterationValue { iterationId title startDate duration updatedAt field { ... on ProjectV2IterationField { id name dataType } } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            project: "{{ stream_partition.project_id }}"
+            q: "updated:>={{ stream_interval.start_time }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, node, items, nodes]
+        record_filter:
+          type: RecordFilter
+          # A draft card has no issue behind it and no identity outside the
+          # board, so it can join nothing downstream.
+          #
+          # Only drafts are dropped. A card whose `content` is null is NOT a
+          # draft — it is an item the token cannot see, its issue living in a
+          # repository outside the token's reach. Dropping those two together
+          # would make a coverage gap indistinguishable from a board note; kept,
+          # the row states that a card exists whose content is unknown.
+          condition: "{{ (record.get('content') or {}).get('__typename') != 'DraftIssue' }}"
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((response.get('data') or {}).get('node') or {}).get('items') or {}).get('pageInfo', {}).get('endCursor') }}"
+          stop_condition: "{{ not (((response.get('data') or {}).get('node') or {}).get('items') or {}).get('pageInfo', {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: project_id
+            extra_fields:
+              - [number]
+            stream: *projects_all_parent
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: updated_at
+      # Day granularity is the API's, not a choice: `updated:>=` rejects a
+      # timestamp by returning nothing.
+      datetime_format: "%Y-%m-%d"
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%SZ"
+        - "%Y-%m-%dT%H:%M:%S%z"
+      # The server filter is coarser than the cursor, so a day is re-read on
+      # every sync. That is deliberate rather than tolerated: the row key
+      # carries the day the card changed, so a re-read rewrites the same row.
+      #
+      # A client-side cut is NOT used here. The CDK applies it in the record
+      # selector, before the transformations that rename `updatedAt` to
+      # `updated_at` — so the cursor field it looks for does not exist yet and
+      # every record is silently dropped. State observation runs after the
+      # transformations, which is why the cursor field is the bronze name.
+      lookback_window: P1D
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ config['github_start_date'] }}"
+        datetime_format: "%Y-%m-%d"
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ stream_partition.project_id }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_number]
+            value: "{{ stream_slice.extra_fields['number'] }}"
+          - type: AddedFieldDefinition
+            path: [item_id]
+            value: "{{ record.get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_database_id]
+            value: "{{ record.get('fullDatabaseId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [item_type]
+            value: "{{ record.get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [content_type]
+            value: "{{ (record.get('content') or {}).get('__typename') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [content_number]
+            value: "{{ (record.get('content') or {}).get('number') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [content_repo_full_name]
+            value: "{{ ((record.get('content') or {}).get('repository') or {}).get('nameWithOwner') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [is_archived]
+            value: "{{ record.get('isArchived') or false }}"
+            value_type: boolean
+          - type: AddedFieldDefinition
+            path: [creator_login]
+            value: "{{ (record.get('creator') or {}).get('login') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [creator_id]
+            value: "{{ (record.get('creator') or {}).get('databaseId') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ record.get('createdAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [updated_at]
+            value: "{{ record.get('updatedAt') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [field_values_json]
+            value: "{{ ((record.get('fieldValues') or {}).get('nodes') or []) | tojson }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: >-
+              {{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:project:{{ (stream_partition.project_id or '') | replace(':', '%3A') }}:item:{{ (record.get('id') or '') | replace(':', '%3A') }}:{{ (record.get('updatedAt') or '')[:10] }}
+      - type: RemoveFields
+        # Hoisted above; the camelCase and nested originals stay out of bronze.
+        field_pointers:
+          - [id]
+          - [fullDatabaseId]
+          - [type]
+          - [createdAt]
+          - [updatedAt]
+          - [isArchived]
+          - [creator]
+          - [content]
+          - [fieldValues]
+
   # ── Native issue fields (GitHub GraphQL) ────────────────────────────────
   # The organization's own issue-field catalogue: every field an issue can
   # carry, its data type, and — for the select types — the options it admits.
@@ -3348,6 +3819,9 @@ streams:
           new_value_id: {type: [string, "null"]}
           prev_options_json: {type: [string, "null"]}
           new_options_json: {type: [string, "null"]}
+          project_id: {type: [string, "null"]}
+          project_number: {type: [integer, "null"]}
+          was_automated: {type: [boolean, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -3363,7 +3837,7 @@ streams:
             query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
               repository(owner: $owner, name: $name) {
                 issue(number: $number) {
-                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT]) {
+                  timelineItems(first: 100, after: $cursor, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT, LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT, ISSUE_TYPE_CHANGED_EVENT, ISSUE_FIELD_CHANGED_EVENT, PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ADDED_TO_PROJECT_V2_EVENT, REMOVED_FROM_PROJECT_V2_EVENT]) {
                     pageInfo { hasNextPage endCursor }
                     nodes {
                       __typename
@@ -3385,7 +3859,16 @@ streams:
                           ... on IssueFieldText { id name }
                         }
                       }
-                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login ... on User { databaseId } } previousStatus status }
+                      # `project` is the board discriminator: an issue on
+                      # several boards interleaves all their status events in
+                      # this one timeline, and without it they cannot be told
+                      # apart. `wasAutomated` separates a workflow's move from
+                      # a person's.
+                      ... on ProjectV2ItemStatusChangedEvent { id createdAt actor { login ... on User { databaseId } } previousStatus status project { id number } wasAutomated }
+                      # Board membership: which boards an issue was on, and
+                      # when. The card snapshot states only the present.
+                      ... on AddedToProjectV2Event { id createdAt actor { login ... on User { databaseId } } project { id number } wasAutomated }
+                      ... on RemovedFromProjectV2Event { id createdAt actor { login ... on User { databaseId } } project { id number } wasAutomated }
                     }
                   }
                 }
@@ -3588,6 +4071,21 @@ streams:
             path: [new_options_json]
             value: "{{ (record.get('newOptions') or []) | map(attribute='name') | list | tojson }}"
             value_type: string
+          # Which board the status change or the membership change happened on.
+          # Every project defines its own Status field, so the board is what
+          # makes a status event resolvable at all.
+          - type: AddedFieldDefinition
+            path: [project_id]
+            value: "{{ (record.get('project') or {}).get('id') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [project_number]
+            value: "{{ (record.get('project') or {}).get('number') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [was_automated]
+            value: "{{ record.get('wasAutomated') or false }}"
+            value_type: boolean
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-
@@ -3716,6 +4214,8 @@ metadata:
     pull_request_diff_stats: false
     issues: false
     projects_v2: false
+    project_fields: false
+    project_items: false
     issue_fields: false
     issue_types: false
     workflow_runs: false

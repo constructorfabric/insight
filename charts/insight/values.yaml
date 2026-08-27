@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.14.26-bdd022d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.27.14.56-cbd5568" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.14.26-bdd022d" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.27.14.56-cbd5568" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -530,6 +530,7 @@ analytics:
     # installation; when off, the catalog omits them and the CI lens renders
     # its honest not-enabled state.
     tenantMetricsEnabled: false
+  externalSources: []
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at
   # boot rather than accepting keys it cannot seal.
@@ -576,9 +577,9 @@ analytics:
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
-# The persons-store API. Reads from MariaDB `persons` written by the seed
-# pipeline (src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
-# fed off ClickHouse `identity.identity_inputs`. NOT an OIDC provider.
+# The persons-store API. Reads from MariaDB `persons`, written by the seed
+# CronJob (the service's own `seed` subcommand) fed off ClickHouse
+# `identity.identity_inputs`. NOT an OIDC provider.
 # Consumers reach it at `http://<release>-identity-resolution:8082`.
 # `deploy: true` is mandatory: the authenticator's login-bootstrap resolve
 # (GET /internal/persons/by-external-id / by-email-override) lives here
@@ -690,8 +691,8 @@ identityResolution:
   # Same hook-twin arrangement as analytics.migrateEnvSecret above.
   migrateEnvSecret: "insight-identity-resolution-migrate-env"
   # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
-  # daily to rebuild the identity org projection (persons / account_person_map
-  # / org_chart) from ClickHouse identity_inputs — without it the projection
+  # daily to rebuild the identity org projection (persons / org_chart) from
+  # ClickHouse identity_inputs — without it the projection
   # freezes at the last manual run and Team-view rosters go stale. Runs
   # serialize on a per-tenant MariaDB advisory lock; input guards abort on an
   # empty identity_inputs read or a tenant mismatch (`--force` overrides).

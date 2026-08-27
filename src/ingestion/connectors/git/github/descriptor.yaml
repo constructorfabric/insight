@@ -14,7 +14,16 @@ name: github
 #   staging never re-reads Bronze, so the column heals to NULL on existing
 #   rows, and a NULL identity never folds. Only the one-shot scoped
 #   `dbt --full-refresh` a major bump dispatches re-materializes the history.
-version: "6.0.0"
+# 6.1.0: Projects V2 boards — two new streams (`project_fields`,
+#   `project_items`) and three new columns on `issue_timeline_events`
+#   (`project_id`, `project_number`, `was_automated`) plus two new event types
+#   on it. MINOR: additive everywhere, and the one model that consumes the new
+#   columns is materialized as a table, so it re-reads Bronze on every run and
+#   needs no full refresh. The new columns are only POPULATED for events
+#   collected after the change — recovering them for history means clearing the
+#   `issue_timeline_events` cursor and re-walking, which is a rollout step, not
+#   a version bump.
+version: "6.1.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

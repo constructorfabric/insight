@@ -15,9 +15,9 @@ export const NOT_ADDITIVE_REASON: Record<MetricComputation, string | null> = {
   sum: null,
   ratio: "A ratio over a period is its own numerator over its own denominator",
   median: "A median cannot be rebuilt from the medians of shorter periods",
-  distinct_count: "Someone active in two months is distinct in each of them",
   percentile: "A percentile cannot be rebuilt from the percentiles of shorter periods",
   stddev: "A spread cannot be rebuilt from the spreads of shorter periods",
+  distinct_count: "Someone active in two months is distinct in each of them",
 };
 
 /**

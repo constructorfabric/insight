@@ -23,6 +23,7 @@ Git silver models. Two layers:
 | `class_git_pull_requests_reviewers` | one row per reviewer action |
 | `class_git_pull_requests_comments` | one row per PR comment |
 | `class_git_pull_requests_commits` | one row per PR ↔ commit link |
+| `class_git_pr_review_events` | one row per review verdict or PR comment (no body text) |
 
 ### Facts
 

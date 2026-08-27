@@ -34,7 +34,7 @@ The `persons` schema splits the value across three columns by
   case-insensitive search, room for FULLTEXT.
 - `value TEXT` — catch-all, indexed only via `value_hash`.
 
-The C# service must agree with the seed pipeline on which `value_type`
+The serving path must agree with the seed pipeline on which `value_type`
 lands in which column, otherwise lookups will miss rows the seed
 wrote.
 
@@ -88,7 +88,7 @@ Confirmed by integration tests that seed each canonical `value_type`
 and assert the assembled response surfaces them at the right field.
 The seed-side routing is locked behind unit tests over
 `route_value_type_to_column` in
-`seed-persons-from-identity-input.py`.
+the persons-seed.
 
 ## Pros and Cons of the Options
 

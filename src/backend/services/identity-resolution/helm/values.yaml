@@ -9,8 +9,7 @@ image:
 
 service:
   type: ClusterIP
-  # Same port as the .NET identity service this replaces (consumers reach
-  # identity at <host>:8082, so the cutover flips only the hostname).
+  # Consumers reach identity at <host>:8082.
   port: 8082
 
 resources:
@@ -29,7 +28,7 @@ resources:
 #   APP__gears__identity_resolution__config__bootstrap_admin_person_id (optional)
 #
 # The two optional fields drive the first-admin bootstrap in the migrate
-# initContainer (port of the .NET BootstrapAdminRunner): the configured person
+# initContainer: the configured person
 # gets an active `admin` assignment in the default tenant, idempotently.
 #
 # The umbrella populates `insight-identity-resolution-config` automatically;
@@ -113,8 +112,7 @@ seed:
       cpu: 500m
       memory: 512Mi
 
-# TCP gate before start: the service connects to MariaDB at boot. Same
-# busybox wait as the .NET identity chart.
+# TCP gate before start: the service connects to MariaDB at boot.
 waitForMariadb:
   enabled: true
   image:

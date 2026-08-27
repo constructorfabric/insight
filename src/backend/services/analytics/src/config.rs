@@ -11,6 +11,23 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalSourceProvider {
+    Github,
+    Gitlab,
+    BitbucketCloud,
+    Jira,
+    Youtrack,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExternalSourceConfig {
+    pub id: String,
+    pub provider: ExternalSourceProvider,
+    pub web_base_url: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VisibilityPolicy {
@@ -66,6 +83,8 @@ pub struct GearConfig {
 
     /// AI-assist configuration.
     pub ai_assist: AiAssistConfig,
+
+    pub external_sources: Vec<ExternalSourceConfig>,
 }
 
 impl Default for GearConfig {
@@ -83,6 +102,7 @@ impl Default for GearConfig {
             metric_catalog: MetricCatalogConfig::default(),
             usage: UsageConfig::default(),
             ai_assist: AiAssistConfig::default(),
+            external_sources: Vec::new(),
         }
     }
 }
@@ -335,6 +355,33 @@ mod tests {
                 "should reject: {value}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn external_sources_default_to_empty() -> anyhow::Result<()> {
+        let config: GearConfig = serde_json::from_value(serde_json::json!({}))?;
+
+        assert!(config.external_sources.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn external_sources_deserialize_provider_and_url() -> anyhow::Result<()> {
+        let config: GearConfig = serde_json::from_value(serde_json::json!({
+            "external_sources": [{
+                "id": "source-a",
+                "provider": "gitlab",
+                "web_base_url": "https://code.example.test/platform"
+            }]
+        }))?;
+
+        assert_eq!(config.external_sources.len(), 1);
+        assert_eq!(config.external_sources[0].id, "source-a");
+        assert_eq!(
+            config.external_sources[0].provider,
+            ExternalSourceProvider::Gitlab
+        );
         Ok(())
     }
 }

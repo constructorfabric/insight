@@ -1,0 +1,37 @@
+# Mirrors the bronze_github.project_fields DDL in scripts/connectors-ddl/github.sql.
+schemas:
+  bronze_github.project_fields:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id:
+        type: string
+      _airbyte_extracted_at:
+        type: string
+        format: date-time
+      _airbyte_meta:
+        type: string
+      _airbyte_generation_id:
+        type: integer
+      unique_key: &id001
+        type: string
+      tenant_id: *id001
+      source_id: *id001
+      data_source: *id001
+      collected_at: *id001
+      snapshot_date: *id001
+      project_id: *id001
+      project_number: &id002
+        type: integer
+      field_id: *id001
+      field_database_id: *id001
+      field_name: *id001
+      data_type: *id001
+      is_multi: &id003
+        type: boolean
+      is_mirror: *id003
+      is_issue_field: *id003
+      options_json: *id001
+      configuration_json: *id001
+      field_updated_at: *id001

@@ -24,10 +24,12 @@ from insight_stand import ApiClient, ApiResponse, Manifest, analytics_path
 from insight_stand.api import JsonValue
 
 from ..schemas import (
+    BreakdownView,
     MetricDefinitionListResponse,
     MetricResultsResponse,
     PeriodView,
     ProblemDocument,
+    RollupView,
 )
 from . import query_window
 
@@ -281,4 +283,249 @@ def test_one_hidden_person_refuses_the_whole_request(
     assert response.status_code == 403, (
         f"a request naming one hidden person answered {response.status_code} — if it "
         f"succeeded, the hidden entity was silently dropped: {response.text[:300]}"
+    )
+
+
+def _git_definitions(api: ApiClient) -> dict[str, list[str]]:
+    """Every git metric the installation offers, keyed by metric_key → dimensions.
+
+    The listing carries no `computation`, so what a rollup can be asserted
+    against is read from the dimension list instead — which is the property
+    that actually decides whether a metric can be grouped by repository. The
+    keys this file cares about are recent enough that a stand pinned to an
+    older image simply will not have them, so the catalogue decides rather
+    than a hardcoded list.
+    """
+    response = api.get(analytics_path("/v1/metric-definitions"))
+    assert response.status_code == 200, f"definitions: {response.status_code}"
+    return {
+        metric.metric_key: list(metric.dimensions)
+        for metric in response.parse(MetricDefinitionListResponse).metrics
+        if metric.metric_key.startswith("git.")
+    }
+
+
+#: Summed git metrics, most preferred first. Every one of them counts whole
+#: records, so a rollup's rows add up to the same period total — which is what
+#: the reconciliation below asserts. Hardcoded because the listing does not say
+#: which computation a metric uses, and a median would need a different oracle.
+_SUMMED_GIT_METRICS = ("git.prs_merged", "git.commits", "git.code_lines")
+
+
+def _a_summed_git_metric(api: ApiClient) -> str | None:
+    """A summed git metric this install offers that groups by repository."""
+    dimensions = _git_definitions(api)
+    return next(
+        (key for key in _SUMMED_GIT_METRICS if "repository" in dimensions.get(key, [])),
+        None,
+    )
+
+
+def _rollup_view(response: ApiResponse, metric_key: str) -> RollupView:
+    """The one rollup view the response carries for a metric.
+
+    Narrowing the union IS the assertion, as in `_values`: the request asked
+    for a rollup, so any other variant means the service answered a question
+    nobody asked.
+    """
+    results = response.parse(MetricResultsResponse)
+    views = [view.root for metric in results.metrics for view in metric.root.views]
+    assert len(views) == 1, f"asked for one view of {metric_key} and got {len(views)}"
+    view = views[0]
+    assert isinstance(view, RollupView), f"asked for the rollup view and got {type(view).__name__}"
+    return view
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_rollup_answers_per_dimension_without_an_entity_grain(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """A repository rollup: rows keyed by the dimension, never by a person.
+
+    The shape is the whole point. `rollup` is the one view whose rows carry no
+    `entity_id` — the Repositories lens reads it precisely because a
+    per-repository number cannot be assembled from per-person rows without
+    knowing which people to add. A row that grew an entity id back would break
+    that screen while still answering 200.
+
+    `contributing_entity_count` is asserted against the roster it was asked
+    over rather than a number: it counts DISTINCT resolved persons among the
+    entities in the request, so it can never exceed how many were named, and a
+    value above that would mean the count is measuring something else.
+
+    Skipped rather than failed when the installation offers no git metric with
+    a `repository` dimension — a stand seeded without a git connector has
+    nothing to roll up, which is not this test's news to report.
+    """
+    metric_key = _a_summed_git_metric(api)
+    if metric_key is None:
+        pytest.skip("this installation offers no summed git metric to roll up")
+
+    person = stand_manifest.fixture("dev_lead")
+    start, end = query_window(stand_manifest)
+    response = api.post(
+        METRIC_RESULTS,
+        json_body={
+            "entity": {"type": "person", "ids": [person.uuid]},
+            "period": {"from": start, "to": end},
+            "metrics": [
+                {
+                    "metric_key": metric_key,
+                    "views": [{"view": "rollup", "dimensions": ["repository"]}],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    view = _rollup_view(response, metric_key)
+    assert view.dimensions == ["repository"]
+    for value in view.values:
+        keys = [dimension.key for dimension in value.dimensions]
+        # A remainder row names no dimension value; this request set no group
+        # limit, so every row here is a real repository.
+        assert keys == ["repository"], f"a rollup row named {keys}"
+        assert value.contributing_entity_count <= 1, (
+            f"one person was asked about and the row counted "
+            f"{value.contributing_entity_count} contributors: {value}"
+        )
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_a_rollup_totals_the_same_work_the_period_view_reports(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """Two independent reads of one number have to agree.
+
+    The oracle is the API's own period view rather than an expectation written
+    here: for a summed metric, every repository's share added together IS the
+    person's total over the same window. The two answers travel different SQL
+    (a grouped aggregate against an ungrouped one), so a drift between them is
+    a real defect in one of the two paths — and neither number is hand-authored,
+    which keeps the case honest on any seed.
+
+    A rollup that returns nothing is a skip, not a pass: a metric the stand has
+    no git rows for would otherwise let 0 == 0 through as agreement.
+    """
+    metric_key = _a_summed_git_metric(api)
+    if metric_key is None:
+        pytest.skip("this installation offers no summed git metric to roll up")
+
+    person = stand_manifest.fixture("dev_lead")
+    start, end = query_window(stand_manifest)
+    body: dict[str, JsonValue] = {
+        "entity": {"type": "person", "ids": [person.uuid]},
+        "period": {"from": start, "to": end},
+        "metrics": [
+            {
+                "metric_key": metric_key,
+                "views": [{"view": "rollup", "dimensions": ["repository"]}],
+            }
+        ],
+    }
+    rolled = api.post(METRIC_RESULTS, json_body=body)
+    assert rolled.status_code == 200, f"status={rolled.status_code} {rolled.text[:300]}"
+    rows = _rollup_view(rolled, metric_key).values
+    if not rows:
+        pytest.skip(f"{metric_key} has no rows on this stand to reconcile")
+
+    period = _ask(api, stand_manifest, person.uuid, metric_key)
+    assert period.status_code == 200, f"status={period.status_code} {period.text[:300]}"
+    total = sum(value or 0 for _, value in _values(period, metric_key))
+    grouped = sum(row.value or 0 for row in rows)
+
+    assert grouped == pytest.approx(total), (
+        f"{metric_key} over {start}..{end}: the repositories add up to {grouped} "
+        f"while the period view reports {total} — the grouped and ungrouped "
+        f"paths disagree about the same work"
+    )
+
+
+@pytest.mark.requires_seed("dev_lead", "sales_ic")
+@pytest.mark.security
+def test_a_rollup_refuses_a_person_out_of_scope(api: ApiClient, stand_manifest: Manifest) -> None:
+    """The visibility gate holds on the view with no entity grain.
+
+    Worth its own case precisely BECAUSE the answer carries no entity ids: a
+    rollup that skipped the gate would leak an outsider's work as an
+    unattributed total, which no reader could trace back to a person and no
+    other assertion in this module would catch.
+    """
+    metric_key = next(iter(_git_definitions(api)), None)
+    if metric_key is None:
+        pytest.skip("this installation offers no git metric")
+
+    start, end = query_window(stand_manifest)
+    response = api.post(
+        METRIC_RESULTS,
+        json_body={
+            "entity": {
+                "type": "person",
+                "ids": [stand_manifest.fixture("sales_ic").uuid],
+            },
+            "period": {"from": start, "to": end},
+            "metrics": [
+                {
+                    "metric_key": metric_key,
+                    "views": [{"view": "rollup", "dimensions": ["repository"]}],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 403, (
+        f"a rollup over a person outside the caller's scope answered "
+        f"{response.status_code}: {response.text[:300]}"
+    )
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.versatility
+def test_pr_comments_split_into_own_and_others(api: ApiClient, stand_manifest: Manifest) -> None:
+    """`comment_target` is a two-valued dimension, and only those two values.
+
+    The split is what makes the metric readable — reviewing someone else's
+    request is different work from answering on your own — so a third value
+    arriving (an empty string, an `__unknown__` placeholder leaking from gold)
+    would silently turn one of the two columns into a third.
+
+    Skipped where the installation predates the metric: a stand pinned to an
+    older analytics image has no such key, which the catalogue answers for.
+    """
+    if "git.pr_comments" not in _git_definitions(api):
+        pytest.skip("this installation does not offer git.pr_comments")
+
+    person = stand_manifest.fixture("dev_lead")
+    start, end = query_window(stand_manifest)
+    response = api.post(
+        METRIC_RESULTS,
+        json_body={
+            "entity": {"type": "person", "ids": [person.uuid]},
+            "period": {"from": start, "to": end},
+            "metrics": [
+                {
+                    "metric_key": "git.pr_comments",
+                    "views": [{"view": "breakdown", "dimensions": ["comment_target"]}],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    results = response.parse(MetricResultsResponse)
+    views = [view.root for metric in results.metrics for view in metric.root.views]
+    assert len(views) == 1 and isinstance(views[0], BreakdownView), (
+        f"asked for the breakdown view and got {[type(v).__name__ for v in views]}"
+    )
+    seen = {
+        dimension.value
+        for value in views[0].values
+        for dimension in value.dimensions
+        if dimension.key == "comment_target"
+    }
+    assert seen <= {"own", "others"}, (
+        f"comment_target answered with {sorted(seen)} — own/others is the whole "
+        f"vocabulary, so a third value means gold classified something it could "
+        f"not name"
     )

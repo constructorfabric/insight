@@ -187,9 +187,6 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     """A seeded org member is resolvable by the id binding the authenticator
     queries — the whole reason this connector exists.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     member_id = _run_specific_member_id(run_tag)
     login = f"pipeline-dev-{run_tag}"
@@ -258,9 +255,6 @@ def test_the_binding_is_the_member_id_never_the_login(
     not — a login resolving means the fields_history entity key regressed to
     the handle and sign-in is one rename away from breaking.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     member_id = _run_specific_member_id(run_tag)
     mixed_case_login = f"Pipeline-Dev-{run_tag}"

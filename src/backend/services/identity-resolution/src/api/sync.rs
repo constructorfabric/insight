@@ -70,8 +70,8 @@ impl From<Operation> for PersonsSyncOperationResponse {
             request: super::seed::parse_or_null(op.request_json.as_deref()),
             summary: super::seed::parse_or_null(op.summary_json.as_deref()),
             error_message: op.error_message,
-            started_at: super::seed::fmt_ts(op.started_at),
-            completed_at: op.completed_at.map(super::seed::fmt_ts),
+            started_at: super::datetime::fmt_ts(op.started_at),
+            completed_at: op.completed_at.map(super::datetime::fmt_ts),
         }
     }
 }

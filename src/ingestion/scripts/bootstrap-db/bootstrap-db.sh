@@ -4,11 +4,7 @@
 # regenerate the committed connectors-ddl snapshot (see dump-ddl.sh).
 #
 # Order matters (this is the fix for #1831/#1763):
-#   1. Core databases + person/identity schema (init-identity migration).
-#      The identity dbt models (seed_persons_*, seed_aliases_*) ANTI-JOIN
-#      person.persons, so that table MUST exist BEFORE dbt runs — otherwise
-#      those models fail and identity/person tables never make it into the
-#      snapshot.
+#   1. Core databases + the identity schema (init-identity migration).
 #   2. Connectors -> bronze (+ per-connector bronze_promoted).
 #   3. dbt run (all): staging + silver + dbt-owned gold.
 #   4. Gold-view migrations (apply-ch-migrations.sh): CREATE OR REPLACE the
@@ -45,7 +41,7 @@ fi
 export CLICKHOUSE_URL="${CLICKHOUSE_PROTOCOL}://${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}"
 source "${SCRIPT_DIR}/../lib/ch-exec.sh"
 
-echo "=== 1. Core databases + identity/person schema (init-identity) ==="
+echo "=== 1. Core databases + identity schema (init-identity) ==="
 # `presentation` (#1964); its role + grant-less user follow in step 4.
 run_ch <<SQL
 CREATE DATABASE IF NOT EXISTS staging;
@@ -54,9 +50,6 @@ CREATE DATABASE IF NOT EXISTS ${CLICKHOUSE_DATABASE};
 CREATE DATABASE IF NOT EXISTS presentation;
 CREATE DATABASE IF NOT EXISTS product_usage;
 SQL
-# person.persons + identity.aliases must exist before the identity dbt models
-# (LEFT ANTI JOIN person.persons). init-identity is the first, idempotent
-# migration (CREATE DATABASE/TABLE IF NOT EXISTS).
 run_ch < "${MIGRATIONS_DIR}/20260408000000_init-identity.sql"
 
 echo "=== 2. Creating connector tables (bronze + promote) ==="

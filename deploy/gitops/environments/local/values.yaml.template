@@ -136,8 +136,7 @@ authenticator:
     redirectUri: "http://localhost/auth/callback"
     # The identity-resolution source_type this IdP is seeded under — required
     # (constructorfabric/insight#1960): the login-bootstrap resolve
-    # (GET /internal/persons/by-external-id) is scoped to it, and it only
-    # exists on identity-resolution (Rust), never the .NET identity twin.
+    # (GET /internal/persons/by-external-id) is scoped to it.
     sourceType: "keycloak"
     # id_token claim carrying the stable external user id for sourceType.
     # The realm generator pins each realm user's `id` to their OWN roster uuid

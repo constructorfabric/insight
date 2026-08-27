@@ -49,8 +49,8 @@ does not depend on ClickHouse availability for synchronous lookups.
 
 ## Decision Outcome
 
-`insight-identity` reads exclusively from MariaDB `persons` via
-`MySqlConnector`. ClickHouse access is not part of the service; bronze
+The service reads exclusively from MariaDB `persons`. ClickHouse
+access is not part of it; bronze
 tables remain the upstream input to the dbt pipeline that feeds
 `identity_inputs`, but the service does not see them.
 
@@ -69,7 +69,7 @@ tables remain the upstream input to the dbt pipeline that feeds
 Confirmed by the Phase 1 integration test (`PersonsEndpointTests`)
 which exercises the full read path against a Testcontainers MariaDB
 seeded with `persons` rows and asserts the assembled response. The
-absence of any ClickHouse client in `Insight.Identity.Infrastructure.csproj`
+absence of any ClickHouse client in the service's dependencies
 is enforced at build time.
 
 ## Pros and Cons of the Options

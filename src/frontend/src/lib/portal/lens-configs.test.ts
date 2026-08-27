@@ -167,6 +167,31 @@ describe("sectionMetricKeys — Overview section kinds", () => {
     });
     expect(keys.sort()).toEqual(["git.commits", "wiki.edits"]);
   });
+  it("collects dimension-table and ownership metrics", () => {
+    const keys = sectionMetricKeys({
+      title: "t",
+      sections: [
+        {
+          kind: "dimension-table",
+          title: "t",
+          dimension: "repository",
+          noun: "repositories",
+          metrics: ["git.prs_merged", "git.lines_added"],
+        },
+        {
+          kind: "ownership",
+          metric: "git.code_lines",
+          dimension: "repository",
+          title: "t",
+        },
+      ],
+    });
+    expect(keys.sort()).toEqual([
+      "git.code_lines",
+      "git.lines_added",
+      "git.prs_merged",
+    ]);
+  });
   it("derives direction-cards keys from every configured Overview lens headline", () => {
     const keys = sectionMetricKeys({
       title: "t",
@@ -240,6 +265,37 @@ describe("visibleSections", () => {
     );
 
     expect(gated.sections.map((s) => s.kind)).not.toContain("distribution");
+  });
+
+  it("gates dimension-table columns and drops an emptied table or ownership section", () => {
+    const repoConfig = {
+      title: "T",
+      sections: [
+        {
+          kind: "dimension-table",
+          title: "t",
+          dimension: "repository",
+          noun: "repositories",
+          metrics: ["git.prs_merged", "ai.cost"],
+        },
+        {
+          kind: "ownership",
+          metric: "ai.cost",
+          dimension: "repository",
+          title: "o",
+        },
+      ] as const satisfies readonly SectionSpec[],
+    };
+    const gated = visibleSections(repoConfig, false, gate(["metric:ai.*"]));
+    expect(gated.sections).toEqual([
+      {
+        kind: "dimension-table",
+        title: "t",
+        dimension: "repository",
+        noun: "repositories",
+        metrics: ["git.prs_merged"],
+      },
+    ]);
   });
 
   it("keeps the sections that name no metric of their own", () => {

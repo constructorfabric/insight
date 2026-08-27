@@ -1,0 +1,149 @@
+spec_version: 1
+description: >
+  Metric: git.pr_commits — Commits per PR (median).
+  How it's computed (bronze → silver → gold):
+    • bronze: pull requests, their per-request diff stats (the author email
+      lives there, not on the request), and the request→commit link rows
+    • silver: link rows keyed per (repo, request, commit), so a re-synced
+      duplicate link collapses instead of inflating the count
+    • gold:   one value per MERGED request = distinct linked commits, dated at
+      the merge day; a merged request with no link rows contributes no value
+      (the source did not report its commits), never a zero
+
+  alice merges three requests with 1, 2, and 4 linked commits (one link row
+  seeded twice as a re-sync duplicate) → median 2, mean 2.33 — a wrong
+  aggregation fails the equal. bob merges one request with no link rows → null,
+  and stays out of the peer pool.
+  Team (median/range = the person's department): per-person values
+  alice 2, carol 3, dave 5, erin 1, heidi 6 → median 3, range [1, 6], n 5.
+  Cases: alice median across views, merge-day dating, bob honest absence,
+  empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+    - $ref: templates/people.yaml#/templates/heidi
+  bronze_github.pull_requests:
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a1, id: 101, number: 101, author_login: alice, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-a1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a2, id: 102, number: 102, author_login: alice, closed_at: "2026-10-01T13:00:00Z", merged_at: "2026-10-01T13:00:00Z", merge_commit_sha: merge-a2}
+    # Created on 2026-10-01 (template default), merged on 2026-10-02: the value
+    # must land in the merge-day bucket.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a3, id: 103, number: 103, author_login: alice, closed_at: "2026-10-02T12:00:00Z", merged_at: "2026-10-02T12:00:00Z", merge_commit_sha: merge-a3}
+    # Merged, but no pull_request_commits rows arrive for it.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-b1, id: 104, number: 104, author_login: bob, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-b1}
+    # One request each for the rest of the department, to keep the peer pool at
+    # its five-person disclosure minimum without bob (who carries no value).
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-c1, id: 105, number: 105, author_login: carol, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-c1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-d1, id: 106, number: 106, author_login: dave, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-d1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-e1, id: 107, number: 107, author_login: erin, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-e1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-h1, id: 108, number: 108, author_login: heidi, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-h1}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a1, pull_number: 101, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a2, pull_number: 102, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a3, pull_number: 103, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-b1, pull_number: 104, additions: 10, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-c1, pull_number: 105, additions: 10, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-d1, pull_number: 106, additions: 10, author_email: dave@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-e1, pull_number: 107, additions: 10, author_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-h1, pull_number: 108, additions: 10, author_email: heidi@example.com}
+  bronze_github.pull_request_commits:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a1-1, sha: sha-a1-1, pull_number: 101, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a2-1, sha: sha-a2-1, pull_number: 102, repo_full_name: constructor/insight, is_merge: false}
+    # The same link row twice — an Airbyte re-sync duplicate the count must not double.
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a2-1, sha: sha-a2-1, pull_number: 102, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a2-2, sha: sha-a2-2, pull_number: 102, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a3-1, sha: sha-a3-1, pull_number: 103, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a3-2, sha: sha-a3-2, pull_number: 103, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a3-3, sha: sha-a3-3, pull_number: 103, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-a3-4, sha: sha-a3-4, pull_number: 103, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-c1-1, sha: sha-c1-1, pull_number: 105, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-c1-2, sha: sha-c1-2, pull_number: 105, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-c1-3, sha: sha-c1-3, pull_number: 105, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-d1-1, sha: sha-d1-1, pull_number: 106, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-d1-2, sha: sha-d1-2, pull_number: 106, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-d1-3, sha: sha-d1-3, pull_number: 106, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-d1-4, sha: sha-d1-4, pull_number: 106, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-d1-5, sha: sha-d1-5, pull_number: 106, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-e1-1, sha: sha-e1-1, pull_number: 107, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-1, sha: sha-h1-1, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-2, sha: sha-h1-2, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-3, sha: sha-h1-3, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-4, sha: sha-h1-4, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-5, sha: sha-h1-5, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: lnk-h1-6, sha: sha-h1-6, pull_number: 108, repo_full_name: constructor/insight, is_merge: false}
+
+cases:
+  - name: Median commits per merged pull request
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_commits
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+              - {view: histogram}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_commits, view: period, find: {entity_id: alice@example.com}, equal: {value: 2}}
+      # bob's valueless request keeps him out of the pool: n is 5, not 6.
+      - {metric: git.pr_commits, view: peer, find: {entity_id: alice@example.com}, equal: {target_value: 2, p25: 2, median: 3, p75: 5, min: 1, max: 6, n: 5}}
+      - {metric: git.pr_commits, view: timeseries, find: {entity_id: alice@example.com}, contains: {points: {bucket_start: "2026-10-01", value: 2}}}
+      - {metric: git.pr_commits, view: timeseries, find: {entity_id: alice@example.com}, contains: {points: {bucket_start: "2026-10-02", value: 4}}}
+      - {metric: git.pr_commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}, equal: {value: 2}}
+      - {metric: git.pr_commits, view: histogram, find: {entity_id: alice@example.com}, nonempty: [bins]}
+
+  - name: A request counts on its merge day, not its creation day
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-02", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_commits
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_commits, view: period, find: {entity_id: alice@example.com}, equal: {value: 4}}
+
+  - name: A merged request without linked commit rows contributes no value
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [bob@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.pr_commits
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_commits, view: period, find: {entity_id: bob@example.com}, equal: {value: null}}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - metric_key: git.pr_commits
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_commits, view: period, find: {entity_id: alice@example.com}, equal: {value: null}}

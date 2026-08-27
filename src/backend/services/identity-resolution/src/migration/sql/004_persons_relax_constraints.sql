@@ -39,8 +39,8 @@
 -- this is sub-second; production tables may take longer.
 
 -- Idempotency note: each statement is safe to re-run. The first time
--- it executes on a fresh DbUp journal, it drops the old UNIQUE and
--- recreates it with the new shape. On a cluster where the same
+-- it executes it drops the old UNIQUE and recreates it with the new
+-- shape. On a cluster where the same
 -- migration was applied out-of-band (e.g. manual ALTER during a
 -- production hot-fix), `DROP INDEX IF EXISTS` and
 -- `CREATE UNIQUE INDEX IF NOT EXISTS` keep it from failing. MODIFY

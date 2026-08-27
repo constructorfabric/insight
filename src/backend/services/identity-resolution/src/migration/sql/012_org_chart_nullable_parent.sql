@@ -10,17 +10,14 @@
 -- but a NULL parent is allowed (it can't equal anything, including
 -- the child).
 --
--- The persons-seed rebuild ports change in tandem (Sql.PersonsSeed.cs
--- InsertOrgChartForTenant adds a UNION ALL for the no-parent rows);
--- the next seed run populates the new rows.
+-- The persons-seed rebuild changes in tandem (a UNION ALL for the
+-- no-parent rows); the next seed run populates the new rows.
 --
--- RUST-PORT DIVERGENCE from the .NET 012 (the one deliberate edit in the
--- copied set): DROP/ADD are IF EXISTS / IF NOT EXISTS guarded. MariaDB DDL
--- is not transactional and the ledger row is written only after the whole
--- script — a crash between the plain DROP and ADD left a re-run failing on
+-- DROP/ADD are IF EXISTS / IF NOT EXISTS guarded. MariaDB DDL is not
+-- transactional and the ledger row is written only after the whole script
+-- — a crash between a plain DROP and ADD left a re-run failing on
 -- "Can't DROP CONSTRAINT". The guards make every interleaving/retry
--- converge (also against the frozen .NET DbUp replaying its own 012 on a
--- fresh side-by-side install).
+-- converge.
 ALTER TABLE org_chart
     MODIFY COLUMN parent_person_id BINARY(16) NULL;
 

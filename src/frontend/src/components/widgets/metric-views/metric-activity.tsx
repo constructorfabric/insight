@@ -33,9 +33,7 @@ import {
 } from "@/lib/metrics/collection";
 import {
   activityEventLabel,
-  evidenceRecordLinks,
   TYPE_DIMENSION,
-  withSourceDimension,
   withTypeDimension,
 } from "@/lib/metrics/provider-links";
 import { RecordLink } from "@/components/record-link";
@@ -76,19 +74,12 @@ export function MetricActivity({
   const base = metric.selection
     ? evidenceSelection(metric.selection, entityId)
     : null;
-  // INVARIANT: the same gate the evidence dialog applies — `source` is what
-  // makes a link safe, `type` is what says which kind of issue a row is, and
-  // asking for either where a metric does not declare it is rejected outright,
+  // INVARIANT: asking for `type` where a metric does not declare it is rejected,
   // so the read waits for the catalogue.
   const declaredForMetric = base
     ? declared.byMetricKey?.get(base.metric_key)
     : null;
-  const selection = base
-    ? withTypeDimension(
-        withSourceDimension(base, declaredForMetric),
-        declaredForMetric
-      )
-    : null;
+  const selection = base ? withTypeDimension(base, declaredForMetric) : null;
   const detail = useMetricDetail(
     selection,
     grain != null && !declared.isPending
@@ -225,7 +216,7 @@ function EventList({
     <div className="flex flex-col gap-1">
       <ul className="flex flex-col">
         {shown.map((event, index) => {
-          const links = evidenceRecordLinks(metricKey, event.values);
+          const links = event.links ?? {};
           const label = activityEventLabel(metricKey, event.ref, event.title);
           return (
             <li

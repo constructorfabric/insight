@@ -36,6 +36,7 @@ def test_tenant_metrics_are_opt_in_per_installation(umbrella_deps, extra: tuple[
     assert code == 0, err
 
     assert _analytics_config(out)["metric_catalog"]["tenant_metrics_enabled"] is expected
+    assert _analytics_config(out)["external_sources"] == []
 
 
 def test_analytics_visibility_policy_reuses_identity_resolution_setting(umbrella_deps) -> None:
@@ -51,3 +52,27 @@ def test_analytics_visibility_policy_reuses_identity_resolution_setting(umbrella
 
     key = "APP__gears__analytics__config__visibility_policy"
     assert _analytics_secret(out)[key] == "flat"
+
+
+def test_external_source_registry_reaches_analytics_config(umbrella_deps) -> None:
+    code, out, err = render(
+        umbrella_deps,
+        *UMBRELLA_BASE,
+        "--set",
+        f"global.tenantDefaultId={TENANT}",
+        "--set",
+        "analytics.externalSources[0].id=github-main",
+        "--set",
+        "analytics.externalSources[0].provider=github",
+        "--set",
+        "analytics.externalSources[0].webBaseUrl=https://github.example.com/",
+    )
+    assert code == 0, err
+
+    assert _analytics_config(out)["external_sources"] == [
+        {
+            "id": "github-main",
+            "provider": "github",
+            "web_base_url": "https://github.example.com/",
+        }
+    ]

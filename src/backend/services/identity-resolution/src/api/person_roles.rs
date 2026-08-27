@@ -1,10 +1,9 @@
 //! Person-roles junction HTTP surface — grant / list / revoke role assignments.
 //!
-//! Admin-gated; ported 1:1 from the .NET `PersonRolesEndpoints` (ADR-0014).
-//! Revoke refuses to remove the tenant's LAST active `admin` assignment
-//! (lockout protection). As in the roles domain, the .NET last-admin 422 has
-//! no gears canonical equivalent → surfaced as `aborted` (409), the same
-//! mapping as every .NET-422 guard (contract-suite pinned).
+//! Admin-gated (ADR-0014). Revoke refuses to remove the tenant's LAST active
+//! `admin` assignment (lockout protection). As in the roles domain, the
+//! refusal is surfaced as `aborted` (409) — the same mapping the other
+//! data-invariant guards use (contract-suite pinned).
 
 use std::sync::Arc;
 
@@ -67,11 +66,11 @@ impl From<PersonRole> for PersonRoleResponse {
             insight_tenant_id: p.insight_tenant_id,
             person_id: p.person_id,
             role_id: p.role_id,
-            valid_from: fmt_ts(p.valid_from),
-            valid_to: p.valid_to.map(fmt_ts),
+            valid_from: super::datetime::fmt_ts(p.valid_from),
+            valid_to: p.valid_to.map(super::datetime::fmt_ts),
             author_person_id: p.author_person_id,
             reason: p.reason,
-            created_at: fmt_ts(p.created_at),
+            created_at: super::datetime::fmt_ts(p.created_at),
         }
     }
 }
@@ -80,9 +79,8 @@ impl From<PersonRole> for PersonRoleResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonRoleListResponse {
     pub items: Vec<PersonRoleResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonRoleListResponse {}
@@ -100,8 +98,8 @@ pub struct ListParams {
     pub person: Option<Uuid>,
     pub role: Option<Uuid>,
     pub active: Option<bool>,
-    // Signed so a negative `?limit=` clamps to 1 (parity with the .NET `int?`
-    // clamp) rather than failing query deserialization.
+    // Signed so a negative `?limit=` clamps to 1 rather than failing query
+    // deserialization.
     pub limit: Option<i64>,
 }
 
@@ -114,8 +112,8 @@ pub async fn create_person_role(
     let tenant = ctx.subject_tenant_id();
     let author = require_admin(&state.db, &ctx).await?;
 
-    // Per-field validation, mirroring the .NET `CreatePersonRoleCommandValidator`
-    // (`invalid_person_id` / `invalid_role_id` / `invalid_reason`).
+    // Per-field validation: `invalid_person_id` / `invalid_role_id` /
+    // `invalid_reason`.
     if req.person_id.is_nil() {
         return Err(invalid_field(
             "person_id",
@@ -176,7 +174,7 @@ pub async fn list_person_roles(
     let tenant = ctx.subject_tenant_id();
     require_admin(&state.db, &ctx).await?;
 
-    let limit = clamp_limit(params.limit);
+    let limit = super::listing::clamp_limit(params.limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT);
     let rows = person_roles_repo::list(
         &state.db,
         tenant,
@@ -262,21 +260,13 @@ fn not_found(id: Uuid) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "person_roles query failed");
     CanonicalError::internal("failed to read assignments").create()
 }
 
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator, matching the
-/// .NET `System.Text.Json` `DateTime` output.
-fn fmt_ts(dt: DateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
-}
-
-/// `reason`, when present, must be at most 500 chars — mirrors the .NET
-/// `MaximumLength(500)` on `CreatePersonRoleCommandValidator` /
-/// `RevokeReasonValidator`.
+/// `reason`, when present, must be at most 500 chars.
 fn reason_valid(reason: Option<&str>) -> bool {
     reason.is_none_or(|r| r.chars().count() <= MAX_REASON_LEN)
 }
@@ -296,10 +286,6 @@ fn reason_too_long() -> CanonicalError {
     )
 }
 
-fn clamp_limit(limit: Option<i64>) -> u64 {
-    super::listing::clamp_limit(limit, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,10 +303,28 @@ mod tests {
 
     #[test]
     fn limit_clamping() {
-        assert_eq!(clamp_limit(None), LIST_DEFAULT_LIMIT);
-        assert_eq!(clamp_limit(Some(10)), 10);
-        assert_eq!(clamp_limit(Some(0)), 1, "zero → 1");
-        assert_eq!(clamp_limit(Some(-5)), 1, "negative → 1");
-        assert_eq!(clamp_limit(Some(9999)), LIST_MAX_LIMIT, "over cap → 500");
+        assert_eq!(
+            crate::api::listing::clamp_limit(None, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_DEFAULT_LIMIT
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(10), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            10
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(0), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "zero → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(-5), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            1,
+            "negative → 1"
+        );
+        assert_eq!(
+            crate::api::listing::clamp_limit(Some(9999), LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT),
+            LIST_MAX_LIMIT,
+            "over cap → 500"
+        );
     }
 }

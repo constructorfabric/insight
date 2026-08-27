@@ -2,7 +2,7 @@
 Insight sample-data seed — orchestrator.
 
 Subcommands:
-    identity   Persons, org_chart, account_person_map (MariaDB).
+    identity   Persons, org_chart, person_roles (MariaDB).
     silver     CREATE silver tables + apply gold view migrations + INSERT
                sample rows (ClickHouse). Phase 2 — placeholder for now.
     analytics  The catalogue rows no endpoint can create — a

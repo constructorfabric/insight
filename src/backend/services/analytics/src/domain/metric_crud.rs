@@ -574,6 +574,8 @@ async fn insert_graph<C: ConnectionTrait>(
             Value::from(graph.direction.as_db()),
             Value::from(graph.entity_type.as_str()),
             Value::from(graph.computation.as_db()),
+            // The scale column is the definition's one numeric computation
+            // parameter: the ratio multiplier, or the percentile quantile.
             nullable_f64(graph.scale),
             nullable_f64(graph.transform.and_then(|t| t.multiplier)),
             nullable_f64(graph.transform.and_then(|t| t.offset)),

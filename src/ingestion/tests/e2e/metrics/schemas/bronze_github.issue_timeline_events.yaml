@@ -43,3 +43,17 @@ schemas:
       new_value_id: *id001
       prev_options_json: *id001
       new_options_json: *id001
+      # Nullable: only board status and board membership events carry these, so
+      # every other event in a fixture leaves them unset.
+      project_id: &id003
+        type:
+        - string
+        - 'null'
+      project_number:
+        type:
+        - integer
+        - 'null'
+      was_automated:
+        type:
+        - boolean
+        - 'null'

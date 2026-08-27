@@ -1,16 +1,11 @@
 """identity service lifecycle for the contract suite (issue #1753).
 
 The identity service is the system-under-test here (unlike lib/identity_stub.py,
-which fakes it FOR analytics). The service is the Rust `identity-resolution`
-binary (the sole implementation since the .NET decommission). The harness runs
-its `migrate` subcommand first (the service does not migrate at server start),
-then boots the server with an analytics-style gears rig config against a
-throwaway `identity_e2e` MariaDB database. The binary is baked into the runner
-image (a build-only compose service + Dockerfile.runner COPY).
-
-`E2E_IDENTITY_IMPLEMENTATION` remains as an explicit selector (only `rust` is
-valid) so a stale caller fails fast instead of silently testing the wrong
-thing.
+which fakes it FOR analytics). The harness runs the `identity-resolution`
+binary's `migrate` subcommand first (the service does not migrate at server
+start), then boots the server with an analytics-style gears rig config against
+a throwaway `identity_e2e` MariaDB database. The binary is baked into the
+runner image (a build-only compose service + Dockerfile.runner COPY).
 
 Auth is the same gateway-JWT rig analytics uses (lib/gateway_jwt.py): the
 host's oidc-authn-plugin verifies the ES256 JWT via the rig's TLS discovery
@@ -45,76 +40,15 @@ LOG = logging.getLogger("e2e.identity")
 # analytics one the compose stack pre-creates.
 IDENTITY_DATABASE = "identity_e2e"
 
-IMPLEMENTATIONS = ("rust",)
-
-
-def implementation_from_env() -> str:
-    """The EXPLICIT implementation selection (E2E_IDENTITY_IMPLEMENTATION).
-
-    Fails fast on an unknown value, and on the removed E2E_IDENTITY_URL
-    external mode: pointing the suite at an arbitrary URL while seeding the
-    local throwaway database would silently test one deployment's HTTP
-    surface against another's data.
-    """
+def reject_external_target() -> None:
+    """The harness seeds its own throwaway database, so an external target
+    would answer from different data. Fail fast on the removed override
+    instead of silently testing one deployment against another's rows."""
     if os.environ.get("E2E_IDENTITY_URL"):
         raise ApiSpawnError(
             "E2E_IDENTITY_URL is not supported: the harness seeds its own throwaway "
-            "database, so an external target would answer from different data. Use "
-            "E2E_IDENTITY_IMPLEMENTATION=rust (the harness boots the service)."
+            "database and boots the service itself."
         )
-    impl = os.environ.get("E2E_IDENTITY_IMPLEMENTATION", "rust")
-    if impl not in IMPLEMENTATIONS:
-        raise ApiSpawnError(f"unknown E2E_IDENTITY_IMPLEMENTATION={impl!r} (expected one of {IMPLEMENTATIONS})")
-    return impl
-
-
-def supports_deprecated_person_lookup(implementation: str) -> bool:
-    """GET /v1/persons/{email} existed only in the retired .NET service — the
-    Rust service dropped it (approved removal, zero callers). Kept as an
-    explicit capability so the spec-universe SKIP stays documented."""
-    return False
-
-
-def supports_containerized_clickhouse(implementation: str) -> bool:
-    """The Rust service reads ClickHouse over HTTP and runs the seed e2e
-    against the harness's containerized ClickHouse normally. (The retired
-    .NET Octonica native-protocol reader could not.)"""
-    return implementation == "rust"
-
-
-def supports_seed_http_trigger(implementation: str) -> bool:
-    """Whether `POST /v1/persons-seed` exists. It existed only in the retired
-    .NET service; the Rust service removed it (#1690) — the seed is CLI-only
-    (the `seed` subcommand, run by the Helm CronJob or a manual Job) and only
-    the GET journal routes remain. Kept as an explicit capability so the
-    trigger selection and the spec-universe SKIP stay documented."""
-    return False
-
-
-def supports_seed_cli(implementation: str) -> bool:
-    """Whether the binary has the `seed` subcommand (#1690) — the CLI trigger
-    that replaced the POST on the Rust implementation."""
-    return implementation == "rust"
-
-
-def supports_persons_sync(implementation: str) -> bool:
-    """Whether the binary has the `sync` subcommand + its GET journal routes.
-
-    `sync` copies the `persons` log into ClickHouse
-    `identity.identity_persons` — one half of what the metrics resolver reads.
-    The other half is the connector evidence in `identity.identity_inputs`,
-    which says which account carries an e-mail. A NEW Rust-only surface,
-    deliberately never backported to the frozen, outgoing .NET service.
-    """
-    return implementation == "rust"
-
-
-def supports_strict_input_validation(implementation: str) -> bool:
-    """Strict input validation added by the Rust service (reviewed on epic
-    #1602): too-long revoke `reason` → 400, present-but-nil
-    `viewed_person_id` on POST /v1/visibility → 400, malformed person_id on
-    GET /v1/subchart/{person_id} → 400."""
-    return implementation == "rust"
 
 
 _HEALTH_TIMEOUT_S = float(
@@ -194,42 +128,15 @@ def create_identity_database(cfg: SessionConfig) -> None:
 class IdentityProcess:
     """A spawned, health-checked identity service bound to loopback."""
 
-    def __init__(self, cfg: SessionConfig, port: int, implementation: str = "rust"):
-        if implementation not in IMPLEMENTATIONS:
-            raise ApiSpawnError(f"unknown implementation {implementation!r}")
+    def __init__(self, cfg: SessionConfig, port: int):
         self.cfg = cfg
         self.port = port
-        self.implementation = implementation
         self.base_url = f"http://127.0.0.1:{port}"
         self.auth = GatewayAuth()
         self._proc: subprocess.Popen[str] | None = None
         self._log_fh: Any = None
         self._log_path: Path | None = None
         self._rig_config_path: Path | None = None
-
-    @property
-    def supports_deprecated_person_lookup(self) -> bool:
-        return supports_deprecated_person_lookup(self.implementation)
-
-    @property
-    def supports_containerized_clickhouse(self) -> bool:
-        return supports_containerized_clickhouse(self.implementation)
-
-    @property
-    def supports_strict_input_validation(self) -> bool:
-        return supports_strict_input_validation(self.implementation)
-
-    @property
-    def supports_seed_http_trigger(self) -> bool:
-        return supports_seed_http_trigger(self.implementation)
-
-    @property
-    def supports_seed_cli(self) -> bool:
-        return supports_seed_cli(self.implementation)
-
-    @property
-    def supports_persons_sync(self) -> bool:
-        return supports_persons_sync(self.implementation)
 
     def run_sync_cli(
         self,
@@ -247,10 +154,6 @@ class IdentityProcess:
         `tenant` scopes the run's JOURNAL row (the copy itself is
         tenant-agnostic); pass the tenant whose admin will read the journal.
         """
-        if not self.supports_persons_sync:
-            raise ApiSpawnError(
-                f"the sync CLI exists only on the rust implementation (selected: {self.implementation})"
-            )
         cmd = locate_rust_app(self.cfg)
         env = self._rust_env()
         if tenant is not None:
@@ -260,7 +163,7 @@ class IdentityProcess:
         args = [*cmd, "-c", str(self._rig_config_path), "sync"]
         if force:
             args.append("--force")
-        return subprocess.run(  # noqa: S603 — harness-controlled argv
+        return subprocess.run(
             args, env=env, capture_output=True, text=True, timeout=timeout_s, check=False
         )
 
@@ -283,10 +186,6 @@ class IdentityProcess:
         `None` leaves the config empty, exercising the binary's tenant
         inference (sole-tenant fallback / ambiguous refusal).
         """
-        if not self.supports_seed_cli:
-            raise ApiSpawnError(
-                f"the seed CLI exists only on the rust implementation (selected: {self.implementation})"
-            )
         cmd = locate_rust_app(self.cfg)
         env = self._rust_env()
         if tenant is not None:
@@ -298,7 +197,7 @@ class IdentityProcess:
             args += ["--mode", mode]
         if force:
             args.append("--force")
-        return subprocess.run(  # noqa: S603 — harness-controlled argv
+        return subprocess.run(
             args, env=env, capture_output=True, text=True, timeout=timeout_s, check=False
         )
 
@@ -404,7 +303,7 @@ class IdentityProcess:
         env = self._rust_env()
         # The Rust service does NOT migrate at server start — run its migrate
         # subcommand first (schema + first-admin bootstrap), synchronously.
-        migrate = subprocess.run(  # noqa: S603 — harness-controlled argv
+        migrate = subprocess.run(
             [*cmd, "-c", str(config_path), "migrate"], env=env, capture_output=True, text=True, timeout=300, check=False
         )
         if migrate.returncode != 0:
@@ -422,7 +321,7 @@ class IdentityProcess:
         )
         self._log_path = Path(self._log_fh.name)
         LOG.info(
-            "spawning identity (%s) on 127.0.0.1:%d (startup log: %s)", self.implementation, self.port, self._log_path
+            "spawning identity on 127.0.0.1:%d (startup log: %s)", self.port, self._log_path
         )
         self._proc = subprocess.Popen(cmd, env=env, stdout=self._log_fh, stderr=subprocess.STDOUT, text=True)
 
@@ -524,7 +423,8 @@ class IdentityProcess:
 @contextmanager
 def spawn(cfg: SessionConfig):
     """Context manager: provision DB, migrate, spawn, yield, stop."""
-    proc = IdentityProcess(cfg, find_free_port(), implementation=implementation_from_env())
+    reject_external_target()
+    proc = IdentityProcess(cfg, find_free_port())
     proc.start()
     try:
         yield proc
