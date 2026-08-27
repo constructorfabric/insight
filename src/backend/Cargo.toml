@@ -126,6 +126,10 @@ grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.8" }
 gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.27" }
 types_registry = { package = "cf-gears-types-registry", version = "0.1.23" }
 
+# Anchored validation patterns (previews image-tag shapes). The lite build:
+# no Unicode tables, ASCII-only patterns here.
+regex-lite = "0.1"
+
 # Kubernetes client (previews gear). Same versions/features as gears-rust.
 kube = { version = "3.0", default-features = false }
 k8s-openapi = { version = "0.27", default-features = false }

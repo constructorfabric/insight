@@ -1,7 +1,10 @@
 //! Experiment domain values: the validated name and image tag, TTL, the
 //! record served by the API, and the status derivation. Pure — no I/O.
 
+use std::sync::LazyLock;
+
 use chrono::{DateTime, Utc};
+use regex_lite::Regex;
 
 /// Resource-name prefix; `preview-` is 8 chars, so a 55-char name never
 /// trunc-collides at the 63-char Kubernetes name limit.
@@ -82,42 +85,23 @@ impl ImageTag {
     }
 }
 
-fn is_tag_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-'
+static PREVIEW_TAG: LazyLock<Regex> = LazyLock::new(|| tag_pattern(r"^preview-[A-Za-z0-9._-]+$"));
+
+/// `YYYY.MM.DD.HH.MM-<sha7>` optionally followed by `.<sanitized-branch>`.
+static BUILD_TAG: LazyLock<Regex> = LazyLock::new(|| {
+    tag_pattern(r"^\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}-[0-9a-fA-F]{7}(\.[A-Za-z0-9._-]+)?$")
+});
+
+fn tag_pattern(pattern: &str) -> Regex {
+    Regex::new(pattern).unwrap_or_else(|e| panic!("static tag pattern {pattern:?}: {e}"))
 }
 
 fn is_preview_tag(s: &str) -> bool {
-    s.strip_prefix("preview-")
-        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(is_tag_char))
+    PREVIEW_TAG.is_match(s)
 }
 
-/// `YYYY.MM.DD.HH.MM-<sha7>` optionally followed by `.<sanitized-branch>`.
 fn is_build_tag(s: &str) -> bool {
-    let Some((stamp, rest)) = s.split_once('-') else {
-        return false;
-    };
-
-    let stamp_parts: Vec<&str> = stamp.split('.').collect();
-    let widths = [4, 2, 2, 2, 2];
-    if stamp_parts.len() != widths.len() {
-        return false;
-    }
-    let stamp_ok = stamp_parts
-        .iter()
-        .zip(widths)
-        .all(|(part, width)| part.len() == width && part.bytes().all(|b| b.is_ascii_digit()));
-    if !stamp_ok {
-        return false;
-    }
-
-    let (sha, suffix) = rest.split_at_checked(7).unwrap_or((rest, ""));
-    if sha.len() != 7 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return false;
-    }
-    match suffix.strip_prefix('.') {
-        None => suffix.is_empty(),
-        Some(branch) => !branch.is_empty() && branch.bytes().all(is_tag_char),
-    }
+    BUILD_TAG.is_match(s)
 }
 
 /// A validated time-to-live in whole days, clamped nowhere: a request outside
@@ -253,6 +237,7 @@ mod tests {
             "2026.08.06.14.05-abc1234",
             "2026.08.06.14.05-abc1234.my-branch",
             "2026.08.06.14.05-0f0f0f0.feat-2372-previews-gear",
+            "2026.08.06.14.05-ABC1234",
         ] {
             assert!(ImageTag::parse(good).is_ok(), "should accept: {good:?}");
         }

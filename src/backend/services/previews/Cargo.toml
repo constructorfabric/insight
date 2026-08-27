@@ -45,6 +45,8 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 # Creator identity (gateway-JWT subject).
 uuid = { workspace = true }
+# Image-tag shape validation (anchored, ASCII-only patterns).
+regex-lite = { workspace = true }
 
 # Kubernetes: the Deployment/Service/HTTPRoute trio IS the experiment store.
 kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"] }
