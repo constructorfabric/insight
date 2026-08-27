@@ -1,0 +1,13 @@
+{
+  "node": {"id": "ari:cloud:compass:11111111-2222-3333-4444-555555555555:component/aaaaaaaa-0000-0000-0000-000000000000/c1"},
+  "score": {
+    "totalScore": 67,
+    "maxTotalScore": 100,
+    "status": {"name": "NEEDS_ATTENTION"},
+    "criteriaScores": [
+      {"criterionId": "cr1", "score": 34, "maxScore": 34, "status": "PASSING", "dataSourceLastUpdated": "2026-08-10T14:51:00.233Z"},
+      {"criterionId": "cr2", "score": 33, "maxScore": 33, "status": "PASSING", "dataSourceLastUpdated": null},
+      {"criterionId": "cr3", "score": 0, "maxScore": 33, "status": "FAILING", "dataSourceLastUpdated": null}
+    ]
+  }
+}

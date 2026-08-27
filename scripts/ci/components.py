@@ -239,10 +239,17 @@ COMPONENTS = [
         "pytest_args": "--suites-only",
         "cover": False,
         "triggered_by": ["connector-tests-harness"],
+        # Every nocode connector that ships a tests/ suite belongs here, or a
+        # change to that connector does not re-run its own mock tests. CDK
+        # connectors with suites (hubspot, gitlab, bamboohr, …) are covered by
+        # their own components instead.
         "paths": [
             "src/ingestion/connectors/task-tracking/jira",
             "src/ingestion/connectors/git/github",
             "src/ingestion/connectors/git/bitbucket-cloud",
+            "src/ingestion/connectors/git/github-directory",
+            "src/ingestion/connectors/collaboration/zoom",
+            "src/ingestion/connectors/dev-portal/compass",
         ],
     },
     # `src/frontend/helm` falls under this path but has no measured lines, so it
