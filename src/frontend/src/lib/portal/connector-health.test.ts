@@ -266,6 +266,15 @@ describe("connectorState", () => {
     expect(state).toBe("run_failed");
   });
 
+  it("reads a run nobody timed without inventing a duration", () => {
+    // The contract marks this required-and-nullable, and the summary and the
+    // drill-down must agree: absence stays absence on both.
+    const state = connectorState(row({ last_run: run({ duration_ms: null }) }));
+
+    expect(state).toBe("delivering");
+    expect(formatDuration(null)).toBe("not recorded");
+  });
+
   it("does not call a run still going a run with no transform", () => {
     // A run in flight has not reached its transform yet. Reporting "no
     // transform recorded" turns a normal moment into a downstream finding.

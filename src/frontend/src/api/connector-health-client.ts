@@ -18,7 +18,8 @@ export interface RunFacts {
   step: string | null;
   /** Absent where nothing recorded when it began — never a stand-in zero. */
   started_at: string | null;
-  duration_ms: number;
+  /** Absent where nothing timed the run; a measured zero stays a zero. */
+  duration_ms: number | null;
   /** Outcome of this run's own transform step, when it got that far. */
   transform_status: string | null;
 }

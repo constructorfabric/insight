@@ -234,7 +234,9 @@ The read model does no name mapping: it merges rows the writers have already key
 connector. The mapping happens where storage is observed — the sweep strips the schema prefix
 and turns underscores back into hyphens, and the recorder derives the schema the same way in
 reverse. Both are expressions rather than a shared function, and both rest on a connector name
-never carrying an underscore, which nothing enforces.
+never carrying an underscore — which the connector wiring guard now enforces, because the
+round trip is otherwise lossy and the storage would be filed under a name no configured-set
+row carries.
 
 ### 3.2 Component Model
 

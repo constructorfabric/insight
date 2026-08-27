@@ -25,7 +25,14 @@ Checks
                   silver models drop out of any regenerated DDL snapshot.
   3. depends_on — that same connector MUST be declared in class_people.sql's
                   `depends_on` list, per the convention stated in that file.
-  4. cast-types — contributors MUST NOT explicitly cast the same class_people
+  4. name-shape — a connector name MUST NOT contain an underscore. Bronze
+                  schemas are named `bronze_<name with - turned into _>`, and
+                  the connector-health sweep reverses that by turning every
+                  underscore back into a hyphen. An underscore in the name
+                  makes the round trip lossy, so storage would be filed under
+                  a connector that appears in no configured-set row and would
+                  vanish from the page with no error.
+  5. cast-types — contributors MUST NOT explicitly cast the same class_people
                   column to different types; `union_by_tag` UNION ALLs the
                   branches and ClickHouse raises Code 386 NO_COMMON_TYPE.
 
@@ -115,6 +122,19 @@ def main(argv: list[str]) -> int:
         descriptor = _load_yaml(descriptor_path)
         version = str(descriptor.get("version", ""))
         images = descriptor.get("images") or {}
+
+        # ── name shape ───────────────────────────────────────────────────────
+        # INVARIANT: reversible bronze-schema naming. See check 4 above.
+        name = str(descriptor.get("name", ""))
+        if "_" in name:
+            errors.append(
+                f"{rel}: connector name {name!r} contains an underscore. The "
+                "bronze schema is `bronze_" + name.replace("-", "_") + "`, and "
+                "reversing that mapping turns every underscore into a hyphen — "
+                "so this connector's storage would be filed under a name no "
+                "configured-set row carries, and its rows would disappear from "
+                "the connector-health page without an error anywhere."
+            )
 
         # ── 1. semver ────────────────────────────────────────────────────────
         if not SEMVER_RE.match(version):
