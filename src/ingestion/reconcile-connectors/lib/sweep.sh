@@ -82,6 +82,12 @@ sweep_run() {
 # Emits the JSON the sweep reads on stdin:
 #   {"tick_id": "...", "connectors": [{"name": ..., "connection_id": ...}]}
 #
+# Configured means what it means to the reconcile loop: a descriptor WITH a
+# Kubernetes Secret. Descriptors are every connector the product ships, and a
+# descriptor without a Secret is not installed here — reconcile cascade-deletes
+# its source and connection rather than driving it — so reporting the descriptor
+# set would fill the page with connectors this install does not have.
+#
 # A connector the mover has no connection for yet is reported WITHOUT a
 # connection id rather than dropped. It is configured — which is the first thing
 # the page answers — and simply has nothing to read yet; dropping it would make
@@ -96,9 +102,28 @@ sweep__build_work() {
   # Re-delimited on US for the same reason reconcile_run does it: TAB is
   # IFS-whitespace, so empty descriptor fields would collapse and shift. Only
   # the name is read here; `rest` absorbs the columns this sweep has no use for.
+  local missing_rc
   while IFS=$'\037' read -r name rest; do
     [[ -n "${name}" ]] || continue
     : "${rest}"  # read into it deliberately; nothing here needs the other columns
+    # Exit codes are the gate's contract: 0=missing, 1=exists, 2=API blip.
+    # A blip may not be read as "missing" here for the same reason it may not
+    # in the reconcile loop — there it would cascade-delete a live source, and
+    # here it would seal a snapshot claiming the connector is no longer
+    # configured, which the read surface takes as authoritative.
+    # SAFETY: stdout is this function's JSON contract, so the gate's is
+    # discarded rather than allowed to land in the middle of it. stderr is left
+    # alone — it is where the reason for a failed lookup reaches the pod log.
+    valsec_secret_missing_p "${name}" >/dev/null
+    missing_rc=$?
+    case ${missing_rc} in
+      0) continue ;;
+      1) ;;
+      *)
+        log_line WARN "sweep: secret lookup failed for ${name}; recording nothing this tick"
+        return 1
+        ;;
+    esac
     conn_name="$(reconcile_compute_connection_name "${name}")"
     # Not piped into `head`: without `pipefail` that hides a nonzero exit from
     # the filter, and a failed lookup would read as "no connection yet" — which

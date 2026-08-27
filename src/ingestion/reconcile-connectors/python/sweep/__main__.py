@@ -110,6 +110,16 @@ def run(stream: Any) -> int:
         watermark = ledger.watermark()
         closed = ledger.closed_job_ids(watermark)
         entries, truncated = mover.sync_jobs(plan.as_listing_stamp(watermark))
+
+        # The mover ignores a filter it does not recognise rather than refusing
+        # it, so this is the only place an unsupported one shows up as anything
+        # but a page that quietly stops advancing.
+        unfiltered = plan.unfiltered_count(entries, watermark)
+        if unfiltered:
+            _log(
+                f"the listing returned {unfiltered} entry(ies) older than the "
+                "watermark it was handed; the mover is not filtering on it"
+            )
         if truncated:
             incomplete = True
             _log(

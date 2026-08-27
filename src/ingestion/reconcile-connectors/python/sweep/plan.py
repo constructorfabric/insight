@@ -5,9 +5,14 @@ exercise. Its rules are this change's densest logic: which jobs to cover, which
 already-recorded rows close a job, and which jobs cannot be placed at all.
 
 Every field read here comes from the mover's own listing entry, whose shape is
-flat: `jobId`, `connectionId`, `status`, `createdAt`, `startTime`, `duration`,
-`rowsSynced`. The stamps are ISO-8601 strings and the duration is an ISO-8601
-duration, so both are parsed rather than cast.
+flat: `jobId`, `connectionId`, `status`, `lastUpdatedAt`, `startTime`,
+`duration`, `rowsSynced`. The stamps are ISO-8601 strings and the duration is an
+ISO-8601 duration, so both are parsed rather than cast.
+
+INVARIANT: the entry carries no creation time. The listing accepts a creation
+filter but never reports one, so reading a job's moment from anything other
+than its last-update stamp refuses every entry — indistinguishable, from the
+page, from a mover that has run no syncs at all.
 """
 
 from __future__ import annotations
@@ -91,13 +96,13 @@ def moment(stamp: object) -> str | None:
 
 
 def entry_moment(entry: Mapping[str, Any]) -> str | None:
-    """One listing entry's creation moment, in the ledger's own form.
+    """One listing entry's last-update moment, in the ledger's own form.
 
-    The single reader of that field: the watermark is compared against it and
-    the planner records it, and the two must never disagree about what an
-    entry's creation time is.
+    The single reader of that field: the watermark is compared against it, the
+    listing is filtered by it and the planner records it, and the three must
+    never disagree about which of an entry's stamps places it.
     """
-    return moment(entry.get("createdAt"))
+    return moment(entry.get("lastUpdatedAt"))
 
 
 def as_listing_stamp(recorded: str | None) -> str | None:
@@ -107,10 +112,35 @@ def as_listing_stamp(recorded: str | None) -> str | None:
     silent: a listing handed `2026-08-27 16:00:00.000` does not filter on it, so
     the sweep would re-read the whole history every tick and think it had
     filtered. Converting in one named place is the only way that stays visible.
+
+    `unfiltered_count` is the other half of that guard — this one shapes the
+    request, and that one checks the answer.
     """
     if recorded is None:
         return None
     return recorded.strip().replace(" ", "T") + "Z"
+
+
+def unfiltered_count(entries: Iterable[Mapping[str, Any]], watermark: str | None) -> int:
+    """How many entries came back older than the watermark the listing was handed.
+
+    The mover ignores a query parameter it does not recognise instead of
+    refusing it, so a filter a later release renames stops filtering silently:
+    the read restarts at the beginning of history, a capped pass never reaches
+    the newest jobs, and the page stops advancing with nothing to say why. Any
+    entry older than what was asked for proves the filter did not apply.
+
+    Compared as strings deliberately — both sides are the ledger's own
+    fixed-width form, where lexicographic order is chronological order.
+    """
+    if watermark is None:
+        return 0
+    older = 0
+    for entry in entries:
+        placed = entry_moment(entry)
+        if placed is not None and placed < watermark:
+            older += 1
+    return older
 
 
 def duration_ms(duration: object) -> int | None:
@@ -203,9 +233,9 @@ def sync_row(
     # SAFETY: the summary resolves the newest sync per connector along this
     # column, and a row without it can never win that comparison. Recording it
     # anyway would hide the connector rather than the row.
-    created = entry_moment(entry)
-    if created is None:
-        return Skipped(job_id, "job carries no readable creation time")
+    updated = entry_moment(entry)
+    if updated is None:
+        return Skipped(job_id, "job carries no readable update time")
 
     return {
         "tick_id": tick_id,
@@ -214,7 +244,7 @@ def sync_row(
         "event": SYNC_COMPLETED,
         "status": vocab.normalise(entry.get("status")),
         "started_at": moment(entry.get("startTime")),
-        "job_created_at": created,
+        "job_updated_at": updated,
         "duration_ms": duration_ms(entry.get("duration")),
         "records_reported": records_reported(entry),
     }
@@ -260,8 +290,8 @@ def plan_abandoned(
     for job in jobs:
         job_id = str(job.get("job_id", ""))
         connector = str(job.get("connector", ""))
-        created = str(job.get("created", ""))
-        if not job_id or not connector or not created:
+        updated = str(job.get("updated", ""))
+        if not job_id or not connector or not updated:
             continue
         rows.append(
             {
@@ -271,7 +301,7 @@ def plan_abandoned(
                 "event": SYNC_COMPLETED,
                 "status": vocab.UNKNOWN,
                 "started_at": None,
-                "job_created_at": created,
+                "job_updated_at": updated,
                 "duration_ms": None,
                 "records_reported": None,
             }
@@ -287,7 +317,7 @@ def _bare_row(tick_id: str, event: str, connector: str) -> dict[str, Any]:
         "event": event,
         "status": _ABSENT,
         "started_at": None,
-        "job_created_at": None,
+        "job_updated_at": None,
         "duration_ms": None,
         "records_reported": None,
     }
