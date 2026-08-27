@@ -530,6 +530,7 @@ analytics:
     # installation; when off, the catalog omits them and the CI lens renders
     # its honest not-enabled state.
     tenantMetricsEnabled: false
+  externalSources: []
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at
   # boot rather than accepting keys it cannot seal.
