@@ -30,9 +30,9 @@ use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
 ///
-/// 0 matches → 404; >1 → 409. (The .NET service returned 422 `ambiguous_profile`;
-/// the gears canonical model has no 422, so this maps to `aborted`/409 — an
-/// accepted status divergence, same as the roles / person-roles guards.)
+/// 0 matches → 404; >1 → 409. (The gears canonical model has no 422, so an
+/// ambiguous profile maps to `aborted`/409, the same as the roles /
+/// person-roles guards.)
 pub async fn resolve_profile(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -41,8 +41,7 @@ pub async fn resolve_profile(
     let tenant = ctx.subject_tenant_id();
     let caller = require_caller(&ctx)?;
     let candidate_ids = resolve_person_ids(&state, tenant, &req).await?;
-    // Visibility gate (parity with .NET `VisibilityService.CanSeeAsync`): a
-    // caller may only resolve profiles they can see. Filter BEFORE deciding
+    // Visibility gate: a caller may only resolve profiles they can see. Filter BEFORE deciding
     // between not-found / resolved / ambiguous, so a hidden candidate neither
     // leaks its existence through an `AMBIGUOUS_PROFILE` id list nor causes a
     // uniquely-visible candidate to be misreported as ambiguous.
@@ -60,8 +59,8 @@ pub async fn resolve_profile(
                         tracing::error!(error = %e, "fetch person observations failed");
                         CanonicalError::internal("profile assembly failed").create()
                     })?;
-            // Resolver returned an id but hydration found no rows → not-found
-            // (matches .NET ProfileLookupService). Practically unreachable.
+            // Resolver returned an id but hydration found no rows →
+            // not-found. Practically unreachable.
             if observations.is_empty() {
                 return Err(ProfileError::not_found("person not found")
                     .with_resource(req.value.clone())
@@ -87,8 +86,8 @@ pub async fn resolve_profile(
         }
         ids => {
             // >1 match: include the resolved ids in the detail so operators can
-            // fix the data (the .NET 422 carried a `person_ids` array; the gears
-            // canonical model has no structured payload, so they go in the text).
+            // fix the data: the gears canonical model has no structured
+            // payload, so they go in the text.
             let list = ids
                 .iter()
                 .map(Uuid::to_string)
@@ -137,8 +136,8 @@ async fn visible_person_ids(
     Ok(visible)
 }
 
-/// Wire shape of the internal S2S lookup response. Mirrors the .NET anonymous
-/// object `{ value_type, value, insight_source_type, insight_source_id }`.
+/// Wire shape of the internal S2S lookup response:
+/// `{ value_type, value, insight_source_type, insight_source_id }`.
 #[derive(Debug, Serialize)]
 struct InternalPersonResponse {
     value_type: String,
@@ -170,12 +169,9 @@ pub struct InternalByExternalIdQuery {
 /// `/v1/profiles` enforces: at login neither a tenant nor a caller identity
 /// exists yet. Still fail-closed — a valid gateway JWT is required (host
 /// authn), and a non-service principal (`subject_type != "service"`, the
-/// gears mapping of the .NET `sub_type` claim) gets 403. Registered as a raw
-/// route so it stays out of the public OpenAPI, matching the .NET
-/// `.ExcludeFromDescription()`. Supersedes the removed
-/// `GET /internal/persons/by-email/{email}` (ported from `PersonsEndpoints`)
-/// as the login-bootstrap lookup — same gate, resolves by external id instead
-/// of email.
+/// gears mapping of the `sub_type` claim) gets 403. Registered as a raw
+/// route so it stays out of the public OpenAPI. This is the login-bootstrap
+/// lookup: it resolves by external id, never by email.
 pub async fn internal_person_by_external_id(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -397,10 +393,8 @@ pub struct InternalByEmailOverrideQuery {
 /// through to this one.
 ///
 /// Same bypass-tenant-gates rationale and fail-closed service-only gate as
-/// `by-external-id`. This is the URL the OLD, now-removed
-/// `GET /internal/persons/by-email/{email}` login-bootstrap lookup would map
-/// to if it still existed — but it doesn't: this route is override-only by
-/// contract, never called from the login path.
+/// `by-external-id`. INVARIANT: override-only by contract — the login path
+/// never resolves by email.
 pub async fn internal_person_by_email_override(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -584,8 +578,7 @@ fn refused_roster_email(refusal: login_bootstrap::RosterEmailRefusal) -> Canonic
 
 /// Validate the request and resolve it to candidate `person_id`s.
 ///
-/// Validation mirrors the .NET `ResolveProfileRequestValidator`; resolution
-/// dispatches on `value_type` ("email" across all sources, "id" scoped to one
+/// Resolution dispatches on `value_type` ("email" across all sources, "id" scoped to one
 /// source instance, `person_id` the canonical person itself). Returns the
 /// (possibly empty or multi-element) match set — the caller maps 0 → 404,
 /// 1 → profile, >1 → 409.
@@ -596,8 +589,8 @@ async fn resolve_person_ids(
 ) -> Result<Vec<Uuid>, CanonicalError> {
     let value_type = req.value_type.trim();
 
-    // Validation order mirrors the .NET FluentValidation declaration order:
-    // value_type first, then value, then the source cross-field rules.
+    // Validation order: value_type first, then value, then the source
+    // cross-field rules.
     if value_type.is_empty() {
         return Err(ProfileError::invalid_argument()
             .with_field_violation("value_type", "value_type is required", "REQUIRED")

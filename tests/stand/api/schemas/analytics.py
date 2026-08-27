@@ -99,7 +99,7 @@ class ComputationDto3(BaseModel):
 
 
 class Computation3(StrEnum):
-    distinct_count = 'distinct_count'
+    percentile = 'percentile'
 
 
 class ComputationDto4(BaseModel):
@@ -107,10 +107,33 @@ class ComputationDto4(BaseModel):
         extra='forbid',
     )
     computation: Computation3
+    q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
 
 
-class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4]):
-    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4
+class Computation4(StrEnum):
+    stddev = 'stddev'
+
+
+class ComputationDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation4
+
+
+class Computation5(StrEnum):
+    distinct_count = 'distinct_count'
+
+
+class ComputationDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation5
+
+
+class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6]):
+    root: ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6
 
 
 class CreateSavedQueryRequest(BaseModel):
@@ -209,6 +232,8 @@ class MetricComputation(StrEnum):
     sum = 'sum'
     ratio = 'ratio'
     median = 'median'
+    percentile = 'percentile'
+    stddev = 'stddev'
     distinct_count = 'distinct_count'
 
 
@@ -216,6 +241,7 @@ class MetricDimensionDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    href: str | None = None
     key: str
     label: str | None = None
     value: str
@@ -338,6 +364,7 @@ class MetricDrilldownRow(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    links: dict[str, str]
     values: dict[str, Any]
 
 
@@ -379,7 +406,7 @@ class MetricOrigin(StrEnum):
     custom = 'custom'
 
 
-class Computation4(StrEnum):
+class Computation6(StrEnum):
     sum = 'sum'
 
 
@@ -387,10 +414,10 @@ class MetricResultDto1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation4
+    computation: Computation6
 
 
-class Computation5(StrEnum):
+class Computation7(StrEnum):
     ratio = 'ratio'
 
 
@@ -398,11 +425,11 @@ class MetricResultDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation5
+    computation: Computation7
     scale: float
 
 
-class Computation6(StrEnum):
+class Computation8(StrEnum):
     median = 'median'
 
 
@@ -410,18 +437,41 @@ class MetricResultDto3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation6
+    computation: Computation8
 
 
-class Computation7(StrEnum):
-    distinct_count = 'distinct_count'
+class Computation9(StrEnum):
+    percentile = 'percentile'
 
 
 class MetricResultDto4(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation7
+    computation: Computation9
+    q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
+
+
+class Computation10(StrEnum):
+    stddev = 'stddev'
+
+
+class MetricResultDto5(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation10
+
+
+class Computation11(StrEnum):
+    distinct_count = 'distinct_count'
+
+
+class MetricResultDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    computation: Computation11
 
 
 class View(StrEnum):
@@ -454,6 +504,10 @@ class MetricResultViewDto6(BaseModel):
     )
     values: list[HistogramValueDto]
     view: View5
+
+
+class View6(StrEnum):
+    error = 'error'
 
 
 class Type3(StrEnum):
@@ -529,11 +583,20 @@ class MetricResultsPeriodDto(BaseModel):
 class MetricSchemaErrorCode(StrEnum):
     table_not_found = 'table_not_found'
     column_not_found = 'column_not_found'
+    detail_key_not_found = 'detail_key_not_found'
     dimension_not_covered = 'dimension_not_covered'
     unknown = 'unknown'
 
 
-class View6(StrEnum):
+class MetricViewErrorCode(StrEnum):
+    SOURCE_RELATION_MISSING = 'SOURCE_RELATION_MISSING'
+    RESOURCE_EXHAUSTED = 'RESOURCE_EXHAUSTED'
+    QUERY_TIMEOUT = 'QUERY_TIMEOUT'
+    RESULT_PARSE_FAILED = 'RESULT_PARSE_FAILED'
+    QUERY_FAILED = 'QUERY_FAILED'
+
+
+class View7(StrEnum):
     period = 'period'
 
 
@@ -541,10 +604,10 @@ class MetricViewRequest1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View6
+    view: View7
 
 
-class View7(StrEnum):
+class View8(StrEnum):
     peer = 'peer'
 
 
@@ -553,10 +616,10 @@ class MetricViewRequest2(BaseModel):
         extra='forbid',
     )
     cohort_key: str | None = None
-    view: View7
+    view: View8
 
 
-class View8(StrEnum):
+class View9(StrEnum):
     timeseries = 'timeseries'
 
 
@@ -567,10 +630,10 @@ class MetricViewRequest3(BaseModel):
     bucket: Bucket | None = None
     dimensions: list[str] | None = None
     group_limit: MetricGroupLimitRequest | None = None
-    view: View8
+    view: View9
 
 
-class View9(StrEnum):
+class View10(StrEnum):
     breakdown = 'breakdown'
 
 
@@ -579,10 +642,10 @@ class MetricViewRequest4(BaseModel):
         extra='forbid',
     )
     dimensions: list[str]
-    view: View9
+    view: View10
 
 
-class View10(StrEnum):
+class View11(StrEnum):
     rollup = 'rollup'
 
 
@@ -592,10 +655,10 @@ class MetricViewRequest5(BaseModel):
     )
     dimensions: list[str]
     group_limit: MetricGroupLimitRequest | None = None
-    view: View10
+    view: View11
 
 
-class View11(StrEnum):
+class View12(StrEnum):
     histogram = 'histogram'
 
 
@@ -603,7 +666,7 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    view: View11
+    view: View12
 
 
 class MetricViewRequest(RootModel[MetricViewRequest1 | MetricViewRequest2 | MetricViewRequest3 | MetricViewRequest4 | MetricViewRequest5 | MetricViewRequest6]):
@@ -1063,6 +1126,20 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
+class MetricResultViewDto7(BaseModel):
+    """
+    This view's computation failed; sibling views and metrics are
+    unaffected. `message` detail depends on the caller's role: admins get
+    the underlying description, everyone else a generic one.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    code: MetricViewErrorCode
+    message: str
+    view: View6
+
+
 class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1220,11 +1297,11 @@ class MetricResultViewDto2(BaseModel):
     view: View1
 
 
-class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6]):
-    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6
+class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
+    root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
 
 
-class MetricResultDto5(BaseModel):
+class MetricResultDto7(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -1241,32 +1318,44 @@ class MetricResultDto5(BaseModel):
     views: list[MetricResultViewDto]
 
 
-class MetricResultDto6(MetricResultDto1, MetricResultDto5):
+class MetricResultDto8(MetricResultDto1, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto7(MetricResultDto2, MetricResultDto5):
+class MetricResultDto9(MetricResultDto2, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto8(MetricResultDto3, MetricResultDto5):
+class MetricResultDto10(MetricResultDto3, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto9(MetricResultDto4, MetricResultDto5):
+class MetricResultDto11(MetricResultDto4, MetricResultDto7):
     model_config = ConfigDict(
         extra='forbid',
     )
 
 
-class MetricResultDto(RootModel[MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9]):
-    root: MetricResultDto6 | MetricResultDto7 | MetricResultDto8 | MetricResultDto9
+class MetricResultDto12(MetricResultDto5, MetricResultDto7):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
+class MetricResultDto13(MetricResultDto6, MetricResultDto7):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+
+
+class MetricResultDto(RootModel[MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11 | MetricResultDto12 | MetricResultDto13]):
+    root: MetricResultDto8 | MetricResultDto9 | MetricResultDto10 | MetricResultDto11 | MetricResultDto12 | MetricResultDto13
 
 
 class MetricResultsResponse(BaseModel):

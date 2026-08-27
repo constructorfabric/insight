@@ -16,25 +16,24 @@ Turn an observed defect into an issue someone else can act on in under a minute,
 
 **The repo is public.** PRs close issues with `Closes #N`, so an issue here is outward-facing. Two consequences: draft → confirm → create is the default flow, and the body gets scrubbed before it goes anywhere.
 
-## Coming from the QA fleet
+## Coming from an exploratory pass
 
-A finding may arrive already carrying a `verdict`, an `existing_issue` and a `layer`. That shape is defined in `.claude/skills/explore-ui/references/finding-contract.md` — read it when the file is there, and don't stall when it isn't: the fields are self-describing, and a defect you found yourself has to clear the same four gates anyway.
+A finding may arrive from `probe-merged-change` already carrying a `verdict`, an `existing_issue` and a `layer`. Those fields are self-describing, and a defect you found yourself has to clear the same four gates anyway.
 
-- **`verdict` must be `CONFIRMED`.** An `UNVERIFIED` finding is a hypothesis, and filing one spends a reader's attention on a maybe. Reproduce it yourself first, or hand it to the `qa-finding-refuter` agent where the fleet is installed.
+- **`verdict` must be `CONFIRMED`.** An `UNVERIFIED` finding is a hypothesis, and filing one spends a reader's attention on a maybe. Reproduce it yourself first.
 - **`existing_issue` must have been searched.** If it names an issue, comment on that issue instead of filing. If the match is *closed*, say so in the comment — a regression is more urgent than a new bug.
 - **`layer: stand` is not a product bug.** A `join_use_nulls` view mismatch, a stale `schema_status` cache, an unseeded connector, a tenant mismatch — these are environment faults, and the reproduction shows it: the same check passes on a correctly populated instance. Record that and stop.
 - **A missing `layer` is not a blocker.** You do not have to know where the fix lands in order to file. Attach what you observed at each layer you could reach and leave the conclusion open.
 
 ## Companion skills
 
-Each of these owns a slice of the work. Some are still being built out here, so check that one exists before relying on it, and fall back to the hand-run commands in this skill rather than stalling.
+Each of these owns a slice of the work.
 
 | Skill | Owns | Reach for it when |
 |---|---|---|
 | `playwright-cli` | the browser command surface — snapshots, refs, clicks, screenshots, console, network | exploring a stand or reproducing any UI defect |
 | `drive-ui` | getting an *authenticated* browser on any stand — the Keycloak realm login and the `DEV_USER_EMAIL` seed locally, a passkey attach on a remote one — plus the routes and the evidence set | any UI defect, local or remote |
-| `metric-parity` | the full bronze → silver → gold walk | collecting the same query at every layer |
-| `release-verify` | install and seed health | settling "product bug, or empty instance?" |
+| `insight-stand` | the compose test stand, and whether a failure is the stand or the product | settling "product bug, or empty instance?" |
 | `probe-merged-change` | the exploratory pass over a change that just merged | findings arrive here from that pass, already reproduced |
 
 One collection step belongs here rather than in `drive-ui`: whenever a value on screen looks wrong, capture the browser console and the API response behind it (`playwright-cli console`, then `requests` and `request <n>`) and attach both. Whether the wrong number arrived from the API or was rendered wrong is the single most useful fact in the report — and it is an observation, not a diagnosis, as long as you paste what the response actually contained.
@@ -54,7 +53,7 @@ gh issue list --repo constructorfabric/insight --state closed --search "<key phr
 
 Search more than once with different vocabulary — the metric key, the field name, the group title, the error code, the user-visible label. Same defect → add your evidence to the existing issue. A genuinely different symptom → file new and cross-link with a one-line `related to #N` (a bare link, not a "how this differs" writeup — that reads as noise).
 
-**Product bug, or environment artifact?** A metric that is empty because nothing was seeded or synced is not a product defect. File only what would still be wrong on a correctly populated instance. The cheapest check is the bottom of the medallion: no bronze rows for that connector and window means a seed or sync gap, so stop. (`release-verify` sweeps this for the whole install where it exists.)
+**Product bug, or environment artifact?** A metric that is empty because nothing was seeded or synced is not a product defect. File only what would still be wrong on a correctly populated instance. The cheapest check is the bottom of the medallion: no bronze rows for that connector and window means a seed or sync gap, so stop.
 
 **One bug or several?** One issue per distinct reproduction. Two symptoms that need different steps to trigger are two issues; the same symptom reached by two paths is one issue with both paths in Steps. Where you cannot tell, file one and say what else you saw — merging beats splitting a single defect across two threads.
 
@@ -72,7 +71,7 @@ Collect first, write second. The evidence must let someone else reproduce this.
   "${CH[@]}" -q "SELECT … FROM bronze_<connector>.<table> WHERE …"          # bronze — raw ingest
   ```
   Every layer needs its database prefix: the client connects to `insight`, so an unqualified `class_*` resolves to the wrong database. The password is required — compose sets `CLICKHOUSE_PASSWORD` with `insight-local` as the default.
-  For a remote stand: `../insight-workspace/scripts/ch.sh query --target <target> "<sql>"` (`ch.sh` lists its targets). Those three queries *are* the three-layer walk; `metric-parity` automates it where it exists.
+  For a remote stand: `../insight-workspace/scripts/ch.sh query --target <target> "<sql>"` (`ch.sh` lists its targets). Those three queries *are* the three-layer walk.
 - **UI bugs** — reproduce it in a browser first (`drive-ui` owns the stand and the browser; `playwright-cli` owns the commands), then lead with a tight annotated shot of the broken widget plus a contrast shot of something that renders correctly. The stand URL belongs in your commands, never in the issue.
 - **Pipeline / config bugs with no UI** — the failure signal itself: the exact error and stack, or a row-count contrast that runs the code's own filter (returns 0) against the unfiltered count (>0). **If the failure is silent** — completes "successfully" with zero effect — say so explicitly. That is the key symptom.
 - **What the metric is *supposed* to do** lives in the model under `src/ingestion/` and the definition registry in `src/backend/services/analytics/`. Read the intent before calling behaviour wrong.

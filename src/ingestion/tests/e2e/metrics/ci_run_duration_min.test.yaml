@@ -1,0 +1,64 @@
+description: >
+  Metric: ci.run_duration_min — typical (median) minutes a gate run takes
+  (tenant-grain, issue #2803).
+  How it's computed (bronze → silver → gold):
+    • bronze: workflow run attempts with start and finish timestamps
+    • silver: duration = finish − start of the LAST attempt, minutes
+    • gold:   per-run rows at event grain; the value is the exact median over
+      runs in the period — the tail is a different metric (p90)
+
+  Seeded: three gate runs of 1, 2 and 10 minutes — median 2, mean 4.33, so a
+  mean-computed value fails.
+  Cases: median 2, daily point, per-pipeline breakdown, histogram exposes the
+  event rows.
+bronze:
+  bronze_github.workflow_runs:
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m1
+      id: 1
+      run_number: 1
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:01:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m2
+      id: 2
+      run_number: 2
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:02:00Z"
+    - $ref: templates/github_ci.yaml#/templates/workflow_run
+      unique_key: gh-run-m3
+      id: 3
+      run_number: 3
+      run_started_at: "2026-03-02T10:00:00Z"
+      updated_at: "2026-03-02T10:10:00Z"
+cases:
+  - name: duration is the median over runs, not the mean
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: tenant }
+        period: { from: "2026-03-01", to: "2026-03-07" }
+        metrics:
+          - metric_key: ci.run_duration_min
+            views:
+              - { view: period }
+              - { view: timeseries, bucket: day }
+              - { view: breakdown, dimensions: [pipeline] }
+              - { view: histogram }
+    expect:
+      - assert: "status == 200"
+      - metric: ci.run_duration_min
+        view: period
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "double(it.value) == 2.0"
+      - metric: ci.run_duration_min
+        view: timeseries
+        assert: "items.exists(s, s.points.exists(p, p.bucket_start == '2026-03-02' && double(p.value) == 2.0))"
+      - metric: ci.run_duration_min
+        view: breakdown
+        assert: "items.exists(v, v.dimensions.exists(d, d.key == 'pipeline' && d.value == '.github/workflows/ci.yml') && double(v.value) == 2.0)"
+      - metric: ci.run_duration_min
+        view: histogram
+        find: { entity_id: "11111111-1111-1111-1111-111111111111" }
+        assert: "size(it.bins) > 0"

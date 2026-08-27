@@ -1,12 +1,11 @@
 //! Roles catalogue HTTP surface — CRUD over the global `roles` table.
 //!
 //! Admin-gated. Hard-DELETE with an atomic in-use guard (a role with active
-//! `person_roles` assignments cannot be deleted). Ported 1:1 from the .NET
-//! `RolesEndpoints` (ADR-0013). Note: the .NET "role in use" case is a 422
-//! `role_in_use`; gears canonical errors have no 422, so it is surfaced as
-//! `aborted` (409) — the SAME mapping every .NET-422 guard uses
+//! `person_roles` assignments cannot be deleted); ADR-0013. The "role in
+//! use" refusal is surfaced as `aborted` (409) — gears canonical errors have
+//! no 422, the same mapping the other data-invariant guards use
 //! (`ambiguous_profile`, `last_admin_protected`), pinned by the identity
-//! contract suite's `UNPROCESSABLE_OR_CONFLICT` = {422, 409}.
+//! contract suite.
 
 use std::sync::Arc;
 
@@ -57,9 +56,8 @@ impl From<Role> for RoleResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct RoleListResponse {
     pub items: Vec<RoleResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for RoleListResponse {}
@@ -74,8 +72,7 @@ pub async fn create_role(
 
     // Trim before validating / storing / duplicate-checking so whitespace-only
     // variants (" Admin " vs "Admin") don't accumulate as near-duplicates in the
-    // global catalogue. Stricter than the .NET service (which stored verbatim) —
-    // a deliberate data-hygiene deviation.
+    // global catalogue.
     let name = req.name.trim().to_owned();
     if !role_name_valid(&name) {
         return Err(RoleError::invalid_argument()
@@ -88,7 +85,7 @@ pub async fn create_role(
     }
 
     // Pre-check duplicate name → friendly 409 (the UNIQUE(name) index would
-    // otherwise surface as an opaque 500). Parity with .NET.
+    // otherwise surface as an opaque 500).
     if roles_repo::get_by_name(&state.db, &name)
         .await
         .map_err(read_err)?
@@ -191,14 +188,14 @@ fn already_exists(name: &str) -> CanonicalError {
 }
 
 // Takes the error by value so it can be used directly as `.map_err(read_err)`.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn read_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %e, "roles query failed");
     CanonicalError::internal("failed to read roles").create()
 }
 
 /// `name` must be non-empty (ignoring surrounding whitespace) and at most 64
-/// chars — mirrors the .NET `NotEmpty` + `MaximumLength(64)` validator.
+/// chars.
 fn role_name_valid(name: &str) -> bool {
     !name.trim().is_empty() && name.chars().count() <= MAX_ROLE_NAME_LEN
 }

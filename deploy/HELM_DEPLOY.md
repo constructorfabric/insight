@@ -93,7 +93,7 @@ Argo is the exception to "only wired in": the chart installs WorkflowTemplates a
 
 Three things on those systems are yours to create:
 
-- **MariaDB: the `insight` database and login.** The pre-install hook creates only Identity Resolution's `identity`, and Analytics' blocking `migrate` initContainer needs this one — without it `--wait` burns its whole timeout and fails.
+- **MariaDB: the `insight` database and login.** The pre-install hook creates only Identity Resolution's `identity`, and Analytics' pre-install `migrate` hook Job needs this one — without it `--wait` burns its whole timeout and fails.
 
   ```sql
   CREATE DATABASE IF NOT EXISTS `insight`

@@ -1,19 +1,18 @@
 //! Depth-bounded org subchart reads (recursive CTEs over `org_chart`).
 //!
-//! Ported from the .NET `SubchartRepository` / `Sql.Subchart.cs` (#348 / #344)
-//! plus the visibility predicate `Sql.Visibility.cs::IsTargetInVisibleSet`. Every
-//! query is a `WITH RECURSIVE` traversal, and the latest-observation pass uses
+//! (#348 / #344), plus the visibility predicate. Every query is a
+//! `WITH RECURSIVE` traversal, and the latest-observation pass uses
 //! `ROW_NUMBER()`; neither construct has a `toolkit-db` builder or raw-SQL path,
 //! so we run raw SQL on the self-managed pool (see `infra::db` module docs +
-//! constructorfabric/gears-rust#4239). The .NET SQL uses named `@params` that
-//! repeat on every recursion level, so we expand them to positional `?` via
+//! constructorfabric/gears-rust#4239). The SQL uses named `@params` that
+//! repeat on every recursion level, expanded to positional `?` via
 //! [`super::sql_named::bind_named`]. Values are bound parameters (never
 //! interpolated) and the tenant is always pinned in the `WHERE`.
 //!
 //! Result rows are flat (`person_id`, `parent_person_id`, the four attribute
-//! fields); the tree is assembled in [`crate::domain::subchart`], mirroring the
-//! .NET service split (`SqlSubchart` returns a flat set, `SubchartService`
-//! builds the tree). Roots always surface with `parent_person_id IS NULL`.
+//! fields); the tree is assembled in [`crate::domain::subchart`] — this layer
+//! returns a flat set, the domain builds the tree. Roots always surface with
+//! `parent_person_id IS NULL`.
 
 use sea_orm::prelude::DateTime;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
@@ -50,11 +49,11 @@ fn row_to_flat(r: &sea_orm::QueryResult) -> anyhow::Result<SubchartFlatNode> {
 }
 
 /// Predicate "can `viewer_person_id` see `target_person_id`?" as of `valid_at`
-/// (`None` = right now). Ported from `IsTargetInVisibleSet`: a single recursive
-/// CTE that unions the viewer, their active grant targets, the target itself
+/// (`None` = right now). A single recursive CTE that unions the viewer, their active grant targets, the target itself
 /// when a whole-tenant (wildcard) grant exists, and every `org_chart` descendant
-/// of anyone already visible. The .NET final `SELECT EXISTS(…)` is rendered as a
-/// `SELECT 1 … LIMIT 1` presence probe (truthiness = row present), matching the
+/// of anyone already visible. The final check is a `SELECT 1 … LIMIT 1`
+/// presence probe (truthiness = row present) rather than `SELECT EXISTS(…)`,
+/// matching the
 /// `roles_repo::has_active_role` convention so it maps cleanly through SeaORM
 /// regardless of how the driver types an `EXISTS` scalar.
 ///
@@ -260,9 +259,9 @@ pub async fn visible_targets(
         .collect()
 }
 
-/// Depth-bounded subtree rooted at `root_person_id`. Ported verbatim from
-/// `SqlSubchart.GetSubchart`: a recursive descent over `org_chart` (anchor =
-/// the root with a NULL parent) joined to a `ROW_NUMBER()` latest-observation
+/// Depth-bounded subtree rooted at `root_person_id`: a recursive descent over
+/// `org_chart` (anchor = the root with a NULL parent) joined to a
+/// `ROW_NUMBER()` latest-observation
 /// pass. `max_depth = None` = unbounded (bounded by MariaDB's
 /// `cte_max_recursion_depth`). The caller gates visibility on the root before
 /// calling this (see [`is_target_in_visible_set`]).
@@ -345,16 +344,15 @@ pub async fn get_subchart_flat(
 }
 
 /// Forest variant: every root the `viewer_person_id` can see, one subtree per
-/// visible top of the source's org chart. Ported verbatim from
-/// `SqlSubchart.GetForest` (`visible_set` → `in_source` → `roots` → `subtree` →
-/// `latest_obs`). Roots surface with `parent_person_id IS NULL` regardless of
+/// visible top of the source's org chart (`visible_set` → `in_source` →
+/// `roots` → `subtree` → `latest_obs`). Roots surface with `parent_person_id IS NULL` regardless of
 /// their stored row; singleton orphans (no children in the source) are dropped
 /// by the `roots` CTE's `EXISTS` guard.
 ///
 /// # Errors
 ///
 /// Returns an error if the query fails or a stored id is not 16 bytes.
-#[allow(clippy::too_many_lines)] // one verbatim multi-CTE SQL const dominates
+#[expect(clippy::too_many_lines)] // one verbatim multi-CTE SQL const dominates
 pub async fn get_forest_flat(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -495,8 +493,7 @@ pub async fn get_forest_flat(
     rows.iter().map(row_to_flat).collect()
 }
 
-/// UUID → big-endian `BINARY(16)` bound value (matches the .NET
-/// `ToByteArray(bigEndian: true)`).
+/// UUID → big-endian `BINARY(16)` bound value.
 fn bytes(id: Uuid) -> Value {
     id.as_bytes().to_vec().into()
 }

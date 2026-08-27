@@ -1,0 +1,19 @@
+[package]
+name = "insight-migration"
+version = "0.1.0"
+description = "Shared MariaDB migration lifecycle for Insight backend services"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+tracing = { workspace = true }

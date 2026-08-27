@@ -85,7 +85,7 @@ case "$cmd" in
         # analysis inside the runner image (no DB via --no-deps, no second
         # compose). A `-k` subset run under-fills the ledger and will fail it.
         #
-        # The api and identity-rust endpoint gates used to live here too. They
+        # The api and identity endpoint gates used to live here too. They
         # retired with the HTTP contract suites they measured: those contracts
         # are asserted against a deployed stand now, and their gate is
         # `tests/lib/insight_stand/coverage.py`, run by `e2e-stand.yml` and by

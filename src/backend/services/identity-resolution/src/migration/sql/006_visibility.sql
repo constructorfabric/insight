@@ -36,9 +36,8 @@ CREATE TABLE IF NOT EXISTS visibility (
 
     -- Hot path: "what are A's active grants?" — drives the visibility
     -- CTE seed list when checking can_see(A, B). `viewed_person_id` is
-    -- a covering column so the index satisfies the SELECT shape from
-    -- `Sql.Visibility.cs::ActiveGrantsByViewer` without a back-lookup
-    -- into the clustered index. The valid_to suffix lets the index
+    -- a covering column so the index satisfies the active-grants-by-viewer
+    -- SELECT shape without a back-lookup into the clustered index. The valid_to suffix lets the index
     -- also serve historical queries (valid_to <= @as_of).
     INDEX idx_viewer_current
         (insight_tenant_id, viewer_person_id, valid_to, viewed_person_id)

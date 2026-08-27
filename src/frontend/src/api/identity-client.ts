@@ -1,15 +1,13 @@
 /**
- * `subordinates` is empty until the backend `expand_subordinates` flag is on
- * (see `PersonResponse.cs`). When mocks are off and the endpoint fails the
- * caller surfaces the failure to the UI — never silently falls back to seeded
- * data.
+ * `subordinates` is empty until the backend `expand_subordinates` flag is on.
+ * When mocks are off and the endpoint fails the caller surfaces the failure to
+ * the UI — never silently falls back to seeded data.
  *
  * The legacy `GET /persons/{email}` lookup (RFC 8594 deprecated) is replaced by
- * `POST /profiles` with a `{ value_type, value }` body. The wire shape
- * (`ProfileResponse`) mirrors the C# `PersonResponse`, but nearly every field is
- * optional; we normalize it back into the required-string `IdentityPerson`
- * projection the UI already consumes so callers and the org-tree sidebar are
- * unchanged.
+ * `POST /profiles` with a `{ value_type, value }` body. In the wire shape
+ * (`ProfileResponse`) nearly every field is optional; we normalize it back into
+ * the required-string `IdentityPerson` projection the UI already consumes so
+ * callers and the org-tree sidebar are unchanged.
  */
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";

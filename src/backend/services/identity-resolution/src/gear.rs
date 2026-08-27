@@ -38,6 +38,8 @@ impl Gear for IdentityResolutionGear {
         // server process only serves reads + the operations journal.
         let db = crate::infra::db::connect(&config.database_url).await?;
 
+        crate::infra::db::assert_schema_compatible(&db).await?;
+
         let state = AppState { db, config };
         self.state
             .set(Arc::new(state))
@@ -62,8 +64,7 @@ fn extract_gear_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<Ge
 }
 
 /// `migrate` subcommand: apply pending schema migrations + the first-admin
-/// bootstrap, then exit. Runs on a dedicated single-connection session (the
-/// advisory lock in `run_migrations` is session-scoped).
+/// bootstrap, then exit.
 ///
 /// # Errors
 ///
@@ -76,11 +77,11 @@ pub async fn run_migrate(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<
         !cfg.database_url.is_empty(),
         "`gears.identity-resolution.config.database_url` is required for migrate"
     );
-    let db = crate::infra::db::connect_single(&cfg.database_url).await?;
-    // Migrations AND the first-admin bootstrap run under one advisory lock —
-    // see `run_migrations` on why the bootstrap must stay inside the critical
-    // section (unconstrained INSERT … WHERE NOT EXISTS between replicas).
-    crate::infra::db::run_migrations(&db, &cfg).await?;
+    // Migrations AND the first-admin bootstrap run under one advisory lock on a
+    // pinned session — see `run_migrations` on why the bootstrap must stay
+    // inside the critical section (unconstrained INSERT … WHERE NOT EXISTS
+    // between replicas).
+    crate::infra::db::run_migrations(&cfg.database_url, &cfg).await?;
     Ok(())
 }
 

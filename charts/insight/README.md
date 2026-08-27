@@ -18,7 +18,7 @@ local `file://` subchart:
 | Frontend (SPA)        | app service (req'd)  | `src/frontend/helm`                          | mandatory (no flag)             |
 | Identity Resolution   | app service (opt)    | `src/backend/services/identity-resolution/helm` | `identityResolution.deploy`  |
 
-> Identity Resolution requires a populated `persons` table (seeded by `src/backend/services/identity-resolution/seed/seed-persons.sh`). Not an OIDC provider. Off by default.
+> Identity Resolution requires a populated `persons` table (seeded by the service's own `seed` subcommand, scheduled as a CronJob). Not an OIDC provider. Off by default.
 
 ## What it does NOT contain
 

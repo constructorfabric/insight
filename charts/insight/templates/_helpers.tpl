@@ -198,14 +198,6 @@ Invoked from NOTES.txt so they fire on every install.
     {{- if not (default dict .Values.identityResolution).rosterSourceType -}}
       {{- fail "authenticator.oidc.resolveBy=email requires identityResolution.rosterSourceType — the email lookup is confined to the roster, and identity refuses it with no roster declared rather than matching an address any source happened to state. Every sign-in would be denied." -}}
     {{- end -}}
-    {{- /* The mode's one input is the `email` claim, which rides the `email`
-           scope. An explicit scope list that omits it denies every login, and
-           adding it back is harmless — so refuse here rather than at the first
-           sign-in. An empty list means the gear asks for its own default set,
-           which includes `email`. */ -}}
-    {{- if and $aoidc.scopes (not (has "email" $aoidc.scopes)) -}}
-      {{- fail (printf "authenticator.oidc.resolveBy=email needs \"email\" in authenticator.oidc.scopes — the mode resolves by that claim and the IdP only emits it for the scope. Got %v." $aoidc.scopes) -}}
-    {{- end -}}
     {{- /* Minting needs the source-native id the roster observed, and an
            address is not one: no login provisions in this mode. The gear
            refuses the pair at boot; say so at render, where it is cheap. */ -}}

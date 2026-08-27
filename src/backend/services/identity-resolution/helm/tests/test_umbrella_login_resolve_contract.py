@@ -117,12 +117,14 @@ def test_external_id_mode_still_demands_a_source_type(umbrella_deps) -> None:
     assert "sourceType" in err
 
 
-def test_email_mode_without_the_email_scope_is_refused(umbrella_deps) -> None:
-    """The mode's only input is the claim that scope carries.
+def test_email_mode_accepts_a_scope_list_that_does_not_name_email(umbrella_deps) -> None:
+    """The claim need not be requested to arrive.
 
-    An explicit scope list that omits it installs cleanly and denies every
-    login; adding it back costs nothing, so this is refused while the operator
-    is still editing values.
+    An IdP may emit `email` from an always-on client scope, and Keycloak 26
+    errors on a scope its client is not assigned — so a stand can legitimately
+    request `openid` alone and still carry the claim. Refusing that shape
+    turned a working installation away, which is why the check this replaces
+    is gone.
     """
     code, _, err = render(
         umbrella_deps,
@@ -133,10 +135,9 @@ def test_email_mode_without_the_email_scope_is_refused(umbrella_deps) -> None:
         "--set",
         "authenticator.oidc.resolveBy=email",
         "--set",
-        "authenticator.oidc.scopes={openid,profile}",
+        "authenticator.oidc.scopes={openid,offline_access}",
     )
-    assert code != 0, "render must fail"
-    assert "scopes" in err
+    assert code == 0, err
 
 
 def test_email_mode_refuses_provisioning_rather_than_ignoring_it(umbrella_deps) -> None:

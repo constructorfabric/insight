@@ -124,3 +124,9 @@ data:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
+          external_sources: {{- if not .Values.externalSources }} []{{- end }}
+            {{- range .Values.externalSources }}
+            - id: {{ .id | quote }}
+              provider: {{ .provider | quote }}
+              web_base_url: {{ .webBaseUrl | quote }}
+            {{- end }}

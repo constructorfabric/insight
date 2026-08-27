@@ -8,6 +8,15 @@
 # substitution scans comments and an unresolvable placeholder fails the import.
 realm: insight-broker
 enabled: true
+# Shown as the heading on any page Keycloak renders itself; without it the
+# heading is the raw realm name.
+displayName: Insight
+# Overrides the page Keycloak serves when a request names an authentication
+# execution that no longer matches the session — reachable when several logins
+# race in one browser, and a dead end because both of its recovery links depend
+# on state that race has already destroyed. Set it only where the umbrella
+# deploys Keycloak: the theme ships with the server, not with this file.
+loginTheme: insight
 
 clientScopes:
   # The claim allow-list: tokens carry exactly email, single-string tenant_id,
@@ -78,3 +87,9 @@ clients:
     redirectUris:
       - $(env:INSIGHT_AUTHENTICATOR_REDIRECT_URI)
     webOrigins: []
+    # Keycloak's generic error page (error.ftl) renders a way out ONLY when the
+    # client names one, and without this it names none — which is what strands
+    # a login Keycloak rebuilt from KC_RESTART and stamped with a timeout.
+    # Relative with no rootUrl set, so ResolveRelative replaces the path on the
+    # reached host: the app root, not /kc.
+    baseUrl: "/"

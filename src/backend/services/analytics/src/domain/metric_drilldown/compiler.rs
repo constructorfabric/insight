@@ -315,11 +315,11 @@ pub fn decode_evidence_rows(bytes: &[u8]) -> Result<Vec<EvidenceQueryRow>, serde
 mod tests {
     use super::*;
     use crate::domain::metric_definitions::definition::AliasCollapse;
-    use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
-    use crate::domain::metric_drilldown::dto::EvidencePresentation;
-    use crate::domain::metric_drilldown::presentation::evidence_presentation;
+    use crate::domain::metric_definitions::{
+        EvidenceGranularity, EvidencePresentation, RatioDenominatorAggregation,
+    };
     use crate::domain::metric_drilldown::test_support::{
-        TEST_PERSON, TEST_TENANT, input, plan, validated,
+        TEST_PERSON, TEST_TENANT, commit_presentation, input, plan, validated,
     };
     use uuid::Uuid;
 
@@ -334,11 +334,7 @@ mod tests {
                 role: MetricInputRole::Value,
                 alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
+                presentation: commit_presentation(),
             }],
         );
         let mut request = validated(plan);
@@ -404,11 +400,7 @@ mod tests {
                 role: MetricInputRole::Value,
                 alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
+                presentation: commit_presentation(),
             }],
         );
         let mut request = validated(plan);
@@ -433,11 +425,7 @@ mod tests {
                 role: MetricInputRole::Value,
                 alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
+                presentation: commit_presentation(),
             }],
         );
         let second = Uuid::from_u128(0x019e_2830_0000_7000_8000_0000_0000_0002);
@@ -485,19 +473,17 @@ mod tests {
                     role: MetricInputRole::Numerator,
                     alias_collapse: AliasCollapse::Sum,
                     measure_key: numerator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
+                    presentation: EvidencePresentation::undeclared(
+                        EvidenceGranularity::SourceSummary,
+                    ),
                 },
                 EvidenceInput {
                     role: MetricInputRole::Denominator,
                     alias_collapse: AliasCollapse::Sum,
                     measure_key: denominator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
+                    presentation: EvidencePresentation::undeclared(
+                        EvidenceGranularity::SourceSummary,
+                    ),
                 },
             ],
         );
@@ -542,11 +528,7 @@ mod tests {
                 role: MetricInputRole::Value,
                 alias_collapse: AliasCollapse::Sum,
                 measure_key: "commit_count".to_owned(),
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
+                presentation: commit_presentation(),
             }],
         ));
         let (sql, params) =
@@ -594,11 +576,7 @@ mod tests {
                 role: MetricInputRole::Value,
                 alias_collapse: AliasCollapse::Sum,
                 measure_key: "commit_count".to_owned(),
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
+                presentation: commit_presentation(),
             }],
         ));
         let (sql, _) =
@@ -630,19 +608,17 @@ mod tests {
                     role: MetricInputRole::Numerator,
                     alias_collapse: AliasCollapse::Sum,
                     measure_key: numerator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
+                    presentation: EvidencePresentation::undeclared(
+                        EvidenceGranularity::SourceSummary,
+                    ),
                 },
                 EvidenceInput {
                     role: MetricInputRole::Denominator,
                     alias_collapse: denominator_collapse,
                     measure_key: denominator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
+                    presentation: EvidencePresentation::undeclared(
+                        EvidenceGranularity::SourceSummary,
+                    ),
                 },
             ],
         ))

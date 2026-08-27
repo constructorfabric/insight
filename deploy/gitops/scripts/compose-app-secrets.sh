@@ -211,18 +211,6 @@ if [ "$AUTH_RESOLVE_BY" = "email" ]; then
     echo "ERROR: authenticator.oidc.provisionOnLogin cannot be used with resolveBy=email in $VALUES — no login provisions in this mode" >&2
     exit 1
   fi
-  # The mode's one input is the `email` claim, which rides the `email` scope. An
-  # explicit list that omits it installs cleanly and denies every login; adding
-  # it back is harmless.
-  AUTH_SCOPE_LIST=$(yq -r '(.authenticator.oidc.scopes // []) | join(" ")' "$VALUES")
-  case " $AUTH_SCOPE_LIST " in
-    "  ") ;;                      # unset — the gear asks for its own default set
-    *" email "*) ;;
-    *)
-      echo "ERROR: authenticator.oidc.resolveBy=email needs \"email\" in authenticator.oidc.scopes in $VALUES (got '$AUTH_SCOPE_LIST')" >&2
-      exit 1
-      ;;
-  esac
 fi
 
 for v in MDB_HOST MDB_USER MDB_DB CH_HOST CH_USER CH_DB RD_HOST; do
@@ -388,7 +376,7 @@ stringData:
   APP__gears__identity_resolution__config__clickhouse_user: "${CH_USER}"
   APP__gears__identity_resolution__config__clickhouse_password: "${CH_PW}"
 EOF
-  # First-admin bootstrap inputs (migrate initContainer): mirror the
+  # First-admin bootstrap inputs (migrate hook Job): mirror the
   # chart-side block in charts/insight/templates/secrets.yaml.
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
     echo "  APP__gears__identity_resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""

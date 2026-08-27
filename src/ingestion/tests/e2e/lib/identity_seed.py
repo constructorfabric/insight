@@ -64,7 +64,7 @@ VISIBILITY_GRANT_BOB_HIDDEN = uuid.UUID("cccccccc-0000-4000-8000-000000000001")
 ALICE_ADMIN_ASSIGNMENT = uuid.UUID("cccccccc-0000-4000-8000-000000000002")
 
 # persons-seed runs under its OWN tenant so its tenant-scoped rebuild of
-# account_person_map / org_chart never touches the fixture tree above.
+# org_chart never touches the fixture tree above.
 # (The identity_inputs read is deliberately tenant-UNfiltered — HOTFIX(#1550) —
 # but every WRITE binds the caller's tenant.)
 SEED_TENANT = uuid.UUID("44444444-4444-4444-4444-444444444444")
@@ -183,18 +183,16 @@ WIPE_SEEDED_SQL = (
     "DELETE FROM visibility WHERE reason = 'e2e-seed'",
     "DELETE FROM person_roles WHERE reason = 'e2e-seed'",
     "DELETE FROM org_chart WHERE reason = 'e2e-seed'",
-    "DELETE FROM account_person_map WHERE reason = 'e2e-seed'",
     "DELETE FROM persons WHERE reason = 'e2e-seed'",
 )
 
 # Correction tests append journal rows under 'operator-%' reasons and rebuild
-# the derived caches, whose rows carry copied or empty reasons; on a kept stack
-# all of it is fixture residue. The caches are derived per tenant, so wiping the
-# tenant is exact.
+# org_chart, whose rows carry copied or empty reasons; on a kept stack all of
+# it is fixture residue. The edges are derived per tenant, so wiping the tenant
+# is exact.
 WIPE_CORRECTIONS_SQL = (
     "DELETE FROM persons WHERE reason LIKE 'operator-%%' AND insight_tenant_id = %s",
     "DELETE FROM org_chart WHERE insight_tenant_id = %s",
-    "DELETE FROM account_person_map WHERE insight_tenant_id = %s",
 )
 
 

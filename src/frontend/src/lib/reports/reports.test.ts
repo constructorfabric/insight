@@ -26,6 +26,7 @@ import {
   type ReportPerson,
 } from "@/lib/identities/report-person";
 import type { MetricResult } from "@/api/metric-results-client";
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 
 const months = (...pairs: Array<[string, number | null]>) =>
   pairs.map(([bucket_start, value]) => ({ bucket_start, value }));
@@ -235,6 +236,28 @@ describe("buildReportTable", () => {
         1,
       ],
     ]);
+  });
+
+  it("keeps the report when a metric answers only an error view", () => {
+    // A failed computation arrives as an error view in the timeseries slot;
+    // the metric keeps its column with empty cells instead of dropping the
+    // report.
+    const errored = {
+      metric_key: "git.commits",
+      label: "Commits",
+      computation: "sum",
+      views: [buildMetricErrorView()],
+    } as unknown as MetricResult;
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map([["git.commits", errored]]),
+      range: { from: "2026-01-01", to: "2026-03-31" },
+      granularity: "quarter",
+    });
+    expect(table.columns).toContain("Commits");
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0]?.at(-1)).toBeNull();
   });
 
   it("reads a weekly value into the week the server bucketed it by", () => {

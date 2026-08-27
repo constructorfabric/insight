@@ -9,9 +9,8 @@
 
 CREATE ROLE IF NOT EXISTS presentation_ro;
 
--- Contract (read-only): silver + identity/person + legacy gold in `insight`.
+-- Contract (read-only): silver + identity + legacy gold in `insight`.
 GRANT SELECT ON silver.* TO presentation_ro;
-GRANT SELECT ON person.* TO presentation_ro;
 GRANT SELECT ON identity.* TO presentation_ro;
 GRANT SELECT ON insight.* TO presentation_ro;
 

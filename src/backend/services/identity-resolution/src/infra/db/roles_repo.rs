@@ -1,19 +1,17 @@
 //! Role checks against the shared MariaDB `person_roles` table.
 //!
-//! Ported from the .NET `RolesRepository` / `Sql.Roles.cs`. Used by the
-//! persons-seed admin gate — only admins may trigger a seed, matching the .NET
-//! `CallerAdminCheck`.
+//! Used by the persons-seed admin gate — only admins may trigger a seed.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use uuid::Uuid;
 
-/// The `admin` role id — a stable seed value (`Roles.Admin` in the .NET domain).
+/// The `admin` role id — a stable seed value.
 pub const ADMIN_ROLE_ID: Uuid = Uuid::from_u128(0xa4d1_1000_0000_4000_8000_0000_0000_0001);
 
 /// True if `person_id` currently holds an active (`valid_to IS NULL`) `role_id`
-/// in the tenant. Mirrors `Sql.Roles.cs::HasActivePersonRole` (`SELECT EXISTS`);
-/// implemented as a `LIMIT 1` probe so the truthiness maps cleanly through
-/// SeaORM regardless of how the driver types an `EXISTS` scalar.
+/// in the tenant. Implemented as a `LIMIT 1` probe rather than `SELECT EXISTS`
+/// so the truthiness maps cleanly through SeaORM regardless of how the driver
+/// types an `EXISTS` scalar.
 ///
 /// # Errors
 ///
@@ -75,8 +73,7 @@ fn row_to_role(r: &sea_orm::QueryResult) -> anyhow::Result<Role> {
     })
 }
 
-/// Look up a role by (unique) name — the duplicate-name pre-check. Ported from
-/// `SqlRoles.RoleByName`.
+/// Look up a role by (unique) name — the duplicate-name pre-check.
 ///
 /// # Errors
 ///
@@ -91,7 +88,7 @@ pub async fn get_by_name(db: &DatabaseConnection, name: &str) -> anyhow::Result<
         .transpose()
 }
 
-/// Look up a role by id. Ported from `SqlRoles.RoleById`.
+/// Look up a role by id.
 ///
 /// # Errors
 ///
@@ -145,7 +142,7 @@ pub async fn active_roles_of_person(
         .collect()
 }
 
-/// All roles, ordered by name. Ported from `SqlRoles.ListAllRoles`.
+/// All roles, ordered by name.
 ///
 /// # Errors
 ///
@@ -160,7 +157,7 @@ pub async fn list_all(db: &DatabaseConnection) -> anyhow::Result<Vec<Role>> {
         .collect()
 }
 
-/// Insert a new role. Ported from `SqlRoles.InsertRole`.
+/// Insert a new role.
 ///
 /// # Errors
 ///
@@ -178,7 +175,7 @@ pub async fn insert_role(db: &DatabaseConnection, role_id: Uuid, name: &str) -> 
 
 /// Hard-delete a role only if no ACTIVE `person_roles` reference it (single
 /// atomic statement — the in-use guard). Returns rows affected: 1 = deleted,
-/// 0 = missing or in use. Ported verbatim from `SqlRoles.TryDeleteRoleIfUnused`.
+/// 0 = missing or in use.
 /// The correlated `NOT EXISTS` guard has no `toolkit-db` builder form → raw SQL
 /// (see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
@@ -200,7 +197,7 @@ pub async fn try_delete_if_unused(db: &DatabaseConnection, role_id: Uuid) -> any
 }
 
 /// Count active `person_roles` referencing a role across ALL tenants — feeds the
-/// in-use error message. Ported from `SqlRoles.CountActivePersonRolesByRoleAnyTenant`.
+/// in-use error message.
 ///
 /// # Errors
 ///

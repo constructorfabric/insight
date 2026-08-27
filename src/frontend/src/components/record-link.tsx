@@ -1,11 +1,3 @@
-/**
- * A record's text, linked when the record has a page to link to.
- *
- * Metric evidence is only sometimes addressable — it depends on the provider
- * and on what the row carries (see `lib/metrics/provider-links`). Callers pass the
- * href they resolved and this decides nothing except how to render it, so an
- * unlinkable row is plain text rather than a dead anchor.
- */
 export function RecordLink({
   href,
   children,

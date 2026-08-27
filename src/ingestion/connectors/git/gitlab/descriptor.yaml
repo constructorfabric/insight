@@ -23,7 +23,7 @@ name: gitlab
 # 1.21.0: dbt staging declares the class-contract column patch_id. MINOR, not
 #   MAJOR: the commits stream reports no patch id, so the column is NULL
 #   whether a row re-materializes or not and nothing has to be rebuilt.
-version: "1.22.0"
+version: "1.23.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -32,7 +32,7 @@ images:
     name: source-gitlab-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.08.26.03.42-3e74a6a"
+    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.08.26.14.21-a068c16"
 dbt_select: "tag:gitlab+"
 connection:
   namespace: "bronze_gitlab"
