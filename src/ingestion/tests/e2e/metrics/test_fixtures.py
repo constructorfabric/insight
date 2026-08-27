@@ -78,8 +78,10 @@ def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> No
     both producers (the connector models and the service's persons-sync), one
     synthetic account per persona.
 
-    The runtime resolves while it serves, so these rows only have to exist
-    before the requests run — not before the gold build.
+    Ordering is not free: the map RELATION must exist before the gold build,
+    because `metric_entity_cohorts_current` is a view that INNER JOINs
+    `person_map` and ClickHouse validates a view's query when it creates it. The
+    map's CONTENTS are read per request, so only the rows may change afterwards.
     """
     # NOT worker-scoped: the map models name the `identity` schema literally, so
     # a per-worker suffix would leave the map reading an unseeded table. xdist
@@ -261,8 +263,8 @@ def test_metric_smoke(
         tracked_models.run(["class_focus_metrics"], worker_ctx=worker_ctx, full_refresh=True)
 
     # 4. Identity bindings for the personas the cases address (the rig plays the
-    #    persons-sync role). Read per request, so only the map relation has to
-    #    exist before the gold build.
+    #    persons-sync role). Must precede the gold build: the cohorts view
+    #    INNER JOINs person_map, and creating a view validates its references.
     persona_emails = _all_persona_emails(test_yaml)
     all_person_ids = _person_ids_for(persona_emails, test_yaml.identity_aliases)
     to_person_id = {email: all_person_ids[email] for email in _requested_persona_emails(test_yaml)}

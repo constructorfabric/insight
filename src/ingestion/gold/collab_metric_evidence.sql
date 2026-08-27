@@ -30,7 +30,7 @@ WITH
 chat_source AS (
     SELECT
         tenant_id,
-        person_key AS entity_id,
+        {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
         total_chat_messages,
         channel_posts,
@@ -49,7 +49,7 @@ chat_source AS (
 meeting_source AS (
     SELECT
         tenant_id,
-        person_key AS entity_id,
+        {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
         meetings_attended,
         meetings_organized,
@@ -71,7 +71,7 @@ meeting_source AS (
 email_source AS (
     SELECT
         tenant_id,
-        person_key AS entity_id,
+        {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
         sent_count,
         received_count,
@@ -89,7 +89,7 @@ email_source AS (
 document_source AS (
     SELECT
         tenant_id,
-        person_key AS entity_id,
+        {{ normalized_email('person_key') }} AS entity_id,
         date AS metric_date,
         viewed_or_edited_count,
         shared_internally_count,
@@ -115,7 +115,7 @@ document_source AS (
 focus_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
-        email AS entity_id,
+        {{ normalized_email('email') }} AS entity_id,
         day AS metric_date,
         dev_time_h,
         working_hours_per_day,

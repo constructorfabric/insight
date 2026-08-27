@@ -156,18 +156,45 @@ fn compile_ratio_query(
                        toJSONString(evidence.dimensions) AS dimensions_json, \
                        {collapsed} AS contribution \
                 FROM {database}.{table} AS evidence \
+                LEFT JOIN {account_map_relation} AS account_map \
+                    ON account_map.source_type = evidence.account_source_type \
+                   AND account_map.source_id = {account_source_uuid} \
+                   AND account_map.account_id = {account_id} \
+                LEFT JOIN {person_map_relation} AS person_map \
+                    ON person_map.email = evidence.entity_id \
                 WHERE {tenant} AND evidence.source_key = ? AND evidence.entity_type = ? AND {entity} \
                   AND evidence.metric_date >= toDate(?) AND evidence.metric_date <= toDate(?) \
                   AND evidence.measure_key IN (?, ?){filter_sql} \
                 GROUP BY evidence.metric_date, evidence.measure_key, \
-                         evidence.subject_key, toJSONString(evidence.dimensions)\
+                         evidence.subject_key, toJSONString(evidence.dimensions), \
+                         {resolved_person}\
             ) AS collapsed \
             GROUP BY collapsed.metric_date\
          ){cursor_sql} \
          ORDER BY role, metric_date, observed_at, source_key, measure_key, record_id, record_kind, subject_key, entity_id \
          LIMIT {limit}",
+        account_map_relation = crate::domain::metric_results::compiler::ACCOUNT_ASSIGNMENT_RELATION,
+        person_map_relation = crate::domain::metric_results::compiler::PERSON_MAP_RELATION,
+        account_source_uuid =
+            crate::domain::metric_results::compiler::account_source_uuid_expr("evidence"),
+        account_id = crate::domain::metric_results::compiler::account_id_expr("evidence"),
+        resolved_person = resolved_person_expr(),
     );
     Ok((sql, params))
+}
+
+/// INVARIANT: the collapse groups by the resolved PERSON, not the source
+/// identity. Grouping by identity would leave one person's aliases uncollapsed;
+/// omitting the person entirely would collapse a roster's people into each
+/// other, so a flagged denominator would read `1` for a whole team.
+fn resolved_person_expr() -> String {
+    format!(
+        "multiIf(coalesce(account_map.account_id, '') != '', \
+          toString(assumeNotNull(account_map.person_id)), \
+          coalesce(person_map.email, '') != '', \
+          toString(assumeNotNull(person_map.person_id)), \
+          evidence.entity_id)"
+    )
 }
 
 /// Per-identity combination for the two halves of a ratio, at evidence grain.
@@ -665,8 +692,32 @@ mod tests {
         ))
         .unwrap_or_else(|error| panic!("query must compile: {error}"));
 
-        assert!(!sql.contains("multiIf("));
+        // Pinned to the collapse arms, not to `multiIf(` — the resolved-person
+        // expression is a multiIf and is present in every ratio drilldown.
+        assert!(!sql.contains("max(ifNull(evidence.contribution, 0))"));
+        assert!(!sql.contains("min(ifNull(evidence.contribution, 0))"));
         assert!(sql.contains("sum(ifNull(evidence.contribution, 0))"));
+    }
+
+    // A roster drilldown collapses each person separately: grouping without the
+    // person would take one `max` across the whole team, so a flagged
+    // denominator would read 1 for five active people.
+    #[test]
+    fn the_ratio_collapse_groups_by_the_resolved_person() {
+        let (sql, _) = compile_query(&ratio_plan(
+            AliasCollapse::Max,
+            RatioDenominatorAggregation::Sum,
+        ))
+        .unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(
+            sql.contains("LEFT JOIN identity.account_assignment AS account_map"),
+            "the collapse resolves the person account-first"
+        );
+        assert!(
+            sql.contains("toJSONString(evidence.dimensions), multiIf(coalesce(account_map"),
+            "the resolved person closes the collapse GROUP BY"
+        );
     }
 
     #[test]

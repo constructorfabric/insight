@@ -30,7 +30,7 @@ WITH
 ai_dev_usage_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
+        {{ normalized_email('email') }} AS entity_id,
         day AS metric_date,
         CAST(
             [
@@ -56,7 +56,7 @@ ai_dev_usage_source AS (
 ai_assistant_usage_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
+        {{ normalized_email('email') }} AS entity_id,
         day AS metric_date,
         surface,
         CAST(
