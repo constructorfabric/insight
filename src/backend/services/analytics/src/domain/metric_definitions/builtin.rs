@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
+    fn a_counted_pull_request_reads_the_request_and_where_it_was_headed() {
         for measure_key in [
             "pr_created",
             "pr_merged",
@@ -339,13 +339,24 @@ mod tests {
             "default_pr_merged",
         ] {
             let presentation = declared_presentation("git", measure_key);
+            // Where the work went is part of the record on every path that
+            // opens the dialog: a column that appeared only for a reader who
+            // arrived through a grouped table left the same request looking
+            // like a different one.
             assert_eq!(
                 presentation
                     .detail_columns
                     .iter()
                     .map(|column| column.key.as_str())
                     .collect::<Vec<_>>(),
-                ["ref", "title", "repository", "author"],
+                [
+                    "ref",
+                    "title",
+                    "repository",
+                    "author",
+                    "branch_scope",
+                    "destination_branch"
+                ],
                 "{measure_key} should read the request it counted"
             );
             // The row IS the request it counted, so a value column would be 1s.
