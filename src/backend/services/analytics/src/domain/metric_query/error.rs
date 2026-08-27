@@ -68,6 +68,26 @@ pub enum QueryError {
     TooManyQuantiles { limit: usize },
     #[error("a question that names quantiles names at least one")]
     NoQuantiles,
+    #[error("a page reports between 1 and {limit} rows")]
+    PageSizeOutOfRange { limit: u32 },
+    #[error("a page reports at most {limit} dimensions beyond the metric's own")]
+    TooManyDisplayDimensions { limit: usize },
+    #[error("the metric declares no dimension `{dimension}` to report")]
+    UnknownDisplayDimension { dimension: String },
+    #[error("the metric composes {valid}, so a page names which of them to read")]
+    InputUnnamed { valid: String },
+    #[error("the metric composes no input `{input}`; it composes {valid}")]
+    UnknownInput { input: String, valid: String },
+    #[error("the cursor cannot be read")]
+    CursorUnreadable,
+    #[error("the cursor was issued for a different question")]
+    CursorMismatched,
+    /// The rows under a page moved while it was being read, so the position the
+    /// caller holds no longer selects the rows after it.
+    #[error("the rows this page resumes from have been replaced")]
+    PageExpired,
+    #[error("its page could not be bound to the rows it read")]
+    PageUnanchored,
     /// A metric asked for the shape of its own per-row values, which its
     /// computation does not take.
     #[error("{0}")]
@@ -119,6 +139,12 @@ impl QueryError {
             Self::QuantileOutOfRange { .. } | Self::TooManyQuantiles { .. } | Self::NoQuantiles => {
                 "queries.quantiles"
             }
+            Self::PageSizeOutOfRange { .. } => "page_size",
+            Self::TooManyDisplayDimensions { .. } | Self::UnknownDisplayDimension { .. } => {
+                "display_dimensions"
+            }
+            Self::InputUnnamed { .. } | Self::UnknownInput { .. } => "input",
+            Self::CursorUnreadable | Self::CursorMismatched => "cursor",
             Self::Uncompilable(_)
             | Self::NoQueries
             | Self::TooManyQueries { .. }
@@ -128,11 +154,17 @@ impl QueryError {
             | Self::SubjectsUnresolved
             | Self::PopulationUnresolved
             | Self::SplitUnranked
+            | Self::PageExpired
+            | Self::PageUnanchored
             | Self::ReadFailed
             | Self::RowsUndecodable => "queries",
         }
     }
 }
+
+/// INVARIANT: `/v1/metric-drilldown` refuses an expired page under this same
+/// code, and a caller retries both the same way, so the two must not drift.
+const PAGE_EXPIRED_REASON: &str = "EVIDENCE_SNAPSHOT_EXPIRED";
 
 impl From<QueryError> for CanonicalError {
     fn from(error: QueryError) -> Self {
@@ -149,9 +181,17 @@ impl From<QueryError> for CanonicalError {
                     )
                     .create()
             }
+            QueryError::PageExpired => MetricError::failed_precondition()
+                .with_precondition_violation(
+                    "metric evidence snapshot",
+                    "Metric evidence was rebuilt while the request was running.",
+                    PAGE_EXPIRED_REASON,
+                )
+                .create(),
             QueryError::SubjectsUnresolved
             | QueryError::PopulationUnresolved
             | QueryError::SplitUnranked
+            | QueryError::PageUnanchored
             | QueryError::ReadFailed
             | QueryError::RowsUndecodable => {
                 tracing::error!(%error, "a metric question went unanswered");
@@ -182,6 +222,13 @@ impl From<QueryError> for CanonicalError {
             | QueryError::QuantileOutOfRange { .. }
             | QueryError::TooManyQuantiles { .. }
             | QueryError::NoQuantiles
+            | QueryError::PageSizeOutOfRange { .. }
+            | QueryError::TooManyDisplayDimensions { .. }
+            | QueryError::UnknownDisplayDimension { .. }
+            | QueryError::InputUnnamed { .. }
+            | QueryError::UnknownInput { .. }
+            | QueryError::CursorUnreadable
+            | QueryError::CursorMismatched
             | QueryError::NoDistribution(_)
             | QueryError::Unanswerable { .. }
             | QueryError::Uncompilable(_) => MetricError::invalid_argument()
@@ -245,6 +292,20 @@ mod tests {
             },
             QueryError::ResultTooLarge { limit: 5000 },
             QueryError::PopulationTooLarge { limit: 5000 },
+            QueryError::PageSizeOutOfRange { limit: 250 },
+            QueryError::TooManyDisplayDimensions { limit: 10 },
+            QueryError::UnknownDisplayDimension {
+                dimension: "not_a_dimension".to_owned(),
+            },
+            QueryError::InputUnnamed {
+                valid: "`numerator`, `denominator`".to_owned(),
+            },
+            QueryError::UnknownInput {
+                input: "total".to_owned(),
+                valid: "`value`".to_owned(),
+            },
+            QueryError::CursorUnreadable,
+            QueryError::CursorMismatched,
         ];
 
         for case in cases {
@@ -264,10 +325,32 @@ mod tests {
             QueryError::SubjectsUnresolved,
             QueryError::PopulationUnresolved,
             QueryError::SplitUnranked,
+            QueryError::PageUnanchored,
             QueryError::RowsUndecodable,
         ] {
             assert_eq!(status(case), StatusCode::INTERNAL_SERVER_ERROR.as_u16());
         }
+    }
+
+    /// A page whose rows moved is a precondition failure rather than a
+    /// restatable question, so it carries its own type and reason: a caller
+    /// restarts the read instead of rewriting what it asked for.
+    #[test]
+    fn a_page_whose_rows_were_replaced_is_refused_under_the_expiry_code_callers_already_retry() {
+        let error = CanonicalError::from(QueryError::PageExpired);
+        let status = error.status_code();
+        let problem = serde_json::to_value(toolkit_canonical_errors::Problem::from(error))
+            .expect("the refusal serializes");
+
+        assert_eq!(status, StatusCode::BAD_REQUEST.as_u16());
+        assert_eq!(
+            problem["type"],
+            "gts://gts.cf.core.errors.err.v1~cf.core.err.failed_precondition.v1~"
+        );
+        assert_eq!(
+            problem["context"]["violations"][0]["type"],
+            PAGE_EXPIRED_REASON
+        );
     }
 
     #[test]

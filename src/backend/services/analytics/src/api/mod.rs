@@ -538,6 +538,29 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(query::distributions::query_distributions)
         .register(router, openapi);
 
+    router = OperationBuilder::post("/v1/query/rows")
+        .operation_id("analytics_api.query.rows")
+        .summary("Page the rows behind a metric value")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::metric_query::rows::RowsRequest>(
+            openapi,
+            "The rows to page, and where to resume",
+        )
+        .json_response_with_schema::<crate::domain::metric_query::rows::RowsResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of rows",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(query::rows::query_rows)
+        .register(router, openapi);
+
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
     // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
     router = OperationBuilder::get("/v1/queries")

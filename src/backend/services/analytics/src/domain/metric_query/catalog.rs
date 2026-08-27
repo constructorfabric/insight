@@ -6,10 +6,13 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use crate::domain::compiler::drilldown::{
+    CompiledDrilldown, compile_drilldown, drilldown_input_roles,
+};
 use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::group_ranking::compile_group_ranking_query;
 use crate::domain::compiler::metric::{check_distribution, compile_metric_query};
-use crate::domain::compiler::request::{GroupRankingQuery, MetricQuery};
+use crate::domain::compiler::request::{DrilldownQuery, GroupRankingQuery, MetricQuery};
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
 use crate::domain::definitions::seeds::{SeedError, product_definitions};
@@ -72,6 +75,12 @@ impl MetricCatalog {
         self.metrics.get(metric_key)
     }
 
+    /// Every metric the definitions carry, in key order.
+    #[cfg(test)]
+    pub(super) fn metric_keys(&self) -> Vec<&str> {
+        self.metrics.keys().map(String::as_str).collect()
+    }
+
     /// The dimension keys a question may name for a metric. INVARIANT: a
     /// metric's capability is derived, not declared — the intersection of its
     /// inputs' dimension sets, so no view can name a key one input cannot
@@ -120,6 +129,25 @@ impl MetricCatalog {
         query: &MetricQuery,
     ) -> Result<CompiledMeasureQuery, CompileError> {
         compile_metric_query(self.catalog, metric, &self.measures, query)
+    }
+
+    /// One page per input of the metric's computation: the rows its value was
+    /// folded from.
+    pub(super) fn compile_drilldown(
+        &self,
+        metric: &MetricDefinition,
+        query: &DrilldownQuery,
+    ) -> Result<Vec<CompiledDrilldown>, CompileError> {
+        compile_drilldown(self.catalog, metric, &self.measures, query)
+    }
+
+    /// The parts of a metric's computation a page may be asked for, named as
+    /// the pages themselves are tagged.
+    pub(super) fn input_roles(
+        &self,
+        metric: &MetricDefinition,
+    ) -> Result<Vec<String>, CompileError> {
+        drilldown_input_roles(metric, &self.measures)
     }
 
     /// The pre-pass ranking a split's groups, over a metric that need not be

@@ -66,12 +66,56 @@ pub struct DrilldownColumn {
     pub kind: DrilldownColumnKind,
 }
 
+/// The relation a page scanned, so a caller can bind a page to the table its
+/// rows came from without resolving the metric a second time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedRelation {
+    pub database: String,
+    pub relation: String,
+}
+
+/// What one row contributes to the metric's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Contribution {
+    /// Every row contributes the same 1, because the row itself is what the
+    /// fold counted. Reporting that number says nothing the row does not.
+    CountedRow,
+    /// Each row contributes the value the fold read from it.
+    MeasuredValue,
+}
+
+impl Contribution {
+    fn of(aggregation: Aggregation) -> Self {
+        match aggregation {
+            Aggregation::Count | Aggregation::CountDistinct => Self::CountedRow,
+            Aggregation::Sum | Aggregation::Avg | Aggregation::Min | Aggregation::Max => {
+                Self::MeasuredValue
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledDrilldown {
     pub input_role: String,
+    pub relation: ScannedRelation,
+    pub contribution: Contribution,
     pub sql: String,
     pub params: Vec<QueryParam>,
     pub columns: Vec<DrilldownColumn>,
+}
+
+/// The parts a metric's computation is composed of, named exactly as the pages
+/// of its rows are tagged.
+pub fn drilldown_input_roles(
+    metric: &MetricDefinition,
+    measures: &BTreeMap<String, MeasureDefinition>,
+) -> Result<Vec<String>, CompileError> {
+    Ok(Fold::resolve(metric, measures)?
+        .inputs()
+        .into_iter()
+        .map(|(role, _)| role.to_owned())
+        .collect())
 }
 
 /// One page of rows per input of the metric's computation: one for a metric
@@ -149,6 +193,11 @@ pub(super) fn compile_drilldown_rows(
 
     Ok(CompiledDrilldown {
         input_role: role.to_owned(),
+        relation: ScannedRelation {
+            database: dataset.database.clone(),
+            relation: dataset.relation.clone(),
+        },
+        contribution: Contribution::of(measure.aggregation),
         sql,
         params,
         columns: projection.columns,
@@ -428,8 +477,8 @@ mod tests {
     use crate::domain::field_catalog::model::DisplayRole;
 
     use super::{
-        CompiledDrilldown, DrilldownColumnKind, ROLE_DENOMINATOR, ROLE_NUMERATOR, ROLE_VALUE,
-        compile_drilldown,
+        CompiledDrilldown, Contribution, DrilldownColumnKind, ROLE_DENOMINATOR, ROLE_NUMERATOR,
+        ROLE_VALUE, compile_drilldown, drilldown_input_roles,
     };
 
     fn rows(
@@ -1137,6 +1186,68 @@ mod tests {
                 measure: "prs_merged".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn the_inputs_a_metric_is_paged_by_are_the_parts_its_pages_are_tagged_with() {
+        let cases: [(&str, MetricDefinition, Vec<MeasureDefinition>); 3] = [
+            (
+                "direct",
+                metric(direct("prs_merged")),
+                vec![measure("prs_merged", None)],
+            ),
+            (
+                "ratio",
+                metric(ratio("prs_merged", "prs_closed")),
+                vec![measure("prs_merged", None), measure("prs_closed", None)],
+            ),
+            (
+                "derived",
+                metric(derived(
+                    &[("merged", "prs_merged"), ("opened", "prs_opened")],
+                    "merged / opened",
+                )),
+                vec![measure("prs_merged", None), measure("prs_opened", None)],
+            ),
+        ];
+
+        for (named, metric, defined) in cases {
+            let roles = drilldown_input_roles(&metric, &measures(&defined)).expect("resolves");
+
+            assert_eq!(
+                roles,
+                rows(&metric, &defined, &drilldown_query())
+                    .iter()
+                    .map(|page| page.input_role.clone())
+                    .collect::<Vec<_>>(),
+                "{named}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_page_says_which_relation_it_scanned_and_whether_its_contribution_says_anything() {
+        let counted = only(
+            &metric(direct("prs_merged")),
+            &[measure("prs_merged", None)],
+            &drilldown_query(),
+        );
+        let measured = only(
+            &metric(direct("pr_size")),
+            &[sized_measure("pr_size")],
+            &drilldown_query(),
+        );
+        let distinct = only(
+            &metric(direct("active_days")),
+            &[counting_days()],
+            &drilldown_query(),
+        );
+
+        assert_eq!(counted.relation.database, "silver");
+        assert_eq!(counted.relation.relation, "class_git_pull_requests");
+        assert_eq!(counted.contribution, Contribution::CountedRow);
+        assert_eq!(distinct.contribution, Contribution::CountedRow);
+        assert_eq!(measured.contribution, Contribution::MeasuredValue);
     }
 
     #[test]
