@@ -761,13 +761,21 @@ SELECT
     -- `commit_day` rows group by that model's own dimension tuple, so a
     -- dimension added there would split one active day into one row per
     -- block and inflate every active-day reading.
+    --
+    -- INVARIANT: the appended element is CAST to the array's own named tuple
+    -- type. `arrayConcat` with an anonymous or wider-nullability tuple widens
+    -- the whole column to `Tuple(String, Nullable(String), Nullable(String))`,
+    -- which changes this table's DDL and every relation that unions it.
     arrayConcat(
         source_dimensions,
-        [tuple(
-            'hour_block',
-            {{ hour_block_value('observed_at') }},
-            toNullable({{ hour_block_label('observed_at') }})
-        )]
+        CAST(
+            [tuple(
+                'hour_block',
+                coalesce({{ hour_block_value('observed_at') }}, '__unknown__'),
+                toNullable(coalesce({{ hour_block_label('observed_at') }}, 'Unknown'))
+            )]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        )
     ) AS dimensions,
     map(
         'source_id', coalesce(toString(source_id), ''),

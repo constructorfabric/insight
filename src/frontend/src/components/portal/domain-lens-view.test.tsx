@@ -1553,6 +1553,12 @@ describe("descending into one dimension value", () => {
       </EvidenceDialogContext.Provider>,
     );
 
+    // Every block is openable, not only the labelled ones: the density choice
+    // must not take six of twelve drilldowns with it.
+    expect(
+      screen.getAllByRole("button", { name: /Open the records from the/ }),
+    ).toHaveLength(12);
+
     await user.click(
       screen.getByRole("button", {
         name: "Open the records from the 08:00 block",

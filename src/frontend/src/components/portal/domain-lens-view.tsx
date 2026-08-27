@@ -2152,20 +2152,24 @@ function HeatmapHoursSection({
             <div />
             {HOUR_BLOCKS.map((block, index) => (
               <div key={block} className="text-center text-muted-foreground">
-                {index % 2 !== 0 ? (
-                  ""
-                ) : onOpenBlock ? (
+                {onOpenBlock ? (
+                  // Every block is openable, including the ones whose label is
+                  // suppressed for density: the button fills its column, so an
+                  // unlabelled one is still a target for a mouse and a
+                  // screen reader both.
                   <button
                     type="button"
                     aria-haspopup="dialog"
                     aria-label={`Open the records from the ${block}:00 block`}
                     onClick={() => onOpenBlock(block)}
-                    className="cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
+                    className="w-full cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
                   >
-                    {block}
+                    <span aria-hidden={index % 2 !== 0}>
+                      {index % 2 === 0 ? block : "·"}
+                    </span>
                   </button>
                 ) : (
-                  block
+                  <span>{index % 2 === 0 ? block : ""}</span>
                 )}
               </div>
             ))}
