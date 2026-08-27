@@ -1,5 +1,17 @@
 version: 2
 
+sources:
+  # Operator-authored binding: which seat tier an invoice line's catalogue
+  # identifier prices, and which seat population its prices reach. dbt guarantees
+  # the relation exists via the `create_ai_config_tables` on-run-start hook but
+  # owns none of the rows — a model materializing over it would wipe the
+  # decisions it holds. No vendor states the correspondence, so nothing can
+  # derive it.
+  - name: config
+    schema: config
+    tables:
+      - name: ai_seat_tier_map
+
 models:
   - name: class_ai_dev_usage
     description: >
