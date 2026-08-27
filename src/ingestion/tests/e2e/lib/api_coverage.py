@@ -68,9 +68,9 @@ BLOCKED: dict[str, frozenset[int]] = {
 # every request), so 401 is exercised and REQUIRED — only 429 (no rate
 # limiter) is universally unobservable.
 IDENTITY_UNIVERSAL_BOILERPLATE = frozenset({429})
-# The committed .NET spec declares a generic `200` on the mutating routes,
-# but the handlers actually answer 201 (create) / 202 (accepted) / 204
-# (delete) — same `.standard_errors`-style spec-fidelity gap as analytics
+# The spec declares a generic `200` on the mutating routes, but the handlers
+# actually answer 201 (create) / 202 (accepted) / 204 (delete) — the same
+# `.standard_errors`-style spec-fidelity gap as analytics
 # #1669. The wrong 200 is BLOCKED (never answered), and the REAL success code
 # is REQUIRED_EXTRA (must be observed even though the spec doesn't declare
 # it) — so the gate cannot report 100% while no mutation success was ever
@@ -93,7 +93,7 @@ IDENTITY_BLOCKED: dict[str, frozenset[int]] = {
 # out (SERVER_FAULT_FLOOR — e.g. the queue-full 503 on POST /v1/persons-seed
 # is not deterministically inducible black-box). Self-cleaning once the spec
 # starts declaring real codes (REDUNDANT then forces the move).
-_IDENTITY_COMMON_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+_IDENTITY_BASE_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
     "POST /v1/profiles": frozenset({400, 401, 404}),
     "POST /v1/persons-seed": frozenset({202, 400, 401, 403}),
     "GET /v1/persons-seed/{id}": frozenset({400, 401, 403, 404}),
@@ -111,34 +111,33 @@ _IDENTITY_COMMON_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
     "GET /v1/subchart/{personId}": frozenset({400, 401, 404}),
 }
 
-IDENTITY_RUST_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
-    # POST /v1/persons-seed is dropped in the Rust successor (see the SKIP
-    # entry below) — its inherited requirement must go with it, or the gate
-    # demands codes no test can ever observe.
-    **{k: v for k, v in _IDENTITY_COMMON_REQUIRED_EXTRA.items() if k != "POST /v1/persons-seed"},
-    "POST /v1/profiles": _IDENTITY_COMMON_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
+IDENTITY_REQUIRED_EXTRA: dict[str, frozenset[int]] = {
+    # POST /v1/persons-seed no longer exists (see the SKIP entry below) — its
+    # inherited requirement must go with it, or the gate demands codes no test
+    # can ever observe.
+    **{k: v for k, v in _IDENTITY_BASE_REQUIRED_EXTRA.items() if k != "POST /v1/persons-seed"},
+    "POST /v1/profiles": _IDENTITY_BASE_REQUIRED_EXTRA["POST /v1/profiles"] | {409},
     # Analytics reads this endpoint's answer as authorization for every
     # person-keyed metric read, so its refusals are contract, not boilerplate:
     # 400 for a request naming nobody (empty / nil / non-UUID / over the cap),
     # 401 for a caller the gateway did not identify. The spec declares only
     # 200, so without this entry the gate asks nothing beyond "it was called".
     "POST /v1/visible-persons": frozenset({400, 401}),
-    "DELETE /v1/roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
-    "DELETE /v1/person-roles/{id}": _IDENTITY_COMMON_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"] | {409},
+    "DELETE /v1/roles/{id}": _IDENTITY_BASE_REQUIRED_EXTRA["DELETE /v1/roles/{id}"] | {409},
+    "DELETE /v1/person-roles/{id}": _IDENTITY_BASE_REQUIRED_EXTRA["DELETE /v1/person-roles/{id}"] | {409},
 }
 
-# The Rust service dropped the deprecated persons lookup (approved removal,
-# zero callers) and the persons-seed POST trigger (#1690: the seed is
-# CLI-only — CronJob / manual Job via the `seed` subcommand; the GET journal
-# routes remain). The gate universe (the committed identity-resolution spec,
-# inherited from the retired .NET service) still lists them, so SKIP entries
-# let these operations be legitimately unexercised.
-IDENTITY_RUST_SKIP_LIST: list[tuple[str, str]] = [
-    ("GET /v1/persons/{email}", "dropped in the Rust successor (approved removal; tests skip via capabilities)"),
+# The deprecated persons lookup (approved removal, zero callers) and the
+# persons-seed POST trigger (#1690: the seed is CLI-only — CronJob / manual
+# Job via the `seed` subcommand; the GET journal routes remain) no longer
+# exist. While the gate universe still lists them, SKIP entries let these
+# operations be legitimately unexercised.
+IDENTITY_SKIP_LIST: list[tuple[str, str]] = [
+    ("GET /v1/persons/{email}", "removed (approved: zero callers)"),
     (
         "POST /v1/persons-seed",
-        "removed in the Rust successor (#1690: seed runs via the `seed` CLI "
-        "subcommand — CronJob/manual Job; the GET journal routes remain)",
+        "removed (#1690: seed runs via the `seed` CLI subcommand — "
+        "CronJob/manual Job; the GET journal routes remain)",
     ),
 ]
 
@@ -184,11 +183,11 @@ _SUITES = {
         _ANALYTICS_UNIVERSAL_BOILERPLATE,
         _ANALYTICS_REQUIRED_EXTRA,
     ),
-    "identity-rust": (
-        IDENTITY_RUST_SKIP_LIST,
+    "identity": (
+        IDENTITY_SKIP_LIST,
         IDENTITY_BLOCKED,
         IDENTITY_UNIVERSAL_BOILERPLATE,
-        IDENTITY_RUST_REQUIRED_EXTRA,
+        IDENTITY_REQUIRED_EXTRA,
     ),
     "authenticator": (
         AUTHENTICATOR_SKIP_LIST,

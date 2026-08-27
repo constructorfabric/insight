@@ -73,6 +73,10 @@ pub struct PeerQueryRow {
 pub struct BreakdownQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
+    #[serde(rename = "link_source_provider")]
+    pub source_provider: Option<String>,
+    #[serde(rename = "link_source_id")]
+    pub source_id: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -394,18 +398,20 @@ pub(crate) fn compile_breakdown_query(
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_predicate = selected_entity_predicate(req, &mut params);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
+    let (source_select, source_group) = hidden_source_context(dimensions);
     let group = if dim_group.is_empty() {
         "entity_id".to_owned()
     } else {
         format!("entity_id, {dim_group}")
     };
+    let group = format!("{group}{source_group}");
     let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
     let value_expr = grouped_value_expr(def);
     let inner = format!(
         r"
         SELECT
-            entity_id{dim_select},
+            entity_id{dim_select}{source_select},
             {value_expr} AS value
         FROM {observation_table}
         WHERE {metric_where}
@@ -575,6 +581,10 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
         ComputationSpec::Median { .. } => {
             "quantileExactIf(0.5)(value, value IS NOT NULL)".to_owned()
         }
+        ComputationSpec::Percentile { q, .. } => {
+            format!("quantileExactIf({q})(value, value IS NOT NULL)")
+        }
+        ComputationSpec::Stddev { .. } => "stddevSampIf(value, value IS NOT NULL)".to_owned(),
         ComputationSpec::DistinctCount { .. } => {
             "toFloat64(uniqExactIf(subject_key, subject_key IS NOT NULL))".to_owned()
         }
@@ -973,6 +983,23 @@ fn item_value_expr(def: &MetricDefinition, params: &mut Vec<String>) -> String {
             "quantileExactIfOrNull(0.5)(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
                 .to_owned()
         }
+        ComputationSpec::Percentile { value, q } => {
+            // Honest-null like Median — same event-grain shape, different point
+            // on the distribution.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            format!(
+                "quantileExactIfOrNull({q})(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+            )
+        }
+        ComputationSpec::Stddev { value } => {
+            // Honest-null like Median; sample stddev, so a single observation
+            // reads NULL (no spread is measurable), never a fabricated 0.
+            params.push(value.source_key.clone());
+            params.push(value.measure_key.clone());
+            "stddevSampIfOrNull(value, source_key = ? AND measure_key = ? AND value IS NOT NULL)"
+                .to_owned()
+        }
         ComputationSpec::DistinctCount { value } => {
             // OrNull like sum: an entity present via another measure but with
             // no rows for this one comes back NULL, not 0, so it never enters
@@ -1115,6 +1142,8 @@ fn measure_pairs(defs: &[&MetricDefinition]) -> BTreeSet<(String, String)> {
         .flat_map(|def| match &def.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => {
                 vec![(value.source_key.clone(), value.measure_key.clone())]
             }
@@ -1165,6 +1194,8 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
     match &def.spec {
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
         | ComputationSpec::DistinctCount { .. } => {
             format!(
                 "{tenant} AND source_key = ? AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND measure_key = ?"
@@ -1196,6 +1227,8 @@ fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
         ],
         ComputationSpec::Sum { .. }
         | ComputationSpec::Median { .. }
+        | ComputationSpec::Percentile { .. }
+        | ComputationSpec::Stddev { .. }
         | ComputationSpec::DistinctCount { .. } => Vec::new(),
     }
 }
@@ -1204,6 +1237,8 @@ fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsReque
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
+        | ComputationSpec::Percentile { value, .. }
+        | ComputationSpec::Stddev { value }
         | ComputationSpec::DistinctCount { value } => vec![
             req.tenant_id.to_string(),
             value.source_key.clone(),
@@ -1287,6 +1322,18 @@ fn dimension_select_group(dimensions: &[String]) -> (String, String) {
         groups.push(label_alias);
     }
     (select, groups.join(", "))
+}
+
+fn hidden_source_context(dimensions: &[String]) -> (String, String) {
+    if !dimensions.iter().any(|dimension| dimension == "repository") {
+        return (String::new(), String::new());
+    }
+    let provider = dimension_value_expr("source");
+    let source_id = dimension_value_expr("source_id");
+    (
+        format!(", {provider} AS link_source_provider, {source_id} AS link_source_id"),
+        ", link_source_provider, link_source_id".to_owned(),
+    )
 }
 
 fn ranking_dimension_select_group(dimensions: &[String]) -> (String, String, String) {
@@ -1867,6 +1914,17 @@ mod tests {
                 .sql
                 .contains("GROUP BY entity_id, dim_0_value, dim_0_label")
         );
+    }
+
+    #[test]
+    fn repository_breakdown_namespaces_hidden_source_context() {
+        let query =
+            compile_breakdown_query(&sum_metric(), &request(), &["repository".to_owned()], &[]);
+
+        assert!(query.sql.contains("AS link_source_provider"));
+        assert!(query.sql.contains("AS link_source_id"));
+        assert!(query.sql.contains("link_source_provider, link_source_id"));
+        assert!(!query.sql.contains(" AS source_id"));
     }
 
     #[test]

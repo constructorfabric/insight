@@ -23,10 +23,11 @@
 --
 -- GRAIN: the endpoint reports current-billing-period-to-date spend with no
 -- explicit period field. We stamp period_month = start-of-month of the
--- snapshot's extraction time and keep the LATEST snapshot per (seat, month).
--- As months roll over this accrues a monthly history; within the current
--- month it always reflects the freshest snapshot. unique_key carries the
--- month so a new month never overwrites a prior month's closing value.
+-- snapshot's extraction time and keep the LATEST snapshot per (seat, month),
+-- held against a drop on the month's last day (see the CTE below). As months
+-- roll over this accrues a monthly history; within the current month it always
+-- reflects the freshest snapshot. unique_key carries the month so a new month
+-- never overwrites a prior month's closing value.
 -- INVARIANT: full_refresh=false is a data-safety guard. This model is the only
 -- place a past month's closing spend exists — the endpoint keeps no history and
 -- Bronze rows keyed on the seat alone collapse to its latest state — so a
@@ -48,11 +49,9 @@
     tags=['claude-team', 'silver:class_ai_overage']
 ) }}
 
-WITH latest_per_seat_month AS (
-    -- Bronze is full-refresh+append and its unique_key carries the extraction
-    -- month, so it keeps each seat's closing state per month. Collapsing here
-    -- is still required: repeated syncs within a month re-emit the seat, and
-    -- rows written before the key carried a month have no month in theirs.
+WITH per_seat_day AS (
+    -- One reading per seat per day: Bronze keys a reading by seat and day, but
+    -- ReplacingMergeTree collapses on merge rather than on insert.
     SELECT *
     FROM {{ source('bronze_claude_team', 'claude_team_overage_spend') }}
     WHERE account_uuid IS NOT NULL
@@ -60,10 +59,40 @@ WITH latest_per_seat_month AS (
       AND account_email IS NOT NULL
       AND trim(account_email) != ''
     ORDER BY _airbyte_extracted_at DESC
-    -- Dedup on the FULL grain (tenant + source + seat + month), not just
+    -- Dedup on the FULL grain (tenant + source + seat + day), not just
     -- account_uuid: a multi-tenant / multi-instance bronze_claude_team can hold
-    -- the same account_uuid under different tenant_id/source_id in one month,
-    -- and keying on account_uuid alone would drop those as false duplicates.
+    -- the same account_uuid under different tenant_id/source_id on one day, and
+    -- keying on account_uuid alone would drop those as false duplicates.
+    LIMIT 1 BY tenant_id, source_id, account_uuid, toDate(_airbyte_extracted_at)
+),
+-- INVARIANT: a reading on the month's last calendar day may raise the month,
+-- never lower it — this row IS the closing figure. Mirrors the hold in
+-- ai_cost_metric_evidence, so the monthly and per-day figures keep agreeing.
+per_seat_day_held AS (
+    SELECT
+        *,
+        -- INVARIANT: the PRECEDING reading, never the largest. Gold erases an
+        -- earlier reading that overstated the month; a maximum over them would
+        -- restore it.
+        if(
+            toDate(_airbyte_extracted_at) = toLastDayOfMonth(_airbyte_extracted_at),
+            greatest(
+                toInt64(round(coalesce(used_credits, 0))),
+                lagInFrame(toInt64(round(coalesce(used_credits, 0))), 1, toInt64(0)) OVER (
+                    PARTITION BY tenant_id, source_id, account_uuid,
+                                 toStartOfMonth(_airbyte_extracted_at)
+                    ORDER BY _airbyte_extracted_at
+                )
+            ),
+            toInt64(round(coalesce(used_credits, 0)))
+        )                                               AS held_cents
+    FROM per_seat_day
+),
+latest_per_seat_month AS (
+    -- The month's closing state.
+    SELECT *
+    FROM per_seat_day_held
+    ORDER BY _airbyte_extracted_at DESC
     LIMIT 1 BY tenant_id, source_id, account_uuid, toStartOfMonth(_airbyte_extracted_at)
 )
 
@@ -93,19 +122,19 @@ SELECT
     -- (e.g. unassigned seats with limit_type NULL). round() guards against a
     -- float repr ('10000.0') that toUInt32OrNull would otherwise reject.
     toUInt32OrNull(toString(round(monthly_credit_limit))) AS credit_limit_cents,
-    toUInt32(round(coalesce(used_credits, 0)))          AS used_amount_cents,
+    toUInt32(held_cents)                                AS used_amount_cents,
     -- Overage = spend beyond the limit. NULL (not 0) when the limit is unknown
     -- — honest-NULL: we cannot compute overage without a limit.
     multiIf(
         monthly_credit_limit IS NULL, CAST(NULL AS Nullable(UInt32)),
-        CAST(greatest(0, toInt64(round(coalesce(used_credits, 0)))
+        CAST(greatest(0, held_cents
                          - toInt64(round(monthly_credit_limit))) AS Nullable(UInt32))
     )                                                   AS overage_cents,
     -- Soft over-limit flag (used > limit). NULL when limit unknown. Distinct
     -- from out_of_credits (hard exhaustion), which lives in the JSON blob.
     multiIf(
         monthly_credit_limit IS NULL, CAST(NULL AS Nullable(UInt8)),
-        toUInt8(coalesce(used_credits, 0) > monthly_credit_limit)
+        toUInt8(held_cents > toInt64(round(monthly_credit_limit)))
     )                                                   AS is_over_limit,
     -- Bronze may store the JSON boolean as Bool, UInt8, or the strings
     -- 'true'/'false' depending on destination typing — normalise all forms.

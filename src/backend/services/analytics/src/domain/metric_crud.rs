@@ -303,15 +303,45 @@ fn validate_inputs(graph: &CustomMetric) -> Result<(), GraphViolation> {
 
     let roles: Vec<MetricInputRole> = graph.inputs.iter().map(|input| input.role).collect();
     match graph.computation {
-        MetricComputation::Sum | MetricComputation::Median | MetricComputation::DistinctCount => {
+        MetricComputation::Sum
+        | MetricComputation::Median
+        | MetricComputation::Stddev
+        | MetricComputation::DistinctCount => {
             if roles != [MetricInputRole::Value] {
                 return Err(violation(
                     "inputs",
-                    "sum/median/distinct_count take exactly one value input",
+                    "sum/median/stddev/distinct_count take exactly one value input",
                 ));
             }
             if graph.scale.is_some() {
-                return Err(violation("scale", "only ratio metrics carry a scale"));
+                return Err(violation(
+                    "scale",
+                    "only ratio and percentile metrics carry a scale",
+                ));
+            }
+        }
+        MetricComputation::Percentile => {
+            if roles != [MetricInputRole::Value] {
+                return Err(violation(
+                    "inputs",
+                    "percentile takes exactly one value input",
+                ));
+            }
+            // `scale` doubles as the quantile for percentile metrics.
+            match graph.scale {
+                None => {
+                    return Err(violation(
+                        "scale",
+                        "percentile metrics require the quantile in scale",
+                    ));
+                }
+                Some(q) if !(0.0..=1.0).contains(&q) => {
+                    return Err(violation(
+                        "scale",
+                        "percentile quantile must be within [0, 1]",
+                    ));
+                }
+                Some(_) => {}
             }
         }
         MetricComputation::Ratio => {
@@ -1182,6 +1212,45 @@ mod tests {
             measure_key: "num".to_owned(),
         }];
         assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn percentile_requires_a_probability_quantile_in_scale() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = None;
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(1.5);
+        assert_eq!(rejected_field(&graph), "scale");
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Percentile;
+        graph.scale = Some(0.9);
+        graph.inputs.push(CustomMetricInput {
+            role: MetricInputRole::Numerator,
+            measure_key: "events".to_owned(),
+        });
+        assert_eq!(rejected_field(&graph), "inputs");
+    }
+
+    #[test]
+    fn stddev_rejects_a_scale_like_every_single_value_computation() {
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        assert!(validate_graph(&graph).is_ok());
+
+        let mut graph = sum_graph();
+        graph.computation = MetricComputation::Stddev;
+        graph.scale = Some(0.9);
+        assert_eq!(rejected_field(&graph), "scale");
     }
 
     #[test]

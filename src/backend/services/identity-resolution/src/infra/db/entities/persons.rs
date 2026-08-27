@@ -19,7 +19,6 @@ pub struct Model {
     pub value: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub value_effective: Option<String>,
-    pub value_hash: Option<String>,
     #[sea_orm(column_type = "Binary(16)")]
     pub person_id: Vec<u8>,
     #[sea_orm(column_type = "Binary(16)")]

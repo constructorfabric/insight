@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 import {
   MEDIAN_METRIC_FIXTURE,
   RATIO_METRIC_FIXTURE,
@@ -121,6 +122,46 @@ describe("normalizeMetricResult forward-compat", () => {
   });
 });
 
+describe("normalizeMetricResult error views", () => {
+  it("stores the error instead of warning, keeping the healthy views", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const withError = {
+        ...SUM_METRIC_FIXTURE,
+        views: [
+          ...SUM_METRIC_FIXTURE.views,
+          buildMetricErrorView({ code: "QUERY_TIMEOUT", message: "took too long" }),
+        ],
+      };
+      const normalized = normalizeMetricResult(withError);
+      expect(normalized.error).toEqual({
+        code: "QUERY_TIMEOUT",
+        message: "took too long",
+      });
+      // The failed view's slot stays unset; sibling views are unaffected.
+      expect(normalized.period).toBeDefined();
+      expect(normalized.peer).toBeDefined();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("keeps the first error when several views failed", () => {
+    const normalized = normalizeMetricResult({
+      ...SUM_METRIC_FIXTURE,
+      views: [
+        buildMetricErrorView({ code: "SOURCE_RELATION_MISSING", message: "first" }),
+        buildMetricErrorView({ code: "QUERY_FAILED", message: "second" }),
+      ],
+    });
+    expect(normalized.error).toEqual({
+      code: "SOURCE_RELATION_MISSING",
+      message: "first",
+    });
+  });
+});
+
 describe("row-limit chunking", () => {
   const PERIOD_PEER: MetricCollectionConfig = {
     metrics: Array.from({ length: 10 }, (_, i) => ({
@@ -199,6 +240,26 @@ describe("row-limit chunking", () => {
     // period survives (second chunk had none); peer values append.
     expect(metric.period?.values.length).toBeGreaterThan(0);
     expect(metric.peer?.values.length ?? 0).toBeGreaterThan(1);
+  });
+
+  it("keeps a later chunk's error when the accumulator has none", () => {
+    const healthy = normalizeMetricResults([SUM_METRIC_FIXTURE]);
+    const failed = structuredClone(SUM_METRIC_FIXTURE);
+    failed.views = [
+      buildMetricErrorView({ code: "QUERY_FAILED", message: "chunk two failed" }),
+    ];
+
+    const merged = mergeNormalizedResults([
+      healthy,
+      normalizeMetricResults([failed]),
+    ]);
+    const metric = merged.get("ai.accepted_lines")!;
+    expect(metric.error).toEqual({
+      code: "QUERY_FAILED",
+      message: "chunk two failed",
+    });
+    // The healthy chunk's data still merges alongside the error.
+    expect(metric.period?.values.length).toBeGreaterThan(0);
   });
 });
 

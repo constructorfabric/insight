@@ -65,7 +65,7 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         UNIQUE KEY uq_metric_sources_tenant_key (tenant_id_sentinel, source_key),
         CONSTRAINT chk_metric_sources_source_key_shape CHECK (source_key REGEXP BINARY '^[a-z][a-z0-9_]*$'),
         CONSTRAINT chk_metric_sources_schema_error_biconditional CHECK ((schema_status = 'error') = (schema_error_code IS NOT NULL)),
-        CONSTRAINT chk_metric_sources_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','dimension_not_covered','unknown'))
+        CONSTRAINT chk_metric_sources_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','detail_key_not_found','dimension_not_covered','unknown'))
     )",
     "CREATE TABLE IF NOT EXISTS metric_source_measures (
         id BINARY(16) NOT NULL PRIMARY KEY,
@@ -81,7 +81,7 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         CONSTRAINT fk_metric_source_measures_source FOREIGN KEY (source_id) REFERENCES metric_sources(id) ON DELETE CASCADE,
         CONSTRAINT chk_metric_source_measures_measure_key_shape CHECK (measure_key REGEXP BINARY '^[a-z][a-z0-9_]*$'),
         CONSTRAINT chk_metric_source_measures_schema_error_biconditional CHECK ((schema_status = 'error') = (schema_error_code IS NOT NULL)),
-        CONSTRAINT chk_metric_source_measures_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','dimension_not_covered','unknown'))
+        CONSTRAINT chk_metric_source_measures_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','detail_key_not_found','dimension_not_covered','unknown'))
     )",
     "CREATE TABLE IF NOT EXISTS metric_source_dimensions (
         id BINARY(16) NOT NULL PRIMARY KEY,
@@ -126,7 +126,7 @@ const SCHEMA_STATEMENTS: &[&str] = &[
             OR (computation_type = 'ratio' AND scale IS NOT NULL)
         ),
         CONSTRAINT chk_metric_definitions_schema_error_biconditional CHECK ((schema_status = 'error') = (schema_error_code IS NOT NULL)),
-        CONSTRAINT chk_metric_definitions_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','dimension_not_covered','unknown'))
+        CONSTRAINT chk_metric_definitions_schema_error_enum CHECK (schema_error_code IS NULL OR schema_error_code IN ('table_not_found','column_not_found','detail_key_not_found','dimension_not_covered','unknown'))
     )",
     "CREATE TABLE IF NOT EXISTS metric_definition_inputs (
         id BINARY(16) NOT NULL PRIMARY KEY,

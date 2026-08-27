@@ -219,14 +219,14 @@ Integration tests:
 If a tenant somehow ends up with zero admins (direct SQL, bootstrap
 mis-configuration, or a prior revoke under an earlier version of
 this code), recovery is the same as initial provisioning: set
-`IDENTITY__identity__bootstrap_admin_person_id` and restart. The
-idempotent `INSERT … WHERE NOT EXISTS` in `BootstrapAdminRunner`
-will mint the row on the next pod start.
+`APP__gears__identity-resolution__config__bootstrap_admin_person_id`
+and restart. The idempotent `INSERT … WHERE NOT EXISTS` in the
+first-admin bootstrap will mint the row on the next pod start.
 
 ## Traceability
 
-- Endpoint: `src/backend/services/identity/src/Insight.Identity.Api/Endpoints/PersonRolesEndpoints.cs`
-- SQL: `SqlRoles.TrySoftDeletePersonRoleProtectingLastAdmin`
+- Endpoint: `src/backend/services/identity-resolution/src/api/person_roles.rs`
+- SQL: the guarded soft-delete in `infra/db/person_roles_repo.rs`
 - Tests: `OrgChartVisibilityEndpointsTests.PersonRoles_revoke_last_admin_returns_422_last_admin_protected`,
   `OrgChartVisibilityEndpointsTests.PersonRoles_revoke_admin_when_another_admin_exists_succeeds`
 - Related: ADR-0012 (admin-only reads), ADR-0013 (roles hard-delete guard)

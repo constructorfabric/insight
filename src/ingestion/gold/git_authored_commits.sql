@@ -51,6 +51,7 @@ SELECT
             tuple('branch_scope', branch_scope_value, branch_scope_label),
             tuple('repository', repository_value, repository_label),
             tuple('project', project_value, project_label),
+            tuple('source_id', coalesce(toString(source_id), ''), coalesce(toString(source_id), '')),
             tuple('source', source_value, source_label)
         ]
         AS Array(Tuple(key String, value String, label Nullable(String)))

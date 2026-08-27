@@ -1,5 +1,5 @@
 -- Materialized SCD2 cache of parent→child relationships derived from
--- `persons` by `seed-persons-from-identity-input.py` step 9. Edges
+-- `persons` by the persons-seed. Edges
 -- come from two sources UNION-ed in the rebuild SQL:
 --
 --   Source 1: value_type='parent_person_id' observations (resolved

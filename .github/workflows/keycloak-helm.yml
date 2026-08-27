@@ -1,0 +1,53 @@
+name: Keycloak — Helm contract
+
+# Render-contract gate for the login theme (#2721). The theme's whole job is
+# to stop a rebuilt login dead-ending on Keycloak's "page expired" screen, and
+# every way it can break — a moved template file, a mount path that no longer
+# matches the theme name, a realm binding a theme that is not shipped — fails
+# silently: Keycloak starts, falls back to the built-in theme, and the dead
+# end simply returns. Pure `helm template` + assertions, no cluster.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/backend/services/keycloak/helm/**"
+      - "deploy/gitops/environments/*/keycloak/realms/**"
+      - "charts/insight/**"
+      - ".github/workflows/keycloak-helm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  helm-contract:
+    name: render contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full SHAs (mutable tags are repointable — supply-chain
+      # hardening, same as semgrep.yml / trivy.yml).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install test deps
+        run: pip install --quiet pytest pyyaml
+
+      - name: helm lint
+        run: |
+          helm lint src/backend/services/keycloak/helm
+          helm dependency update charts/insight
+          helm lint charts/insight
+
+      - name: Render-contract tests (login theme, realm binding)
+        run: python -m pytest src/backend/services/keycloak/helm/tests/ -q

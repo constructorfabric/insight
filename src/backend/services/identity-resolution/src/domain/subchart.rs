@@ -1,8 +1,6 @@
 //! Subchart response DTOs + flat→tree assembly (#348 / #344).
 //!
-//! Mirrors the .NET `SubchartNodeResponse` / `SubchartResponse` /
-//! `SubchartForestResponse` contracts and the `SubchartService.BuildTree`
-//! assembly. The repo returns a flat row set; here we index children by parent
+//! The repo returns a flat row set; here we index children by parent
 //! and recurse from every root (a root arrives with `parent_person_id == None`,
 //! both for the single-root anchor and each forest top). Null attribute fields
 //! are emitted as JSON `null` so consumers distinguish "no observation" from
@@ -51,7 +49,7 @@ impl toolkit::api::api_dto::ResponseApiDto for SubchartForestResponse {}
 /// Assemble flat rows into a forest of trees. Rows with `parent_person_id ==
 /// None` are the roots; everything else is indexed by parent and attached
 /// recursively. O(N): `org_chart` is a tree (single current parent per child),
-/// so each row is consumed exactly once. Ported from `SubchartService.BuildTree`.
+/// so each row is consumed exactly once.
 #[must_use]
 pub fn assemble_forest(flat: Vec<SubchartFlatNode>) -> Vec<SubchartNode> {
     let mut roots: Vec<SubchartFlatNode> = Vec::new();

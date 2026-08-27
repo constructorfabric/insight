@@ -1,15 +1,13 @@
 //! Persons-seed write store (MariaDB).
 //!
-//! Two halves, ported from the .NET `IPersonsSeedStore` / `SqlPersonsSeed`:
+//! Two halves:
 //!   * resolver-feeding reads — current `account → person` bindings and the
 //!     latest `email → person` map (fed to [`crate::domain::seed`]);
 //!   * the transactional `apply` — `INSERT IGNORE` the resolved observations
-//!     into `persons`, then rebuild the tenant's `account_person_map` (SCD2).
+//!     into `persons`, then rebuild the tenant's `org_chart` (SCD2).
 //!
-//! The transactional `apply` also rebuilds `org_chart`. All SQL is verbatim
-//! from the .NET service for parity. These queries use `LEAD()`/`ROW_NUMBER()`
-//! window functions (SCD2 `valid_from`/`valid_to`) and `INSERT … SELECT` cache
-//! rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
+//! These queries use `LEAD()`/`ROW_NUMBER()` window functions (SCD2
+//! `valid_from`/`valid_to`) and `INSERT … SELECT` cache rebuilds — constructs `toolkit-db` cannot express, hence the raw-SQL /
 //! self-managed pool (see `infra::db` module docs + constructorfabric/gears-rust#4239).
 
 use std::collections::HashMap;
@@ -163,8 +161,8 @@ pub async fn known_account_bindings(
 
 /// Current `email → person_id` map for the tenant — the latest
 /// `value_type='email'` observation per email. Keys are normalized via
-/// [`normalize_email`] (lowercase only, no trim — ADR-0011, .NET parity) so the
-/// resolver's lookups match. Ported from `SqlPersonsSeed.LatestEmailToPerson`.
+/// [`normalize_email`] (lowercase only, no trim — ADR-0011) so the resolver's
+/// lookups match.
 ///
 /// # Errors
 ///
@@ -209,74 +207,24 @@ pub async fn latest_email_to_person(
     Ok(map)
 }
 
-/// Rebuild the tenant's derived caches inside an open transaction: the SCD2
-/// `account_person_map` and `org_chart`, both re-derived from `persons`. Shared
-/// by the persons-seed and the operator corrections so a journal write and its
-/// caches always commit together. Returns the `org_chart` rows written.
+/// Rebuild the tenant's `org_chart` from `persons` inside an open transaction.
+/// Shared by the persons-seed and the operator corrections so a journal write
+/// and its derived edges always commit together. Returns the rows written.
 ///
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is the caller's to
 /// roll back.
-#[allow(clippy::too_many_lines)] // dominated by the verbatim org_chart CTE
-async fn rebuild_derived_caches(
+// The length is dominated by the verbatim org_chart CTE string constant, not
+// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
+#[expect(clippy::too_many_lines)]
+async fn rebuild_org_chart(
     txn: &DatabaseTransaction,
     tenant_id: Uuid,
     author_person_id: Uuid,
 ) -> anyhow::Result<u64> {
-    const DELETE_APM: &str = "DELETE FROM account_person_map WHERE insight_tenant_id = ?";
-    // The journal may hold TWO bindings for one account at the same instant:
-    // its unique key ends in `person_id`, so a re-run that resolves an account
-    // to a different person re-emits the account's `id` row under the source's
-    // own timestamp — which is exactly what an operator correction causes on
-    // the next seed. This cache is keyed by (account, valid_from) with no
-    // person, so those two rows are one row here, and the later decision (the
-    // higher `id`) is the one that stands — the same latest-wins rule the
-    // binding readers use. Without the rank the insert dies on a duplicate key
-    // and takes the whole seed run with it.
-    const INSERT_APM: &str = r"
-        INSERT INTO account_person_map
-            (insight_tenant_id, insight_source_type, insight_source_id, source_account_id,
-             person_id, author_person_id, reason, valid_from, valid_to)
-        SELECT
-            insight_tenant_id,
-            insight_source_type,
-            insight_source_id,
-            source_account_id,
-            person_id,
-            author_person_id,
-            reason,
-            valid_from,
-            LEAD(valid_from) OVER (
-                PARTITION BY insight_tenant_id, insight_source_type,
-                             insight_source_id, source_account_id
-                ORDER BY valid_from
-            ) AS valid_to
-        FROM (
-            SELECT
-                insight_tenant_id,
-                insight_source_type,
-                insight_source_id,
-                value_id     AS source_account_id,
-                person_id,
-                author_person_id,
-                reason,
-                created_at   AS valid_from,
-                ROW_NUMBER() OVER (
-                    PARTITION BY insight_tenant_id, insight_source_type,
-                                 insight_source_id, value_id, created_at
-                    ORDER BY id DESC
-                ) AS rn
-            FROM persons
-            WHERE value_type = 'id'
-              AND value_id IS NOT NULL
-              AND insight_tenant_id = ?
-        ) ranked
-        WHERE rn = 1
-    ";
     const DELETE_ORG_CHART: &str = "DELETE FROM org_chart WHERE insight_tenant_id = ?";
-    // Ported verbatim from Sql.PersonsSeed.cs::InsertOrgChartForTenant. The `?`
-    // markers bind, in order: `insight_tenant_id` SIX times (state_log,
+    // The `?` markers bind, in order: `insight_tenant_id` SIX times (state_log,
     // default_active, pe_periods, email_to_person, existing_edges,
     // source_member_latest_active), then `author_person_id` once (the Path-B
     // no-parent rows). Keep this order in lock-step with the params vec below.
@@ -493,21 +441,6 @@ async fn rebuild_derived_caches(
     let tenant_bytes = tenant_id.as_bytes().to_vec();
     let author_bytes = author_person_id.as_bytes().to_vec();
 
-    // Rebuild account_person_map for the tenant (delete + reinsert).
-    txn.execute_raw(Statement::from_sql_and_values(
-        DbBackend::MySql,
-        DELETE_APM,
-        [tenant_bytes.clone().into()],
-    ))
-    .await?;
-    txn.execute_raw(Statement::from_sql_and_values(
-        DbBackend::MySql,
-        INSERT_APM,
-        [tenant_bytes.clone().into()],
-    ))
-    .await?;
-    tracing::info!("persons-seed apply: account_person_map rebuilt");
-
     // Rebuild org_chart for the tenant. The CTE binds the tenant six times, then
     // the author once — same order as INSERT_ORG_CHART's `?` markers.
     txn.execute_raw(Statement::from_sql_and_values(
@@ -541,18 +474,14 @@ async fn rebuild_derived_caches(
 }
 
 /// Apply a seed's resolved observations: `INSERT IGNORE` each into `persons`,
-/// then rebuild the tenant's `account_person_map` and `org_chart` — all in one
-/// transaction, so the log and the derived caches are never left
-/// cross-inconsistent. `author_person_id` stamps the computed `org_chart`
+/// then rebuild the tenant's `org_chart` — all in one transaction, so the log
+/// and the edges derived from it are never left cross-inconsistent. `author_person_id` stamps the computed `org_chart`
 /// no-parent rows (the seed operation's author). Returns the number of
 /// observation rows actually inserted (duplicates are ignored).
 ///
 /// # Errors
 ///
 /// Returns an error if any statement fails; the transaction is rolled back.
-// The length is dominated by the verbatim org_chart CTE string constant, not
-// control flow — keeping the SQL inline (co-located, greppable) over hoisting it.
-#[allow(clippy::too_many_lines)]
 pub async fn apply(
     db: &DatabaseConnection,
     tenant_id: Uuid,
@@ -602,7 +531,7 @@ pub async fn apply(
     }
     tracing::info!(inserted, "persons-seed apply: observations inserted");
 
-    let org_chart_rows_rebuilt = rebuild_derived_caches(&txn, tenant_id, author_person_id).await?;
+    let org_chart_rows_rebuilt = rebuild_org_chart(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;
     Ok(ApplyCounts {

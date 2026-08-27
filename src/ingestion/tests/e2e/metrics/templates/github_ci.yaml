@@ -1,0 +1,88 @@
+templates:
+  # Base workflow run: every schema column, non-run fields nulled. A gate run
+  # (push, success, 3 minutes) on its first attempt; variants override.
+  workflow_run:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-03-10T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: gh-run-1-1
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: insight_github
+    collected_at: "2026-03-10T00:00:00Z"
+    id: 1
+    run_attempt: 1
+    repo_full_name: acme/app
+    name: CI
+    workflow_id: 10
+    event: push
+    status: completed
+    conclusion: success
+    head_branch: main
+    head_sha: "0000000000000000000000000000000000000001"
+    actor_login: dev1
+    actor_id: 101
+    triggering_actor_login: dev1
+    triggering_actor_id: 101
+    run_number: 1
+    workflow_path: .github/workflows/ci.yml
+    display_title: "build"
+    check_suite_id: 900
+    pull_request_numbers: "[]"
+    head_commit_message: "change"
+    head_commit_timestamp: "2026-03-01T10:00:00Z"
+    head_commit_author_name: Dev One
+    head_commit_author_email: dev1@example.com
+    run_started_at: "2026-03-01T10:00:00Z"
+    created_at: "2026-03-01T10:00:00Z"
+    updated_at: "2026-03-01T10:03:00Z"
+
+  deployment:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-03-10T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: gh-dep-1
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: insight_github
+    collected_at: "2026-03-10T00:00:00Z"
+    id: 1
+    repo_full_name: acme/app
+    sha: "0000000000000000000000000000000000000001"
+    ref: main
+    task: deploy
+    environment: production
+    original_environment: production
+    is_transient_environment: false
+    is_production_environment: true
+    description: null
+    creator_login: dev1
+    creator_id: 101
+    created_at: "2026-03-01T12:00:00Z"
+    updated_at: "2026-03-01T12:00:00Z"
+
+  deployment_status:
+    _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"
+    _airbyte_extracted_at: "2026-03-10T00:00:00"
+    _airbyte_meta: "{}"
+    _airbyte_generation_id: 0
+    unique_key: gh-depst-1
+    tenant_id: "11111111-1111-1111-1111-111111111111"
+    source_id: github-test
+    data_source: insight_github
+    collected_at: "2026-03-10T00:00:00Z"
+    id: 1
+    deployment_id: 1
+    repo_full_name: acme/app
+    state: success
+    environment: production
+    description: null
+    creator_login: dev1
+    creator_id: 101
+    target_url: null
+    log_url: null
+    environment_url: null
+    created_at: "2026-03-01T12:05:00Z"
+    updated_at: "2026-03-01T12:05:00Z"

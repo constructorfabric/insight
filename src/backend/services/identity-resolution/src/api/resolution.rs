@@ -1168,7 +1168,7 @@ pub async fn account_binding(
             author: card_of(h.author_person_id),
             by_operator: !h.author_person_id.is_nil(),
             reason: h.reason.clone(),
-            recorded_at: super::seed::fmt_ts(h.created_at),
+            recorded_at: super::datetime::fmt_ts(h.created_at),
         })
         .collect();
 
@@ -1225,7 +1225,7 @@ fn account_operation(
             .and_then(|entry| entry.get("outcome"))
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
-        recorded_at: super::seed::fmt_ts(op.started_at),
+        recorded_at: super::datetime::fmt_ts(op.started_at),
     }
 }
 

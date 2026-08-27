@@ -5,6 +5,9 @@ use std::fmt;
 pub enum MetricSchemaErrorCode {
     TableNotFound,
     ColumnNotFound,
+    /// A measure declares a detail column its evidence rows do not carry, so
+    /// the drilldown would serve that column blank on every row.
+    DetailKeyNotFound,
     DimensionNotCovered,
     Unknown,
 }
@@ -13,6 +16,7 @@ pub enum MetricSchemaErrorCode {
 pub const ALL_METRIC_SCHEMA_ERROR_CODES: &[MetricSchemaErrorCode] = &[
     MetricSchemaErrorCode::TableNotFound,
     MetricSchemaErrorCode::ColumnNotFound,
+    MetricSchemaErrorCode::DetailKeyNotFound,
     MetricSchemaErrorCode::DimensionNotCovered,
     MetricSchemaErrorCode::Unknown,
 ];
@@ -23,6 +27,7 @@ impl MetricSchemaErrorCode {
         match self {
             Self::TableNotFound => "table_not_found",
             Self::ColumnNotFound => "column_not_found",
+            Self::DetailKeyNotFound => "detail_key_not_found",
             Self::DimensionNotCovered => "dimension_not_covered",
             Self::Unknown => "unknown",
         }
@@ -32,6 +37,7 @@ impl MetricSchemaErrorCode {
         match value {
             "table_not_found" => Some(Self::TableNotFound),
             "column_not_found" => Some(Self::ColumnNotFound),
+            "detail_key_not_found" => Some(Self::DetailKeyNotFound),
             "dimension_not_covered" => Some(Self::DimensionNotCovered),
             "unknown" => Some(Self::Unknown),
             _ => None,

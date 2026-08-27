@@ -111,6 +111,7 @@ fn app_as(db: DatabaseConnection, tenant: Uuid, person: Uuid, config: GearConfig
         anthropic,
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
+        external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     });
 
     let openapi = OpenApiRegistryImpl::new();
