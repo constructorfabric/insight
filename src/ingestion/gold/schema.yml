@@ -240,6 +240,21 @@ models:
           set across families; there is no source-native identity to record.
         tests:
           - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
+        tests:
+          - not_null
       - name: metric_date
         description: "Run start date; deployment creation date"
         tests:
@@ -878,6 +893,21 @@ models:
           The tenant id, verbatim — the shape the results compiler expects
           for tenant-entity reads (entity_id = tenant_id). No person ever
           appears in this family (issue #2803, decision 5).
+        tests:
+          - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
         tests:
           - not_null
       - name: metric_date

@@ -8,6 +8,9 @@ SELECT
     source_key,
     entity_type,
     entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -16,7 +19,7 @@ SELECT
     dimensions
 FROM {{ ref('ci_metric_evidence') }}
 WHERE measure_key != 'run_duration_min'
-GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, dimensions
+GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id, metric_date, measure_key, dimensions
 
 UNION ALL
 
@@ -27,6 +30,9 @@ SELECT
     source_key,
     entity_type,
     entity_id,
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
