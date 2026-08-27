@@ -33,7 +33,6 @@ import {
 } from "@/lib/metrics/collection";
 import {
   activityEventLabel,
-  evidenceRecordLinks,
   TYPE_DIMENSION,
   withSourceDimension,
   withTypeDimension,
@@ -225,7 +224,7 @@ function EventList({
     <div className="flex flex-col gap-1">
       <ul className="flex flex-col">
         {shown.map((event, index) => {
-          const links = evidenceRecordLinks(metricKey, event.values);
+          const links = event.links ?? {};
           const label = activityEventLabel(metricKey, event.ref, event.title);
           return (
             <li

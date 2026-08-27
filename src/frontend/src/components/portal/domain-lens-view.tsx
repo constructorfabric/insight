@@ -57,7 +57,6 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import {
   personsEvidenceSelection,
   type MetricEvidenceSelection,
@@ -1717,14 +1716,7 @@ function CompositionSection({
           });
         }
         const label = dim.label?.trim() || running?.label || dim.value;
-        const href =
-          running?.href ??
-          (spec.dimension === LINKABLE_DIMENSION
-            ? (githubRepoUrl(
-                row.dimensions.find((d) => d.key === SOURCE_DIMENSION)?.value,
-                label
-              ) ?? undefined)
-            : undefined);
+        const href = running?.href ?? dim.href;
         bucket.set(dim.value, {
           label,
           value: (running?.value ?? 0) + row.value,

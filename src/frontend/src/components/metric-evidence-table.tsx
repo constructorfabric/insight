@@ -30,10 +30,7 @@ import {
   summaryLine,
   type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
-import {
-  evidenceRecordLinks,
-  evidenceRefText,
-} from "@/lib/metrics/provider-links";
+import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
@@ -76,7 +73,6 @@ export function MetricEvidenceTable({
   nextPageError,
   pageLimitReached,
 }: {
-  /** Null while the metric picker has yet to resolve one — links stay off. */
   metricKey: string | null;
   rows: MetricEvidenceRow[];
   columns: MetricEvidenceColumn[];
@@ -229,7 +225,7 @@ export function MetricEvidenceTable({
             if (!row) return null;
             const key = rowKeys[virtualRow.index]!;
             const isOpen = expanded.has(key);
-            const links = evidenceRecordLinks(metricKey ?? "", row.values);
+            const links = row.links ?? {};
             return (
               <TableRow
                 role="row"
