@@ -1,7 +1,7 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -81,7 +81,10 @@ import {
   UNSPLIT_SEGMENT,
   type BarEntry,
   type BarRow,
+  type BarSegment,
 } from "@/lib/portal/bar-rows";
+import { narrowedEvidenceSelection } from "@/lib/metrics/evidence-targets";
+import { evidenceMetricFor } from "@/lib/metrics/evidence-via";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
@@ -110,7 +113,7 @@ import {
   buildTrendData,
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
-import { bucketBreakdown } from "@/lib/portal/trend-drilldown";
+import { bucketBreakdown, bucketRange } from "@/lib/portal/trend-drilldown";
 import {
   TrendDrilldownDialog,
   type TrendDrilldownState,
@@ -441,12 +444,17 @@ export function DomainLensView({
   // disagree: under a flat policy that roster is the whole organisation, and
   // under an org chart it is the viewer's own subtree — the permission
   // boundary identity already enforces.
-  const openTrendDrilldown = (chart: TrendChart) => {
+  const openTrendDrilldown = (chart: TrendChart, bucketStart?: string) => {
+    // A clicked point asks about its own bucket; the card asks about the
+    // period. The label says which, so the dialog never looks like the other.
+    const range = bucketStart
+      ? bucketRange(bucketStart, trendBucket ?? "day")
+      : { from: dateRange.from, to: dateRange.to };
     setDrilldown({
       metricKey: chart.derived ? null : chart.drilldownKey,
-      label: chart.title,
+      label: bucketStart ? `${chart.title} · ${bucketStart}` : chart.title,
       bucketLabel: trendBucket ?? "period",
-      period: { from: dateRange.from, to: dateRange.to },
+      period: range,
       members: scopedMembers,
       breakdown: bucketBreakdown(chart.drilldownKey, trend.byKey, scopedMembers),
     });
@@ -569,7 +577,7 @@ function Section({
   personIdByEntity: Map<string, string>;
   cohortOf: (id: string) => string | null;
   cohortLabel: string;
-  onOpenChart: (chart: TrendChart) => void;
+  onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
   switch (spec.kind) {
     case "headline":
@@ -671,6 +679,7 @@ function Section({
           compIsError={compIsError}
           compRefetch={compRefetch}
           memberIds={memberIds}
+          nameByEntity={nameByEntity}
         />
       );
     case "attention":
@@ -1066,18 +1075,25 @@ function HeadlineSection({
       if (now == null) return null;
       const prev = representative(grid.previousByKey.get(key), memberIds);
       const isSum = r.computation === "sum";
-      return { key, r, now, prev, isSum };
+      // The records that carry the figure: its own, unless the family says
+      // another metric holds them (a line count is carried by commits).
+      const carrier = grid.byKey.get(evidenceMetricFor(key));
+      return { key, r, now, prev, isSum, carrier };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
   // Every drillable card of the row, so the dialog a reader opens on one of
   // them lists its neighbours — the same set the members grid offers from a
-  // row of cells.
+  // row of cells. Deduplicated by metric: two tiles carried by one metric
+  // would otherwise name the same key twice, which the request refuses.
+  const seen = new Set<string>();
   const targets = cards.flatMap((c) => {
-    if (!c.r.drilldown) return [];
-    const selection = personsEvidenceSelection(c.r.selection, memberIds);
-    return selection ? [{ selection, label: c.r.label }] : [];
+    if (!c.carrier?.drilldown || seen.has(c.carrier.metric_key)) return [];
+    const selection = personsEvidenceSelection(c.carrier.selection, memberIds);
+    if (!selection) return [];
+    seen.add(c.carrier.metric_key);
+    return [{ selection, label: c.carrier.label }];
   });
 
   return (
@@ -1120,14 +1136,15 @@ function HeadlineCard({
     now: number;
     prev: number | null;
     isSum: boolean;
+    carrier: NormalizedMetricResult | undefined;
   };
   targets: readonly { selection: MetricEvidenceSelection; label: string }[];
   memberIds: readonly string[];
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection = c.r.drilldown
-    ? personsEvidenceSelection(c.r.selection, memberIds)
+  const selection = c.carrier?.drilldown
+    ? personsEvidenceSelection(c.carrier.selection, memberIds)
     : null;
   const body = (
     <CardContent className="p-4">
@@ -1143,15 +1160,15 @@ function HeadlineCard({
         <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
       </div>
       <div className={cn("mt-1", TEXT_FIGURE)}>
-        {formatMetricValue(
-          c.isSum ? perCapita(c.r, memberIds) : c.now,
-          c.r.format,
-          c.r.unit
-        )}
+        {formatMetricValue(c.now, c.r.format, c.r.unit)}
       </div>
+      {/* The team total leads, because the dialog this card opens lists the
+        roster's records — a per-person figure on the face and a roster-sized
+        table behind it read as a contradiction. The per-person figure keeps
+        its place underneath, where the comparison it serves still works. */}
       <div className="text-xs text-muted-foreground">
         {c.isSum
-          ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
+          ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
           : "median / person"}
       </div>
     </CardContent>
@@ -1323,7 +1340,7 @@ function TrendSection({
   trend: TrendData;
   bucket: MetricBucket;
   memberIds: readonly string[];
-  onOpenChart: (chart: TrendChart) => void;
+  onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
   const charts = trendCharts(spec, grid, trend, memberIds);
 
@@ -1361,6 +1378,7 @@ function TrendSection({
             series={chart.series}
             data={chart.data}
             isPending={trend.isPending}
+            onBucketClick={(bucketStart) => onOpenChart(chart, bucketStart)}
           />
         </button>
       ))}
@@ -1760,6 +1778,7 @@ function CompositionSection({
   grid: GridData;
   memberIds: readonly string[];
 }) {
+  const evidence = useMetricEvidenceOptional();
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -1814,9 +1833,32 @@ function CompositionSection({
       }
     }
   }
-  const rows = toBarRows(bucket);
+  const rows = toBarRows(bucket, spec.splitBy);
   // A single 100%-share bar is an empty shell (rule 11), same as ByUnitSection.
   if (rows.length < 2) return null;
+
+  // The records behind a bar are the ones that carry the figure, which for a
+  // line count is its commits rather than its own per-day summary.
+  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric));
+  const openBar =
+    evidence && carrier?.drilldown
+      ? (row: BarRow, segment?: BarSegment) => {
+          const selection = narrowedEvidenceSelection(carrier, memberIds, {
+            filters: [
+              { dimension: spec.dimension, value: row.key },
+              ...(segment && spec.splitBy
+                ? [{ dimension: spec.splitBy, value: segment.seed }]
+                : []),
+            ],
+          });
+          if (selection) {
+            evidence.openEvidenceTargets(
+              [{ selection, label: carrier.label }],
+              { activeMetricKey: selection.metric_key }
+            );
+          }
+        }
+      : undefined;
 
   return (
     <BarList
@@ -1825,6 +1867,7 @@ function CompositionSection({
       format={r?.format ?? "integer"}
       unit={r?.unit ?? null}
       notes={spec.notes}
+      onOpen={openBar}
     />
   );
 }
@@ -1851,6 +1894,7 @@ function DimensionTableSection({
   tableIsError: boolean;
   tableRefetch: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (tableIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -1914,8 +1958,8 @@ function DimensionTableSection({
   if (ranked.length < 2) return null;
 
   const limit = spec.limit ?? DIMENSION_TABLE_ROWS;
-  const visible = ranked.slice(0, limit);
-  const rest = ranked.slice(limit);
+  const visible = expanded ? ranked : ranked.slice(0, limit);
+  const rest = expanded ? [] : ranked.slice(limit);
   // A remainder only for what still adds up: sums add; a median or a ratio
   // over "everything else" is not derivable from the shown rows.
   const remainder = rest.length
@@ -1937,9 +1981,20 @@ function DimensionTableSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title} · {ranked.length} {spec.noun}
-      </p>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          {spec.title} · {ranked.length} {spec.noun}
+        </p>
+        {expanded && ranked.length > limit ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            Show top {limit}
+          </button>
+        ) : null}
+      </div>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -1978,7 +2033,18 @@ function DimensionTableSection({
               ))}
               {remainder ? (
                 <TableRow className="text-muted-foreground">
-                  <TableCell className="text-sm">{remainder.label}</TableCell>
+                  <TableCell className="text-sm">
+                    {/* The remainder is the way into the rows it hides, not a
+                      dead summary line: a reader who wants the long tail has
+                      nowhere else to ask for it. */}
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(true)}
+                      className="cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {remainder.label}
+                    </button>
+                  </TableCell>
                   {results.map((r) => (
                     <TableCell
                       key={r.metric_key}
@@ -2015,13 +2081,16 @@ function OwnershipSection({
   compIsError,
   compRefetch,
   memberIds,
+  nameByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "ownership" }>;
   compData: Map<string, NormalizedMetricResult>;
   compIsError: boolean;
   compRefetch: () => void;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -2062,15 +2131,27 @@ function OwnershipSection({
   }
   const rows = [...byValue.entries()]
     .map(([value, bucket]) => {
-      const shares = [...bucket.byEntity.values()].sort((a, b) => b - a);
+      const ranked = [...bucket.byEntity.entries()].sort((a, b) => b[1] - a[1]);
+      const shares = ranked.map(([, share]) => share);
       const top1 = (shares[0] ?? 0) / bucket.total;
       const top3 =
         shares.slice(0, 3).reduce((sum, v) => sum + v, 0) / bucket.total;
-      return { value, label: bucket.label, total: bucket.total, top1, top3 };
+      const nameOf = ([id]: [string, number]) => nameByEntity.get(id) ?? id;
+      return {
+        value,
+        label: bucket.label,
+        total: bucket.total,
+        top1,
+        top3,
+        // The bar stays anonymous; hovering a segment is the reader asking.
+        topName: ranked[0] ? nameOf(ranked[0]) : null,
+        nextNames: ranked.slice(1, 3).map(nameOf),
+        othersCount: Math.max(0, ranked.length - 3),
+      };
     })
     .sort((a, b) => b.total - a.total);
   if (rows.length < 2) return null;
-  const visible = rows.slice(0, OWNERSHIP_ROWS);
+  const visible = expanded ? rows : rows.slice(0, OWNERSHIP_ROWS);
 
   return (
     <section className="flex flex-col gap-3">
@@ -2079,6 +2160,7 @@ function OwnershipSection({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
+         <TooltipProvider delay={HOVER_DELAY_MS}>
           <ul
             className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
             aria-label="What each colour in a bar means"
@@ -2109,20 +2191,33 @@ function OwnershipSection({
                 role="img"
                 aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
               >
-                <span
+                <OwnershipSegment
                   className="rounded-[3px] bg-primary"
-                  style={{ width: `${row.top1 * 100}%` }}
+                  width={row.top1 * 100}
+                  who={row.topName ? [row.topName] : []}
+                  share={ownershipPct(row.top1)}
+                  role="Top person"
                 />
                 {row.top3 > row.top1 ? (
-                  <span
+                  <OwnershipSegment
                     className="rounded-[3px] bg-primary/50"
-                    style={{ width: `${(row.top3 - row.top1) * 100}%` }}
+                    width={(row.top3 - row.top1) * 100}
+                    who={row.nextNames}
+                    share={ownershipPct(row.top3 - row.top1)}
+                    role="Next 2"
                   />
                 ) : null}
                 {row.top3 < 1 ? (
-                  <span
+                  <OwnershipSegment
                     className="rounded-[3px] border border-border bg-muted"
-                    style={{ width: `${(1 - row.top3) * 100}%` }}
+                    width={(1 - row.top3) * 100}
+                    who={[]}
+                    share={ownershipPct(1 - row.top3)}
+                    role={
+                      row.othersCount
+                        ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
+                        : "Everyone else"
+                    }
                   />
                 ) : null}
               </div>
@@ -2140,14 +2235,54 @@ function OwnershipSection({
               </div>
             </div>
           ))}
-          {rows.length > visible.length ? (
-            <p className="text-xs text-muted-foreground">
-              +{rows.length - visible.length} more
-            </p>
+          {rows.length > visible.length || expanded ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {expanded
+                ? `Show top ${OWNERSHIP_ROWS}`
+                : `+${rows.length - visible.length} more`}
+            </button>
           ) : null}
+         </TooltipProvider>
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+/**
+ * One share of an ownership bar, named only when hovered.
+ *
+ * The bar's job is the shape of the concentration, which is why the row itself
+ * says no names. A reader who hovers is asking who, and withholding it there
+ * makes the section unusable for the decision it exists to inform.
+ */
+function OwnershipSegment({
+  className,
+  width,
+  who,
+  share,
+  role,
+}: {
+  className: string;
+  width: number;
+  who: readonly string[];
+  share: string;
+  role: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={className} style={{ width: `${width}%` }} />}
+      />
+      <TooltipContent side="top">
+        {role} · {share}
+        {who.length ? ` · ${who.join(", ")}` : ""}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -2394,6 +2529,38 @@ const HOVER_DELAY_MS = 400;
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
+/**
+ * One fill inside a bar — a button when its records can be opened, a plain
+ * span when they cannot. Same geometry either way, so a list where only some
+ * rows are drillable still draws one row of bars.
+ */
+function BarPiece({
+  className,
+  style,
+  onOpen,
+  label,
+}: {
+  className: string;
+  style?: CSSProperties;
+  onOpen?: () => void;
+  label: string;
+}) {
+  if (!onOpen) return <span className={className} style={style} />;
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      aria-label={`Open the records behind ${label}`}
+      onClick={onOpen}
+      className={cn(
+        className,
+        "cursor-pointer transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+      )}
+      style={style}
+    />
+  );
+}
+
 export function BarList({
   title,
   rows,
@@ -2401,6 +2568,7 @@ export function BarList({
   unit,
   showShare = true,
   notes,
+  onOpen,
 }: {
   title: string;
   rows: BarRow[];
@@ -2410,6 +2578,12 @@ export function BarList({
   showShare?: boolean;
   /** Below the bars, not above: it explains what was read, not what to read. */
   notes?: readonly string[];
+  /**
+   * The records behind one bar, or behind one of its segments. Omitted where
+   * the caller cannot narrow the figure — the bars then stay inert rather
+   * than offering a dialog that would answer a different question.
+   */
+  onOpen?: (row: BarRow, segment?: BarSegment) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
@@ -2461,7 +2635,7 @@ export function BarList({
               </ul>
             ) : null}
             {visible.map((row) => (
-              <div key={row.label} className="flex items-center gap-3">
+              <div key={row.key} className="flex items-center gap-3">
                 {/* A dimension value is often a path (`owner/repo`), and the part
                   that tells two rows apart is at the END — so the column grows
                   with the viewport and the full value stays on hover. */}
@@ -2495,12 +2669,16 @@ export function BarList({
                         <Tooltip key={segment.seed}>
                           <TooltipTrigger
                             render={
-                              <span
+                              <BarPiece
                                 className="h-full first:rounded-s last:rounded-e"
                                 style={{
                                   width: `${(segment.value / row.value) * 100}%`,
                                   backgroundColor: colors[segment.seed],
                                 }}
+                                onOpen={
+                                  onOpen ? () => onOpen(row, segment) : undefined
+                                }
+                                label={`${row.label} · ${segment.label}`}
                               />
                             }
                           />
@@ -2508,11 +2686,16 @@ export function BarList({
                             {segment.label} ·{" "}
                             {formatMetricValue(segment.value, format, unit)} ·{" "}
                             {shareLabel((segment.value / row.value) * 100)}
+                            {onOpen ? " · click to open the records" : ""}
                           </TooltipContent>
                         </Tooltip>
                       ))
                     ) : (
-                      <span className="h-full w-full rounded bg-primary/25" />
+                      <BarPiece
+                        className="h-full w-full rounded bg-primary/25"
+                        onOpen={onOpen ? () => onOpen(row) : undefined}
+                        label={row.label}
+                      />
                     )}
                   </div>
                 </div>

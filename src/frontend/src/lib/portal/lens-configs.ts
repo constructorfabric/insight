@@ -1,3 +1,4 @@
+import { evidenceCarriers } from "@/lib/metrics/evidence-via";
 import {
   directionHidden,
   directionPlanned,
@@ -1228,5 +1229,8 @@ export function directionMetricKeys(dir: string): string[] {
     if ("comingSoon" in entry || "entity" in entry) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
+  // A figure whose records live under another metric needs that metric in the
+  // same request, or its tile has nothing to open.
+  for (const carrier of evidenceCarriers([...keys])) keys.add(carrier);
   return [...keys];
 }

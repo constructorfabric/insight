@@ -2,6 +2,7 @@ import type {
   MetricEvidenceColumn,
   MetricEvidenceRow,
 } from "@/api/metric-drilldown-client";
+import type { MetricBucket } from "@/api/metric-results-client";
 import { forEntity, type NormalizedMetricResult } from "@/lib/metrics/collection";
 
 /** One person's evidence page, as the drilldown answered it. */
@@ -110,4 +111,30 @@ export function bucketBreakdown(
         .sort((a, b) => a.localeCompare(b)),
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * The day range one chart bucket covers, from the label the axis shows.
+ *
+ * The axis is keyed by `bucket_start`, and the evidence request needs both
+ * ends: a reader clicking a week wants that week's records, not the day the
+ * week happens to start on. The last bucket is NOT clipped to the period
+ * here — the request's own period does that, and clipping twice would need
+ * this function to know about a period it is not given.
+ */
+export function bucketRange(
+  bucketStart: string,
+  bucket: MetricBucket
+): { from: string; to: string } {
+  const start = new Date(`${bucketStart}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()))
+    return { from: bucketStart, to: bucketStart };
+
+  const end = new Date(start);
+  if (bucket === "week") end.setUTCDate(end.getUTCDate() + 6);
+  else if (bucket === "month") {
+    end.setUTCMonth(end.getUTCMonth() + 1);
+    end.setUTCDate(0);
+  }
+  return { from: bucketStart, to: end.toISOString().slice(0, 10) };
 }

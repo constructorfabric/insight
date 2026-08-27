@@ -216,11 +216,12 @@ afterEach(() => vi.clearAllMocks());
 /* ── tests ───────────────────────────────────────────────────────────── */
 
 describe("headline (rules 1–2: per-capita + PoP delta)", () => {
-  it("shows the per-active-person value, the team total and the delta", () => {
+  it("leads with the team total the dialog explains, and keeps the per-person read", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 commits over 4 active people = 25/person; halved from last period.
-    expect(screen.getByText("25 commits")).toBeInTheDocument();
-    expect(screen.getByText(/100 commits team total/)).toBeInTheDocument();
+    // The figure is the roster's, because that is the set the evidence dialog
+    // lists; 100 commits over 4 active people = 25/person underneath.
+    expect(screen.getByText("100 commits")).toBeInTheDocument();
+    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
     // header carries the scope size + tagline
     expect(screen.getByText(/4 people · test lens/)).toBeInTheDocument();
@@ -232,8 +233,8 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     ]);
     mocks.grid.previousByKey = new Map();
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 total / 2 active = 50, not 25
-    expect(screen.getByText("50 commits")).toBeInTheDocument();
+    // 100 total / 2 active = 50 per person, not 25
+    expect(screen.getByText(/50 commits per active person/)).toBeInTheDocument();
   });
 });
 
@@ -600,6 +601,150 @@ describe("composition (rule 7: only real server dimensions)", () => {
       screen.getByText("First rule that matches wins."),
     ).toBeInTheDocument();
     expect(screen.getByText("Code — everything else.")).toBeInTheDocument();
+  });
+
+  it("opens the records the clicked bar stands for, filtered to it", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = vi.fn();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/api", label: "acme/api" },
+              {
+                key: "branch_scope",
+                value: "default",
+                label: "Default branch",
+              },
+            ],
+            value: 30,
+          },
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/web", label: "acme/web" },
+              {
+                key: "branch_scope",
+                value: "non_default",
+                label: "Other branches",
+              },
+            ],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          IDS.map((id) => [id, 10] as [string, number]),
+          {
+            label: "Commits",
+            drilldown: { granularity: ["event"] },
+            selection: {
+              metric_key: "t.commits",
+              entity: { type: "person", ids: IDS },
+              period: { from: "2026-07-20", to: "2026-07-26" },
+              filters: [],
+            },
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView
+          config={{
+            title: "T",
+            sections: [
+              {
+                kind: "composition",
+                metric: "t.commits",
+                dimension: "repository",
+                splitBy: "branch_scope",
+                title: "Lines by repository",
+              },
+            ],
+          }}
+        />
+      </EvidenceDialogContext.Provider>
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /acme\/api · Default branch/ })
+    );
+
+    expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+    const [targets] = openEvidenceTargets.mock.calls[0]!;
+    // Narrowed to the repository AND the segment: a bar that opened the
+    // unfiltered metric would answer a different question from the one asked.
+    expect(targets[0].selection.filters).toEqual([
+      { dimension: "repository", values: ["src:acme/api"] },
+      { dimension: "branch_scope", values: ["default"] },
+    ]);
+    // And the row says which slice it belongs to.
+    expect(targets[0].selection.display_dimensions).toEqual([
+      "branch_scope",
+      "repository",
+    ]);
+  });
+
+  it("leaves the bars inert when the carrier's records cannot be read", () => {
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [{ key: "category", value: "docs" }],
+            value: 30,
+          },
+          {
+            entity_id: id,
+            dimensions: [{ key: "category", value: "code" }],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    render(
+      <DomainLensView
+        config={{
+          title: "T",
+          sections: [
+            {
+              kind: "composition",
+              metric: "t.commits",
+              dimension: "category",
+              title: "By category",
+            },
+          ],
+        }}
+      />
+    );
+
+    // An affordance that opens an empty dialog is worse than none.
+    expect(
+      screen.queryByRole("button", { name: /Open the records behind/ })
+    ).not.toBeInTheDocument();
   });
 
   it("shows a retryable error card when the breakdown request fails", () => {
@@ -989,6 +1134,35 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
     expect(screen.queryByText(/Repositories ranked/)).not.toBeInTheDocument();
   });
 
+  it("opens the tail from the remainder row, and folds it back", async () => {
+    const user = userEvent.setup();
+    const table = emptyCollection();
+    table.byKey.set(
+      "t.commits",
+      rollup("t.commits", [
+        ["r1", "org/one", 40, 3],
+        ["r2", "org/two", 60, 2],
+        ["r3", "org/three", 10, 1],
+      ])
+    );
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      table,
+    ];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+
+    // The limit is 2, so org/three is inside the remainder and nowhere else:
+    // without this control the tail is unreachable.
+    expect(screen.queryByText("org/three")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Other (1)" }));
+    expect(screen.getByText("org/three")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show top 2" }));
+    expect(screen.queryByText("org/three")).not.toBeInTheDocument();
+  });
+
   it("shows a retryable error card when the rollup request fails", () => {
     const table = emptyCollection();
     table.isError = true;
@@ -1051,6 +1225,72 @@ describe("ownership (concentration risk per dimension value)", () => {
     ).toBeInTheDocument();
     // No member names anywhere on the section.
     expect(screen.queryByText("a")).not.toBeInTheDocument();
+  });
+
+  it("keeps the names out of the row and puts them on the segment", async () => {
+    const user = userEvent.setup();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: [
+          breakdownRow(pid("a"), "alpha", 70),
+          breakdownRow(pid("b"), "alpha", 20),
+          breakdownRow(pid("c"), "alpha", 10),
+          breakdownRow(pid("a"), "beta", 30),
+          breakdownRow(pid("b"), "beta", 40),
+        ],
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      comp,
+      emptyCollection(),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+
+    // Nothing on the row names anyone, which is the section's standing rule.
+    expect(screen.queryByText(/Top person ·/)).not.toBeInTheDocument();
+
+    // Hovering is the reader asking who, and the answer names the leader of
+    // that value — a section that withheld it could not inform the decision
+    // it exists for.
+    const bar = screen.getByRole("img", { name: /alpha: top person 70%/ });
+    await user.hover(bar.firstElementChild as Element);
+    expect(await screen.findByText(/Top person · 70% · a/)).toBeInTheDocument();
+  });
+
+  it("reaches the rows beyond the first few, and folds them back", async () => {
+    const user = userEvent.setup();
+    const comp = emptyCollection();
+    // One value more than the section shows, so the control is the only way in.
+    const repos = Array.from({ length: 13 }, (_, i) => `repo-${i}`);
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: repos.flatMap((repo, i) => [
+          breakdownRow(pid("a"), repo, 100 - i),
+          breakdownRow(pid("b"), repo, 10),
+        ]),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      comp,
+      emptyCollection(),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+
+    const hidden = repos[repos.length - 1]!;
+    expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^\+\d+ more$/ }));
+    expect(screen.getByText(hidden)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Show top \d+$/ }));
+    expect(screen.queryByText(hidden)).not.toBeInTheDocument();
   });
 
   it("renders nothing with fewer than two values", () => {
