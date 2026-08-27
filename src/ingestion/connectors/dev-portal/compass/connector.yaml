@@ -35,6 +35,131 @@ version: "7.0.4"
 type: DeclarativeSource
 
 definitions:
+  # ORDER MATTERS. The catch-all FAIL matches any body carrying `errors[]`,
+  # including a 5xx whose body happens to be a GraphQL error document, so the
+  # transient and throttle filters have to run first or a retryable failure
+  # becomes a hard one.
+  response_filters:
+    f_rate_limited_429: &f_rate_limited_429
+      type: HttpResponseFilter
+      action: RATE_LIMITED
+      http_codes: [429]
+    # The gateway limits by cost, and a body-level throttle answer is not
+    # guaranteed to carry a 429.
+    f_rate_limited_body: &f_rate_limited_body
+      type: HttpResponseFilter
+      action: RATE_LIMITED
+      predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
+    f_retry_5xx: &f_retry_5xx
+      type: HttpResponseFilter
+      action: RETRY
+      http_codes: [500, 502, 503, 504]
+    # A GraphQL-level error (bad credentials, missing product access,
+    # malformed query) is HTTP 200 with no `data`. Without this filter the
+    # extractor finds nothing, the stream reports zero records, and the
+    # sync looks green while collecting nothing.
+    f_graphql_error: &f_graphql_error
+      type: HttpResponseFilter
+      action: FAIL
+      predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+      error_message: "Atlassian GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+
+  base_error_handler: &base_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: &backoff_strategies
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+      - type: ExponentialBackoffStrategy
+        factor: 5
+    response_filters: &base_response_filters
+      - *f_rate_limited_429
+      - *f_rate_limited_body
+      - *f_retry_5xx
+      - *f_graphql_error
+
+  # Per-stream union handling. Most Compass fields return a union of a
+  # connection and `QueryError`, and a `QueryError` member is a SUCCESSFUL body
+  # with no top-level `errors[]`: the catch-all above cannot see it, the
+  # extractor finds no nodes, and the stream would report zero records. These
+  # filters run after the catch-all so a query-level error still fails with the
+  # message the API gave.
+  stream_error_handlers:
+    catalog: &h_catalog
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('message') is not none }}"
+          error_message: "Compass rejected the component catalog query: {{ (((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('message') }}"
+    scorecards: &h_scorecards
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('scorecards') or {}).get('message') is not none }}"
+          error_message: "Compass rejected the scorecards query: {{ (((response.get('data') or {}).get('compass') or {}).get('scorecards') or {}).get('message') }}"
+    scores: &h_scores
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # Also covers the beta opt-in being withdrawn, which surfaces on
+        # appliedToComponents rather than on the scorecard itself.
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ ((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('message') is not none) or (((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('message') is not none) }}"
+          error_message: "Compass rejected a scorecard score query: {{ (((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('message') or ((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('message') }}"
+    teams: &h_teams
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # teamSearchV3 is not a union, so an unusable scope comes back as a
+        # null connection rather than an error object.
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (response.get('data') or {}).get('team') is not none and ((response.get('data') or {}).get('team') or {}).get('teamSearchV3') is none }}"
+          error_message: The Teams directory returned no connection for this site scope; check atlassian_cloud_id.
+    team_members: &h_team_members
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (response.get('data') or {}).get('team') is not none and ((response.get('data') or {}).get('team') or {}).get('teamV2') is none }}"
+          error_message: A team enumerated moments earlier is no longer readable; membership would be silently empty.
+    events: &h_events
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # IGNORE, not FAIL: across a catalog of thousands, a component deleted
+        # between the parent sweep and this read is ordinary. The partition
+        # yields nothing and the sync continues.
+        - type: HttpResponseFilter
+          action: IGNORE
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('component') or {}).get('message') is not none }}"
+          error_message: Component no longer readable; its events are skipped and other components continue.
+
   graphql_requester: &graphql_requester
     type: HttpRequester
     url_base: "https://api.atlassian.com/"
@@ -46,30 +171,7 @@ definitions:
       password: "{{ config['atlassian_api_token'] }}"
     request_headers:
       Accept: "application/json"
-    error_handler:
-      type: DefaultErrorHandler
-      max_retries: 5
-      backoff_strategies:
-        - type: WaitTimeFromHeader
-          header: Retry-After
-          max_waiting_time_in_seconds: 600
-        - type: ExponentialBackoffStrategy
-          factor: 5
-      response_filters:
-        - type: HttpResponseFilter
-          action: RATE_LIMITED
-          http_codes: [429]
-        # A GraphQL-level error (bad credentials, missing product access,
-        # malformed query) is HTTP 200 with no `data`. Without this filter the
-        # extractor finds nothing, the stream reports zero records, and the
-        # sync looks green while collecting nothing.
-        - type: HttpResponseFilter
-          action: FAIL
-          predicate: "{{ (response.get('errors') or []) | length > 0 }}"
-          error_message: "Atlassian GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
-        - type: HttpResponseFilter
-          action: RETRY
-          http_codes: [500, 502, 503, 504]
+    error_handler: *base_error_handler
 
   standard_fields: &standard_fields
     - type: AddedFieldDefinition
@@ -135,6 +237,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_catalog
         request_body_json:
           query: |
             query insightComponents($cloudId: String!, $cursor: String) {
@@ -293,6 +396,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_scorecards
         request_body_json:
           query: |
             query insightScorecards($cloudId: ID!) {
@@ -401,6 +505,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_scores
         request_body_json:
           query: |
             query insightScorecardScores($scorecardId: ID!, $cursor: String) {
@@ -479,6 +584,7 @@ streams:
                 type: SimpleRetriever
                 requester:
                   <<: *graphql_requester
+                  error_handler: *h_scorecards
                   request_body_json:
                     query: |
                       query insightScorecardIds($cloudId: ID!) {
@@ -573,6 +679,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_teams
         request_body_json:
           query: |
             query insightTeams($scopeId: ID!, $cursor: String) {
@@ -685,6 +792,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_team_members
         request_body_json:
           query: |
             query insightTeamMembers($teamId: ID!, $siteId: String!, $cursor: String) {
@@ -747,6 +855,7 @@ streams:
                 type: SimpleRetriever
                 requester:
                   <<: *graphql_requester
+                  error_handler: *h_teams
                   request_body_json:
                     query: |
                       query insightTeamIds($scopeId: ID!, $cursor: String) {
@@ -873,6 +982,7 @@ streams:
       type: SimpleRetriever
       requester:
         <<: *graphql_requester
+        error_handler: *h_events
         request_body_json:
           query: |
             query insightDeploymentEvents($componentId: ID!, $cursor: String) {
@@ -960,6 +1070,7 @@ streams:
                 type: SimpleRetriever
                 requester:
                   <<: *graphql_requester
+                  error_handler: *h_catalog
                   request_body_json:
                     query: |
                       query insightComponentIds($cloudId: String!, $cursor: String) {

@@ -132,6 +132,21 @@ def test_graphql_error_in_http_200_fails_the_read(http_mocker: HttpMocker):
     assert output.errors
 
 
+def test_null_connection_fails_the_stream(http_mocker: HttpMocker):
+    """`teamSearchV3` is not a union: an unusable scope returns a null connection.
+
+    There is no error object to key on, so without the per-stream filter the
+    directory would come back empty and the sync would look successful.
+    """
+    config = CompassConfigBuilder().build()
+    http_mocker.post(_req(), HttpResponse(body=json.dumps({"data": {"team": {"teamSearchV3": None}}}), status_code=200))
+
+    output = read_stream(_CONNECTOR, _STREAM, config, expecting_exception=True)
+
+    assert output.records == []
+    assert output.errors
+
+
 def test_error_retry_on_429(http_mocker: HttpMocker):
     config = CompassConfigBuilder().build()
     http_mocker.post(

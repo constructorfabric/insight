@@ -4,27 +4,6 @@ Status: **implemented (bronze-only).** Manifest, descriptor, bronze→RMT
 promotion and mock suites are in place; every stream has been read against a
 live site. Silver is deliberately deferred (see §7).
 
-Deltas from the original design, all forced by what the API actually does — the
-tables below already reflect them:
-
-- `component_links` and `component_relationships` are **not** separate streams.
-  Links, labels, event sources and dependency edges all arrive inside the
-  catalog sweep, so splitting them would re-query the same data to reshape it;
-  they are JSON columns on `components` and flatten in dbt. The nested
-  relationship list cannot be paginated, hence `relationships_truncated`.
-- `appliedToComponents` caps page size at **25**. Asking for more fails the sync
-  outright (HTTP 200 + `errors[]`), it does not clamp.
-- `scorecards.scoringStrategyType` turned out to be beta-gated and was dropped,
-  keeping the `scorecards` stream entirely on stable fields.
-- Teams are enumerated with `teamSearchV3` and a site-scoped ARI derived from the
-  cloud id, so no organization id has to be configured.
-- Paginator path expressions are null-safe. A component that resolves to
-  `QueryError` has no `events` and therefore no `pageInfo`; the naive path
-  raised "'None' has no attribute 'pageInfo'" and killed those partitions.
-- Nullable timestamps carry **no** `value_type`. With it, a Jinja `none` renders
-  as the four-character text "None", so a never-completed deployment would carry
-  a fake timestamp instead of a null.
-
 Source: Atlassian Compass (internal developer portal — a catalog of software
 components) plus the Atlassian Teams directory that Compass uses for component
 ownership. One connector covers both; see [Placement](#8-placement).
@@ -33,7 +12,7 @@ All examples below are synthetic.
 
 ## 1. Scope
 
-In scope — seven streams:
+In scope — six streams:
 
 | Stream | Grain |
 | --- | --- |
@@ -89,8 +68,9 @@ per site:
 GET <atlassian_instance_url>/_edge/tenant_info  ->  {"cloudId": "..."}
 ```
 
-The Teams fields additionally need the organization id, which is read off any
-resolved team (`TeamV2.organizationId`).
+The Teams fields take a site-scoped ARI rather than a second identifier:
+`ari:cloud:platform::site/<cloudId>`. The instance URL is only ever used
+out-of-band, to read the cloud id above — it is not a connector setting.
 
 ### 2.2 Protocol rules that shape the manifest
 
@@ -136,8 +116,7 @@ position nor the `X-ExperimentalApi` header works.
 | `TeamV2.hierarchy` | `Team-hierarchy` | (out of scope for v1) |
 
 **Risk to record explicitly:** experimental fields may change shape without a
-deprecation cycle. `components`, `component_links`,
-`component_relationships`, `scorecards`, `teams`, `team_members` and
+deprecation cycle. `components`, `scorecards`, `teams`, `team_members` and
 `deployment_events` are all reachable on stable fields. Only
 `component_scorecard_scores` (and the optional history backfill) depend on
 beta. If beta stability becomes a problem, that one stream can be dropped
@@ -155,8 +134,8 @@ teams                           [root        · full refresh]
 
 components                      [root        · full refresh]
 │      ownerId ───────────────► teams.id
-│      links[] ────────────────► component_links (flattened from the same response)
-├─► component_relationships     [substream: partition = component_id · full refresh]
+│      links[] · labels[] · event_sources[] · relationships[]  — JSON columns,
+│      all carried by the same catalog response
 ├─► component_scorecard_scores  [traversed via scorecards, not components · full refresh]
 └─► deployment_events           [substream: partition = component_id · INCREMENTAL]
 ```
@@ -205,19 +184,19 @@ query components($cloudId: String!, $after: String) {
 
 Sync: full refresh. `unique_key = id`.
 
-### 3.3 `component_links`
+### 3.3 Links (a column, not a stream)
 
-Flattened from `components.links[]` — no extra requests.
+Links arrive with the catalog sweep and land as the `links` JSON column on
+`components`. Each entry:
 
 | Field | Type | Note |
 | --- | --- | --- |
-| `component_id` | `ID!` | FK |
 | `id` | `ID!` | link id |
 | `type` | `CompassLinkType` | `REPOSITORY` / `PROJECT` / `DASHBOARD` / `CHAT_CHANNEL` / `ON_CALL` / `OTHER_LINK` |
 | `url` | `URL!` | |
 | `name` | `String` | |
 
-`unique_key = (component_id, id)`.
+dbt flattens the column with `ARRAY JOIN`, keyed `(component_id, id)`.
 
 `REPOSITORY` links are the join to the git sources. The git connectors do not
 persist `html_url` / `web_url` into staging, so the only cross-connector repo
@@ -226,13 +205,16 @@ key is `class_git_repositories.full_name` (`owner/repo`,
 host decides which `data_source` to match against, path becomes the candidate
 `full_name`. Treat the parse as lossy and keep the raw URL in bronze.
 
-### 3.4 `component_relationships`
+### 3.4 Dependency edges (a column, not a stream)
+
+Dependency edges are requested inside the catalog sweep and land as the
+`relationships` JSON column on `components`:
 
 ```graphql
-relationships(query: {first: 100, after: $after}) {
+relationships(query: {first: 100}) {
   ... on CompassRelationshipConnection {
     nodes { relationshipType startNode { id } endNode { id } }
-    pageInfo { hasNextPage endCursor }
+    pageInfo { hasNextPage }
   }
 }
 ```
@@ -243,7 +225,13 @@ relationships(query: {first: 100, after: $after}) {
 | `startNode.id` | `ID` |
 | `endNode.id` | `ID` |
 
-Sync: full refresh. `unique_key = (start_node_id, end_node_id, relationship_type)`.
+Asking each component for its edges separately would cost one request per
+component for data the catalog query already returns. The trade is that a
+nested list cannot be paginated: `pageInfo.hasNextPage` is therefore carried
+out as the `relationships_truncated` column, so a component with more edges
+than the query asked for is a visible row rather than silent edge loss. Nothing
+in the catalog is expected to approach that bound; if the column is ever true,
+the edges want a substream of their own.
 
 ### 3.5 `scorecards`
 
@@ -282,7 +270,7 @@ query scores($cloudId: ID!, $after: String) {
       ... on CompassScorecardConnection {
         nodes {
           id
-          appliedToComponents(query: {first: 100, after: $after}) @optIn(to: "compass-beta") {
+          appliedToComponents(query: {first: 25, after: $after}) @optIn(to: "compass-beta") {
             ... on CompassScorecardAppliedToComponentsConnection {
               totalCount
               edges {
@@ -298,8 +286,10 @@ query scores($cloudId: ID!, $after: String) {
               }
               pageInfo { hasNextPage endCursor }
             }
+            ... on QueryError { message }
           }
         }
+        ... on QueryError { message }
       }
     }
   }
@@ -342,23 +332,25 @@ Compass concept and not a Jira concept: Compass references it from
 the Jira field — how densely it is populated is a per-site configuration
 choice, whereas Compass ownership is enforced by scorecards.
 
-Enumeration (stable, no opt-in):
+Enumeration (stable, no opt-in). The scope is an ARI built from the configured
+cloud id, so no separate organization id has to be supplied:
 
 ```graphql
-query teams($organizationId: ID!, $siteId: String!, $after: String) {
+query insightTeams($scopeId: ID!, $cursor: String) {
   team {
-    teamSearchV2(organizationId: $organizationId, siteId: $siteId,
-                 first: 50, after: $after,
+    teamSearchV3(scopeId: $scopeId, first: 50, after: $cursor,
                  enablePagination: true, showEmptyTeams: true) {
-      nodes { team { id displayName state } }
       pageInfo { hasNextPage endCursor }
+      nodes { team { id displayName description state organizationId memberCount isVerified } }
     }
   }
 }
 ```
 
-`teamSearchV2` does not populate `memberCount`; resolve details either in bulk
-via `teamsV2(ids, siteId) @optIn(to: "Team")` or per team via `teamV2`.
+with `scopeId = ari:cloud:platform::site/<atlassian_cloud_id>`.
+
+The search field does not populate `memberCount`; count `team_members` rows, or
+resolve details per team via `teamV2`.
 
 | Field | Type | Note |
 | --- | --- | --- |
@@ -373,8 +365,10 @@ via `teamsV2(ids, siteId) @optIn(to: "Team")` or per team via `teamV2`.
 
 Sync: full refresh. `unique_key = id`. Dated snapshots required.
 
-`teamsTql` / `teamSearchV3` are alternative listing fields; `teamsTql` needs its
-own opt-in and rejects a site-scoped ARI as `scopeId`. Prefer `teamSearchV2`.
+`teamSearchV2` and `teamsTql` are the alternatives. `teamSearchV2` works but
+requires an organization id the connector would otherwise have no way to
+obtain; `teamsTql` needs its own opt-in *and* rejects a site-scoped ARI as
+`scopeId`. Neither is worth the extra configuration.
 
 **A team directory may be fed by an external HR system.** Where it is, team
 names, membership and hierarchy are managed by that sync and are read-only in
@@ -458,7 +452,7 @@ query events($id: ID!, $after: String) {
 | `deploymentProperties.state` | enum | String | `PENDING` / `IN_PROGRESS` / `SUCCESSFUL` / `CANCELLED` / `FAILED` / `ROLLED_BACK` / `UNKNOWN` |
 | `deploymentProperties.environment.category` | enum | String | `PRODUCTION` / `STAGING` / `TESTING` / `DEVELOPMENT` / `UNMAPPED` |
 | `deploymentProperties.environment.displayName`, `.environmentId` | `String` | String | |
-| `deploymentProperties.startedAt`, `.completedAt` | `DateTime` | Nullable(DateTime64) | duration; `completedAt` may stay null |
+| `deploymentProperties.startedAt`, `.completedAt` | `DateTime` | Nullable(DateTime64) | duration; `completedAt` may stay null — see the `value_type` note below |
 | `deploymentProperties.sequenceNumber` | `Long` | UInt64 | source-side ordinal |
 | `deploymentProperties.pipeline` | object | JSON | `{pipelineId, displayName, url}` |
 
@@ -466,6 +460,12 @@ Sync: incremental on `lastUpdated`. `unique_key = (component_id,
 update_sequence_number)`. One event is updated in place as it progresses, so the
 ReplacingMergeTree version must be `lastUpdated` (or the sequence number), and
 read-time dedup must pick the latest.
+
+A nullable timestamp must be added **without** `value_type: string`. With it, a
+Jinja `none` renders as the four-character text `"None"` and is stored as a
+value, so a deployment that never completed would carry a fake timestamp rather
+than a null. Without it the CDK literal-evaluates `"None"` back to a null, and a
+real timestamp — which is not a Python literal — stays the string it was.
 
 Three properties of this stream that the manifest and the silver models both
 have to respect:
@@ -510,6 +510,13 @@ back truncated with `hasNextPage: true` on every team, including teams whose
 members all fit. Per-team `teamV2(...).members(...)` paginates exactly and
 reconciles with `memberCount`. Enumerate teams in bulk; fetch members per team.
 
+**Every paginator path expression must be null-safe.** The cursor is read out of
+the response by path, and a union that resolved to `QueryError` has no
+connection under it — so a plain `response['data'][...]['pageInfo']` raises
+`'None' has no attribute 'pageInfo'` and kills that partition. Guard each hop
+(`(… or {}).get(…)`), and let the stream's error handler (§2.2) decide whether
+the union error is fatal or skippable.
+
 ## 5. History
 
 Compass and Teams emit **no change events and no field-level audit**. Scorecard
@@ -529,7 +536,7 @@ diffs to **materialise in silver**.
 | `teams` | diff on `displayName`, `state` | renames must not retroactively rename history |
 | `scorecards` | **dated snapshots of the definition** | weights renormalise to 100, so a score drop is ambiguous — a service degrading and a criterion being added look identical. Only a definition snapshot for the same date separates them |
 | `component_scorecard_scores` | dated snapshots, never collapsed | the series *is* the deliverable |
-| `component_relationships` | latest only | no historical metric depends on past dependency graphs |
+| `components.relationships` | latest only | no historical metric depends on past dependency graphs |
 | `deployment_events` | events, RMT by `update_sequence_number` | not applicable — already a log |
 
 **Asymmetry to plan around:** score history is backfillable from the API (see
@@ -557,10 +564,9 @@ Per daily sync, as a function of catalog size:
 
 | Stream | Requests |
 | --- | --- |
-| `components` (+ links, labels, event sources) | `ceil(N_components / 100)` |
-| `component_relationships` | `O(N_components)` — batch inside the component sweep where the response size allows |
+| `components` (+ links, labels, event sources, dependency edges) | `ceil(N_components / 100)` |
 | `scorecards` | 1 |
-| `component_scorecard_scores` | `sum over scorecards of ceil(applied_components / 100)` |
+| `component_scorecard_scores` | `sum over scorecards of ceil(applied_components / 25)` — the field caps page size at 25 |
 | `teams` | `ceil(N_teams / 50)` + 1 bulk resolve |
 | `team_members` | `O(N_teams)` |
 | `deployment_events` | `O(N_components)` — one page for a quiet component, several for a busy one |
@@ -604,7 +610,7 @@ matches and keep the unmatched rows visible rather than dropping them.
 | Descriptor version | `1.0.0`, strict semver |
 | Bronze namespace | `bronze_compass` |
 | Schedule | daily; `deployment_events` sets the floor, since a missed run loses events |
-| Secret fields | `atlassian_instance_url`, `atlassian_email`, `atlassian_api_token` |
+| Secret fields | `atlassian_email`, `atlassian_api_token`, `atlassian_cloud_id` |
 | `dbt_select` | `tag:compass+` |
 
 Teams streams live in this connector rather than in their own: same host, same

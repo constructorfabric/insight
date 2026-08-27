@@ -155,12 +155,13 @@ def test_graphql_error_in_http_200_fails_the_read(http_mocker: HttpMocker):
     assert output.errors, "a GraphQL error served as HTTP 200 must fail the stream"
 
 
-def test_query_error_union_member_yields_no_records(http_mocker: HttpMocker):
-    """`searchComponents` returns a union; the error member has no `nodes`.
+def test_query_error_union_member_fails_the_catalog(http_mocker: HttpMocker):
+    """`searchComponents` returns a union, and its error member has no `nodes`.
 
-    Unlike the case above this is a legitimate 200 with no top-level `errors`,
-    so the stream must simply produce nothing rather than crash while walking
-    the response for a paginator cursor.
+    This body carries no top-level `errors`, so the catch-all filter cannot see
+    it; without the per-stream filter the extractor would find nothing and the
+    whole catalog would report zero components as a successful sync. For the
+    catalog that is never an acceptable outcome, so it must fail loudly.
     """
     config = CompassConfigBuilder().build()
     http_mocker.post(
@@ -170,9 +171,10 @@ def test_query_error_union_member_yields_no_records(http_mocker: HttpMocker):
         ),
     )
 
-    output = read_stream(_CONNECTOR, _STREAM, config)
+    output = read_stream(_CONNECTOR, _STREAM, config, expecting_exception=True)
 
     assert output.records == []
+    assert output.errors, "a union QueryError on the catalog must fail the stream"
 
 
 def test_error_retry_on_429(http_mocker: HttpMocker):

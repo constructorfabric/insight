@@ -164,6 +164,40 @@ def test_graphql_error_in_http_200_fails_the_read(http_mocker: HttpMocker):
     assert output.errors
 
 
+def test_union_error_on_applied_components_fails(http_mocker: HttpMocker):
+    """The beta opt-in being withdrawn surfaces here, not as a top-level error.
+
+    `appliedToComponents` is a union, so a refusal is a successful body with a
+    `message` and no `edges`. Left unhandled the stream would report zero
+    scores for every scorecard and look healthy.
+    """
+    config = CompassConfigBuilder().build()
+    http_mocker.post(_parent_req(), _parent("s1"))
+    http_mocker.post(
+        _child_req("s1"),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "compass": {
+                            "scorecard": {
+                                "id": scorecard_ari("s1"),
+                                "appliedToComponents": {"message": "EXPERIMENTAL field requires opt-in"},
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, _STREAM, config, expecting_exception=True)
+
+    assert output.records == []
+    assert output.errors
+
+
 def test_error_retry_on_429(http_mocker: HttpMocker):
     config = CompassConfigBuilder().build()
     http_mocker.post(

@@ -247,26 +247,29 @@ def test_graphql_error_in_http_200_fails_the_read(http_mocker: HttpMocker):
 
 
 @freeze_time(_NOW)
-def test_query_error_union_member_does_not_crash_the_paginator(http_mocker: HttpMocker):
-    """A component resolving to `QueryError` has no `events` and no `pageInfo`.
+def test_unreadable_component_is_skipped_not_fatal(http_mocker: HttpMocker):
+    """A component deleted between the parent sweep and this read is ordinary.
 
-    The paginator walks the response for a cursor, so a naive path expression
-    raises "'None' has no attribute 'pageInfo'" and kills the partition. The
-    null-safe expressions must turn this into a clean zero-record partition.
+    It comes back as a `QueryError` union member with no `events` and no
+    `pageInfo` — so the paginator paths have to be null-safe, and the stream
+    handler IGNOREs it rather than failing. Unlike the catalog query, one
+    unreadable component out of thousands must not take the sync down: the
+    remaining partitions still have to produce their events.
     """
     config = CompassConfigBuilder().build()
-    http_mocker.post(_parent_req(), _parent("c1"))
+    http_mocker.post(_parent_req(), _parent("c1", "c2"))
     http_mocker.post(
         _child_req("c1"),
         HttpResponse(
             body=json.dumps({"data": {"compass": {"component": {"message": "Component not found"}}}}), status_code=200
         ),
     )
+    http_mocker.post(_child_req("c2"), _child("c2", [_event(7, "2026-06-15T10:00:00.000Z")]))
 
     output = read_stream(_CONNECTOR, _STREAM, config)
 
-    assert output.records == []
     assert not output.errors
+    assert [r.record.data["component_id"] for r in output.records] == [component_ari("c2")]
 
 
 @freeze_time(_NOW)

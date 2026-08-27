@@ -140,6 +140,13 @@ this data has to respect them.
   component has exactly one owner.
 - **`teams.member_count` is not populated** by the search field this stream
   uses; count `team_members` rows instead.
+- **A failed catalog query fails the sync; one unreadable component does not.**
+  Most fields return a union, so a refusal arrives as a *successful* body with a
+  `message` and no rows. Where an empty answer would be indistinguishable from
+  "there is nothing" — the catalog, the scorecards, the team directory and its
+  membership — the connector fails loudly. A single component that vanished
+  between the catalog sweep and its event read is skipped instead, and the other
+  components continue.
 - **`component_scorecard_scores` rides an experimental field** and needs the
   `@optIn(to: "compass-beta")` directive. Every other stream is on stable
   fields, so if beta churn breaks it, it can be dropped without affecting the
