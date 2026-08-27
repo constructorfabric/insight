@@ -1,21 +1,18 @@
 {{ metric_evidence_table(join_use_nulls=1) }}
 
--- Keyed by the source identity through `normalized_email()`, not by person:
--- the analytics runtime resolves through `identity.person_map` and
--- `identity.account_assignment` while it serves. Rows that carry the author's
--- source account id (pull requests) resolve account-first at read time; the
--- account columns below are that key, in the identity store's vocabulary. An
--- unresolvable row stays and starts counting the moment it resolves.
+-- Resolution happens at READ time, and account-first: a row naming its author's
+-- account (pull requests) resolves through that binding, everything else
+-- through the e-mail map. The account columns below are that key, in the
+-- identity store's vocabulary rather than data_source's.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
     {{ normalized_email('src.entity_id') }} AS entity_id,
     src.account_source_type,
-    -- INVARIANT: every account column is a plain String across every evidence
-    -- relation. The class PR source_id is Nullable, and one family typing this
-    -- column differently would fail the service's exact-column probe and blank
-    -- that family's metrics.
+    -- INVARIANT: every account column is a plain String in every evidence
+    -- relation. The class PR source_id is Nullable, and one family typing it
+    -- differently fails the service's exact-column probe, blanking its metrics.
     coalesce(src.account_source_id, '') AS account_source_id,
     src.account_id,
     src.metric_date,

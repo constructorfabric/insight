@@ -1459,25 +1459,19 @@ pub(crate) fn account_id_expr(alias: &str) -> String {
 /// The `FROM` target for an observation read, with identity resolved when the
 /// source needs it.
 ///
-/// A subquery rather than a join spliced into the caller: every clause above it
-/// keeps referring to a bare `entity_id` that already holds the canonical person
-/// id, so scoping, `GROUP BY`, `GROUPING SETS`, window partitions and `ORDER BY`
-/// are unchanged by this move — the one place identity enters is here.
+/// A subquery, not a join spliced into the caller: every clause above it keeps
+/// reading a bare `entity_id` that now holds the person id, so scoping,
+/// `GROUP BY`, `GROUPING SETS`, window partitions and `ORDER BY` are unchanged.
 ///
-/// Resolution is account-first: a row that carries its author's source account
-/// id resolves through the account binding — the source's own primary key for
-/// the person, which survives an empty profile email — and an account bound to
-/// the excluded person terminates resolution, so a bot's rows never fall
-/// through to a human's email. Only a row with no matched binding consults the
-/// email map. An unresolved or contested row resolves to nobody, so it simply
-/// does not appear — no group for nobody, and it starts counting the moment
-/// identity learns it.
+/// Account-first, because an account binding survives an empty profile e-mail
+/// and an account bound to the excluded person must TERMINATE resolution — a
+/// bot's rows would otherwise fall through to whichever human its commit
+/// e-mails name.
 ///
-/// The prune term exists for the scan, not the semantics: `entity_id` leads the
-/// relation's sort key after the tenant and source, so the email lookup reads
-/// only the requested people's parts, and account-carrying rows (a small
-/// fraction — facts that name their author's account) pass through to the
-/// exact resolved filter above.
+/// Two predicates on purpose. The prune is for the scan (`entity_id` leads the
+/// sort key after tenant and source, so the e-mail lookup reads only the
+/// requested parts); the filter above `resolved` is what decides, whatever the
+/// prune let through.
 fn resolved_observation_from(
     source: &ObservationSource,
     scope: &PersonScope<'_>,

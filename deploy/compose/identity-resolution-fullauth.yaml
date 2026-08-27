@@ -91,6 +91,13 @@ gears:
     config:
       database_url: ""
       org_chart_source_type: "bamboohr"
+      # This stand's journal was imported from a deployment whose roster is
+      # GitHub, so by-roster-email must look there; unset, the endpoint refuses
+      # with 400 rather than admitting an address no roster stated.
+      roster_source_type: "github"
+      # Everyone is a peer, matching the deployment this journal came from.
+      # Default is org_chart, which would scope each viewer to their subtree.
+      visibility_policy: "flat"
       expand_subordinates: true
       max_depth: 16
       clickhouse_url: ""
