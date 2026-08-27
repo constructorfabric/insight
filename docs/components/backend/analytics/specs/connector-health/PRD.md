@@ -415,10 +415,14 @@ the product computes no cadence and claims no intended schedule.
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-usecase-fresh-install`
 
 On a new install the operator configures a subset of connectors. The page lists configured
-connectors with their first recorded syncs, and shows the rest — schemas with no
-configuration record and no syncs — as never configured at the bottom, not as failures
-(FR-4). Before the first controller cadence completes, the page says nothing has been read
-from the mover yet rather than implying anything.
+connectors with their first recorded syncs, and sorts a connector that has dropped out of
+configuration — one holding sync history but absent from the newest snapshot — to the bottom
+rather than reporting it as a failure (FR-4). Before the first controller cadence completes,
+the page says nothing has been read from the mover yet rather than implying anything.
+
+A connector that was never configured and has never synced is not listed at all. FR-11 gives
+the read surface one relation and nothing else, and such a connector has left no record in
+it; listing it would mean reading storage the reader deliberately holds no access to.
 
 ## 9. Acceptance Criteria
 
@@ -461,10 +465,10 @@ from the mover yet rather than implying anything.
 - The mover retains job history long enough for a useful backfill window; retention shorter
   than ledger retention limits backfill, not steady-state operation. Its listing is paged, so
   the window is the mover's retention rather than one page of it.
-- A connector name carries no underscore, which keeps the mapping between a connector name
-  and its bronze schema reversible. Nothing enforces this today, and a name that breaks it
-  would attribute syncs to the wrong connector; extending the connector wiring guard is the
-  cheapest way to turn the assumption into a fact.
+- A connector name carries no underscore, so the name the read surface parses out of a URL
+  path is the name the descriptor declares. Enforced by the connector wiring guard rather
+  than assumed: a name that breaks it would leave that connector's history unreachable
+  behind a row the page had already drawn.
 
 ## 12. Open Decisions
 

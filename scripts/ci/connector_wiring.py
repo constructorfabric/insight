@@ -25,7 +25,15 @@ Checks
                   silver models drop out of any regenerated DDL snapshot.
   3. depends_on — that same connector MUST be declared in class_people.sql's
                   `depends_on` list, per the convention stated in that file.
-  4. cast-types — contributors MUST NOT explicitly cast the same class_people
+  4. name-shape — a connector name MUST NOT contain an underscore. The
+                  connector-health surface parses the name out of a URL path
+                  and accepts lowercase letters, digits and hyphens, so a name
+                  carrying an underscore makes that connector's sync history
+                  unreachable — a 400 on a row the page has already drawn.
+                  (Bronze schemas are named `bronze_<name with - turned into
+                  _>`, so the hyphen-only shape also keeps that mapping
+                  reversible.)
+  5. cast-types — contributors MUST NOT explicitly cast the same class_people
                   column to different types; `union_by_tag` UNION ALLs the
                   branches and ClickHouse raises Code 386 NO_COMMON_TYPE.
 
@@ -115,6 +123,18 @@ def main(argv: list[str]) -> int:
         descriptor = _load_yaml(descriptor_path)
         version = str(descriptor.get("version", ""))
         images = descriptor.get("images") or {}
+
+        # ── name shape ───────────────────────────────────────────────────────
+        # INVARIANT: the connector-health route's own parser accepts lowercase
+        # letters, digits and hyphens. See check 4 above.
+        name = str(descriptor.get("name", ""))
+        if "_" in name:
+            errors.append(
+                f"{rel}: connector name {name!r} carries an underscore. Use "
+                "hyphens: the connector-health route parses the name from a "
+                "URL path and refuses one, so this connector's sync history "
+                "would be unreachable."
+            )
 
         # ── 1. semver ────────────────────────────────────────────────────────
         if not SEMVER_RE.match(version):

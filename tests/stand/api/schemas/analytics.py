@@ -826,6 +826,26 @@ class SnapshotSeries(BaseModel):
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
 
 
+class SyncFact(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int | None = Field(None, description='Absent for a job still in flight, and for one the mover gave no usable\npair of stamps for. Never zero to mean absent.', ge=0)
+    job_id: str = Field(..., description="The mover's own job identity.")
+    records_reported: int | None = Field(None, description='What the mover states it moved. Absent where it reported no count at\nall, which is a different answer from a reported zero.', ge=0)
+    started_at: str | None = Field(None, description='Absent for a job the mover had not started.')
+    status: str = Field(..., description="The mover's own word for how the sync ended, or `unknown` where the\nrecorded word was outside its documented vocabulary.")
+
+
+class SyncHistoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    syncs: list[SyncFact] = Field(..., description='A bounded window, newest first — not the full retained history.')
+    window: int = Field(..., description='How many rows this window holds at most, so the page can say the list\nis a window rather than everything.', ge=0)
+
+
 class TelemetryRecord(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -960,6 +980,26 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+
+
+class ConnectorHealth(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
+    connector: str
+    last_sync: SyncFact | None = None
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
+    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
+    connectors: list[ConnectorHealth]
+    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
+    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
 
 
 class ContextEntryResponse(BaseModel):

@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 /**
  * Manage-zone surfaces read the UNIFIED registry, not the legacy catalog:
- * the table lists `metric_key`s `/v1/metric-results` actually serves, spells
- * out an unobserved definition as "no data yet" rather than hiding it, and
- * Data health separates "schema checks out" from "has ever produced a row".
+ * the table lists `metric_key`s `/v1/metric-results` actually serves and
+ * spells out an unobserved definition as "no data yet" rather than hiding it.
+ *
+ * Connector health has its own test file; here only its place in the zone and
+ * its gate are under test.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -41,6 +43,10 @@ vi.mock("@/queries/identity-me", () => ({
 // The console itself has its own test file; here only the gate is under test.
 vi.mock("@/components/portal/identities-view", () => ({
   IdentitiesView: () => <div data-testid="identities-view" />,
+}));
+
+vi.mock("@/components/portal/connector-health", () => ({
+  ConnectorHealthPane: () => <div data-testid="connector-health-pane" />,
 }));
 
 import { ManageView } from "./manage-view";
@@ -148,17 +154,28 @@ describe("Manage · What's new", () => {
   });
 });
 
-describe("Manage · Data health", () => {
-  it("counts schema statuses and, separately, definitions with no data", () => {
+describe("Manage · Connector health", () => {
+  it("is instance-wide, so a non-admin is refused rather than shown an empty page", () => {
+    adminGate.value = { ...adminGate.value, isAdmin: false };
+    render(<ManageView item="connector-health" />);
+
+    expect(
+      screen.queryByTestId("connector-health-pane"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens for an operator", () => {
+    adminGate.value = { ...adminGate.value, isAdmin: true };
+    render(<ManageView item="connector-health" />);
+
+    expect(screen.getByTestId("connector-health-pane")).toBeInTheDocument();
+  });
+
+  it("no longer answers to the pane it replaced", () => {
+    adminGate.value = { ...adminGate.value, isAdmin: true };
     render(<ManageView item="data-health" />);
-    expect(screen.getByText(/across 3 metrics/)).toBeInTheDocument();
-    // 2 ok · 1 error · 0 unchecked · 1 without any observation
-    const tile = (label: string) =>
-      screen.getByText(label).closest("div")?.parentElement?.textContent ?? "";
-    expect(tile("ok")).toMatch(/^2/);
-    expect(tile("error")).toMatch(/^1/);
-    expect(tile("unchecked")).toMatch(/^0/);
-    expect(tile("no data yet")).toMatch(/^1/);
+
+    expect(screen.getByText(/not built yet/i)).toBeInTheDocument();
   });
 });
 

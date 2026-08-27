@@ -185,10 +185,10 @@ column the reader and the writer will disagree about.
 | `job_id` | the mover's job identity | empty | empty |
 | `connector` | the synced connector | the member connector | empty |
 | `status` | the mapped outcome | empty | empty |
-| `started_at` | as reported; NULL if not started | NULL | NULL |
+| `started_at` | the job's own start, else its first attempt's; NULL if not started | NULL | NULL |
 | `job_created_at` | always present | NULL | NULL |
-| `duration_ms` | as reported; NULL if none | NULL | NULL |
-| `records_reported` | as reported; NULL if none | NULL | NULL |
+| `duration_ms` | between the mover's own two stamps; NULL until terminal | NULL | NULL |
+| `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
 
 Empty rather than NULL where a column is inapplicable to a row class: those columns are
 `LowCardinality(String)`, and every read filters by `event` before touching them, so an
@@ -199,11 +199,16 @@ job creation time; the configured set is the membership of the newest *sealed* t
 matters: without keying on the marker, a snapshot still being written would read as the whole
 set, and a connector removed a moment ago would come back for one tick.
 
-**Status vocabulary.** `ok`, `failed`, `cancelled`, `running`, `unknown`. The mover's own
-words are mapped onto this closed set at the boundary; a word outside the mover's documented
-vocabulary is stored as `unknown` rather than passed through, so nothing downstream holds a
-value it cannot read. `unknown` is not a failure and not a reason to sort a connector as
-quiet — the page shows it as a state it cannot read.
+**Status vocabulary.** The mover's own six words, stored verbatim: `pending`, `running`,
+`incomplete`, `succeeded`, `failed`, `cancelled` — plus `unknown` for a word outside that set.
+Nothing is translated on the way in. A surface reporting someone else's account should not
+paraphrase it, and a translation table is one more place for a meaning to be lost: rewriting
+`succeeded` as `ok` would be this service asserting something the mover did not say. What the
+boundary does instead is close the set, so nothing downstream holds a value it cannot read.
+
+`unknown` is neither a failure nor a success, and it does not sort a connector as quiet — the
+page shows it as a state it could not read. It is also not terminal: coverage fails closed, so
+a status the sweep could not read is one it keeps re-reading until it becomes one it can.
 
 **Two timestamps, kept apart.** `started_at` is when the mover says the sync began, and is
 absent for a job it has not started. `job_created_at` is when the job was created, which is
@@ -211,15 +216,21 @@ the field the mover's listing is ordered and filtered by — and therefore the a
 own frontier moves along. Substituting one for the other would report a start that never
 happened and still leave the cursor on the wrong axis.
 
-**`job_created_at` is never NULL on a sync row.** The listing is ordered and filtered by it,
-so a job the mover returns always carries one; the column is nullable only because snapshot
-and seal rows are not about a job at all. The invariant is load-bearing rather than tidy: the
-summary resolves the newest sync per connector with `argMax` over this column, and `argMax`
-ignores rows whose value argument is NULL. A sync row missing it would not merely lose that
-comparison — it would drop out of the summary entirely, taking with it a connector whose only
-recorded sync it was, and rendering as absence rather than as unknown. So a job the mover
-returns without a creation time is one the planner cannot place in time, and it is skipped
-and logged rather than written with a NULL.
+**`job_created_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
+mover returns always carries one; the column is nullable only because snapshot and seal rows
+are not about a job at all. A job the mover returns without a creation time is one the planner
+cannot place in time, so it is skipped and logged rather than written with a NULL.
+
+**The resolution is two `LIMIT 1 BY` steps, not `argMax`.** The inner step takes the newest
+ROW per job and the outer step the newest JOB per connector, and the split is load-bearing in
+both directions.
+
+A job seen mid-flight and later seen finished leaves two rows that share one creation time, so
+resolving straight to the newest job would tie between them — and could answer `running` for a
+sync that ended. And `argMax` ignores rows whose value argument is NULL, so a sync row that
+somehow carried no creation time would not merely lose the comparison but take its whole
+connector out of the answer, rendering as absence rather than as unknown. `LIMIT 1 BY` still
+returns a row when every candidate is NULL, which is the failure mode worth preferring.
 
 ### 3.2 Component Model
 
@@ -331,7 +342,7 @@ design.
       "configured": true,
       "last_sync": {
         "job_id": "8412",
-        "status": "ok",
+        "status": "succeeded",
         "started_at": "2026-01-15T09:00:00Z",
         "duration_ms": 142000,
         "records_reported": 12400
@@ -347,10 +358,11 @@ bounded:
 ```json
 {
   "connector": "example-tracker",
+  "window": 50,
   "syncs": [
     {
       "job_id": "8412",
-      "status": "ok",
+      "status": "succeeded",
       "started_at": "2026-01-15T09:00:00Z",
       "duration_ms": 142000,
       "records_reported": 12400
@@ -365,8 +377,10 @@ disagree, the generated one is right.
 
 Shape rules that the generated contract enforces:
 
-- **Nullable fields are required and nullable**, never optional. The service always emits the
-  key; a client written to the contract must handle `null` rather than a missing key.
+- **Nullable fields are always emitted.** No field is skipped when absent, so a client sees
+  `null` rather than a missing key. The generated contract still marks them optional, which is
+  what every other DTO on this service does — a lone shape with its own nullability convention
+  would cost more than the looser contract does, since handling `null` handles both.
 - `last_sync` is null for a configured connector that has never synced.
 - **`as_of` and `checked_at` are different clocks and both are needed.** `as_of` is when the
   service computed the answer; `checked_at` is the newest sealed tick's own stamp — when the
@@ -384,6 +398,8 @@ Shape rules that the generated contract enforces:
   differently (FR-7).
 - `history_available` is false when nothing has been recorded at all, so the page can say so
   instead of implying health.
+- `window` is the largest number of rows the per-connector list can hold, so the page can say
+  the list is a window rather than the whole retained history (FR-6).
 
 ### 3.4 Internal Dependencies
 
@@ -400,10 +416,24 @@ Shape rules that the generated contract enforces:
 
 #### Data mover job listing
 
-The sweep consumes the mover's stable public job listing: per job, its identity, connection,
-outcome, creation and start timestamps, duration, and reported record count. Richer per-job
-detail exists but is not contract-stable across mover upgrades, so nothing here depends on
-it. Unavailable ⇒ the sweep records nothing this tick and the page serves the last recorded
+The sweep reads the mover's public job listing, paged, with four query parameters: the job
+type, ascending creation order, the page, and a creation-time floor. Per entry it takes the
+job's identity, its connection, its status, its creation and start stamps, its duration and
+its reported record count — all flat on the entry, all as the listing spells them.
+
+Two of those parameters carry the correctness of the whole read. **Ascending order** is what
+makes a capped pass safe: whatever the cap leaves unread is newer than everything collected,
+so the next tick resumes at that edge rather than the watermark stepping over a gap. **The
+creation-time floor** is what keeps a steady tick from re-reading the whole retained history
+to find the handful of jobs it has not seen.
+
+The floor is sent in the listing's own stamp format, which differs from the ledger's by a
+separator. Sending the ledger's form is silent rather than loud — the listing does not filter
+on it — so the conversion lives in one named function rather than at the call site.
+
+Nothing richer is read. Per-job detail exists and is not contract-stable across mover
+upgrades; the value of this ledger is that it keeps saying what a changing source said.
+Unavailable ⇒ the sweep records nothing this tick and the page serves the last recorded
 facts.
 
 #### Warehouse
@@ -423,21 +453,28 @@ sequenceDiagram
     participant M as Data mover
     participant L as Sync ledger
 
-    R->>L: newest job-creation time already covered
-    L-->>R: frontier (empty ⇒ backfill everything)
-    R->>M: list jobs created since frontier, oldest first, paged
-    M-->>R: jobs with outcome, timestamps, reported records
+    R->>L: oldest job still open, else the newest recorded
+    L-->>R: watermark (empty ⇒ backfill everything)
+    R->>M: list sync jobs from the watermark, oldest first, paged
+    M-->>R: jobs with status, stamps, duration, reported records
+    R->>R: map each job's connection to a connector
     R->>R: plan rows for jobs not already closed
     R->>L: insert planned sync rows
     R->>L: insert configured-set rows
     R->>L: insert the seal
 ```
 
-The frontier moves along job creation time because that is what the listing is ordered and
-filtered by. Reading oldest-first makes a truncated read resumable: what is cut is newer than
-everything collected, so the next tick continues at the edge rather than leaving a gap behind
-the cursor. The seal is written last, so a snapshot read never names a tick whose rows are
-still arriving.
+**The watermark is the oldest job still open, and only the newest job recorded when nothing
+is open.** The newest recorded job is the one most likely still running, so a watermark
+standing on it would never let a later tick see how that job ended — the page would show a
+sync running for ever. Standing on the oldest open job leaves every unfinished job at or above
+the line, to be re-read until it closes, at the cost of one duplicate row per tick while it
+runs. No assumption about how many jobs the mover runs at once is needed for that to hold.
+
+A job the ledger already holds with a terminal status is planned away rather than re-recorded,
+so the re-read costs rows only for jobs that are genuinely still open.
+
+The seal is written last, so a snapshot read never names a tick whose rows are still arriving.
 
 #### Page read
 
@@ -480,10 +517,10 @@ customer extracts, which must never carry service rows.
 | `job_id` | `String` | the mover's job identity; empty on rows that are not about a job |
 | `connector` | `LowCardinality(String)` | hyphenated connector name; empty on the seal row |
 | `event` | `LowCardinality(String)` | `sync.completed` \| `connector.configured` \| `sweep.completed` |
-| `status` | `LowCardinality(String)` | on a sync row, the closed set `ok` \| `failed` \| `cancelled` \| `running` \| `unknown`; empty elsewhere |
+| `status` | `LowCardinality(String)` | on a sync row, the mover's own word or `unknown`; empty elsewhere |
 | `started_at` | `Nullable(DateTime64(3, 'UTC'))` | when the mover says the sync began; NULL for a job it has not started |
 | `job_created_at` | `Nullable(DateTime64(3, 'UTC'))` | when the job was created — the axis the frontier moves along; never NULL on a sync row |
-| `duration_ms` | `Nullable(UInt64)` | elapsed time as reported; NULL where the mover reported none, which a zero could not express |
+| `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
 
 `ENGINE = MergeTree`, `PARTITION BY toYYYYMM(ts)`,
@@ -522,9 +559,14 @@ applied files, so every statement in it is written to be safe to repeat.
 |---|---|---|
 | read-only query-path role | `SELECT ON ingestion_history.*` | everything the read surface needs |
 
+The grant lives with the role definition rather than in the migration, beside every other
+grant the query path holds, and re-applies on each deploy along with them.
+
 The writer takes no grant here: the reconcile loop authenticates as the ingestion user, which
-owns the database already. The query-path role must not be given anything that writes, and a
-static test over the migration asserts exactly that.
+owns the database already. The query-path role must not be given anything that writes, and an
+opt-in test against a real server asserts exactly that — it assigns the role to a throwaway
+user and checks that `SELECT` is allowed while `INSERT`, `CREATE`, `DROP`, `TRUNCATE` and
+`ALTER` are all refused.
 
 ### 3.8 Deployment Topology
 
