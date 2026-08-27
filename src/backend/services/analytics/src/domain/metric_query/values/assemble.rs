@@ -10,10 +10,10 @@ use serde_json::Value;
 
 use crate::domain::compiler::dimensions::dimension_aliases;
 
+use super::super::error::QueryError;
 use super::dto::{
     Comparison, Group, GroupDimension, GroupedSeries, GroupedValue, Point, ResultBody,
 };
-use super::error::QueryError;
 
 /// One value per subject, and per split group where the question named one.
 #[derive(Debug, Deserialize)]

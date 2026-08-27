@@ -233,16 +233,16 @@ impl<'a> Fold<'a> {
                 )?;
                 format!("{numerator} / nullIf({denominator}, 0)")
             }
-            FoldKind::Quantile { quantile, .. } => {
+            FoldKind::Quantile { measure, quantile } => {
                 // INVARIANT: a quantile of pre-folded aggregates is not that
                 // quantile, so this ranks the measure's per-row values.
-                let value = self.row_value_expr(metric)?;
+                let value = row_value(metric, measure)?;
                 format!("quantileExact({quantile})({value})")
             }
-            FoldKind::Deviation { .. } => {
+            FoldKind::Deviation { measure } => {
                 // INVARIANT: this ranks the measure's own per-row values, and
                 // a spread nothing was observed for reads NULL, never zero.
-                let value = self.row_value_expr(metric)?;
+                let value = row_value(metric, measure)?;
                 format!("stddevSampIfOrNull({value}, {value} IS NOT NULL)")
             }
             FoldKind::Derived { inputs, expr } => {
@@ -276,26 +276,43 @@ impl<'a> Fold<'a> {
         Ok(format!("toFloat64({value})"))
     }
 
-    /// The per-row value the fold ranks; only a distribution over per-row
-    /// values has one.
-    pub fn row_value_expr(&self, metric: &MetricDefinition) -> Result<&'a str, CompileError> {
+    /// The per-row value the named view ranks; only a distribution over
+    /// per-row values has one.
+    pub fn row_value_expr(
+        &self,
+        metric: &MetricDefinition,
+        view: &'static str,
+    ) -> Result<&'a str, CompileError> {
         match &self.kind {
-            FoldKind::Quantile { measure, .. } | FoldKind::Deviation { measure } => measure
-                .value_expr
-                .as_deref()
-                .ok_or_else(|| CompileError::DistributionWithoutValue {
-                    metric: metric.key.clone(),
-                    measure: measure.key.clone(),
-                }),
+            FoldKind::Quantile { measure, .. } | FoldKind::Deviation { measure } => {
+                row_value(metric, measure)
+            }
             FoldKind::Aggregate(_) | FoldKind::Ratio { .. } | FoldKind::Derived { .. } => {
                 Err(CompileError::UnsupportedView {
                     metric: metric.key.clone(),
-                    view: "bins",
-                    reason: "it needs a percentile or stddev computation, the only ones taken over the measure's own per-row values",
+                    view,
+                    reason: DISTRIBUTION_RULE,
                 })
             }
         }
     }
+}
+
+/// The rule deciding which metrics have a distribution at all, stated once so
+/// every view that needs one refuses in the same words.
+pub(super) const DISTRIBUTION_RULE: &str = "it needs a percentile or stddev computation, the only ones taken over the measure's own per-row values";
+
+fn row_value<'a>(
+    metric: &MetricDefinition,
+    measure: &'a MeasureDefinition,
+) -> Result<&'a str, CompileError> {
+    measure
+        .value_expr
+        .as_deref()
+        .ok_or_else(|| CompileError::DistributionWithoutValue {
+            metric: metric.key.clone(),
+            measure: measure.key.clone(),
+        })
 }
 
 /// The rows one input folds over, as an aggregate-function condition.

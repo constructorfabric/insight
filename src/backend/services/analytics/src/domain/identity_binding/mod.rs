@@ -8,7 +8,7 @@
 mod error;
 mod sql;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 use uuid::Uuid;
@@ -21,6 +21,18 @@ pub use error::IdentityBindingError;
 pub struct IdentitySet {
     pub emails: Vec<String>,
     pub account_ids: Vec<String>,
+}
+
+impl IdentitySet {
+    /// Every value standing for the person, deduplicated: an identity a source
+    /// recorded under both an address and an account id must not attribute its
+    /// rows twice.
+    #[must_use]
+    pub fn values(&self) -> Vec<String> {
+        let mut values: BTreeSet<&String> = self.emails.iter().collect();
+        values.extend(self.account_ids.iter());
+        values.into_iter().cloned().collect()
+    }
 }
 
 #[derive(Debug, Deserialize, clickhouse::Row)]

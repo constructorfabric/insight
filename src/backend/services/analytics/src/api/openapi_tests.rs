@@ -47,6 +47,8 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/queries",
         "/v1/queries/{id}",
         "/v1/queries/{id}/run",
+        "/v1/query/comparisons",
+        "/v1/query/distributions",
         "/v1/query/values",
         "/v1/usage/config",
         "/v1/usage/events",

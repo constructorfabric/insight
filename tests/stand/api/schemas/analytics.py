@@ -64,6 +64,30 @@ class Bucket(StrEnum):
     month = 'month'
 
 
+class CompareOffset(StrEnum):
+    """
+    How far back the compared window sits: `previous_period` shifts it by its
+    own length, and a calendar offset shifts both endpoints, clamping a day the
+    earlier month does not have to that month's last day.
+    """
+    previous_period = 'previous_period'
+    month = 'month'
+    quarter = 'quarter'
+    year = 'year'
+
+
+class Comparison(BaseModel):
+    """
+    The compared window's value and the two ways of reading the change.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    delta: float | None = Field(None, description='Current minus compared; absent when either side is unknown.')
+    ratio: float | None = Field(None, description='Current over compared; absent when the compared value is unknown or\nzero, which no ratio is defined against.')
+    value: float | None = Field(None, description='What the same question answered over the compared window.')
+
+
 class Computation(StrEnum):
     sum = 'sum'
 
@@ -146,6 +170,17 @@ class CreateSavedQueryRequest(BaseModel):
     description: str | None = None
     name: str
     sql: str
+
+
+class DimensionFilter(BaseModel):
+    """
+    Keeps only the rows whose dimension holds one of the named values.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimension: str = Field(..., description="A dimension key the metric's grain measure declares.")
+    values: list[str]
 
 
 class EntityType(StrEnum):
@@ -247,6 +282,15 @@ class GroupDimension(BaseModel):
     key: str
     label: str | None = None
     value: str
+
+
+class HistogramBin(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    count: int = Field(..., ge=0)
+    hi: float
+    lo: float
 
 
 class HistogramBinDto(BaseModel):
@@ -750,6 +794,59 @@ class Point(BaseModel):
     value: float | None = None
 
 
+class Type9(StrEnum):
+    cohort = 'cohort'
+
+
+class Population1(BaseModel):
+    """
+    Who a target is compared against, internally tagged on `type`. `cohort`
+    takes the metric's own declared cohort; a metric that declares none has no
+    cohort to compare within.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type9
+
+
+class Type10(StrEnum):
+    tenant = 'tenant'
+
+
+class Population2(BaseModel):
+    """
+    Who a target is compared against, internally tagged on `type`. `cohort`
+    takes the metric's own declared cohort; a metric that declares none has no
+    cohort to compare within.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type10
+
+
+class Population(RootModel[Population1 | Population2]):
+    root: Population1 | Population2 = Field(..., description="Who a target is compared against, internally tagged on `type`. `cohort`\ntakes the metric's own declared cohort; a metric that declares none has no\ncohort to compare within.")
+
+
+class PopulationSpread(BaseModel):
+    """
+    The spread of the population, withheld below the disclosure floor. The
+    size is reported whatever it is, so a consumer can say why the rest is
+    absent.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    max: float | None = None
+    median: float | None = None
+    min: float | None = None
+    n: int = Field(..., description='How many of the population were observed at all.', ge=0)
+    p25: float | None = None
+    p75: float | None = None
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -773,7 +870,7 @@ class Provenance(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    definition_version: int | None = Field(None, description='The definition version the store holds for this metric. Absent when the\nstore carries no row for it.')
+    definition_version: int | None = Field(None, description='The definition version the store holds; absent when it carries no row.')
     executor: Executor
 
 
@@ -789,6 +886,14 @@ class PutSettingsRequest(BaseModel):
         extra='forbid',
     )
     system_prompt: str
+
+
+class Quantile(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    q: float = Field(..., description='The position asked for, strictly between 0 and 1.')
+    value: float | None = None
 
 
 class Shape(StrEnum):
@@ -905,49 +1010,56 @@ class SplitLimit(BaseModel):
         extra='forbid',
     )
     rank_by: str | None = Field(None, description='The metric the groups are ranked by. Defaults to the metric being read.')
-    remainder: bool = Field(..., description='Whether everything outside the kept groups is reported as one remainder\ngroup, or dropped.')
+    remainder: bool = Field(..., description='Whether everything outside the kept groups is one group, or dropped.')
     top: int = Field(..., description='How many groups to keep.', ge=0)
 
 
-class Type9(StrEnum):
+class Type11(StrEnum):
     persons = 'persons'
 
 
 class Subjects1(BaseModel):
     """
-    Whose values the question is about.
-
-    Internally tagged on `type`, so a subject kind carries only its own fields
-    and a new kind adds a variant rather than a nullable field:
-    `{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.
+    Whose values a question is about, internally tagged on `type` so a subject
+    kind carries only its own fields.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
     ids: list[str]
-    type: Type9
+    type: Type11
 
 
-class Type10(StrEnum):
+class Type12(StrEnum):
     tenant = 'tenant'
 
 
 class Subjects2(BaseModel):
     """
-    Whose values the question is about.
-
-    Internally tagged on `type`, so a subject kind carries only its own fields
-    and a new kind adds a variant rather than a nullable field:
-    `{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.
+    Whose values a question is about, internally tagged on `type` so a subject
+    kind carries only its own fields.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type10
+    type: Type12
 
 
 class Subjects(RootModel[Subjects1 | Subjects2]):
-    root: Subjects1 | Subjects2 = Field(..., description='Whose values the question is about.\n\nInternally tagged on `type`, so a subject kind carries only its own fields\nand a new kind adds a variant rather than a nullable field:\n`{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.')
+    root: Subjects1 | Subjects2 = Field(..., description='Whose values a question is about, internally tagged on `type` so a subject\nkind carries only its own fields.')
+
+
+class TargetComparison(BaseModel):
+    """
+    INVARIANT: the population is the one this target sits in, which under a
+    declared cohort is that target's own and need not be another target's.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    population: PopulationSpread
+    subject: str
+    value: float | None = None
 
 
 class TelemetryRecord(BaseModel):
@@ -968,7 +1080,6 @@ class TimeRange(BaseModel):
         extra='forbid',
     )
     from_: str = Field(..., alias='from', description='Inclusive first day, `YYYY-MM-DD`.')
-    grain: Grain
     to: str = Field(..., description='Inclusive last day, `YYYY-MM-DD`.')
 
 
@@ -1095,6 +1206,50 @@ class BreakdownValueDto(BaseModel):
     value: float | None = None
 
 
+class Compare(BaseModel):
+    """
+    Asks the same question again over an earlier window, and reports the change.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    offset: CompareOffset
+
+
+class ComparisonQuery(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    filters: list[DimensionFilter] | None = Field(None, description='Narrows every measure the metric reads, for the targets and the\npopulation alike. Absent means no narrowing.')
+    metric: str = Field(..., description='The metric key the semantic definitions carry, such as `git.commits`.')
+    population: Population
+    targets: list[str] = Field(..., description='The people the answer reports a value for.')
+    time: TimeRange
+
+
+class ComparisonResult(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metric: str
+    provenance: Provenance
+    targets: list[TargetComparison] = Field(..., description='One entry per requested target, in the order they were asked.')
+
+
+class ComparisonsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    queries: list[ComparisonQuery]
+
+
+class ComparisonsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    results: list[ComparisonResult] = Field(..., description='One entry per requested query, in the order they were asked.')
+
+
 class ContextEntryResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1147,6 +1302,25 @@ class CustomMetricSummary(BaseModel):
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
 
 
+class DistributionQuery(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: int | None = Field(None, description="How many bins each subject's own range is cut into. Absent means ten,\nunless the question asks for quantiles alone.", ge=0)
+    filters: list[DimensionFilter] | None = Field(None, description='Narrows every measure the metric reads. Absent means no narrowing.')
+    metric: str = Field(..., description="The metric key the semantic definitions carry. Only a metric whose\ncomputation is taken over its measure's own per-row values has a\ndistribution.")
+    quantiles: list[float] | None = Field(None, description='The positions to report, each strictly between 0 and 1. Absent means\nnone are.')
+    subjects: Subjects
+    time: TimeRange
+
+
+class DistributionsRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    queries: list[DistributionQuery]
+
+
 class Group1(BaseModel):
     """
     Which slice of the split a row belongs to.
@@ -1166,19 +1340,34 @@ class GroupedSeries(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare: Comparison | None = None
     group: Group | None = None
     points: list[Point]
     subject: str | None = None
-    total: float | None = Field(None, description='The whole window folded once, which is not the sum of the points for\nevery computation.')
+    total: float | None = Field(None, description='The whole window folded once, not the sum of the points.')
 
 
 class GroupedValue(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare: Comparison | None = None
     group: Group | None = None
-    subject: str | None = Field(None, description='The person this value belongs to. Absent when the subjects folded into\none value.')
+    subject: str | None = Field(None, description='Absent when the subjects folded into one value.')
     value: float | None = None
+
+
+class Histogram(BaseModel):
+    """
+    The subject's own range, cut into bins of equal width. INVARIANT: the last
+    bin closes on the maximum rather than opening one more.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: list[HistogramBin] = Field(..., description='Empty when the subject was observed for no event in the window.')
+    hi: float | None = Field(None, description='The largest value observed; absent when nothing was.')
+    lo: float | None = Field(None, description='The smallest value observed; absent when nothing was.')
 
 
 class MetricDefinitionView(BaseModel):
@@ -1388,6 +1577,15 @@ class Split(BaseModel):
     limit: SplitLimit | None = None
 
 
+class SubjectDistribution(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    histogram: Histogram | None = None
+    quantiles: list[Quantile] | None = Field(None, description='Absent when the question named no quantiles.')
+    subject: str
+
+
 class TimeseriesDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1418,6 +1616,8 @@ class ValuesQuery(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare: Compare | None = None
+    filters: list[DimensionFilter] | None = Field(None, description='Narrows every measure the metric reads. Absent means no narrowing.')
     fold: Fold
     metric: str = Field(..., description='The metric key the semantic definitions carry, such as `git.commits`.')
     split: Split | None = None
@@ -1473,6 +1673,22 @@ class CustomMetricListResponse(BaseModel):
         extra='forbid',
     )
     items: list[CustomMetricSummary]
+
+
+class DistributionResult(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metric: str
+    provenance: Provenance
+    subjects: list[SubjectDistribution] = Field(..., description='One entry per requested subject, in the order they were asked.')
+
+
+class DistributionsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    results: list[DistributionResult] = Field(..., description='One entry per requested query, in the order they were asked.')
 
 
 class ExplainRequest(MetricSnapshot):

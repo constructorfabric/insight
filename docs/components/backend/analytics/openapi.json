@@ -146,6 +146,95 @@
         },
         "type": "object"
       },
+      "ComparisonQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "filters": {
+            "description": "Narrows every measure the metric reads, for the targets and the\npopulation alike. Absent means no narrowing.",
+            "items": {
+              "$ref": "#/components/schemas/DimensionFilter"
+            },
+            "type": "array"
+          },
+          "metric": {
+            "description": "The metric key the semantic definitions carry, such as `git.commits`.",
+            "type": "string"
+          },
+          "population": {
+            "$ref": "#/components/schemas/Population"
+          },
+          "targets": {
+            "description": "The people the answer reports a value for.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "time": {
+            "$ref": "#/components/schemas/TimeRange"
+          }
+        },
+        "required": [
+          "metric",
+          "targets",
+          "population",
+          "time"
+        ],
+        "type": "object"
+      },
+      "ComparisonResult": {
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "targets": {
+            "description": "One entry per requested target, in the order they were asked.",
+            "items": {
+              "$ref": "#/components/schemas/TargetComparison"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metric",
+          "provenance",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "ComparisonsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/ComparisonQuery"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries"
+        ],
+        "type": "object"
+      },
+      "ComparisonsResponse": {
+        "properties": {
+          "results": {
+            "description": "One entry per requested query, in the order they were asked.",
+            "items": {
+              "$ref": "#/components/schemas/ComparisonResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
       "ComputationDto": {
         "oneOf": [
           {
@@ -540,6 +629,107 @@
         ],
         "type": "object"
       },
+      "DistributionQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "bins": {
+            "description": "How many bins each subject's own range is cut into. Absent means ten,\nunless the question asks for quantiles alone.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filters": {
+            "description": "Narrows every measure the metric reads. Absent means no narrowing.",
+            "items": {
+              "$ref": "#/components/schemas/DimensionFilter"
+            },
+            "type": "array"
+          },
+          "metric": {
+            "description": "The metric key the semantic definitions carry. Only a metric whose\ncomputation is taken over its measure's own per-row values has a\ndistribution.",
+            "type": "string"
+          },
+          "quantiles": {
+            "description": "The positions to report, each strictly between 0 and 1. Absent means\nnone are.",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "subjects": {
+            "$ref": "#/components/schemas/Subjects"
+          },
+          "time": {
+            "$ref": "#/components/schemas/TimeRange"
+          }
+        },
+        "required": [
+          "metric",
+          "subjects",
+          "time"
+        ],
+        "type": "object"
+      },
+      "DistributionResult": {
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          },
+          "subjects": {
+            "description": "One entry per requested subject, in the order they were asked.",
+            "items": {
+              "$ref": "#/components/schemas/SubjectDistribution"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metric",
+          "provenance",
+          "subjects"
+        ],
+        "type": "object"
+      },
+      "DistributionsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/DistributionQuery"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "queries"
+        ],
+        "type": "object"
+      },
+      "DistributionsResponse": {
+        "properties": {
+          "results": {
+            "description": "One entry per requested query, in the order they were asked.",
+            "items": {
+              "$ref": "#/components/schemas/DistributionResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
       "EntityType": {
         "enum": [
           "person",
@@ -854,6 +1044,61 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "Histogram": {
+        "description": "The subject's own range, cut into bins of equal width. INVARIANT: the last\nbin closes on the maximum rather than opening one more.",
+        "properties": {
+          "bins": {
+            "description": "Empty when the subject was observed for no event in the window.",
+            "items": {
+              "$ref": "#/components/schemas/HistogramBin"
+            },
+            "type": "array"
+          },
+          "hi": {
+            "description": "The largest value observed; absent when nothing was.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lo": {
+            "description": "The smallest value observed; absent when nothing was.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "bins"
+        ],
+        "type": "object"
+      },
+      "HistogramBin": {
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hi": {
+            "format": "double",
+            "type": "number"
+          },
+          "lo": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lo",
+          "hi",
+          "count"
+        ],
         "type": "object"
       },
       "HistogramBinDto": {
@@ -2271,6 +2516,89 @@
         ],
         "type": "object"
       },
+      "Population": {
+        "description": "Who a target is compared against, internally tagged on `type`. `cohort`\ntakes the metric's own declared cohort; a metric that declares none has no\ncohort to compare within.",
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "cohort"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PopulationSpread": {
+        "description": "The spread of the population, withheld below the disclosure floor. The\nsize is reported whatever it is, so a consumer can say why the rest is\nabsent.",
+        "properties": {
+          "max": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "median": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "min": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n": {
+            "description": "How many of the population were observed at all.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "p25": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p75": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "n"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
         "properties": {
@@ -2345,6 +2673,26 @@
         },
         "required": [
           "system_prompt"
+        ],
+        "type": "object"
+      },
+      "Quantile": {
+        "properties": {
+          "q": {
+            "description": "The position asked for, strictly between 0 and 1.",
+            "format": "double",
+            "type": "number"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "q"
         ],
         "type": "object"
       },
@@ -2667,8 +3015,40 @@
         ],
         "type": "object"
       },
+      "SubjectDistribution": {
+        "properties": {
+          "histogram": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Histogram",
+                "description": "Absent when the question asked for no histogram."
+              }
+            ]
+          },
+          "quantiles": {
+            "description": "Absent when the question named no quantiles.",
+            "items": {
+              "$ref": "#/components/schemas/Quantile"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject"
+        ],
+        "type": "object"
+      },
       "Subjects": {
-        "description": "Whose values the question is about, internally tagged on `type` so a\nsubject kind carries only its own fields.",
+        "description": "Whose values a question is about, internally tagged on `type` so a subject\nkind carries only its own fields.",
         "oneOf": [
           {
             "properties": {
@@ -2706,6 +3086,29 @@
             "type": "object"
           }
         ]
+      },
+      "TargetComparison": {
+        "description": "INVARIANT: the population is the one this target sits in, which under a\ndeclared cohort is that target's own and need not be another target's.",
+        "properties": {
+          "population": {
+            "$ref": "#/components/schemas/PopulationSpread"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "subject",
+          "population"
+        ],
+        "type": "object"
       },
       "TelemetryRecord": {
         "properties": {
@@ -2760,9 +3163,6 @@
             "description": "Inclusive first day, `YYYY-MM-DD`.",
             "type": "string"
           },
-          "grain": {
-            "$ref": "#/components/schemas/Grain"
-          },
           "to": {
             "description": "Inclusive last day, `YYYY-MM-DD`.",
             "type": "string"
@@ -2770,8 +3170,7 @@
         },
         "required": [
           "from",
-          "to",
-          "grain"
+          "to"
         ],
         "type": "object"
       },
@@ -6115,6 +6514,194 @@
           }
         ],
         "summary": "Run a saved query"
+      }
+    },
+    "/v1/query/comparisons": {
+      "post": {
+        "operationId": "analytics_api.query.comparisons",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComparisonsRequest"
+              }
+            }
+          },
+          "description": "Metric comparison questions",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonsResponse"
+                }
+              }
+            },
+            "description": "One answer per question asked"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Answer metric comparison questions"
+      }
+    },
+    "/v1/query/distributions": {
+      "post": {
+        "operationId": "analytics_api.query.distributions",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DistributionsRequest"
+              }
+            }
+          },
+          "description": "Metric distribution questions",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DistributionsResponse"
+                }
+              }
+            },
+            "description": "One answer per question asked"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Answer metric distribution questions"
       }
     },
     "/v1/query/values": {

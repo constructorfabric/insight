@@ -13,7 +13,19 @@ use super::fold::{Fold, ScopedRead, bounded_query};
 use super::pool::Pool;
 use super::request::{MetricQuery, ViewKind};
 use super::sql::{CompiledMeasureQuery, ReadScope};
-use super::{bins, combined_split, comparison, subject_series, subject_split};
+use super::{bins, combined_split, comparison, quantiles, subject_series, subject_split};
+
+/// Whether a metric reports the shape of its measure's own per-row values,
+/// which both distribution reads need and no other view does.
+pub fn check_distribution(
+    metric: &MetricDefinition,
+    measures: &BTreeMap<String, MeasureDefinition>,
+    view: &'static str,
+) -> Result<(), CompileError> {
+    Fold::resolve(metric, measures)?
+        .row_value_expr(metric, view)
+        .map(|_| ())
+}
 
 pub fn compile_metric_query(
     catalog: &FieldCatalog,
@@ -53,7 +65,10 @@ pub fn compile_metric_query(
         ViewKind::CombinedSplit(view) => {
             combined_split::compile(dataset, metric, &fold, query, view, pool.as_ref())
         }
-        ViewKind::Bins => bins::compile(dataset, metric, &fold, query, pool.as_ref()),
+        ViewKind::Bins(view) => bins::compile(dataset, metric, &fold, query, *view, pool.as_ref()),
+        ViewKind::Quantiles(view) => {
+            quantiles::compile(dataset, metric, &fold, query, view, pool.as_ref())
+        }
         ViewKind::Comparison(view) => comparison::compile(dataset, metric, &fold, query, view),
     }
 }
@@ -75,7 +90,7 @@ fn subject_total_sql(read: &ScopedRead) -> String {
 mod tests {
     use super::*;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, derived, direct, lines, measure, metric, percent_of_total,
+        bins_view, compile, compile_err, derived, direct, lines, measure, metric, percent_of_total,
         percentile, plain_subject_series, query, ratio, sized_measure, stddev, text,
     };
     use crate::domain::compiler::request::{Bucket, DimensionFilter, EntityScope};
@@ -388,7 +403,7 @@ mod tests {
 
         assert!(
             matches!(
-                compile_err(&metric, &[merged, opened], &query(ViewKind::Bins)),
+                compile_err(&metric, &[merged, opened], &query(bins_view(10))),
                 CompileError::UnsupportedView { view: "bins", .. }
             ),
             "a derived value is not a distribution over per-row values"

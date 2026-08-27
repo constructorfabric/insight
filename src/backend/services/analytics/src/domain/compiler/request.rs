@@ -3,6 +3,8 @@
 //! narrowing and split. Everything here is already resolved — the compiler
 //! translates, it does not look anything up.
 
+use std::num::NonZeroU32;
+
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +61,7 @@ pub struct MeasureQuery {
 
 /// The row shape a metric read produces, with the inputs that shape needs. A
 /// view the window and scope fully determine carries nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ViewKind {
     /// One value per entity over the whole window; the bucket is not read.
     SubjectTotal,
@@ -71,7 +73,9 @@ pub enum ViewKind {
     /// entity the scope admits.
     CombinedSplit(CombinedSplitView),
     /// Per-entity bin counts over the measure's per-row values.
-    Bins,
+    Bins(BinsView),
+    /// Per-entity quantiles of the measure's per-row values.
+    Quantiles(QuantilesView),
     /// One row per target: the target's own value beside its peers' spread.
     Comparison(ComparisonView),
 }
@@ -83,10 +87,24 @@ impl ViewKind {
             Self::SubjectSeries(_) => "subject_series",
             Self::SubjectSplit(_) => "subject_split",
             Self::CombinedSplit(_) => "combined_split",
-            Self::Bins => "bins",
+            Self::Bins(_) => "bins",
+            Self::Quantiles(_) => "quantiles",
             Self::Comparison(_) => "comparison",
         }
     }
+}
+
+/// How many bins each entity's own range is cut into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BinsView {
+    pub bins: NonZeroU32,
+}
+
+/// The quantiles a read reports, in the order the caller asked for them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuantilesView {
+    /// Each in `(0, 1)`.
+    pub quantiles: Vec<f64>,
 }
 
 /// Dimension keys of the metric's grain measure, in the order their
@@ -161,7 +179,7 @@ pub enum ComparisonPopulation {
 
 /// What a caller asks a metric for. INVARIANT: a metric read is never grouped
 /// by a measure dimension the metric does not declare.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MetricQuery {
     pub tenant_id: String,
     /// A comparison read takes its entities from its pool, so this narrows every

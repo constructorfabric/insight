@@ -5,6 +5,7 @@
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 
 use chrono::NaiveDate;
 
@@ -16,7 +17,8 @@ use crate::domain::definitions::definition::{
 use super::error::CompileError;
 use super::metric::compile_metric_query;
 use super::request::{
-    Bucket, DrilldownQuery, EntityScope, MetricQuery, ResolvedPerson, SubjectSeriesView, ViewKind,
+    BinsView, Bucket, DrilldownQuery, EntityScope, MetricQuery, QuantilesView, ResolvedPerson,
+    SubjectSeriesView, ViewKind,
 };
 use super::sql::{CompiledMeasureQuery, QueryParam};
 use super::test_catalog::catalog;
@@ -134,6 +136,20 @@ pub fn plain_subject_series() -> ViewKind {
     ViewKind::SubjectSeries(SubjectSeriesView {
         dimensions: Vec::new(),
         group_limit: None,
+    })
+}
+
+/// A bins read cutting each entity's own range into `bins`.
+pub fn bins_view(bins: u32) -> ViewKind {
+    ViewKind::Bins(BinsView {
+        bins: NonZeroU32::new(bins).expect("a bins read cuts at least one bin"),
+    })
+}
+
+/// A quantile read over the named positions.
+pub fn quantiles(positions: &[f64]) -> ViewKind {
+    ViewKind::Quantiles(QuantilesView {
+        quantiles: positions.to_vec(),
     })
 }
 
