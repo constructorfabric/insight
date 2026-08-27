@@ -1131,6 +1131,14 @@ models:
       line columns are Nullable and an all-NULL group sums to NULL, which no
       join could tell from a commit the file-change stream never reached.
     columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
       - name: commit_hash
         description: "Commit the totals belong to"
         tests:
@@ -1157,6 +1165,10 @@ models:
       their diffs by design. Judge a live instance by recent_collected_pct; the
       all-time share carries history no re-read can reach.
     columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
       - name: data_source
         description: "Git source discriminator (insight_github, insight_gitlab, ...)"
         tests:
