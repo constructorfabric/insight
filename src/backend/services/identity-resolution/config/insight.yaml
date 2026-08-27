@@ -24,8 +24,7 @@ logging:
 gears:
   api-gateway:
     config:
-      # Same port as the .NET identity service it replaces: consumers reach
-      # identity at <host>:8082, so the cutover flips only the hostname.
+      # Consumers reach identity at <host>:8082.
       bind_addr: "0.0.0.0:8082"
       enable_docs: true
       cors_enabled: true
@@ -109,7 +108,7 @@ gears:
       # here so no credential is committed.
       database_url: ""
       # Source instance whose org_chart edges drive the parent/supervisor +
-      # subordinates tree on the lookup endpoints (mirrors .NET AppOptions).
+      # subordinates tree on the lookup endpoints.
       org_chart_source_type: "bamboohr"
       # Kill switch for the recursive subordinates walk. Set to false to skip
       # the (potentially large, N+1) subtree expansion on POST /v1/profiles.

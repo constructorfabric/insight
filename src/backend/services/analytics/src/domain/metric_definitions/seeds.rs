@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::domain::metric_definitions::builtin::{
     BuiltinSource, CohortKey, InputSeed, MetricSeed, builtin_metrics, builtin_sources,
 };
+use crate::domain::metric_definitions::evidence_presentation::EvidencePresentation;
 
 pub async fn reconcile_builtin_definitions(db: &DatabaseConnection) -> Result<(), DbErr> {
     for builtin_source in builtin_sources() {
@@ -41,16 +42,18 @@ async fn reconcile_source(
         db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, evidence_granularity, is_enabled) \
-             VALUES (?, ?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, evidence_presentation, is_enabled) \
+             VALUES (?, ?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
                 evidence_granularity = VALUES(evidence_granularity), \
+                evidence_presentation = VALUES(evidence_presentation), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
                 Value::from(measure.key.as_str()),
                 Value::from(measure.evidence_granularity.as_db()),
+                presentation_value(measure.evidence_presentation.as_ref())?,
             ],
         ))
         .await?;
@@ -405,6 +408,17 @@ fn order_value(idx: usize) -> i32 {
 
 fn uuid_value(id: Uuid) -> Value {
     Value::Bytes(Some(id.as_bytes().to_vec()))
+}
+
+// MariaDB stores JSON as a LONGTEXT alias and validates a bound string
+// server-side, so the declaration goes over as text rather than a CAST.
+fn presentation_value(presentation: Option<&EvidencePresentation>) -> Result<Value, DbErr> {
+    let Some(presentation) = presentation else {
+        return Ok(Value::String(None));
+    };
+    serde_json::to_string(presentation)
+        .map(Value::from)
+        .map_err(|error| DbErr::Custom(format!("evidence presentation is not storable: {error}")))
 }
 
 fn nullable_str(value: Option<&str>) -> Value {

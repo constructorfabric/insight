@@ -6,15 +6,14 @@
 //! entity-builder nor run as raw SQL (it intentionally exposes no raw-SQL path —
 //! `DbConn`/`DbTx` are builder-only). Specifically:
 //!   * window functions (`ROW_NUMBER()` / `LEAD() OVER (…)`) — the resolver reads
-//!     and the SCD2 `account_person_map` / `org_chart` rebuilds;
+//!     and the SCD2 `org_chart` rebuild;
 //!   * `WITH RECURSIVE` — the org-subchart / visibility traversals;
 //!   * atomic conditional DML with a correlated subquery — the role in-use and
 //!     last-admin lockout guards.
 //!
 //! See constructorfabric/gears-rust#4239 for the capability request.
 //!
-//! All SQL here is **verbatim from the .NET service** (cutover parity). It is
-//! injection-safe despite being raw: every value is a **bound parameter**
+//! The raw SQL here is injection-safe: every value is a **bound parameter**
 //! (`Statement::from_sql_and_values`, no string interpolation) and the tenant is
 //! always pinned in the `WHERE`. The `identity` database schema is owned by THIS
 //! service's migrator — see the ownership-transfer docs in `crate::migration`.

@@ -495,9 +495,8 @@ export const handlers = [
   // the panel has something to show; any other account answers 200 with no
   // binding and no history — the real endpoint has no 404: an account nobody
   // ever observed or decided reads as an empty journal, and THAT is what a
-  // stale shared link lands on. Timestamps are zone-less UTC on the wire
-  // (.NET parity) — a `Z` here would train the panel on a shape production
-  // never sends.
+  // stale shared link lands on. Timestamps are zone-less UTC on the wire — a
+  // `Z` here would train the panel on a shape the service never sends.
   http.get(
     "/api/identity/v1/resolution/accounts/:source/:sourceId/:accountId",
     ({ params }) => {

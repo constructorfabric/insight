@@ -104,7 +104,7 @@ first/last names.
 
 ## More Information
 
-- `Insight.Identity.Domain/Services/DisplayNameSplitter.cs` carries
+- The display-name splitter carries
   the implementation; Anton's review comment on PR #398 prompted
   refactor of the helper into a generic `SplitAt`.
 

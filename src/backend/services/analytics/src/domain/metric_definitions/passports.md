@@ -130,7 +130,7 @@ this file and the registry disagree.
 - Reads: seat_cost_usd
 - Formula: sum(seat_cost_usd)
 - Shape: currency, lower_is_better
-- Notes: The invoiced price of one seat for a billing month, taken from the per-seat amount on the invoice. Dated at the first day of that month, so a window inside a month returns nothing and one spanning two months returns both fees. A seat whose tier the invoice does not price returns no value.
+- Notes: The invoiced price of one seat for a billing month, from the invoice's per-seat amount. Dated at that month's first day, so a window must hold it to return the fee. The month comes from the read, not from the vendor. A seat whose tier the invoice does not price returns no value.
 
 ## ai.extra_usage_cost — AI actual usage cost
 
@@ -138,7 +138,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd
 - Formula: sum(extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted. The exact monthly amount, dated at the first day of its billing month, so a window inside a month returns nothing — read the per-day distribution instead. Never added to potential usage cost.
+- Notes: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
 
 ## ai.daily_approximate_extra_usage_cost — AI actual usage cost — approximate distribution
 
@@ -146,7 +146,7 @@ this file and the registry disagree.
 - Reads: daily_extra_usage_usd
 - Formula: sum(daily_extra_usage_usd)
 - Shape: currency, lower_is_better
-- Notes: The billed extra-usage cost placed on the days it was spent. Only a running month-to-date total is reported, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and no day is ever negative.
+- Notes: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
 
 ## ai.extra_usage_utilisation — Extra-usage ceiling used
 
@@ -154,7 +154,7 @@ this file and the registry disagree.
 - Reads: extra_usage_usd, extra_usage_limit_usd
 - Formula: 100 * (extra_usage_usd / extra_usage_limit_usd)
 - Shape: percent, lower_is_better
-- Notes: Extra usage measured against the ceiling on the seat. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste. A seat with no ceiling returns no value, not a zero. Above 100 per cent, the ceiling was lowered below what the seat had spent.
+- Notes: Extra usage measured against the seat's ceiling. At 100% the vendor stops the seat, so this reads as proximity to being blocked, not waste. A seat with no ceiling returns no value, not zero. Above 100%, the ceiling was lowered below what the seat had spent. Its month comes from the read, not the vendor.
 
 ## ai.accepted_edit_actions — Accepted AI edits
 

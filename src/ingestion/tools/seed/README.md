@@ -319,7 +319,7 @@ src/ingestion/tools/seed/
 │   ├── __main__.py          the `insight-seed <step>` entry point
 │   ├── config.py            environment contract: required, defaulted, and why
 │   ├── preflight.py         refuses a stand that cannot take the seed
-│   ├── identity.py          MariaDB: persons, org_chart, account_person_map
+│   ├── identity.py          MariaDB: persons, org_chart, person_roles
 │   ├── silver.py            ClickHouse: placeholders → generators → gold build
 │   ├── analytics.py         the catalogue rows no endpoint can create
 │   ├── profiles.py          demo roster + per-team activity weights

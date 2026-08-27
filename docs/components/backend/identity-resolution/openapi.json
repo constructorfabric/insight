@@ -620,7 +620,7 @@
         "type": "object"
       },
       "PersonResponse": {
-        "description": "A person node in the org tree (subordinate of a profile), matching the .NET\n`PersonResponse` plus `username`, which the .NET shape never carried — the\nUI labels a nameless person by their handle (#2711). Unlike\n`ProfileResponse`, the attribute fields are plain strings (empty when\nabsent, not omitted) and the `supervisor_*`/`parent_*` fields serialize as\n`null` rather than being dropped.",
+        "description": "A person node in the org tree (subordinate of a profile). Carries\n`username` alongside the profile attributes — the UI labels a nameless\nperson by their handle (#2711). Unlike `ProfileResponse`, the attribute\nfields are plain strings (empty when absent, not omitted) and the\n`supervisor_*`/`parent_*` fields serialize as `null` rather than being\ndropped.",
         "properties": {
           "department": {
             "type": "string"
@@ -716,7 +716,7 @@
             "type": "array"
           },
           "next_cursor": {
-            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "description": "The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.",
             "type": [
               "string",
               "null"
@@ -839,7 +839,7 @@
             "type": "array"
           },
           "next_cursor": {
-            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "description": "The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.",
             "type": [
               "string",
               "null"
@@ -852,7 +852,7 @@
         "type": "object"
       },
       "PersonsSeedOperationResponse": {
-        "description": "One operation's status. Wire shape mirrors the .NET\n`PersonsSeedOperationResponse`: `request` and `summary` are surfaced as\nparsed JSON (not double-encoded strings), the tenant/author ids are\nincluded, timestamps are ISO-8601, and null fields are emitted (the .NET\nserializer does not drop nulls).",
+        "description": "One operation's status. `request` and `summary` are surfaced as parsed\nJSON (not double-encoded strings), the tenant/author ids are included,\ntimestamps are ISO-8601, and null fields are emitted rather than dropped.",
         "properties": {
           "author_person_id": {
             "format": "uuid",
@@ -1027,7 +1027,7 @@
         "type": "object"
       },
       "ProfileIdEntry": {
-        "description": "One source-native account id bound to the person — the latest\n`value_type='id'` observation per source instance. Ported from the .NET\n`ProfileIdEntry`.",
+        "description": "One source-native account id bound to the person — the latest\n`value_type='id'` observation per source instance.",
         "properties": {
           "insight_source_id": {
             "format": "uuid",
@@ -1048,7 +1048,7 @@
         "type": "object"
       },
       "ProfileResponse": {
-        "description": "Response body of `POST /v1/profiles` — the resolved person's profile:\ncurrent attributes, the org tree (`supervisor_*` / `parent_*` /\n`subordinates[]`), and every current source-native id (`ids[]`). Null\nattribute fields are omitted from JSON; `subordinates`/`ids` are always\npresent (empty when none), matching the .NET contract.",
+        "description": "Response body of `POST /v1/profiles` — the resolved person's profile:\ncurrent attributes, the org tree (`supervisor_*` / `parent_*` /\n`subordinates[]`), and every current source-native id (`ids[]`). Null\nattribute fields are omitted from JSON; `subordinates`/`ids` are always\npresent (empty when none).",
         "properties": {
           "department": {
             "type": [
@@ -1087,7 +1087,7 @@
             ]
           },
           "ids": {
-            "description": "Every current source-native id for the person (one per source instance).\nAlways serialized — an empty array when the person has no ids — matching\nthe .NET contract (unlike the attributes above, which are omitted).",
+            "description": "Every current source-native id for the person (one per source instance).\nAlways serialized — an empty array when the person has no ids, unlike\nthe attributes above, which are omitted.",
             "items": {
               "$ref": "#/components/schemas/ProfileIdEntry"
             },
@@ -1347,7 +1347,7 @@
             "type": "array"
           },
           "next_cursor": {
-            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "description": "The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.",
             "type": [
               "string",
               "null"
@@ -1457,7 +1457,7 @@
             "type": "array"
           },
           "next_cursor": {
-            "description": "Wire parity with the .NET `ListResponse`: the cursor is declared\nbut pagination is not implemented — always `null` (both\nimplementations return every row; consumers already tolerate it).",
+            "description": "The cursor is declared but pagination is not implemented — always\n`null`; the route returns every row.",
             "type": [
               "string",
               "null"

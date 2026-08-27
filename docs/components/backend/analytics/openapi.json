@@ -1703,6 +1703,7 @@
         "enum": [
           "table_not_found",
           "column_not_found",
+          "detail_key_not_found",
           "dimension_not_covered",
           "unknown"
         ],

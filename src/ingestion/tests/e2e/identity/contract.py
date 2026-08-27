@@ -1,11 +1,4 @@
-"""Shared contract vocabulary for the identity suite.
-
-KNOWN DIVERGENCES between the .NET identity service and its Rust
-identity-resolution replacement (all reviewed and accepted on epic #1602).
-Tests assert against these sets instead of a single implementation's literal
-so the SAME suite is green on both sides of the cutover; everything outside
-this list is asserted exactly.
-"""
+"""Shared contract vocabulary for the identity suite."""
 
 from __future__ import annotations
 
@@ -13,18 +6,10 @@ from typing import Any
 
 import httpx
 
-# The .NET service returns 422 for data-invariant guard refusals
-# (`ambiguous_profile`, `role_in_use`, `last_admin_protected`); the gears
-# canonical-error model has no 422, so the Rust port maps the same guards to
-# 409. One accepted divergence family — tests assert membership in this set.
-UNPROCESSABLE_OR_CONFLICT = {422, 409}
-AMBIGUOUS_STATUSES = UNPROCESSABLE_OR_CONFLICT
-
-# Error envelope `type`: .NET emits `urn:insight:error:<code>`, the Rust
-# toolkit emits `gts://gts.cf.core.errors.err.v1~…`. Both are RFC-9457-shaped
-# ({type,title,status,detail}); tests assert the SHAPE + status, never the
-# scheme.
-ERROR_TYPE_PREFIXES = ("urn:insight:error:", "gts://")
+# Error envelope `type`: the toolkit emits `gts://gts.cf.core.errors.err.v1~…`.
+# The body is RFC-9457-shaped ({type,title,status,detail}); tests assert the
+# SHAPE + status, and the scheme only as a prefix.
+ERROR_TYPE_PREFIXES = ("gts://",)
 
 
 def problem(response: httpx.Response) -> dict[str, Any]:
@@ -42,7 +27,7 @@ def problem(response: httpx.Response) -> dict[str, Any]:
 def list_response(body: Any) -> tuple[list[dict[str, Any]], str | None]:
     """Assert the EXACT list wire envelope and return (items, next_cursor).
 
-    Every .NET list endpoint (roles, person-roles, visibility, persons-seed)
+    Every list endpoint (roles, person-roles, visibility, persons-seed)
     answers `{"items": [...], "next_cursor": null|str}` — verified against the
     live service. This is the consumer contract: a bare JSON array or a
     missing `next_cursor` is a wire break, not a tolerable variation, so no

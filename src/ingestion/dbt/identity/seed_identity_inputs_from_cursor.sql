@@ -1,16 +1,10 @@
--- Phase 1 (Initial Seed): Cursor members → identity.identity_inputs
--- One-time seed. Writes raw alias observations from Cursor Bronze data.
--- Raw values preserved — normalization applied at read time by downstream consumers.
--- Idempotent: skips rows that already exist (by source + value_type + value + account).
--- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
+-- Cursor members → identity_inputs. Raw values preserved; normalization is
+-- applied at read time by downstream consumers.
 --
--- Run: dbt run --select seed_identity_inputs_from_cursor
---
--- NOTE: schema='staging' is intentional. Unlike persons/aliases which write
--- directly to canonical tables, identity_inputs uses a multi-source union
--- pattern: each source writes to staging.*, then identity.identity_inputs
--- (table) aggregates them via union_by_tag('silver:identity_inputs').
--- Consistent with bamboohr/zoom connector models that also target staging.
+-- schema='staging' is intentional: identity_inputs is a multi-source union, so
+-- each source writes to staging.* and identity.identity_inputs aggregates them
+-- via union_by_tag('silver:identity_inputs'), the same as every other
+-- connector's identity_inputs model.
 
 {{ config(
     materialized='incremental',

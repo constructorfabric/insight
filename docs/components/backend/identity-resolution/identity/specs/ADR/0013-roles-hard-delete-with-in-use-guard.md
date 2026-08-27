@@ -156,7 +156,7 @@ admin protection.
 
 ## Traceability
 
-- Endpoint: `src/backend/services/identity/src/Insight.Identity.Api/Endpoints/RolesEndpoints.cs`
-- SQL: `SqlRoles.TryDeleteRoleIfUnused`, `SqlRoles.CountActivePersonRolesByRoleAnyTenant` (the latter only for the 422 message disambiguation, not for the guard itself)
-- Tests: `OrgChartVisibilityEndpointsTests.Roles_delete_in_use_returns_422_role_in_use`,
-  `OrgChartVisibilityEndpointsTests.Roles_create_and_delete_round_trip`
+- Endpoint: `src/backend/services/identity-resolution/src/api/roles.rs`
+- SQL: `infra/db/roles_repo.rs` — the conditional delete (the in-use guard) and
+  the active-assignment count (only for the refusal message, not for the guard)
+- Tests: the identity contract suite's roles cases

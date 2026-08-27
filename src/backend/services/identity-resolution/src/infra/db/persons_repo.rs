@@ -1,14 +1,11 @@
 //! Read queries against the identity store (`persons`).
 //!
-//! Ported from the .NET service's `Sql.Profiles.cs`. The resolution queries use
-//! window functions (`ROW_NUMBER()` over the canonical partition) that have no
+//! The resolution queries use window functions (`ROW_NUMBER()` over the canonical partition) that have no
 //! first-class SeaORM query-builder form and no `toolkit-db` equivalent (see
 //! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
 //! as **raw SQL** via SeaORM's `Statement` and read columns off the
-//! `QueryResult`. Running the same SQL as the .NET service keeps resolution
-//! behaviour identical — with ONE deliberate deviation the .NET service never
-//! needed: rows naming the excluded-person sentinel (ADR-0003; only the Rust
-//! correction verbs can mint them) are filtered AFTER the latest-wins ranking,
+//! `QueryResult`. Rows naming the excluded-person sentinel (ADR-0003; only
+//! the correction verbs mint them) are filtered AFTER the latest-wins ranking,
 //! so an excluded account resolves as no person rather than as the shared
 //! sentinel, and an older binding is never resurrected past an exclusion.
 
@@ -31,7 +28,7 @@ use crate::domain::resolution::EXCLUDED_PERSON;
 /// The caller maps the result to the contract: 0 rows → 404 `person_not_found`,
 /// 1 → resolved, >1 → 422 `ambiguous_profile`.
 ///
-/// Case handling matches the .NET service (ADR-0011): the input is trimmed
+/// Case handling (ADR-0011): the input is trimmed
 /// only — the `value_id` column collation does case-insensitive matching.
 ///
 /// # Errors
@@ -42,7 +39,6 @@ pub async fn resolve_person_ids_by_email(
     tenant_id: Uuid,
     email: &str,
 ) -> anyhow::Result<Vec<Uuid>> {
-    // Verbatim from Sql.Profiles.cs::ResolvePersonIdsByEmail, `@param` -> `?`.
     const SQL: &str = r"
         WITH ranked AS (
             SELECT
@@ -85,7 +81,7 @@ pub async fn resolve_person_ids_by_email(
 /// yet known, so the tenant filter is dropped and any matching tenant's
 /// latest observation wins. Returns the single winning `person_id`, or
 /// `None` when the email is unknown. Ported
-/// verbatim from `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()`
+/// a window `ROW_NUMBER()`
 /// → raw SQL, see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
 /// # Errors
@@ -345,7 +341,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
 
 /// Resolve the set of `person_id`s whose CURRENT `value_type='id'` observation
 /// on the given source instance (`source_type` + `source_id`) equals `value`.
-/// Source-instance scoped, ported from .NET `Sql.Profiles.cs::ResolvePersonIdsBySourceId`.
+/// Source-instance scoped.
 ///
 /// # Errors
 ///
@@ -386,8 +382,7 @@ pub async fn resolve_person_ids_by_source_id(
             tenant_id.as_bytes().to_vec().into(),
             source_type.to_owned().into(),
             source_id.as_bytes().to_vec().into(),
-            // Source-native ids are matched as-is (the .NET service trims only
-            // email, not the id path).
+            // Source-native ids are matched as-is; only the email path trims.
             value.to_owned().into(),
             EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
@@ -545,7 +540,7 @@ pub async fn person_cards(
         r"
         SELECT id, value_type, insight_source_type, insight_source_id,
                insight_tenant_id, value_id, value_full_text, value,
-               value_effective, value_hash, person_id, author_person_id,
+               value_effective, person_id, author_person_id,
                reason, created_at
         FROM (
             SELECT p.*,
@@ -601,7 +596,7 @@ pub struct SourceIdRow {
 
 /// All current source-native ids for one person — one row per source instance
 /// (latest `value_type='id'` per (tenant, person, `source_type`, `source_id`)),
-/// ordered by source. Ported from `Sql.Profiles.cs::CurrentSourceIdsForPerson`.
+/// ordered by source.
 ///
 /// # Errors
 ///
@@ -612,7 +607,6 @@ pub async fn current_source_ids_for_person(
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<Vec<SourceIdRow>> {
-    // Verbatim from Sql.Profiles.cs::CurrentSourceIdsForPerson, `@param` -> `?`.
     const SQL: &str = r"
         WITH ranked AS (
             SELECT
@@ -661,7 +655,7 @@ pub async fn current_source_ids_for_person(
 }
 
 /// One current parent edge for a child, scoped to one source instance
-/// (repo-level row). Ported from the .NET `OrgChartEdge`.
+/// (repo-level row).
 pub struct OrgChartEdge {
     pub source_type: String,
     pub source_id: Uuid,
@@ -670,10 +664,9 @@ pub struct OrgChartEdge {
 
 /// Current parent edges for one child (`valid_to IS NULL`), across every source
 /// instance, ordered by source. The caller filters to the configured
-/// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
+/// `org_chart` source.
 ///
-/// The `parent_person_id IS NOT NULL` filter matches
-/// `Sql.OrgChart.cs::CurrentParentsForChild`: the seed writes Path-B
+/// The `parent_person_id IS NOT NULL` filter is deliberate: the seed writes Path-B
 /// root/membership rows with a NULL parent, and a parent edge with no parent is
 /// not an edge — skipping it also avoids decoding a NULL into the non-nullable
 /// `parent_person_id`.
@@ -729,8 +722,7 @@ pub struct OrgChartChildEdge {
 
 /// Current direct-children edges for one parent (`valid_to IS NULL`), across
 /// every source instance, ordered by source then child. The caller filters to
-/// the configured source and de-dupes. Ported from
-/// `Sql.OrgChart.cs::CurrentChildrenForParent`.
+/// the configured source and de-dupes.
 ///
 /// # Errors
 ///

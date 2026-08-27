@@ -44,10 +44,21 @@ sources:
     measures:
       - key: commit_count
         evidence_granularity: event
+        evidence_presentation: &commit_row
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
+            - { key: lines_added, label: Lines added, type: number }
+            - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
         evidence_granularity: derived_population
       - key: commit_change_size
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: code_lines_added
         evidence_granularity: source_summary
       - key: test_lines_added
@@ -60,42 +71,80 @@ sources:
         evidence_granularity: source_summary
       - key: pr_created
         evidence_granularity: event
+        evidence_presentation: &pull_request_counted
+          show_value: false
+          detail_columns: &pull_request_columns
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
+            - { key: destination_branch, label: Target branch }
       - key: pr_created_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_abandoned
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_reviewed
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_reviewer_count
         evidence_granularity: event
+        evidence_presentation: &pull_request_measured
+          show_value: true
+          detail_columns: *pull_request_columns
       - key: pr_multi_reviewed
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_merged_without_approval
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: pr_commit_count
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_cycle_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_change_size
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_first_review_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_review_wait_share
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_review_to_merge_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_approval_to_merge_hours
         evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: review_submitted
         evidence_granularity: event
+        # A review is not classified by where the request landed, so these rows
+        # carry the branch they targeted but no branch scope of their own.
+        evidence_presentation: &review_row
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: destination_branch, label: Target branch }
       - key: pr_comment
         evidence_granularity: event
+        evidence_presentation: *review_row
       - key: default_commit_count
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: non_default_commit_count
         evidence_granularity: event
+        evidence_presentation: *commit_row
       - key: default_code_lines_added
         evidence_granularity: source_summary
       - key: non_default_code_lines_added
@@ -110,12 +159,16 @@ sources:
         evidence_granularity: source_summary
       - key: default_pr_created
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: non_default_pr_created
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: default_pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
       - key: non_default_pr_merged
         evidence_granularity: event
+        evidence_presentation: *pull_request_counted
     dimensions:
       - branch_scope
       - category
@@ -185,18 +238,31 @@ sources:
     measures:
       - key: tasks_closed
         evidence_granularity: event
+        evidence_presentation: &issue_counted
+          show_value: false
+          detail_columns: &issue_columns
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
       - key: bugs_fixed
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: closed_non_bug
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: due_date_on_time
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: due_date_with_due
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: slip_days_total
         evidence_granularity: event
+        evidence_presentation: &issue_measured
+          show_value: true
+          detail_columns: *issue_columns
       - key: late_count
         evidence_granularity: event
+        evidence_presentation: *issue_counted
       - key: estimation_error_pct
         evidence_granularity: derived_population
       - key: estimation_samples
@@ -217,10 +283,13 @@ sources:
         evidence_granularity: derived_population
       - key: dev_time_hours
         evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: resolution_days
         evidence_granularity: event
+        evidence_presentation: *issue_measured
       - key: pickup_days
         evidence_granularity: event
+        evidence_presentation: *issue_measured
     dimensions:
       - type
       - source
@@ -232,6 +301,11 @@ sources:
     measures:
       - key: pages_created
         evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
       - key: edits
         evidence_granularity: source_summary
       - key: pages_edited
@@ -250,12 +324,25 @@ sources:
     measures:
       - key: extra_usage_usd
         evidence_granularity: source_summary
+        evidence_presentation: &seat_month_row
+          show_value: true
+          detail_columns:
+            - { key: billing_month, label: Billing month }
+            - { key: ceiling_usd, label: Ceiling, type: number }
       - key: extra_usage_limit_usd
         evidence_granularity: source_summary
+        evidence_presentation: *seat_month_row
       - key: seat_cost_usd
         evidence_granularity: source_summary
+        evidence_presentation: *seat_month_row
       - key: daily_extra_usage_usd
         evidence_granularity: source_summary
+        evidence_presentation:
+          show_value: true
+          detail_columns:
+            - { key: billing_month, label: Billing month }
+            - { key: month_to_date_usd, label: Month to date, type: number }
+            - { key: covers_days, label: Days covered, type: number }
     dimensions:
       - tool
       - seat_tier
@@ -267,24 +354,51 @@ sources:
     measures:
       - key: runs
         evidence_granularity: event
+        evidence_presentation: &ci_run_counted
+          show_value: false
+          detail_columns: &ci_run_columns
+            - { key: repository, label: Repository }
+            - { key: pipeline, label: Pipeline }
+            - { key: branch, label: Branch }
+            - { key: outcome, label: Outcome }
       - key: gate_runs
         evidence_granularity: event
+        evidence_presentation: *ci_run_counted
       - key: gate_passed
         evidence_granularity: event
+        evidence_presentation: *ci_run_counted
       - key: gate_first_try_passed
         evidence_granularity: event
+        evidence_presentation: *ci_run_counted
       - key: gate_retried
         evidence_granularity: event
+        evidence_presentation: *ci_run_counted
       - key: run_duration_min
         evidence_granularity: event
+        evidence_presentation: &ci_run_measured
+          show_value: true
+          detail_columns: *ci_run_columns
       - key: run_hours
         evidence_granularity: event
+        evidence_presentation: *ci_run_measured
       - key: deployments
         evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          detail_columns:
+            - { key: repository, label: Repository }
+            - { key: environment, label: Environment }
+            - { key: outcome, label: Outcome }
+            - { key: env_kind, label: Environment type }
       - key: runs_matched_commit
         evidence_granularity: event
+        evidence_presentation: *ci_run_counted
       - key: commits_observed
         evidence_granularity: event
+        evidence_presentation:
+          show_value: false
+          detail_columns:
+            - { key: repository, label: Repository }
     dimensions:
       - repository
       - pipeline
@@ -611,7 +725,7 @@ metrics:
     label: AI seat cost
     short_label: Seat cost
     description: What a seat costs before any usage
-    explanation: The invoiced price of one seat for a billing month, taken from the per-seat amount on the invoice. Dated at the first day of that month, so a window inside a month returns nothing and one spanning two months returns both fees. A seat whose tier the invoice does not price returns no value.
+    explanation: The invoiced price of one seat for a billing month, from the invoice's per-seat amount. Dated at that month's first day, so a window must hold it to return the fee. The month comes from the read, not from the vendor. A seat whose tier the invoice does not price returns no value.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -628,8 +742,8 @@ metrics:
     subject: cost
     label: AI actual usage cost
     short_label: Actual cost
-    description: Exact monthly cost billed on top of the seat fee
-    explanation: What the vendor billed on top of the seat fee, once the usage that fee covered was exhausted. The exact monthly amount, dated at the first day of its billing month, so a window inside a month returns nothing — read the per-day distribution instead. Never added to potential usage cost.
+    description: Monthly cost billed on top of the seat fee, as last read
+    explanation: What the vendor billed on top of the seat fee, once included usage ran out. Exact as of that month's last reading, dated at its first day, so a window missing that day returns nothing — read the per-day distribution. The month comes from the read, not the vendor. Never added to potential usage cost.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -647,7 +761,7 @@ metrics:
     label: AI actual usage cost — approximate distribution
     short_label: Actual cost / day
     description: The monthly billed cost spread across its days
-    explanation: The billed extra-usage cost placed on the days it was spent. Only a running month-to-date total is reported, so a day's figure is the step between two readings — exact in sum over a month, approximate in placement. A day with no reading shows no point, and no day is ever negative.
+    explanation: The billed extra-usage cost placed on the days spent. Only a month-to-date total is reported, so a day is the step between readings — exact in sum against it, approximate in placement. The month comes from the read, so the 1st can cover several days. No reading means no point, and none is negative.
     format: currency
     direction: lower_is_better
     entity_type: person
@@ -665,7 +779,7 @@ metrics:
     label: Extra-usage ceiling used
     short_label: Ceiling used
     description: Share of the extra-usage ceiling consumed
-    explanation: Extra usage measured against the ceiling on the seat. At 100 per cent the vendor stops the seat, so this reads as proximity to being blocked, not as waste. A seat with no ceiling returns no value, not a zero. Above 100 per cent, the ceiling was lowered below what the seat had spent.
+    explanation: Extra usage measured against the seat's ceiling. At 100% the vendor stops the seat, so this reads as proximity to being blocked, not waste. A seat with no ceiling returns no value, not zero. Above 100%, the ceiling was lowered below what the seat had spent. Its month comes from the read, not the vendor.
     format: percent
     direction: lower_is_better
     entity_type: person

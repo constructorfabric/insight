@@ -1,86 +1,14 @@
 version: 2
 
-# Sources used by the identity seeds below are declared in their respective
-# connector schema.yml files:
+# The source it reads is declared in the connector's own schema.yml:
 #   - bronze_cursor        → connectors/ai/cursor/dbt/schema.yml
 
 models:
-  # --- Cursor seed ---
-
-  - name: seed_persons_from_cursor
-    description: >
-      Phase 1 seed: Cursor members → person.persons table.
-      One-time load creating canonical person records from Cursor Bronze data.
-      Each cursor member becomes one person with display_name, email, role.
-    columns:
-      - name: id
-        description: "Person UUID (UUIDv7)"
-        tests:
-          - not_null
-          - unique
-      - name: insight_tenant_id
-        description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"
-        tests:
-          - not_null
-      - name: display_name
-        description: "Person display name from cursor"
-        tests:
-          - not_null
-      - name: email
-        description: "Person email from cursor (lowercased, trimmed)"
-        tests:
-          - not_null
-      - name: status
-        description: "active or inactive (based on isRemoved)"
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['active', 'inactive']
-
-  - name: seed_aliases_from_cursor
-    description: >
-      Phase 1 seed: Cursor members → identity.aliases table.
-      Each cursor member produces up to 3 alias rows: id, email, display_name.
-      Joins on email to resolve person_id from seed_persons_from_cursor.
-    columns:
-      - name: id
-        description: "Alias UUID (UUIDv7)"
-        tests:
-          - not_null
-          - unique
-      - name: person_id
-        description: "FK to person.persons.id"
-        tests:
-          - not_null
-      - name: value_type
-        description: "id, email, or display_name"
-        tests:
-          - not_null
-          - accepted_values:
-              values: ['id', 'email', 'display_name']
-      - name: value
-        description: "Normalized value"
-        tests:
-          - not_null
-      - name: value_field_name
-        description: "Fully-qualified Bronze field path"
-        tests:
-          - not_null
-          - accepted_values:
-              values:
-                - 'bronze_cursor.cursor_members.email'
-                - 'bronze_cursor.cursor_members.id'
-                - 'bronze_cursor.cursor_members.name'
-      - name: source_account_id
-        description: "Cursor user ID (source_account_id)"
-        tests:
-          - not_null
-
   - name: seed_identity_inputs_from_cursor
     description: >
-      Phase 1 seed: Cursor members → identity.identity_inputs table.
-      Raw alias observations (no normalization). Each cursor member produces
-      up to 3 rows: id, email, display_name.
+      Cursor's contribution to the identity_inputs union (tag
+      silver:identity_inputs). Raw alias observations (no normalization).
+      Each cursor member produces up to 3 rows: id, email, display_name.
     columns:
       - name: insight_tenant_id
         description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"

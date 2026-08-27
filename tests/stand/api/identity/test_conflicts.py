@@ -35,11 +35,9 @@ from .views import in_force
 #: and deleted the row this file had just made.
 IDENTITY_ADMIN_ROLE = "admin"
 
-#: The Rust service answers 409; its retired .NET predecessor answered 422 for
-#: the two "still in use" cases. Both are accepted so the assertion is about
-#: the REFUSAL rather than about which service is deployed — a 204 is what
-#: must never happen.
-REFUSED = frozenset({409, 422})
+#: The service answers 409 for the two "still in use" cases — the gears
+#: canonical-error model has no 422. What must never happen is a 204.
+REFUSED = frozenset({409})
 
 
 def _roles(client: ApiClient) -> RoleList:

@@ -34,14 +34,13 @@ use crate::infra::db::{self, ops_repo, seed_repo};
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
 
 /// Author stamped on CLI-run operations and seed-minted observation rows.
-/// Continues the established convention: the legacy Python seed
-/// (`seed-persons-from-identity-input.py::SYSTEM_AUTHOR_UUID`) stamped
+/// Continues the established convention: the retired Python seed stamped
 /// system-written rows with the nil UUID, so existing installs already carry
 /// it. No FK constrains `author_person_id`, and the API-layer nil-caller
 /// check (`api::gate`) inspects the JWT subject, not data rows.
 pub const SYSTEM_AUTHOR: Uuid = Uuid::nil();
 
-/// The only seed mode the pipeline implements (parity with the .NET service).
+/// The only seed mode the pipeline implements.
 pub const LINK_BY_EMAIL_MODE: &str = "link-by-email";
 
 /// Upper bound on the read + pipeline — same ceiling the removed queue

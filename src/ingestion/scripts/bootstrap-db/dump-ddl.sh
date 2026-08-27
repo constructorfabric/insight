@@ -94,14 +94,13 @@ dump_relation() {
   printf ';\n\n' >> "${outfile}"
 }
 
-# person/identity precede silver/insight: the gold-view migrations reference
-# person.persons and identity.aliases/identity_inputs, so keeping them in the
+# identity precedes silver/insight: gold reads identity_inputs and the
+# identity_persons mirror through resolve_person_id, so keeping them in the
 # snapshot lets create-bronze-placeholders.sh satisfy those on a fresh cluster
-# (#1763). These are migration-owned tables (init-identity) and anti-join /
-# full-refresh dbt models — safe to pre-create empty. create-bronze-placeholders
-# applies them in its first batch (before silver at 900, insight at 950),
-# resolving order via its retry loop.
-for database in person identity silver insight; do
+# (#1763). Both are safe to pre-create empty — the resolver degrades to NULL
+# person_id. create-bronze-placeholders applies them in its first batch (before
+# silver at 900, insight at 950), resolving order via its retry loop.
+for database in identity silver insight; do
   outfile="${DDL_DIR}/${database}.sql"
   echo "dumping ${database} -> $(basename "${outfile}")"
   printf 'CREATE DATABASE IF NOT EXISTS `%s`;\n\n' "${database}" > "${outfile}"

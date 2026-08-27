@@ -1,9 +1,8 @@
 //! Persons-seed domain: group source-account profiles and resolve each group to
 //! a `person_id` — the **write-side** identity resolution (what the read side
-//! only looks up). Pure logic, no DB / IO. Ported from the .NET
-//! `EmailProfileResolver` + `PersonAssignmentResolver`, with one deliberate
-//! deviation: divergent e-mail groups keep per-account bindings (classified by
-//! binding author) instead of collapsing onto the first binding.
+//! only looks up). Pure logic, no DB / IO. Divergent e-mail groups keep
+//! per-account bindings (classified by binding author) instead of collapsing
+//! onto the first binding.
 
 use std::collections::HashMap;
 
@@ -26,7 +25,7 @@ pub struct SourceAccountKey {
 
 /// One raw observation from `identity.identity_inputs` (what the connectors
 /// emit). `synced_at` is monotonic per account; `is_delete` marks a tombstone
-/// (signal only — never persisted). Ported from the .NET `IdentityInputRow`.
+/// (signal only — never persisted).
 #[derive(Debug, Clone)]
 pub struct IdentityInputRow {
     pub source_type: String,
@@ -155,11 +154,10 @@ pub struct ResolveOutcome {
 }
 
 /// Case-fold an email for grouping / lookup (ADR-0011: matched
-/// case-insensitively). Lowercases only — it does **not** trim, matching the
-/// .NET seed path (`StringComparer.OrdinalIgnoreCase` + "store as-is"):
-/// surrounding whitespace is significant, so two accounts that differ only by
-/// stray whitespace resolve to distinct persons, exactly as the .NET seeder
-/// does. Blank/whitespace-only values are treated as "no email" by the callers.
+/// case-insensitively). Lowercases only — it does **not** trim: surrounding
+/// whitespace is significant, so two accounts that differ only by stray
+/// whitespace resolve to distinct persons. Blank/whitespace-only values are
+/// treated as "no email" by the callers.
 /// The infra layer must key the `email → person` map with the same function.
 #[must_use]
 pub fn normalize_email(email: &str) -> String {
@@ -167,8 +165,7 @@ pub fn normalize_email(email: &str) -> String {
 }
 
 /// Group profiles that share the same current email into one group; profiles
-/// with no (or blank) email each become a singleton group. Mirrors the .NET
-/// `EmailProfileResolver`.
+/// with no (or blank) email each become a singleton group.
 #[must_use]
 pub fn group_by_email(profiles: Vec<SeedProfile>) -> Vec<ProfileGroup> {
     let mut by_email: HashMap<String, Vec<SeedProfile>> = HashMap::new();
@@ -473,7 +470,7 @@ fn states_a_bindable_id(profile: &SeedProfile) -> bool {
 }
 
 /// Route an observation value into exactly one of the three `persons` value
-/// columns by `value_type` (ported from the .NET `ValueRouting`): identifier
+/// columns by `value_type`: identifier
 /// types → `value_id`; human-readable attributes → `value_full_text`; the rest
 /// → the uncapped `value` (TEXT). Over-limit values return all-`None` (dropped,
 /// never truncated). Returns `(value_id, value_full_text, value)`.
@@ -522,8 +519,7 @@ pub fn route_value(
 /// Fold the raw input stream (delivered **latest-first per account**) into one
 /// [`SeedProfile`] per source account: the first row seen marks the account
 /// closed (tombstone latest), the first email row's value is the current email,
-/// and tombstone rows are signal-only (never persisted). Mirrors the .NET
-/// `AccountAccumulator`.
+/// and tombstone rows are signal-only (never persisted).
 #[must_use]
 pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
     struct Acc {
@@ -572,8 +568,8 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
 /// Turn resolved assignments into the observation rows to append to `persons`:
 /// each upsert observation, routed into its value column and stamped with the
 /// group's `person_id` and the seed author. Email-linked assignments carry the
-/// `auto-seed-link` reason; reused / minted carry an empty reason (matching the
-/// .NET seeder). Over-limit values are dropped.
+/// `auto-seed-link` reason; reused / minted carry an empty reason.
+/// Over-limit values are dropped.
 ///
 /// The natural observation key ends in `created_at` and carries no account
 /// discriminator, so two accounts of one source resolving to one person at the
@@ -729,8 +725,8 @@ mod tests {
 
     #[test]
     fn emails_are_case_folded_but_not_trimmed() {
-        // Case variants merge; a trailing-space variant stays a separate group —
-        // parity with the .NET seeder (OrdinalIgnoreCase + store-as-is, no trim).
+        // Case variants merge; a trailing-space variant stays a separate
+        // group — the fold is case-insensitive but never trims.
         let groups = group_by_email(vec![
             prof("bamboohr", "1", Some("anna@corp.com"), false),
             prof("slack", "U1", Some("ANNA@corp.com"), false), // case → merges
@@ -1106,7 +1102,7 @@ mod tests {
             profiles[0].observations.is_empty(),
             "tombstone not persisted"
         );
-        // Email is still captured even from a tombstone row (matches .NET).
+        // Email is still captured even from a tombstone row.
         assert_eq!(profiles[0].latest_email.as_deref(), Some("x@y.com"));
         Ok(())
     }

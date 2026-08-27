@@ -145,7 +145,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **Storage**: Evidence and the analytics mirror reside in ClickHouse (`identity_inputs`; `identity.identity_persons` published by persons-sync; legacy `aliases`). The identity observation journal `persons`, its derived SCD2 cache `account_person_map`, and the `operations` admin journal reside in MariaDB and are owned by this domain (see DESIGN §3.7, [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md), [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md), and ADR-0006). Future matcher tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are design proposals only — not built.
+- **Storage**: Evidence and the analytics mirror reside in ClickHouse (`identity_inputs`; `identity.identity_persons` published by persons-sync). The identity observation journal `persons`, its derived `org_chart` edges, and the `operations` admin journal reside in MariaDB and are owned by this domain (see DESIGN §3.7, [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md), [ADR-0003](ADR/0003-operator-decisions-as-persons-observations.md), and ADR-0006). Future matcher tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are design proposals only — not built.
 - **Orchestration**: the persons-seed runs as a scheduled Kubernetes job (umbrella chart); Argo-orchestrated processing was the earlier plan and is not used by this domain today.
 - **Naming**: All tables and columns follow PR #55 glossary conventions (see Glossary and DESIGN §2.2).
 - **Temporal model**: Half-open intervals `[effective_from, effective_to)`. `BETWEEN` prohibited on temporal columns. Zero sentinel (`'1970-01-01'`) replaces NULL for ClickHouse compatibility.
@@ -157,7 +157,7 @@ Insight connects to 10+ external platforms (GitLab, GitHub, Jira, YouTrack, Bamb
 ### 4.1 In Scope
 
 - Evidence ingestion: the `identity_inputs` write contract for connectors
-- **Persons observation journal**: the MariaDB `persons` table, its scheduled seed from `identity_inputs` (ADR-0002), the `account_person_map` cache, and the `operations` journal. Schema / seed / corrections are owned by this domain; the Person domain reads the resulting rows to build its golden record.
+- **Persons observation journal**: the MariaDB `persons` table, its scheduled seed from `identity_inputs` (ADR-0002), the `org_chart` edges, and the `operations` journal. Schema / seed / corrections are owned by this domain; the Person domain reads the resulting rows to build its golden record.
 - **Operator corrections** (ADR-0003): merge, split/detach, bind (single and bulk), exclude — appended to the journal, surviving re-runs; review queue of accounts pending a decision and contested-binding groups; per-account binding history; per-person account listing
 - Analytics resolution path: persons-sync mirror + build-time `person_id` resolution (the dbt resolve macro)
 - Person lookups for backend consumers (component spec: `docs/components/backend/identity-resolution/identity/`)
@@ -220,7 +220,7 @@ The system **MUST** isolate identity data by `insight_tenant_id`. A resolution r
 
 The system **MUST** maintain a `persons` table in MariaDB that stores the history of identity field changes per person in an append-only SCD-style log. Each row represents one observed field value (`value_type`, `value`) from one source (`insight_source_type`, `insight_source_id`) assigned to a person (`person_id`) at a specific time (`created_at`). Updating a field **MUST** insert a new row rather than mutate an existing one; the current value is the row with the latest `created_at` for the `(insight_tenant_id, person_id, value_type)` triple.
 
-Schema (the column split by `value_type` into `value_id` / `value_full_text` / `value`, the generated display/digest columns, the natural-key UNIQUE ending in `created_at`, the SCD2 shape of `account_person_map`, and microsecond timestamp precision) is specified in the identity-resolution DESIGN §3.7 and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) with its post-acceptance note. The PRD intentionally states only the behavioural contract.
+Schema (the column split by `value_type` into `value_id` / `value_full_text` / `value`, the generated display/digest columns, the natural-key UNIQUE ending in `created_at`, and microsecond timestamp precision) is specified in the identity-resolution DESIGN §3.7 and in [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) with its post-acceptance note. The PRD intentionally states only the behavioural contract.
 
 **Rationale**: Downstream backend services (Analytics API, Identity Resolution service) need a CRUD-accessible, temporal view of person attributes from heterogeneous sources — ClickHouse is optimised for analytical reads, not operator-driven edits. MariaDB with row-level history supports conflict-resolution UX, audit trails, and operator-driven corrections.
 
@@ -501,7 +501,7 @@ The seed **MUST** process at least 100,000 `identity_inputs` rows per run within
 
 Re-running the seed on identical input **MUST** produce identical output — zero net new journal rows, zero net deleted rows.
 
-**Threshold**: After 3 consecutive runs on unchanged data, `SELECT count() FROM persons` returns the same value and `account_person_map` rebuilds bit-identically.
+**Threshold**: After 3 consecutive runs on unchanged data, `SELECT count() FROM persons` returns the same value and `org_chart` rebuilds bit-identically.
 
 **Rationale**: System restarts, Argo retries, and operational re-runs must be safe.
 
@@ -766,7 +766,7 @@ Every operator correction **MUST** be reversible: applying a correction and then
 | Dependency | Description | Criticality |
 |---|---|---|
 | ClickHouse 24.x+ | Evidence store (`identity_inputs`) and journal mirror; `generateUUIDv7()` support required | `p1` |
-| MariaDB | Journal store (`persons`, `account_person_map`, `operations`); schema applied by the identity-resolution service (ADR-0006) | `p1` |
+| MariaDB | Journal store (`persons`, `org_chart`, `operations`); schema applied by the identity-resolution service (ADR-0006) | `p1` |
 | dbt models (Bronze → Silver) | Populate `identity_inputs` during connector sync transformations; resolve `person_id` at build time via the macro | `p1` |
 | Kubernetes scheduling (umbrella chart) | Runs the persons-seed on schedule and hosts the identity-resolution service | `p1` |
 | Connector sync pipeline | Writes identity observations to `identity_inputs`; must conform to the write contract | `p1` |
