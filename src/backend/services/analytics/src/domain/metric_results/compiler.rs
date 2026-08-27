@@ -73,6 +73,8 @@ pub struct PeerQueryRow {
 pub struct BreakdownQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
+    pub source_provider: Option<String>,
+    pub source_id: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -394,18 +396,20 @@ pub(crate) fn compile_breakdown_query(
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_predicate = selected_entity_predicate(req, &mut params);
     let (dim_select, dim_group) = dimension_select_group(dimensions);
+    let (source_select, source_group) = hidden_source_context(dimensions);
     let group = if dim_group.is_empty() {
         "entity_id".to_owned()
     } else {
         format!("entity_id, {dim_group}")
     };
+    let group = format!("{group}{source_group}");
     let observation_table = observation_table(def.observation_source());
     let limit = query_row_limit();
     let value_expr = grouped_value_expr(def);
     let inner = format!(
         r"
         SELECT
-            entity_id{dim_select},
+            entity_id{dim_select}{source_select},
             {value_expr} AS value
         FROM {observation_table}
         WHERE {metric_where}
@@ -1318,6 +1322,18 @@ fn dimension_select_group(dimensions: &[String]) -> (String, String) {
     (select, groups.join(", "))
 }
 
+fn hidden_source_context(dimensions: &[String]) -> (String, String) {
+    if !dimensions.iter().any(|dimension| dimension == "repository") {
+        return (String::new(), String::new());
+    }
+    let provider = dimension_value_expr("source");
+    let source_id = dimension_value_expr("source_id");
+    (
+        format!(", {provider} AS source_provider, {source_id} AS source_id"),
+        ", source_provider, source_id".to_owned(),
+    )
+}
+
 fn ranking_dimension_select_group(dimensions: &[String]) -> (String, String, String) {
     let mut select = Vec::with_capacity(dimensions.len() * 2);
     let mut group = Vec::with_capacity(dimensions.len());
@@ -1894,6 +1910,16 @@ mod tests {
                 .sql
                 .contains("GROUP BY entity_id, dim_0_value, dim_0_label")
         );
+    }
+
+    #[test]
+    fn repository_breakdown_selects_hidden_source_context() {
+        let query =
+            compile_breakdown_query(&sum_metric(), &request(), &["repository".to_owned()], &[]);
+
+        assert!(query.sql.contains("AS source_provider"));
+        assert!(query.sql.contains("AS source_id"));
+        assert!(query.sql.contains("source_provider, source_id"));
     }
 
     #[test]

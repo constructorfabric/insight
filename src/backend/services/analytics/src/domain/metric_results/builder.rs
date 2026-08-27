@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use toolkit_canonical_errors::CanonicalError;
 
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
 use super::batch::{RankedDimension, RankedGroup};
@@ -119,7 +120,12 @@ pub fn build_timeseries_view(
                 entity_id,
                 dimensions: dims
                     .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .map(|(key, value, label)| MetricDimensionDto {
+                        key,
+                        value,
+                        label,
+                        href: None,
+                    })
                     .collect(),
                 total: data.total,
                 rank: data.rank,
@@ -185,16 +191,33 @@ pub fn build_breakdown_view(
     req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
     rows: Vec<BreakdownQueryRow>,
+    external_links: &ExternalSourceRegistry,
 ) -> Result<MetricResultViewDto, CanonicalError> {
     let values = rows
         .into_iter()
         .map(|row| {
+            let mut dimensions = row_dimensions(&row.extra, dimensions)?
+                .into_iter()
+                .map(|(key, value, label)| MetricDimensionDto {
+                    key,
+                    value,
+                    label,
+                    href: None,
+                })
+                .collect::<Vec<_>>();
+            if let Some(repository) = dimensions
+                .iter_mut()
+                .find(|dimension| dimension.key == "repository")
+            {
+                repository.href = external_links.repository_href(
+                    row.source_provider.as_deref(),
+                    row.source_id.as_deref(),
+                    repository.label.as_deref(),
+                );
+            }
             Ok(BreakdownValueDto {
                 entity_id: req.entity.canonicalize_entity_id(row.entity_id),
-                dimensions: row_dimensions(&row.extra, dimensions)?
-                    .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
-                    .collect(),
+                dimensions,
                 value: row.value,
             })
         })
@@ -218,7 +241,12 @@ pub fn build_rollup_view(
             } else {
                 row_dimensions(&row.extra, dimensions)?
                     .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .map(|(key, value, label)| MetricDimensionDto {
+                        key,
+                        value,
+                        label,
+                        href: None,
+                    })
                     .collect()
             };
             Ok(RollupValueDto {
@@ -888,6 +916,8 @@ mod tests {
         let rows = vec![BreakdownQueryRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             value: Some(1.0),
+            source_provider: None,
+            source_id: None,
             extra,
         }];
         let dimensions = vec!["tool".to_owned()];
@@ -897,7 +927,7 @@ mod tests {
             "2026-01-31",
         );
         let Ok(MetricResultViewDto::Breakdown { values, .. }) =
-            build_breakdown_view(&req, &dimensions, rows)
+            build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())
         else {
             panic!("expected breakdown view");
         };
@@ -906,6 +936,49 @@ mod tests {
             values[0].dimensions[0].label.as_deref(),
             Some(UNKNOWN_DIMENSION_LABEL)
         );
+    }
+
+    #[test]
+    fn breakdown_repository_uses_hidden_source_context_for_href() -> anyhow::Result<()> {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "dim_0_value".to_owned(),
+            serde_json::json!("source-a:group/repository"),
+        );
+        extra.insert(
+            "dim_0_label".to_owned(),
+            serde_json::json!("group/repository"),
+        );
+        let rows = vec![BreakdownQueryRow {
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
+            value: Some(1.0),
+            source_provider: Some("github".to_owned()),
+            source_id: Some("source-a".to_owned()),
+            extra,
+        }];
+        let dimensions = vec!["repository".to_owned()];
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let registry = ExternalSourceRegistry::new(&[crate::config::ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: crate::config::ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let MetricResultViewDto::Breakdown { values, .. } =
+            build_breakdown_view(&req, &dimensions, rows, &registry)?
+        else {
+            panic!("expected breakdown view");
+        };
+
+        assert_eq!(
+            values[0].dimensions[0].href.as_deref(),
+            Some("https://code.example.test/group/repository")
+        );
+        Ok(())
     }
 
     #[test]

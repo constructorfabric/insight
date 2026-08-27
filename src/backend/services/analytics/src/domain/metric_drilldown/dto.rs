@@ -144,6 +144,7 @@ pub struct MetricDrilldownColumn {
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct MetricDrilldownRow {
     pub values: BTreeMap<String, serde_json::Value>,
+    pub links: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
