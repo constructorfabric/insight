@@ -7,9 +7,14 @@
 -- Three row classes share the table, told apart by `event`. Every column has a
 -- defined value on every class — see the design's domain model. Columns are
 -- nullable only where "nobody measured" and "measured zero" are different
--- answers; `job_created_at` is nullable because snapshot rows are not about a
+-- answers; `job_updated_at` is nullable because snapshot rows are not about a
 -- job at all, and is never NULL on a sync row — the read surface orders jobs
 -- along it, and a row without it cannot be placed among them.
+--
+-- `job_updated_at` is the mover's own last-update stamp for the job, not a
+-- creation time: the listing does not report when a job was created, and it is
+-- also the field the listing filters on, so the sweep reads back exactly the
+-- field it asks by.
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
@@ -24,7 +29,7 @@ CREATE TABLE IF NOT EXISTS ingestion_history.sync_events (
     event            LowCardinality(String),
     status           LowCardinality(String),
     started_at       Nullable(DateTime64(3, 'UTC')),
-    job_created_at   Nullable(DateTime64(3, 'UTC')),
+    job_updated_at   Nullable(DateTime64(3, 'UTC')),
     duration_ms      Nullable(UInt64),
     records_reported Nullable(UInt64)
 ) ENGINE = MergeTree

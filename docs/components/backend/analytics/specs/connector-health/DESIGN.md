@@ -174,8 +174,18 @@ One table holds three kinds of row, told apart by `event`.
 | Event | Written when | Carries |
 |---|---|---|
 | `sync.completed` | the sweep sees a job in the mover's history | job identity, connector, outcome, timestamps, duration, reported records |
-| `connector.configured` | each tick, one row per managed connector | connector, tick identity |
+| `connector.configured` | each tick, one row per configured connector | connector, tick identity |
 | `sweep.completed` | each tick, last | tick identity — the marker that seals the snapshot |
+
+**Configured is what it means to the reconcile loop: a shipped descriptor that has a
+Kubernetes Secret on this install.** The two differ by most of the list — descriptors are
+every connector the product knows how to run, and reconcile cascade-deletes the mover
+resources of any without a Secret rather than driving it. Recording the descriptor set would
+fill the page with connectors the install never had, each correctly reported as never synced
+and none of them anything an operator can act on. A connector whose Secret lookup fails is
+neither in nor out: the tick records nothing at all, because dropping it would seal a snapshot
+saying it is no longer configured and the read surface takes a sealed snapshot as
+authoritative.
 
 **What each event writes.** One table serving three row classes means every column needs a
 defined value on every one of them. A column left to the implementation's judgement is a
@@ -188,7 +198,7 @@ column the reader and the writer will disagree about.
 | `connector` | the synced connector | the member connector | empty |
 | `status` | the mapped outcome | empty | empty |
 | `started_at` | the job's own start, else its first attempt's; NULL if not started | NULL | NULL |
-| `job_created_at` | always present | NULL | NULL |
+| `job_updated_at` | always present | NULL | NULL |
 | `duration_ms` | between the mover's own two stamps; NULL until terminal | NULL | NULL |
 | `records_reported` | the last attempt's count; NULL if it reported none | NULL | NULL |
 
@@ -200,10 +210,11 @@ them, so an absent-value type would buy nothing and cost a nullable read on the 
 out-of-range one — it clamps a `DateTime64` and wraps a `UInt64`. A year-1000 stamp lands as
 1900 and a count above 2^64 lands as a different number, and the page would label both as
 what the mover reported. A stamp or a count the column cannot hold is therefore treated as
-absent, and a job whose creation stamp is unusable is not recorded at all.
+absent, and a job whose update stamp is unusable is not recorded at all.
 
 **Resolution.** The summary takes, per connector, the newest `sync.completed` by the mover's
-job creation time; the configured set is the membership of the newest *sealed* tick. Sealing
+own last-update stamp for the job; the configured set is the membership of the newest *sealed*
+tick. Sealing
 matters: without keying on the marker, a snapshot still being written would read as the whole
 set, and a connector removed a moment ago would come back for one tick.
 
@@ -219,24 +230,42 @@ page shows it as a state it could not read. It is also not terminal: coverage fa
 a status the sweep could not read is one it keeps re-reading until it becomes one it can.
 
 **Two timestamps, kept apart.** `started_at` is when the mover says the sync began, and is
-absent for a job it has not started. `job_created_at` is when the job was created, which is
-the field the mover's listing is ordered and filtered by — and therefore the axis the sweep's
-own watermark moves along. Substituting one for the other would report a start that never
-happened and still leave the cursor on the wrong axis.
+absent for a job it has not started. `job_updated_at` is the mover's own last-update stamp for
+the job, which is the field the listing is ordered and filtered by — and therefore the axis
+the sweep's own watermark moves along. Substituting one for the other would report a start
+that never happened and still leave the cursor on the wrong axis.
 
-**`job_created_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
+**The listing reports no creation time, and this is load-bearing.** It accepts a creation
+filter, so a creation stamp looks available from the query surface alone; the entries carry a
+start and a last update and nothing else. A sweep that asks by one field and reads back
+another refuses every entry, and the page then reports every connector as never synced —
+which is indistinguishable from a mover that has run no syncs at all. The sort key, the
+filter and the field read off an entry are therefore one stamp, and both halves of that are
+asserted: the request's shape in the mover's tests, the response's shape in the planner's.
+
+The mover also answers `200` and **ignores a query parameter it does not recognise** rather
+than refusing it. A filter renamed by a later release would therefore stop filtering
+silently, and the read would restart at the beginning of history. Each tick counts the
+entries that came back older than the watermark it sent, and **treats any as a failed read**
+— it plans nothing and does not seal. Logging it would not be enough: every terminal job
+below the watermark would be recorded again on every tick, because the closed-job read is
+bounded by that same watermark and so cannot filter them out; and a capped pass would stop
+short of the newest jobs while still sealing, leaving the page dated as freshly checked on
+facts it never reached.
+
+**`job_updated_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
 mover returns always carries one; the column is nullable only because snapshot and seal rows
-are not about a job at all. A job the mover returns without a creation time is one the planner
+are not about a job at all. A job the mover returns without an update stamp is one the planner
 cannot place in time, so it is skipped and logged rather than written with a NULL.
 
 **The resolution is one aggregate over an ordering tuple.** Per connector the newest row wins
 by `argMax` over
-`(coalesce(job_created_at, ts), toUInt64OrZero(job_id), status IN (terminal), ts)`.
+`(coalesce(job_updated_at, ts), toUInt64OrZero(job_id), status IN (terminal), ts)`.
 
 Every component earns its place, and each closes a wrong answer that was measured first:
 
-- **`coalesce(job_created_at, ts)`** — NULLs sort last in ClickHouse in BOTH directions, so a
-  job the mover gave no creation stamp for does not merely lose the comparison: a different,
+- **`coalesce(job_updated_at, ts)`** — NULLs sort last in ClickHouse in BOTH directions, so a
+  job the mover gave no update stamp for does not merely lose the comparison: a different,
   older job wins it, and the page presents a stale success as the current state. Falling back
   to when the row was recorded places the job by a real recorded moment instead.
 - **`toUInt64OrZero(job_id)`** — the mover's ids are numbers stored as text, so comparing them
@@ -271,10 +300,10 @@ the reconcile loop already authenticates to the mover and ticks.
 
 ##### Responsibility scope
 
-Each tick: resolve the watermark from the ledger, page the mover's job listing forward from
-it, map each job's connection to a connector, plan one row per job the ledger does not
-already hold with a terminal outcome, plan the configured-set snapshot, write the rows, then
-write the seal.
+Each tick: resolve the configured set, resolve the watermark from the ledger, page the
+mover's job listing forward from it, map each job's connection to a connector, plan one row
+per job the ledger does not already hold with a terminal outcome, plan the configured-set
+snapshot, write the rows, then write the seal.
 
 The planning is a pure function over values — the shell gathers, the planner decides, and the
 planner is what the tests exercise. Its rules are the change's densest logic: which jobs to
@@ -426,9 +455,10 @@ Shape rules that the generated contract enforces:
   instead of implying health.
 - `window` is the largest number of rows the per-connector list can hold, so the page can say
   the list is a window rather than the whole retained history (FR-6).
-- **The summary carries a row cap too.** The set is bounded by the build's descriptor list in
-  practice, so an install cannot reach the cap by configuring connectors — only by accumulating
-  names in the ledger that no build has. It is a backstop rather than a page, and the read logs
+- **The summary carries a row cap too.** The set is bounded in practice by the build's
+  descriptor list — and below it, by the descriptors this install holds a Secret for — so an
+  install cannot reach the cap by configuring connectors, only by accumulating names in the
+  ledger that no build has. It is a backstop rather than a page, and the read logs
   when it truncates, because reaching it should be visible rather than silent.
 
 ### 3.4 Internal Dependencies
@@ -448,19 +478,24 @@ Shape rules that the generated contract enforces:
 #### Data mover job listing
 
 The sweep reads the mover's public job listing, paged, with five query parameters: the job
-type, ascending creation order, the page's size and offset, and a creation-time floor. Per entry it takes the
-job's identity, its connection, its status, its creation and start stamps, its duration and
-its reported record count — all flat on the entry, all as the listing spells them.
+type, ascending update order, the page's size and offset, and an update-time floor. Per entry
+it takes the job's identity, its connection, its status, its start and last-update stamps, its
+duration and its reported record count — all flat on the entry, all as the listing spells
+them. The listing reports no creation time, so nothing here reads one.
 
 Two of those parameters carry the correctness of the whole read. **Ascending order** is what
 makes a capped pass safe: whatever the cap leaves unread is newer than everything collected,
 so the next tick resumes at that edge rather than the watermark stepping over a gap. **The
-creation-time floor** is what keeps a steady tick from re-reading the whole retained history
-to find the handful of jobs it has not seen.
+update-time floor** is what keeps a steady tick from re-reading the whole retained history to
+find the handful of jobs it has not seen. Both name the same stamp as the field read back off
+an entry, which is what makes the second claim true of the first.
 
 The floor is sent in the listing's own stamp format, which differs from the ledger's by a
 separator. Sending the ledger's form is silent rather than loud — the listing does not filter
-on it — so the conversion lives in one named function rather than at the call site.
+on it — so the conversion lives in one named function rather than at the call site. So is
+sending a parameter name the listing does not know: it answers `200` and drops it. Each tick
+therefore counts what came back below the floor it sent and refuses the read if anything did,
+which is the only thing that separates an ignored filter from a quiet mover.
 
 Nothing richer is read. Per-job detail exists and is not contract-stable across mover
 upgrades; the value of this ledger is that it keeps saying what a changing source said.
@@ -487,7 +522,7 @@ sequenceDiagram
     R->>L: oldest job still open (floored), or the newest recorded
     L-->>R: watermark (empty ⇒ backfill everything)
     R->>L: jobs already closed at or after the watermark
-    R->>M: list sync jobs from the watermark, oldest first, paged
+    R->>M: list sync jobs updated from the watermark, oldest first, paged
     M-->>R: jobs with status, stamps, duration, reported records
     R->>R: map each job's connection to a connector
     R->>R: plan rows for jobs not already closed
@@ -584,7 +619,7 @@ customer extracts, which must never carry service rows.
 | `event` | `LowCardinality(String)` | `sync.completed` \| `connector.configured` \| `sweep.completed` |
 | `status` | `LowCardinality(String)` | on a sync row, the mover's own word or `unknown`; empty elsewhere |
 | `started_at` | `Nullable(DateTime64(3, 'UTC'))` | when the mover says the sync began; NULL for a job it has not started |
-| `job_created_at` | `Nullable(DateTime64(3, 'UTC'))` | when the job was created — the axis the watermark moves along; never NULL on a sync row |
+| `job_updated_at` | `Nullable(DateTime64(3, 'UTC'))` | the mover's last-update stamp for the job — the axis the watermark moves along, and the field the listing is ordered and filtered by; never NULL on a sync row |
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
 

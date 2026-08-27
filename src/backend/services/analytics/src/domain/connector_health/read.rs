@@ -80,10 +80,10 @@ static READ_INTERVAL_SQL: LazyLock<String> = LazyLock::new(|| {
 ///
 /// Four components, each earning its place:
 ///
-/// * `coalesce(job_created_at, ts)` — the axis the ledger places jobs along,
+/// * `coalesce(job_updated_at, ts)` — the axis the ledger places jobs along,
 ///   falling back to when the row was recorded. A NULL here would be worse than
 ///   a fallback: ClickHouse sorts NULLs last in BOTH directions, so a job the
-///   mover gave no creation time would not merely lose the comparison — a
+///   mover gave no update stamp for would not merely lose the comparison — a
 ///   different, older job would win it, and the page would present a stale
 ///   success as the current state.
 /// * `toUInt64OrZero(job_id)` — the mover's ids are numbers stored as text, so
@@ -99,7 +99,7 @@ static ROW_ORDER: LazyLock<String> = LazyLock::new(|| {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "(coalesce(job_created_at, ts), toUInt64OrZero(job_id), \
+        "(coalesce(job_updated_at, ts), toUInt64OrZero(job_id), \
           status IN ({terminal}), ts)"
     )
 });
@@ -111,7 +111,7 @@ static ROW_ORDER: LazyLock<String> = LazyLock::new(|| {
 /// calls answer from six independently-chosen rows — one column taken from
 /// the newest job and another from an older one whose value happened not to
 /// be NULL, producing a row that never existed.
-const SYNC_COLUMNS: &str = "job_id, status, started_at, job_created_at, \
+const SYNC_COLUMNS: &str = "job_id, status, started_at, job_updated_at, \
      duration_ms, records_reported";
 
 /// The unpacked tuple, under names no ledger column carries.
@@ -122,7 +122,7 @@ const SYNC_COLUMNS: &str = "job_id, status, started_at, job_created_at, \
 /// with an exception. This keeps the rule absolute.
 const UNPACK_WINNER: &str = "winner.1 AS resolved_job_id, \
      winner.2 AS resolved_status, winner.3 AS resolved_started_at, \
-     winner.4 AS resolved_job_created_at, winner.5 AS resolved_duration_ms, \
+     winner.4 AS resolved_job_updated_at, winner.5 AS resolved_duration_ms, \
      winner.6 AS resolved_records_reported";
 
 /// The newest sync per connector.
@@ -216,10 +216,10 @@ struct SyncRow {
     )]
     started_at: Option<DateTime<Utc>>,
     #[serde(
-        rename = "resolved_job_created_at",
+        rename = "resolved_job_updated_at",
         with = "clickhouse::serde::chrono::datetime64::millis::option"
     )]
-    job_created_at: Option<DateTime<Utc>>,
+    job_updated_at: Option<DateTime<Utc>>,
     #[serde(rename = "resolved_duration_ms")]
     duration_ms: Option<u64>,
     #[serde(rename = "resolved_records_reported")]
@@ -238,10 +238,10 @@ struct HistoryRow {
     )]
     started_at: Option<DateTime<Utc>>,
     #[serde(
-        rename = "resolved_job_created_at",
+        rename = "resolved_job_updated_at",
         with = "clickhouse::serde::chrono::datetime64::millis::option"
     )]
-    job_created_at: Option<DateTime<Utc>>,
+    job_updated_at: Option<DateTime<Utc>>,
     #[serde(rename = "resolved_duration_ms")]
     duration_ms: Option<u64>,
     #[serde(rename = "resolved_records_reported")]
@@ -341,7 +341,7 @@ impl HistoryRow {
             job_id: self.job_id,
             status: SyncStatus::parse(&self.status),
             started_at: self.started_at,
-            job_created_at: self.job_created_at,
+            job_updated_at: self.job_updated_at,
             duration_ms: self.duration_ms,
             records_reported: self.records_reported,
         }
@@ -364,7 +364,7 @@ fn merge(syncs: Vec<SyncRow>, configured: &HashSet<String>) -> Vec<ConnectorSumm
             job_id: row.job_id,
             status: SyncStatus::parse(&row.status),
             started_at: row.started_at,
-            job_created_at: row.job_created_at,
+            job_updated_at: row.job_updated_at,
             duration_ms: row.duration_ms,
             records_reported: row.records_reported,
         };
@@ -543,7 +543,7 @@ mod guards {
         // A NULL sort key does not lose a comparison in ClickHouse — it wins a
         // different one, because NULLs sort last in both directions.
         let order = normalised(&ROW_ORDER);
-        assert!(order.contains("coalesce(job_created_at, ts)"), "{order}");
+        assert!(order.contains("coalesce(job_updated_at, ts)"), "{order}");
         assert!(order.contains("touint64orzero(job_id)"), "{order}");
         assert!(order.contains("status in ("), "{order}");
     }

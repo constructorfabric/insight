@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -33,7 +34,7 @@ class _Listing(Mover):
         self._pages = pages
         self.requested: list[int] = []
 
-    def _page(self, offset: int, created_at_start: str | None):
+    def _page(self, offset: int, updated_at_start: str | None):
         self.requested.append(offset)
         index = len(self.requested) - 1
         usable, served = self._pages[index] if index < len(self._pages) else (0, 0)
@@ -105,3 +106,43 @@ class TheReadHasATimeBudget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheRequestNamesTheFieldItReadsBack(unittest.TestCase):
+    """The sort key, the filter and the field read off an entry are one stamp.
+
+    The mover answers 200 and ignores a query parameter it does not recognise,
+    so a filter under the wrong name does not fail — it stops filtering, the
+    read restarts at the beginning of history, and a capped pass never reaches
+    the newest jobs. Nothing downstream can tell that apart from a quiet page,
+    which is why the request's own shape is asserted here.
+    """
+
+    def _query(self, updated_at_start: str | None) -> dict[str, str]:
+        asked: list[str] = []
+
+        class _Transport(Mover):
+            def _get(self, path: str) -> dict:
+                asked.append(path)
+                return {"data": []}
+
+        _Transport("http://mover.invalid", "token").sync_jobs(updated_at_start)
+        self.assertEqual(len(asked), 1)
+        query = urllib.parse.urlparse(asked[0]).query
+        return dict(urllib.parse.parse_qsl(query))
+
+    def test_the_listing_is_ordered_by_the_stamp_the_planner_records(self) -> None:
+        self.assertEqual(self._query(None)["orderBy"], "updatedAt|ASC")
+
+    def test_the_watermark_is_sent_as_the_update_filter(self) -> None:
+        query = self._query("2026-08-27T08:02:52Z")
+
+        self.assertEqual(query["updatedAtStart"], "2026-08-27T08:02:52Z")
+        self.assertNotIn("createdAtStart", query)
+
+    def test_a_first_sweep_sends_no_filter_at_all(self) -> None:
+        """None is "read the whole retained history", not "read from now"."""
+        query = self._query(None)
+
+        self.assertNotIn("updatedAtStart", query)
+        self.assertNotIn("createdAtStart", query)

@@ -6,10 +6,15 @@ contract-stable across mover upgrades, and the whole point of copying this
 account is to keep a durable record of what a changing source said.
 
 Two of those parameters do the work that would otherwise be ours: the listing is
-asked for in ascending creation order and filtered from a watermark. Ascending
+asked for in ascending update order and filtered from a watermark. Ascending
 order is what makes a capped read safe — whatever the cap leaves unread is NEWER
 than everything collected, so the next tick resumes at that edge instead of the
 watermark jumping over a gap.
+
+INVARIANT: the sort key, the filter and the field read back off each entry are
+all the job's last-update stamp. The listing offers a creation filter too but
+reports no creation time, so a read filtered one way and ordered or recorded
+another cannot be told apart from a read that simply found nothing.
 """
 
 from __future__ import annotations
@@ -69,8 +74,8 @@ class Mover:
             raise MoverError("AIRBYTE_TOKEN is not set")
         return cls(url, token)
 
-    def sync_jobs(self, created_at_start: str | None) -> tuple[list[dict[str, Any]], bool]:
-        """Every sync job created at or after the watermark, oldest first.
+    def sync_jobs(self, updated_at_start: str | None) -> tuple[list[dict[str, Any]], bool]:
+        """Every sync job updated at or after the watermark, oldest update first.
 
         Returns the entries and whether the read stopped short — of the page cap
         or of the time budget. Either way what was collected is contiguous from
@@ -85,7 +90,7 @@ class Mover:
             # seal that dates the page.
             if page > 0 and time.monotonic() >= deadline:
                 return collected, True
-            entries, served = self._page(page * PAGE_SIZE, created_at_start)
+            entries, served = self._page(page * PAGE_SIZE, updated_at_start)
             collected.extend(entries)
             # INVARIANT: measured against what the server SERVED, not what
             # survived filtering. A full page carrying one unusable element
@@ -96,16 +101,16 @@ class Mover:
         return collected, True
 
     def _page(
-        self, offset: int, created_at_start: str | None
+        self, offset: int, updated_at_start: str | None
     ) -> tuple[list[dict[str, Any]], int]:
         query = {
             "jobType": "sync",
-            "orderBy": "createdAt|ASC",
+            "orderBy": "updatedAt|ASC",
             "limit": str(PAGE_SIZE),
             "offset": str(offset),
         }
-        if created_at_start:
-            query["createdAtStart"] = created_at_start
+        if updated_at_start:
+            query["updatedAtStart"] = updated_at_start
         path = "/api/public/v1/jobs?" + urllib.parse.urlencode(query)
 
         payload = self._get(path)
