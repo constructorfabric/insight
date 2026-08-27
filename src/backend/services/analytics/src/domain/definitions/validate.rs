@@ -2,7 +2,7 @@
 //! it hold the role the definition uses it in, does an expression name only
 //! catalogued columns, does every reference resolve.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::definition::{Computation, MeasureDefinition, MetricDefinition, Operand};
 use super::expr::{ScalarExprError, validate_scalar_expr};
@@ -57,6 +57,29 @@ pub enum ValidationError {
     #[error("metric `{metric}` composes measures over different datasets: `{a}` and `{b}`")]
     MixedDatasets {
         metric: String,
+        a: String,
+        b: String,
+    },
+    #[error(
+        "metric `{metric}` reads the distribution of measure `{measure}`, which folds no value"
+    )]
+    DistributionWithoutValue { metric: String, measure: String },
+    #[error("metric `{metric}` derives a value from no input")]
+    NoDerivedInputs { metric: String },
+    #[error("metric `{metric}` expression is not admissible: {source}")]
+    MetricExpression {
+        metric: String,
+        #[source]
+        source: ScalarExprError,
+    },
+    #[error("metric `{metric}` expression names `{alias}`, which is not one of its inputs")]
+    UnknownDerivedInput { metric: String, alias: String },
+    #[error("metric `{metric}` declares input `{alias}`, which its expression never reads")]
+    UnusedDerivedInput { metric: String, alias: String },
+    #[error("metric `{metric}` inputs `{a}` and `{b}` bind dimension `{key}` to different fields")]
+    DimensionBindingsDisagree {
+        metric: String,
+        key: String,
         a: String,
         b: String,
     },
@@ -268,6 +291,9 @@ fn validate_metric(
         }
     }
 
+    validate_computation(metric, measures, errors);
+    validate_shared_dimensions(metric, measures, errors);
+
     // Joining aggregates across datasets is capability the compiler does not
     // have, so a definition may not ask for it.
     if let Some((first_key, first_dataset)) = datasets.first()
@@ -280,6 +306,124 @@ fn validate_metric(
             a: (*first_key).to_owned(),
             b: (*other_key).to_owned(),
         });
+    }
+}
+
+/// A metric's dimension capability is the intersection of its inputs' declared
+/// keys, and one scan resolves a key through whichever input's binding it
+/// reaches, so the inputs that share a key must bind it to the same fields.
+fn validate_shared_dimensions(
+    metric: &MetricDefinition,
+    measures: &[MeasureDefinition],
+    errors: &mut Vec<ValidationError>,
+) {
+    let inputs: Vec<&MeasureDefinition> = metric
+        .input_measures()
+        .into_iter()
+        .filter_map(|key| measures.iter().find(|measure| measure.key == key))
+        .collect();
+
+    let Some((first, rest)) = inputs.split_first() else {
+        return;
+    };
+
+    for binding in &first.dimensions {
+        for other in rest {
+            let Some(theirs) = other
+                .dimensions
+                .iter()
+                .find(|candidate| candidate.key == binding.key)
+            else {
+                continue;
+            };
+            if theirs.value_field != binding.value_field
+                || theirs.label_field != binding.label_field
+            {
+                errors.push(ValidationError::DimensionBindingsDisagree {
+                    metric: metric.key.clone(),
+                    key: binding.key.clone(),
+                    a: first.key.clone(),
+                    b: other.key.clone(),
+                });
+            }
+        }
+    }
+}
+
+/// What each computation needs of the measures it names, beyond their being
+/// defined over one dataset.
+fn validate_computation(
+    metric: &MetricDefinition,
+    measures: &[MeasureDefinition],
+    errors: &mut Vec<ValidationError>,
+) {
+    match &metric.computation {
+        Computation::Direct { .. } | Computation::Ratio { .. } => {}
+        Computation::Percentile { measure, .. } | Computation::Stddev { measure } => {
+            // INVARIANT: a distribution is taken over per-row values, so its
+            // measure must fold one.
+            if let Some(defined) = measures.iter().find(|defined| &defined.key == measure)
+                && defined.value_expr.is_none()
+            {
+                errors.push(ValidationError::DistributionWithoutValue {
+                    metric: metric.key.clone(),
+                    measure: measure.clone(),
+                });
+            }
+        }
+        Computation::Derived { inputs, expr } => {
+            validate_derived(metric, inputs, expr, errors);
+        }
+    }
+}
+
+/// The declared aliases and the expression's references must be the same set:
+/// an unknown one names nothing, an unread one is a scan the value never uses.
+fn validate_derived(
+    metric: &MetricDefinition,
+    inputs: &BTreeMap<String, String>,
+    expr: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if inputs.is_empty() {
+        errors.push(ValidationError::NoDerivedInputs {
+            metric: metric.key.clone(),
+        });
+        return;
+    }
+
+    for alias in inputs.keys() {
+        if !is_key(alias) {
+            errors.push(ValidationError::KeyShape(alias.clone()));
+        }
+    }
+
+    let parsed = match validate_scalar_expr(expr) {
+        Err(source) => {
+            errors.push(ValidationError::MetricExpression {
+                metric: metric.key.clone(),
+                source,
+            });
+            return;
+        }
+        Ok(parsed) => parsed,
+    };
+
+    for alias in &parsed.columns {
+        if !inputs.contains_key(alias) {
+            errors.push(ValidationError::UnknownDerivedInput {
+                metric: metric.key.clone(),
+                alias: alias.clone(),
+            });
+        }
+    }
+    for alias in inputs.keys() {
+        if !parsed.columns.contains(alias) {
+            errors.push(ValidationError::UnusedDerivedInput {
+                metric: metric.key.clone(),
+                alias: alias.clone(),
+            });
+        }
     }
 }
 
@@ -375,6 +519,8 @@ datasets:
             description: None,
         }
     }
+
+    type Refusal = fn(&ValidationError) -> bool;
 
     fn errors_for(
         measures: &[MeasureDefinition],
@@ -498,6 +644,197 @@ datasets:
                 "{quantile}"
             );
         }
+    }
+
+    fn distribution_measure() -> MeasureDefinition {
+        MeasureDefinition {
+            aggregation: Aggregation::Sum,
+            value_expr: Some("lines_added".to_owned()),
+            ..measure()
+        }
+    }
+
+    fn derived(inputs: &[(&str, &str)], expr: &str) -> Computation {
+        Computation::Derived {
+            inputs: inputs
+                .iter()
+                .map(|(alias, key)| ((*alias).to_owned(), (*key).to_owned()))
+                .collect(),
+            expr: expr.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_distribution_over_a_measure_that_folds_no_value_is_rejected() {
+        let cases = [
+            Computation::Percentile {
+                measure: "prs_created".to_owned(),
+                quantile: 0.5,
+            },
+            Computation::Stddev {
+                measure: "prs_created".to_owned(),
+            },
+        ];
+
+        for computation in cases {
+            assert_eq!(
+                errors_for(&[measure()], &[metric(computation)]),
+                [ValidationError::DistributionWithoutValue {
+                    metric: "git.prs_created".to_owned(),
+                    measure: "prs_created".to_owned(),
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn a_distribution_over_a_value_bearing_measure_validates() {
+        let sized = distribution_measure();
+        for computation in [
+            Computation::Percentile {
+                measure: "prs_created".to_owned(),
+                quantile: 0.9,
+            },
+            Computation::Stddev {
+                measure: "prs_created".to_owned(),
+            },
+        ] {
+            validate_definitions(
+                &catalog(),
+                std::slice::from_ref(&sized),
+                &[metric(computation)],
+            )
+            .expect("validates");
+        }
+    }
+
+    #[test]
+    fn a_derived_expression_and_its_inputs_must_name_the_same_aliases() {
+        let opened = MeasureDefinition {
+            key: "prs_opened".to_owned(),
+            ..measure()
+        };
+        let defined = [measure(), opened];
+        let cases: [(Computation, Refusal); 5] = [
+            (derived(&[], "1"), |error| {
+                matches!(error, ValidationError::NoDerivedInputs { .. })
+            }),
+            (
+                derived(&[("created", "prs_created")], "created + missing"),
+                |error| {
+                    matches!(
+                        error,
+                        ValidationError::UnknownDerivedInput { alias, .. } if alias == "missing"
+                    )
+                },
+            ),
+            (
+                derived(
+                    &[("created", "prs_created"), ("opened", "prs_opened")],
+                    "created",
+                ),
+                |error| {
+                    matches!(
+                        error,
+                        ValidationError::UnusedDerivedInput { alias, .. } if alias == "opened"
+                    )
+                },
+            ),
+            (
+                derived(&[("created", "prs_created")], "sleep(created)"),
+                |error| matches!(error, ValidationError::MetricExpression { .. }),
+            ),
+            (
+                derived(&[("Created", "prs_created")], "Created"),
+                |error| matches!(error, ValidationError::KeyShape(key) if key == "Created"),
+            ),
+        ];
+
+        for (computation, expected) in cases {
+            let metric = metric(computation);
+            let named = format!("{:?}", metric.computation);
+
+            assert!(
+                errors_for(&defined, &[metric]).iter().any(expected),
+                "should reject: {named}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_derived_metric_whose_aliases_and_expression_agree_validates() {
+        let opened = MeasureDefinition {
+            key: "prs_opened".to_owned(),
+            ..measure()
+        };
+        let computation = derived(
+            &[("created", "prs_created"), ("opened", "prs_opened")],
+            "(created - opened) / opened",
+        );
+
+        validate_definitions(&catalog(), &[measure(), opened], &[metric(computation)])
+            .expect("validates");
+    }
+
+    #[test]
+    fn inputs_that_bind_one_dimension_to_different_fields_are_rejected() {
+        let mut divergent = MeasureDefinition {
+            key: "prs_opened".to_owned(),
+            ..measure()
+        };
+        divergent.dimensions = vec![DimensionBinding {
+            key: "repository".to_owned(),
+            value_field: "state".to_owned(),
+            label_field: None,
+        }];
+        let computation = derived(
+            &[("created", "prs_created"), ("opened", "prs_opened")],
+            "created - opened",
+        );
+
+        assert!(
+            errors_for(&[measure(), divergent], &[metric(computation)])
+                .iter()
+                .any(|error| matches!(
+                    error,
+                    ValidationError::DimensionBindingsDisagree { key, .. } if key == "repository"
+                ))
+        );
+    }
+
+    #[test]
+    fn inputs_that_declare_different_dimension_sets_validate() {
+        let mut narrower = MeasureDefinition {
+            key: "prs_opened".to_owned(),
+            ..measure()
+        };
+        narrower.dimensions = Vec::new();
+        let computation = derived(
+            &[("created", "prs_created"), ("opened", "prs_opened")],
+            "created - opened",
+        );
+
+        validate_definitions(&catalog(), &[measure(), narrower], &[metric(computation)])
+            .expect("a key only one input declares narrows the capability, it is not an error");
+    }
+
+    #[test]
+    fn a_derived_metric_composing_measures_over_different_datasets_is_rejected() {
+        let elsewhere = MeasureDefinition {
+            key: "commits".to_owned(),
+            dataset: "git_commits".to_owned(),
+            ..measure()
+        };
+        let computation = derived(
+            &[("created", "prs_created"), ("commits", "commits")],
+            "created + commits",
+        );
+
+        assert!(
+            errors_for(&[measure(), elsewhere], &[metric(computation)])
+                .iter()
+                .any(|error| matches!(error, ValidationError::MixedDatasets { .. }))
+        );
     }
 
     #[test]

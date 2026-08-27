@@ -18,9 +18,42 @@ pub struct ValuesQuery {
     pub metric: String,
     pub subjects: Subjects,
     pub time: TimeRange,
+    /// Narrows every measure the metric reads. Absent means no narrowing.
+    #[serde(default)]
+    pub filters: Vec<DimensionFilter>,
     #[serde(default)]
     pub split: Option<Split>,
     pub fold: Fold,
+    #[serde(default)]
+    pub compare: Option<Compare>,
+}
+
+/// Keeps only the rows whose dimension holds one of the named values.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DimensionFilter {
+    /// A dimension key the metric's grain measure declares.
+    pub dimension: String,
+    pub values: Vec<String>,
+}
+
+/// Asks the same question again over an earlier window, and reports the change.
+#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Compare {
+    pub offset: CompareOffset,
+}
+
+/// How far back the compared window sits: `previous_period` shifts it by its
+/// own length, and a calendar offset shifts both endpoints, clamping a day the
+/// earlier month does not have to that month's last day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompareOffset {
+    PreviousPeriod,
+    Month,
+    Quarter,
+    Year,
 }
 
 /// Whose values the question is about, internally tagged on `type` so a
@@ -129,6 +162,9 @@ pub struct GroupedValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<Group>,
     pub value: Option<f64>,
+    /// Absent when the question asked for no comparison.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<Comparison>,
 }
 
 #[derive(Debug, PartialEq, Serialize, utoipa::ToSchema)]
@@ -140,6 +176,22 @@ pub struct GroupedSeries {
     pub points: Vec<Point>,
     /// The whole window folded once, not the sum of the points.
     pub total: Option<f64>,
+    /// The window total beside the compared window's. A series is compared at
+    /// the total only; the points carry no comparison of their own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<Comparison>,
+}
+
+/// The compared window's value and the two ways of reading the change.
+#[derive(Debug, PartialEq, Serialize, utoipa::ToSchema)]
+pub struct Comparison {
+    /// What the same question answered over the compared window.
+    pub value: Option<f64>,
+    /// Current minus compared; absent when either side is unknown.
+    pub delta: Option<f64>,
+    /// Current over compared; absent when the compared value is unknown or
+    /// zero, which no ratio is defined against.
+    pub ratio: Option<f64>,
 }
 
 #[derive(Debug, PartialEq, Serialize, utoipa::ToSchema)]
@@ -221,20 +273,174 @@ mod tests {
     }
 
     #[test]
-    fn a_field_the_contract_does_not_declare_is_refused_rather_than_ignored() {
+    fn a_narrowed_and_compared_question_parses_from_the_shape_it_is_documented_as() {
         let body = serde_json::json!({
             "queries": [{
+                "metric": "git.commits",
+                "subjects": { "type": "persons", "ids": ["00000000-0000-0000-0000-000000000001"] },
+                "time": { "from": "2026-01-01", "to": "2026-01-31", "grain": "total" },
+                "filters": [
+                    { "dimension": "repository", "values": ["acme/app", "acme/api"] },
+                ],
+                "compare": { "offset": "previous_period" },
+                "fold": "per_subject",
+            }],
+        });
+
+        let parsed: ValuesRequest = serde_json::from_value(body).expect("the wire shape parses");
+
+        let query = &parsed.queries[0];
+        assert_eq!(query.filters[0].dimension, "repository");
+        assert_eq!(query.filters[0].values, ["acme/app", "acme/api"]);
+        assert_eq!(
+            query.compare.as_ref().map(|compare| compare.offset),
+            Some(CompareOffset::PreviousPeriod)
+        );
+    }
+
+    #[test]
+    fn every_offset_the_contract_names_parses() {
+        for (spelling, offset) in [
+            ("previous_period", CompareOffset::PreviousPeriod),
+            ("month", CompareOffset::Month),
+            ("quarter", CompareOffset::Quarter),
+            ("year", CompareOffset::Year),
+        ] {
+            let parsed: CompareOffset =
+                serde_json::from_value(serde_json::Value::String(spelling.to_owned()))
+                    .unwrap_or_else(|_| panic!("should parse: {spelling}"));
+
+            assert_eq!(parsed, offset);
+        }
+    }
+
+    #[test]
+    fn a_compared_answer_is_serialized_as_the_documented_shape() {
+        let response = ValuesResponse {
+            results: vec![QueryResult {
+                metric: "git.commits".to_owned(),
+                provenance: Provenance {
+                    executor: Executor::Semantic,
+                    definition_version: Some(4),
+                },
+                result: ResultBody::Values {
+                    values: vec![GroupedValue {
+                        subject: Some("00000000-0000-0000-0000-000000000001".to_owned()),
+                        group: None,
+                        value: Some(12.0),
+                        compare: Some(Comparison {
+                            value: Some(8.0),
+                            delta: Some(4.0),
+                            ratio: Some(1.5),
+                        }),
+                    }],
+                },
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&response).expect("the answer serializes"),
+            serde_json::json!({
+                "results": [{
+                    "metric": "git.commits",
+                    "provenance": { "executor": "semantic", "definition_version": 4 },
+                    "result": {
+                        "shape": "values",
+                        "values": [{
+                            "subject": "00000000-0000-0000-0000-000000000001",
+                            "value": 12.0,
+                            "compare": { "value": 8.0, "delta": 4.0, "ratio": 1.5 },
+                        }],
+                    },
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_compared_series_carries_its_comparison_beside_the_total_and_not_the_points() {
+        let response = ValuesResponse {
+            results: vec![QueryResult {
+                metric: "git.commits".to_owned(),
+                provenance: Provenance {
+                    executor: Executor::Semantic,
+                    definition_version: None,
+                },
+                result: ResultBody::Series {
+                    series: vec![GroupedSeries {
+                        subject: Some("00000000-0000-0000-0000-000000000001".to_owned()),
+                        group: None,
+                        points: vec![Point {
+                            date: "2026-01-05".to_owned(),
+                            value: Some(9.0),
+                        }],
+                        total: Some(9.0),
+                        compare: Some(Comparison {
+                            value: None,
+                            delta: None,
+                            ratio: None,
+                        }),
+                    }],
+                },
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&response).expect("the answer serializes"),
+            serde_json::json!({
+                "results": [{
+                    "metric": "git.commits",
+                    "provenance": { "executor": "semantic" },
+                    "result": {
+                        "shape": "series",
+                        "series": [{
+                            "subject": "00000000-0000-0000-0000-000000000001",
+                            "points": [{ "date": "2026-01-05", "value": 9.0 }],
+                            "total": 9.0,
+                            "compare": { "value": null, "delta": null, "ratio": null },
+                        }],
+                    },
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_field_the_contract_does_not_declare_is_refused_rather_than_ignored() {
+        let cases = [
+            serde_json::json!({
                 "metric": "git.commits",
                 "subjects": { "type": "tenant" },
                 "time": { "from": "2026-01-01", "to": "2026-01-31", "grain": "total" },
                 "split": { "dimensions": ["repository"], "bucket": "day" },
                 "fold": "combined",
-            }],
-        });
+            }),
+            serde_json::json!({
+                "metric": "git.commits",
+                "subjects": { "type": "tenant" },
+                "time": { "from": "2026-01-01", "to": "2026-01-31", "grain": "total" },
+                "filters": [{ "dimension": "repository", "values": ["x"], "op": "in" }],
+                "split": { "dimensions": ["repository"] },
+                "fold": "combined",
+            }),
+            serde_json::json!({
+                "metric": "git.commits",
+                "subjects": { "type": "tenant" },
+                "time": { "from": "2026-01-01", "to": "2026-01-31", "grain": "total" },
+                "compare": { "offset": "month", "baseline": "zero" },
+                "split": { "dimensions": ["repository"] },
+                "fold": "combined",
+            }),
+        ];
 
-        let parsed: Result<ValuesRequest, _> = serde_json::from_value(body);
+        for query in cases {
+            let named = query.to_string();
+            let body = serde_json::json!({ "queries": [query] });
 
-        assert!(parsed.is_err());
+            let parsed: Result<ValuesRequest, _> = serde_json::from_value(body);
+
+            assert!(parsed.is_err(), "should refuse: {named}");
+        }
     }
 
     #[test]
@@ -262,6 +468,7 @@ mod tests {
                                 value: Some(9.0),
                             }],
                             total: Some(9.0),
+                            compare: None,
                         },
                         GroupedSeries {
                             subject: Some("00000000-0000-0000-0000-000000000001".to_owned()),
@@ -271,6 +478,7 @@ mod tests {
                                 value: None,
                             }],
                             total: Some(2.0),
+                            compare: None,
                         },
                     ],
                 },
@@ -324,6 +532,7 @@ mod tests {
                         subject: None,
                         group: None,
                         value: None,
+                        compare: None,
                     }],
                 },
             }],

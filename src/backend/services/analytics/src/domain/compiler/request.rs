@@ -36,7 +36,7 @@ pub struct ResolvedPerson {
 }
 
 /// Narrows a read to named values of one of the measure's declared dimensions.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DimensionFilter {
     pub key: String,
     pub values: Vec<String>,

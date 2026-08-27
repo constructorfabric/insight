@@ -75,8 +75,8 @@ fn subject_total_sql(read: &ScopedRead) -> String {
 mod tests {
     use super::*;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile,
-        plain_subject_series, query, ratio, sized_measure, text,
+        compile, compile_err, derived, direct, lines, measure, metric, percent_of_total,
+        percentile, plain_subject_series, query, ratio, sized_measure, stddev, text,
     };
     use crate::domain::compiler::request::{Bucket, DimensionFilter, EntityScope};
     use crate::domain::compiler::sql::QueryParam;
@@ -275,6 +275,154 @@ mod tests {
     }
 
     #[test]
+    fn a_stddev_reads_the_sample_spread_of_the_measures_row_values_in_every_view() {
+        let sized = sized_measure("pr_size");
+        let cases = [
+            (ViewKind::SubjectTotal, "GROUP BY entity_id"),
+            (
+                plain_subject_series(),
+                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
+            ),
+        ];
+
+        for (view, expected_group) in cases {
+            let name = view.name();
+            let compiled = compile(
+                &metric(stddev("pr_size")),
+                std::slice::from_ref(&sized),
+                &query(view),
+            );
+
+            assert!(
+                compiled.sql.contains(
+                    "toFloat64(stddevSampIfOrNull(lines_added, lines_added IS NOT NULL)) AS value"
+                ),
+                "{name}: {}",
+                compiled.sql
+            );
+            assert!(compiled.sql.contains(expected_group), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_stddev_of_a_measure_that_folds_no_value_is_rejected() {
+        assert_eq!(
+            compile_err(
+                &metric(stddev("prs_merged")),
+                &[measure("prs_merged", None)],
+                &query(ViewKind::SubjectTotal)
+            ),
+            CompileError::DistributionWithoutValue {
+                metric: "git.merge_rate".to_owned(),
+                measure: "prs_merged".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_derived_metric_folds_every_input_in_one_scan_under_its_expression() {
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+        let opened = measure("prs_opened", None);
+        let metric = metric(derived(
+            &[("merged", "prs_merged"), ("opened", "prs_opened")],
+            "(opened - merged) / opened",
+        ));
+
+        let compiled = compile(&metric, &[merged, opened], &query(ViewKind::SubjectTotal));
+
+        assert_eq!(
+            compiled.sql,
+            lines(&[
+                "SELECT",
+                "    author_email AS entity_id,",
+                "    toFloat64(((countIfOrNull(1)) - (countIfOrNull(state = ?))) / (countIfOrNull(1))) AS value",
+                "FROM silver.class_git_pull_requests FINAL",
+                "WHERE tenant_id = ?",
+                "  AND toDate(closed_on) >= toDate(?)",
+                "  AND toDate(closed_on) <= toDate(?)",
+                "GROUP BY entity_id",
+                "LIMIT ?",
+            ])
+        );
+        assert_eq!(
+            compiled.params,
+            vec![
+                text("merged"),
+                text("acme-tenant"),
+                text("2026-01-01"),
+                text("2026-01-31"),
+                QueryParam::UInt(10_001),
+            ],
+            "each fold binds where the expression writes it"
+        );
+    }
+
+    #[test]
+    fn a_derived_metric_supports_every_view_a_ratio_does() {
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+        let opened = measure("prs_opened", None);
+        let metric = metric(derived(
+            &[("merged", "prs_merged"), ("opened", "prs_opened")],
+            "merged - opened",
+        ));
+
+        for view in [ViewKind::SubjectTotal, plain_subject_series()] {
+            let name = view.name();
+            let compiled = compile(&metric, &[merged.clone(), opened.clone()], &query(view));
+
+            assert!(
+                compiled
+                    .sql
+                    .contains("(countIfOrNull(state = ?)) - (countIfOrNull(1))"),
+                "{name}: {}",
+                compiled.sql
+            );
+            assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+        }
+
+        assert!(
+            matches!(
+                compile_err(&metric, &[merged, opened], &query(ViewKind::Bins)),
+                CompileError::UnsupportedView { view: "bins", .. }
+            ),
+            "a derived value is not a distribution over per-row values"
+        );
+    }
+
+    #[test]
+    fn a_derived_metric_over_measures_that_cannot_share_one_scan_is_rejected() {
+        let merged = measure("prs_merged", None);
+        let elsewhere = MeasureDefinition {
+            dataset: "git_commits".to_owned(),
+            event_time: "committed_on".to_owned(),
+            ..measure("commits", None)
+        };
+
+        assert_eq!(
+            compile_err(
+                &metric(derived(
+                    &[("merged", "prs_merged"), ("commits", "commits")],
+                    "merged + commits",
+                )),
+                &[merged, elsewhere],
+                &query(ViewKind::SubjectTotal)
+            ),
+            CompileError::InputsDisagree {
+                metric: "git.merge_rate".to_owned(),
+                first: "commits".to_owned(),
+                other: "prs_merged".to_owned(),
+                aspect: "the dataset they read",
+            }
+        );
+    }
+
+    #[test]
     fn a_subject_total_read_carries_no_bucket_and_a_subject_series_read_carries_a_total_row() {
         let sized = sized_measure("pr_size");
         let metric = metric(direct("pr_size"));
@@ -446,10 +594,10 @@ mod tests {
                     &[numerator.clone(), denominator],
                     &query(ViewKind::SubjectTotal)
                 ),
-                CompileError::RatioInputsDisagree {
+                CompileError::InputsDisagree {
                     metric: "git.merge_rate".to_owned(),
-                    numerator: "prs_merged".to_owned(),
-                    denominator: denominator_key,
+                    first: "prs_merged".to_owned(),
+                    other: denominator_key,
                     aspect,
                 },
                 "{aspect}"
@@ -465,7 +613,7 @@ mod tests {
                 &[measure("prs_merged", None)],
                 &query(ViewKind::SubjectTotal)
             ),
-            CompileError::PercentileWithoutValue {
+            CompileError::DistributionWithoutValue {
                 metric: "git.merge_rate".to_owned(),
                 measure: "prs_merged".to_owned(),
             }

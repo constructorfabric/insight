@@ -72,6 +72,38 @@ impl MetricCatalog {
         self.metrics.get(metric_key)
     }
 
+    /// The dimension keys a question may name for a metric. INVARIANT: a
+    /// metric's capability is derived, not declared — the intersection of its
+    /// inputs' dimension sets, so no view can name a key one input cannot
+    /// resolve.
+    pub(super) fn dimension_keys(&self, metric_key: &str) -> Vec<&str> {
+        let Some(metric) = self.metrics.get(metric_key) else {
+            return Vec::new();
+        };
+
+        let mut shared: Option<Vec<&str>> = None;
+        for key in metric.input_measures() {
+            let Some(measure) = self.measures.get(key) else {
+                return Vec::new();
+            };
+            let declared: Vec<&str> = measure
+                .dimensions
+                .iter()
+                .map(|binding| binding.key.as_str())
+                .collect();
+
+            shared = Some(match shared {
+                None => declared,
+                Some(shared) => shared
+                    .into_iter()
+                    .filter(|key| declared.contains(key))
+                    .collect(),
+            });
+        }
+
+        shared.unwrap_or_default()
+    }
+
     pub(super) fn compile(
         &self,
         metric: &MetricDefinition,

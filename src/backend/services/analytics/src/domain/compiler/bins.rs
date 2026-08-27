@@ -191,7 +191,7 @@ mod tests {
             CompileError::UnsupportedView {
                 metric: "git.merge_rate".to_owned(),
                 view: "bins",
-                reason: "it needs a percentile computation, which is the only one taken over the measure's own per-row values",
+                reason: "it needs a percentile or stddev computation, the only ones taken over the measure's own per-row values",
             }
         );
     }
@@ -204,7 +204,7 @@ mod tests {
                 &[measure("prs_merged", None)],
                 &query(ViewKind::Bins)
             ),
-            CompileError::PercentileWithoutValue {
+            CompileError::DistributionWithoutValue {
                 metric: "git.merge_rate".to_owned(),
                 measure: "prs_merged".to_owned(),
             }

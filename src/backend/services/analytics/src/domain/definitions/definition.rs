@@ -1,6 +1,8 @@
 //! The typed definition format: the shapes authored YAML and stored rows are
 //! serializations of.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::filter::FilterTree;
@@ -78,7 +80,8 @@ pub struct MeasureDefinition {
 }
 
 /// A percentile is metric-level because a percentile of pre-aggregated values
-/// is not a percentile.
+/// is not a percentile; a standard deviation is metric-level for the same
+/// reason.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Computation {
@@ -93,6 +96,15 @@ pub enum Computation {
         measure: String,
         /// The quantile to serve, in `(0, 1)`.
         quantile: f64,
+    },
+    Stddev {
+        measure: String,
+    },
+    /// Arithmetic over measures the expression names by alias.
+    Derived {
+        /// Alias to measure key. The alias is what `expr` may reference.
+        inputs: BTreeMap<String, String>,
+        expr: String,
     },
 }
 
@@ -215,15 +227,19 @@ impl Direction {
 }
 
 impl MetricDefinition {
+    /// Every measure the value is composed from, the grain measure first.
     pub fn input_measures(&self) -> Vec<&str> {
         match &self.computation {
-            Computation::Direct { measure } | Computation::Percentile { measure, .. } => {
+            Computation::Direct { measure }
+            | Computation::Percentile { measure, .. }
+            | Computation::Stddev { measure } => {
                 vec![measure.as_str()]
             }
             Computation::Ratio {
                 numerator,
                 denominator,
             } => vec![numerator.as_str(), denominator.as_str()],
+            Computation::Derived { inputs, .. } => inputs.values().map(String::as_str).collect(),
         }
     }
 }
@@ -295,6 +311,47 @@ dimensions:
             description: None,
         };
         assert_eq!(metric.input_measures(), ["merged", "created"]);
+    }
+
+    #[test]
+    fn every_computation_round_trips_through_the_json_a_stored_row_holds() {
+        let cases = [
+            "type: direct\nmeasure: commits\n",
+            "type: ratio\nnumerator: merged\ndenominator: created\n",
+            "type: percentile\nmeasure: pr_size\nquantile: 0.5\n",
+            "type: stddev\nmeasure: pr_size\n",
+            "type: derived\ninputs: { merged: prs_merged, created: prs_created }\nexpr: (created - merged) / created\n",
+        ];
+
+        for yaml in cases {
+            let parsed: Computation = serde_yaml::from_str(yaml).expect("parses");
+
+            let round_tripped: Computation =
+                serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
+
+            assert_eq!(round_tripped, parsed, "should round-trip: {yaml}");
+        }
+    }
+
+    #[test]
+    fn a_composed_computation_names_every_measure_it_reads() {
+        let derived: Computation = serde_yaml::from_str(
+            "type: derived\ninputs: { merged: prs_merged, created: prs_created }\nexpr: merged / created\n",
+        )
+        .expect("parses");
+        let metric = MetricDefinition {
+            key: "git.merge_rate".to_owned(),
+            computation: derived,
+            transform: None,
+            format: Format::Percent,
+            direction: Direction::HigherIsBetter,
+            entity_type: "person".to_owned(),
+            cohort_key: None,
+            label: None,
+            description: None,
+        };
+
+        assert_eq!(metric.input_measures(), ["prs_created", "prs_merged"]);
     }
 
     #[test]

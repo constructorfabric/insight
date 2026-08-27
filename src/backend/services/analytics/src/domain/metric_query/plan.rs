@@ -5,11 +5,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::NaiveDate;
 use uuid::Uuid;
 
 use crate::domain::compiler::request::{
-    Bucket, CombinedSplitView, EntityScope, GroupLimit, GroupRankingQuery, MetricQuery,
-    RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
+    Bucket, CombinedSplitView, DimensionFilter, EntityScope, GroupLimit, GroupRankingQuery,
+    MetricQuery, RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 use crate::domain::identity_binding::{IdentitySet, resolve_identities};
@@ -19,8 +20,33 @@ use super::dto::Grain;
 use super::error::QueryError;
 use super::group_cap::ranked_groups;
 use super::validation::{
-    QueryShape, ValidatedBatch, ValidatedQuery, ValidatedSplit, ValidatedSubjects, query_row_limit,
+    ComparedWindow, QueryShape, ValidatedBatch, ValidatedQuery, ValidatedSplit, ValidatedSubjects,
+    query_row_limit,
 };
+
+/// The statements one question runs: its own, and the compared window's when
+/// it asked for one.
+#[derive(Debug, PartialEq)]
+pub(super) struct PlannedQuery {
+    pub current: CompiledMeasureQuery,
+    pub compared: Option<CompiledMeasureQuery>,
+}
+
+/// The window one compiled read covers.
+#[derive(Debug, Clone, Copy)]
+struct Window {
+    from: NaiveDate,
+    to: NaiveDate,
+}
+
+impl From<ComparedWindow> for Window {
+    fn from(window: ComparedWindow) -> Self {
+        Self {
+            from: window.from,
+            to: window.to,
+        }
+    }
+}
 
 /// Everything a ranking read's answer depends on, beyond the request's own
 /// window. Two questions that agree on all of it share one read.
@@ -29,16 +55,19 @@ struct RankingKey {
     rank_metric_key: String,
     dimensions: Vec<String>,
     subjects: Vec<String>,
+    // INVARIANT: a narrowing changes which groups rank where, so two
+    // differently narrowed questions never share one ranking.
+    filters: Vec<DimensionFilter>,
     top: u32,
 }
 
 /// The statements one request runs, in the order its questions were asked.
-pub async fn plan(
+pub(super) async fn plan(
     catalog: &MetricCatalog,
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
     batch: &ValidatedBatch,
-) -> Result<Vec<CompiledMeasureQuery>, QueryError> {
+) -> Result<Vec<PlannedQuery>, QueryError> {
     let identities = identities(clickhouse, tenant_id, batch).await?;
 
     let mut rankings: BTreeMap<RankingKey, Vec<RankedGroup>> = BTreeMap::new();
@@ -46,7 +75,28 @@ pub async fn plan(
     for query in &batch.queries {
         let scope = entity_scope(&query.subjects, &identities);
         let limit = cap(catalog, clickhouse, tenant_id, &mut rankings, query, &scope).await?;
-        compiled.push(compile(catalog, tenant_id, query, scope, limit)?);
+        let window = Window {
+            from: query.from,
+            to: query.to,
+        };
+
+        // INVARIANT: both reads keep the groups the current window ranked, so
+        // a series compares against the same group it reports.
+        let current = compile(catalog, tenant_id, query, &scope, limit.clone(), window)?;
+        let compared = query
+            .compare
+            .map(|compared| {
+                compile(
+                    catalog,
+                    tenant_id,
+                    query,
+                    &scope,
+                    limit.clone(),
+                    compared.into(),
+                )
+            })
+            .transpose()?;
+        compiled.push(PlannedQuery { current, compared });
     }
     Ok(compiled)
 }
@@ -55,8 +105,9 @@ fn compile(
     catalog: &MetricCatalog,
     tenant_id: Uuid,
     query: &ValidatedQuery,
-    scope: EntityScope,
+    scope: &EntityScope,
     limit: Option<GroupLimit>,
+    window: Window,
 ) -> Result<CompiledMeasureQuery, QueryError> {
     // INVARIANT: validation refuses a metric the definitions do not carry, so
     // every planned question names one they do.
@@ -70,11 +121,11 @@ fn compile(
         metric,
         &MetricQuery {
             tenant_id: tenant_id.to_string(),
-            entity_scope: scope,
-            from: query.from,
-            to: query.to,
+            entity_scope: scope.clone(),
+            from: window.from,
+            to: window.to,
             bucket: bucket(query.grain),
-            dimension_filters: Vec::new(),
+            dimension_filters: query.filters.clone(),
             view: view(query, limit),
             row_limit: query_row_limit(),
         },
@@ -191,6 +242,7 @@ async fn cap(
         rank_metric_key: limit.rank_by.clone(),
         dimensions: dimensions.clone(),
         subjects: scoped_refs(scope),
+        filters: query.filters.clone(),
         top: limit.top,
     };
     if let Some(groups) = rankings.get(&key) {
@@ -205,7 +257,7 @@ async fn cap(
         entity_scope: scope.clone(),
         from: query.from,
         to: query.to,
-        dimension_filters: Vec::new(),
+        dimension_filters: query.filters.clone(),
         dimensions: dimensions.clone(),
         count: u64::from(limit.top),
     };
@@ -234,8 +286,6 @@ fn scoped_refs(scope: &EntityScope) -> Vec<String> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use chrono::NaiveDate;
-
     use super::super::catalog::product_metric_catalog;
     use super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, validated};
     use super::*;
@@ -256,13 +306,21 @@ mod tests {
         }])
     }
 
-    fn compiled(query: &ValidatedQuery, scope: EntityScope) -> CompiledMeasureQuery {
+    fn window(query: &ValidatedQuery) -> Window {
+        Window {
+            from: query.from,
+            to: query.to,
+        }
+    }
+
+    fn compiled(query: &ValidatedQuery, scope: &EntityScope) -> CompiledMeasureQuery {
         compile(
             product_metric_catalog().expect("loads"),
             tenant(),
             query,
             scope,
             None,
+            window(query),
         )
         .unwrap_or_else(|error| panic!("{:?} compiles: {error}", query.shape))
     }
@@ -289,7 +347,7 @@ mod tests {
         ];
 
         for (query, marker) in cases {
-            let sql = compiled(&query, people_scope()).sql;
+            let sql = compiled(&query, &people_scope()).sql;
 
             assert!(sql.contains(marker), "{:?}: {sql}", query.shape);
         }
@@ -304,7 +362,7 @@ mod tests {
         ] {
             let query = validated(QueryShape::SubjectSeries, grain, &[]);
 
-            let sql = compiled(&query, people_scope()).sql;
+            let sql = compiled(&query, &people_scope()).sql;
 
             assert!(sql.contains(marker), "{grain:?}: {sql}");
         }
@@ -314,7 +372,7 @@ mod tests {
     fn a_question_about_people_reaches_its_rows_through_the_pool_that_keys_them() {
         let query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
 
-        let compiled = compiled(&query, people_scope());
+        let compiled = compiled(&query, &people_scope());
 
         assert!(
             compiled.sql.contains("INNER JOIN pool ON pool.identity = "),
@@ -334,7 +392,7 @@ mod tests {
     fn a_tenant_question_reads_without_an_entity_predicate() {
         let query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
 
-        let compiled = compiled(&query, EntityScope::Tenant);
+        let compiled = compiled(&query, &EntityScope::Tenant);
 
         assert!(
             !compiled.sql.contains("INNER JOIN pool"),
@@ -343,6 +401,8 @@ mod tests {
         );
     }
 
+    /// Validation refuses an undeclared dimension before anything is planned;
+    /// this pins the compiler's own refusal, which is the backstop behind it.
     #[test]
     fn a_dimension_the_definitions_do_not_declare_does_not_compile() {
         let query = validated(QueryShape::SubjectSplit, Grain::Total, &["not_a_dimension"]);
@@ -351,8 +411,9 @@ mod tests {
             product_metric_catalog().expect("loads"),
             tenant(),
             &query,
-            people_scope(),
+            &people_scope(),
             None,
+            window(&query),
         )
         .expect_err("an undeclared dimension names no column");
 
@@ -470,6 +531,7 @@ mod tests {
                 rank_metric_key: SHIPPED_METRIC.to_owned(),
                 dimensions: vec!["repository".to_owned()],
                 subjects: vec![person().to_string()],
+                filters: Vec::new(),
                 top: 5,
             },
             vec![RankedGroup {
@@ -519,6 +581,54 @@ mod tests {
         assert_eq!(rankings.len(), 1);
     }
 
+    #[tokio::test]
+    async fn a_differently_narrowed_question_does_not_reuse_another_questions_ranking() {
+        let mut rankings = BTreeMap::from([(
+            RankingKey {
+                rank_metric_key: SHIPPED_METRIC.to_owned(),
+                dimensions: vec!["repository".to_owned()],
+                subjects: vec![person().to_string()],
+                filters: Vec::new(),
+                top: 5,
+            },
+            vec![RankedGroup {
+                rank: 1,
+                dimensions: vec![crate::domain::compiler::request::RankedDimension {
+                    value: "example/app".to_owned(),
+                    label: None,
+                }],
+            }],
+        )]);
+        let mut query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
+        query.split = Some(ValidatedSplit {
+            dimensions: vec!["repository".to_owned()],
+            limit: Some(super::super::validation::ValidatedSplitLimit {
+                top: 5,
+                rank_by: SHIPPED_METRIC.to_owned(),
+                remainder: true,
+            }),
+        });
+        query.filters = vec![DimensionFilter {
+            key: "repository".to_owned(),
+            values: vec!["example/app".to_owned()],
+        }];
+
+        let outcome = cap(
+            product_metric_catalog().expect("loads"),
+            &offline_clickhouse(),
+            tenant(),
+            &mut rankings,
+            &query,
+            &people_scope(),
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, Err(QueryError::SplitUnranked)),
+            "the narrowed question ranks its own groups rather than reusing the unnarrowed ones"
+        );
+    }
+
     #[test]
     fn a_cap_binds_its_groups_into_the_read_it_shapes() {
         let mut query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
@@ -535,7 +645,7 @@ mod tests {
             product_metric_catalog().expect("loads"),
             tenant(),
             &query,
-            EntityScope::Tenant,
+            &EntityScope::Tenant,
             Some(GroupLimit {
                 groups: vec![RankedGroup {
                     rank: 1,
@@ -546,6 +656,7 @@ mod tests {
                 }],
                 include_remainder: true,
             }),
+            window(&query),
         )
         .expect("a capped rollup compiles once its groups are ranked");
 
@@ -561,13 +672,89 @@ mod tests {
         assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
     }
 
+    /// A ratio metric, so both halves are read in one scan and a narrowing
+    /// that reached only one of them would be visible.
+    const COMPOSED_METRIC: &str = "git.merge_rate";
+
+    #[test]
+    fn a_filter_narrows_the_scan_every_input_of_the_metric_is_read_from() {
+        let mut query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+        query.metric_key = COMPOSED_METRIC.to_owned();
+        query.filters = vec![DimensionFilter {
+            key: "repository".to_owned(),
+            values: vec!["example/app".to_owned()],
+        }];
+
+        let compiled = compiled(&query, &people_scope());
+
+        assert_eq!(
+            compiled.sql.matches("repository IN (?)").count(),
+            1,
+            "one scan carries the narrowing both halves fold over: {}",
+            compiled.sql
+        );
+        assert!(
+            compiled.sql.contains("IfOrNull(") && compiled.sql.contains("nullIf("),
+            "the read folds two inputs: {}",
+            compiled.sql
+        );
+        assert!(
+            compiled
+                .params
+                .contains(&QueryParam::Text("example/app".to_owned())),
+            "the filter binds its value rather than writing it into the statement"
+        );
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    #[test]
+    fn a_compared_question_compiles_the_same_read_over_the_shifted_window() {
+        let mut query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+        query.compare = Some(ComparedWindow {
+            from: NaiveDate::from_ymd_opt(2025, 12, 1).expect("valid date"),
+            to: NaiveDate::from_ymd_opt(2025, 12, 31).expect("valid date"),
+        });
+
+        let current = compiled(&query, &people_scope());
+        let compared = compile(
+            product_metric_catalog().expect("loads"),
+            tenant(),
+            &query,
+            &people_scope(),
+            None,
+            query.compare.expect("the question compares").into(),
+        )
+        .expect("the compared window compiles");
+
+        assert_eq!(
+            compared.sql, current.sql,
+            "only the bound window differs between the two reads"
+        );
+        for bound in ["2025-12-01", "2025-12-31"] {
+            assert!(
+                compared
+                    .params
+                    .contains(&QueryParam::Text(bound.to_owned())),
+                "the compared read binds {bound}"
+            );
+        }
+        for bound in ["2026-01-01", "2026-01-31"] {
+            assert!(
+                !compared
+                    .params
+                    .contains(&QueryParam::Text(bound.to_owned())),
+                "the compared read leaves the current window behind"
+            );
+        }
+    }
+
     #[test]
     fn the_window_a_question_names_is_the_window_it_is_read_over() {
         let mut query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
         query.from = NaiveDate::from_ymd_opt(2026, 3, 1).expect("valid date");
         query.to = NaiveDate::from_ymd_opt(2026, 3, 31).expect("valid date");
 
-        let compiled = compiled(&query, people_scope());
+        let compiled = compiled(&query, &people_scope());
 
         for bound in ["2026-03-01", "2026-03-31"] {
             assert!(

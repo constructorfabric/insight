@@ -102,6 +102,24 @@ pub fn percentile(measure: &str, quantile: f64) -> Computation {
     }
 }
 
+pub fn stddev(measure: &str) -> Computation {
+    Computation::Stddev {
+        measure: measure.to_owned(),
+    }
+}
+
+/// A derived computation over `(alias, measure)` pairs and an expression that
+/// reads them.
+pub fn derived(inputs: &[(&str, &str)], expr: &str) -> Computation {
+    Computation::Derived {
+        inputs: inputs
+            .iter()
+            .map(|(alias, measure)| ((*alias).to_owned(), (*measure).to_owned()))
+            .collect(),
+        expr: expr.to_owned(),
+    }
+}
+
 pub fn percent_of_total() -> Transform {
     Transform {
         multiplier: Some(100.0),

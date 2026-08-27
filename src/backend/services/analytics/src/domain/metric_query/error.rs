@@ -34,8 +34,28 @@ pub enum QueryError {
     TooManySplitDimensions { limit: usize },
     #[error("dimension `{dimension}` is named twice")]
     DuplicateSplitDimension { dimension: String },
+    #[error("the metric declares no dimension `{dimension}` to split by")]
+    UnknownSplitDimension { dimension: String },
     #[error("a split keeps between 1 and {limit} groups")]
     SplitTopOutOfRange { limit: u32 },
+    #[error("a question carries at most {limit} filters")]
+    TooManyFilters { limit: usize },
+    #[error("the metric declares no dimension `{dimension}` to filter on")]
+    UnknownFilterDimension { dimension: String },
+    #[error("dimension `{dimension}` is filtered twice")]
+    DuplicateFilterDimension { dimension: String },
+    #[error("the filter on `{dimension}` names no value, so it can match no row")]
+    NoFilterValues { dimension: String },
+    #[error("the filter on `{dimension}` names at most {limit} values")]
+    TooManyFilterValues { dimension: String, limit: usize },
+    #[error("a filter value on `{dimension}` is {length} bytes; at most {limit} are read")]
+    FilterValueTooLong {
+        dimension: String,
+        limit: usize,
+        length: usize,
+    },
+    #[error("the compared window falls outside the range a date can express")]
+    CompareOutOfRange,
     /// A question nothing in the semantic layer can answer, as asked.
     #[error("{reason}")]
     Unanswerable { reason: &'static str },
@@ -65,9 +85,17 @@ impl QueryError {
             Self::NoSplitDimensions
             | Self::TooManySplitDimensions { .. }
             | Self::DuplicateSplitDimension { .. }
-            | Self::Uncompilable(_) => "queries.split.dimensions",
+            | Self::UnknownSplitDimension { .. } => "queries.split.dimensions",
             Self::SplitTopOutOfRange { .. } => "queries.split.limit.top",
-            Self::NoQueries
+            Self::TooManyFilters { .. }
+            | Self::UnknownFilterDimension { .. }
+            | Self::DuplicateFilterDimension { .. }
+            | Self::NoFilterValues { .. }
+            | Self::TooManyFilterValues { .. }
+            | Self::FilterValueTooLong { .. } => "queries.filters",
+            Self::CompareOutOfRange => "queries.compare",
+            Self::Uncompilable(_)
+            | Self::NoQueries
             | Self::TooManyQueries { .. }
             | Self::Unanswerable { .. }
             | Self::ResultTooLarge { .. }
@@ -106,7 +134,15 @@ impl From<QueryError> for CanonicalError {
             | QueryError::NoSplitDimensions
             | QueryError::TooManySplitDimensions { .. }
             | QueryError::DuplicateSplitDimension { .. }
+            | QueryError::UnknownSplitDimension { .. }
             | QueryError::SplitTopOutOfRange { .. }
+            | QueryError::TooManyFilters { .. }
+            | QueryError::UnknownFilterDimension { .. }
+            | QueryError::DuplicateFilterDimension { .. }
+            | QueryError::NoFilterValues { .. }
+            | QueryError::TooManyFilterValues { .. }
+            | QueryError::FilterValueTooLong { .. }
+            | QueryError::CompareOutOfRange
             | QueryError::Unanswerable { .. }
             | QueryError::Uncompilable(_) => MetricError::invalid_argument()
                 .with_field_violation(error.field(), error.to_string(), "INVALID")

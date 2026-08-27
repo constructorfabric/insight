@@ -6,7 +6,7 @@
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::domain::compiler::sql::CompiledMeasureQuery;
+use serde::de::DeserializeOwned;
 
 use super::assemble::{
     CombinedValueRow, SubjectSeriesRow, SubjectValueRow, combined_values, subject_series,
@@ -16,7 +16,7 @@ use super::catalog::MetricCatalog;
 use super::dto::{QueryResult, ResultBody, ValuesResponse};
 use super::error::QueryError;
 use super::execute::fetch;
-use super::plan::plan;
+use super::plan::{PlannedQuery, plan};
 use super::provenance::{metric_versions, provenance};
 use super::validation::{QueryShape, ValidatedBatch, ValidatedQuery, row_limit};
 
@@ -58,11 +58,10 @@ pub async fn answer(
 async fn read_all(
     clickhouse: &insight_clickhouse::Client,
     batch: &ValidatedBatch,
-    compiled: &[CompiledMeasureQuery],
+    compiled: &[PlannedQuery],
 ) -> Result<Vec<ResultBody>, QueryError> {
     let mut bodies = Vec::with_capacity(compiled.len());
-    let pairs: Vec<(&ValidatedQuery, &CompiledMeasureQuery)> =
-        batch.queries.iter().zip(compiled).collect();
+    let pairs: Vec<(&ValidatedQuery, &PlannedQuery)> = batch.queries.iter().zip(compiled).collect();
 
     for chunk in pairs.chunks(QUERY_CONCURRENCY) {
         let reads = chunk
@@ -78,7 +77,7 @@ async fn read_all(
 async fn body(
     clickhouse: &insight_clickhouse::Client,
     query: &ValidatedQuery,
-    compiled: &CompiledMeasureQuery,
+    planned: &PlannedQuery,
 ) -> Result<ResultBody, QueryError> {
     let comment = format!(
         "metric-values:{}:{}",
@@ -89,18 +88,41 @@ async fn body(
 
     match query.shape {
         QueryShape::SubjectTotal | QueryShape::SubjectSplit => {
-            let rows = fetch::<SubjectValueRow>(clickhouse, compiled, &comment).await?;
-            subject_values(bounded(rows)?, dimensions)
+            let (rows, compared) =
+                read_both::<SubjectValueRow>(clickhouse, planned, &comment).await?;
+            subject_values(rows, compared, dimensions)
         }
         QueryShape::CombinedSplit => {
-            let rows = fetch::<CombinedValueRow>(clickhouse, compiled, &comment).await?;
-            combined_values(bounded(rows)?, dimensions)
+            let (rows, compared) =
+                read_both::<CombinedValueRow>(clickhouse, planned, &comment).await?;
+            combined_values(rows, compared, dimensions)
         }
         QueryShape::SubjectSeries => {
-            let rows = fetch::<SubjectSeriesRow>(clickhouse, compiled, &comment).await?;
-            subject_series(bounded(rows)?, dimensions)
+            let (rows, compared) =
+                read_both::<SubjectSeriesRow>(clickhouse, planned, &comment).await?;
+            subject_series(rows, compared, dimensions)
         }
     }
+}
+
+/// The question's own rows, and the compared window's when it asked for one.
+/// Both are read before either is assembled, so a comparison is never half-read.
+async fn read_both<T>(
+    clickhouse: &insight_clickhouse::Client,
+    planned: &PlannedQuery,
+    comment: &str,
+) -> Result<(Vec<T>, Option<Vec<T>>), QueryError>
+where
+    T: DeserializeOwned,
+{
+    let rows = bounded(fetch::<T>(clickhouse, &planned.current, comment).await?)?;
+    let Some(compared) = &planned.compared else {
+        return Ok((rows, None));
+    };
+
+    let compared_comment = format!("{comment}:compared");
+    let compared = bounded(fetch::<T>(clickhouse, compared, &compared_comment).await?)?;
+    Ok((rows, Some(compared)))
 }
 
 /// INVARIANT: the read binds one row over the ceiling, so an answer past it is
@@ -124,6 +146,8 @@ fn shape_name(shape: QueryShape) -> &'static str {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use crate::domain::compiler::sql::CompiledMeasureQuery;
+
     use super::super::dto::Grain;
     use super::super::fixtures::{offline_clickhouse, validated};
     use super::*;
@@ -155,12 +179,19 @@ mod tests {
         ));
     }
 
+    fn planned() -> PlannedQuery {
+        PlannedQuery {
+            current: CompiledMeasureQuery {
+                sql: "SELECT 1".to_owned(),
+                params: Vec::new(),
+            },
+            compared: None,
+        }
+    }
+
     #[tokio::test]
     async fn every_shape_reads_and_fails_as_its_own_question() {
-        let compiled = CompiledMeasureQuery {
-            sql: "SELECT 1".to_owned(),
-            params: Vec::new(),
-        };
+        let compiled = planned();
 
         for shape in [
             QueryShape::SubjectTotal,
@@ -188,16 +219,7 @@ mod tests {
                 query(QueryShape::SubjectSeries),
             ],
         };
-        let compiled = vec![
-            CompiledMeasureQuery {
-                sql: "SELECT 1".to_owned(),
-                params: Vec::new(),
-            },
-            CompiledMeasureQuery {
-                sql: "SELECT 1".to_owned(),
-                params: Vec::new(),
-            },
-        ];
+        let compiled = vec![planned(), planned()];
 
         let outcome = read_all(&offline_clickhouse(), &batch, &compiled).await;
 

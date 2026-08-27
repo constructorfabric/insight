@@ -72,16 +72,42 @@ mod product_tests {
     }
 
     impl Shipped {
+        /// The measure the one scan is grained by, which every other input
+        /// agrees with on dataset, entity and event time.
         fn grain(&self, metric: &MetricDefinition) -> &MeasureDefinition {
-            let key = match &metric.computation {
-                Computation::Direct { measure } | Computation::Percentile { measure, .. } => {
-                    measure
-                }
-                Computation::Ratio { numerator, .. } => numerator,
-            };
+            let key = *metric
+                .input_measures()
+                .first()
+                .expect("a shipped metric composes at least one measure");
             self.measures
                 .get(key)
                 .expect("a shipped metric reads a shipped measure")
+        }
+
+        /// INVARIANT: a metric's dimension capability is the intersection of
+        /// its inputs' sets, so a view may only name a key all of them declare.
+        fn shared_dimensions(&self, metric: &MetricDefinition) -> Vec<String> {
+            let mut shared: Option<Vec<String>> = None;
+            for key in metric.input_measures() {
+                let declared: Vec<String> = self
+                    .measures
+                    .get(key)
+                    .expect("a shipped metric reads a shipped measure")
+                    .dimensions
+                    .iter()
+                    .map(|binding| binding.key.clone())
+                    .collect();
+
+                shared = Some(match shared {
+                    None => declared,
+                    Some(shared) => shared
+                        .into_iter()
+                        .filter(|key| declared.contains(key))
+                        .collect(),
+                });
+            }
+
+            shared.unwrap_or_default()
         }
 
         fn compile(
@@ -195,12 +221,20 @@ mod product_tests {
         })
     }
 
+    /// The computations taken over a measure's own per-row values, which are
+    /// the only ones a histogram can bin.
+    fn binnable(metric: &MetricDefinition) -> bool {
+        matches!(
+            metric.computation,
+            Computation::Percentile { .. } | Computation::Stddev { .. }
+        )
+    }
+
     fn supported_views(shipped: &Shipped, metric: &MetricDefinition) -> Vec<ViewKind> {
-        let grain = shipped.grain(metric);
         let mut views = vec![ViewKind::SubjectTotal, subject_series(Vec::new(), None)];
 
-        if let Some(binding) = grain.dimensions.first() {
-            let dimensions = vec![binding.key.clone()];
+        if let Some(key) = shipped.shared_dimensions(metric).first() {
+            let dimensions = vec![key.clone()];
             views.push(subject_series(dimensions.clone(), None));
             views.push(subject_series(dimensions.clone(), Some(group_cap())));
             views.push(ViewKind::SubjectSplit(SubjectSplitView {
@@ -215,7 +249,7 @@ mod product_tests {
                 dimensions,
             }));
         }
-        if matches!(metric.computation, Computation::Percentile { .. }) {
+        if binnable(metric) {
             views.push(ViewKind::Bins);
         }
         if let Some(cohort_key) = &metric.cohort_key {
@@ -306,7 +340,7 @@ mod product_tests {
         for metric in &shipped.metrics {
             let compiled = shipped.compile(metric, ViewKind::Bins);
 
-            if matches!(metric.computation, Computation::Percentile { .. }) {
+            if binnable(metric) {
                 assert!(compiled.is_ok(), "metric `{}`", metric.key);
             } else {
                 assert!(
@@ -398,10 +432,7 @@ mod product_tests {
                         metric.key
                     )
                 });
-                let expected = match metric.computation {
-                    Computation::Direct { .. } | Computation::Percentile { .. } => 1,
-                    Computation::Ratio { .. } => 2,
-                };
+                let expected = metric.input_measures().len();
                 assert_eq!(pages.len(), expected, "metric `{}`", metric.key);
 
                 for page in pages {
@@ -494,7 +525,8 @@ mod product_tests {
         let shipped = shipped();
 
         for metric in &shipped.metrics {
-            let Some(binding) = shipped.grain(metric).dimensions.first() else {
+            let shared = shipped.shared_dimensions(metric);
+            let Some(key) = shared.first() else {
                 continue;
             };
             for scope in scopes() {
@@ -504,7 +536,7 @@ mod product_tests {
                     from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
                     to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
                     dimension_filters: Vec::new(),
-                    dimensions: vec![binding.key.clone()],
+                    dimensions: vec![key.clone()],
                     count: 10,
                 };
 

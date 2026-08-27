@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::domain::definitions::definition::{
     Computation, MeasureDefinition, MetricDefinition, Transform,
 };
+use crate::domain::definitions::expr::{ScalarExpr, validate_scalar_expr};
 use crate::domain::definitions::filter::FilterTree;
 use crate::domain::field_catalog::model::{CatalogDataset, FieldCatalog};
 
@@ -32,10 +33,11 @@ pub(super) struct ScopedRead {
 }
 
 pub(super) struct Fold<'a> {
-    /// A ratio folds two measures in one scan, and the numerator owns the
-    /// grain both halves are read at.
+    /// A composed metric folds every input in one scan, and the first input
+    /// owns the grain all of them are read at.
     pub grain: &'a MeasureDefinition,
-    /// Absent for a ratio, which keeps both measures' filters in its folds.
+    /// Absent for a composed metric, which keeps each input's filter in its
+    /// own fold.
     pub where_filter: Option<&'a FilterTree>,
     kind: FoldKind<'a>,
 }
@@ -50,11 +52,20 @@ enum FoldKind<'a> {
         measure: &'a MeasureDefinition,
         quantile: f64,
     },
+    Deviation {
+        measure: &'a MeasureDefinition,
+    },
+    Derived {
+        /// Each input under the alias the expression names it by, in the order
+        /// the metric declares them.
+        inputs: Vec<(&'a str, &'a MeasureDefinition)>,
+        expr: Box<ScalarExpr>,
+    },
 }
 
 impl<'a> Fold<'a> {
     pub fn resolve(
-        metric: &MetricDefinition,
+        metric: &'a MetricDefinition,
         measures: &'a BTreeMap<String, MeasureDefinition>,
     ) -> Result<Self, CompileError> {
         let input = |key: &str| {
@@ -81,7 +92,7 @@ impl<'a> Fold<'a> {
             } => {
                 let numerator = input(numerator)?;
                 let denominator = input(denominator)?;
-                agree_on(metric, numerator, denominator)?;
+                agree_on(metric, &[numerator, denominator])?;
                 Ok(Self {
                     grain: numerator,
                     where_filter: None,
@@ -99,6 +110,42 @@ impl<'a> Fold<'a> {
                     kind: FoldKind::Quantile {
                         measure,
                         quantile: *quantile,
+                    },
+                })
+            }
+            Computation::Stddev { measure } => {
+                let measure = input(measure)?;
+                Ok(Self {
+                    grain: measure,
+                    where_filter: measure.filter.as_ref(),
+                    kind: FoldKind::Deviation { measure },
+                })
+            }
+            Computation::Derived { inputs, expr } => {
+                let resolved = inputs
+                    .iter()
+                    .map(|(alias, key)| Ok((alias.as_str(), input(key)?)))
+                    .collect::<Result<Vec<_>, CompileError>>()?;
+                let measures: Vec<&MeasureDefinition> =
+                    resolved.iter().map(|(_, measure)| *measure).collect();
+                let Some(grain) = measures.first().copied() else {
+                    return Err(CompileError::NoInputs {
+                        metric: metric.key.clone(),
+                    });
+                };
+                agree_on(metric, &measures)?;
+
+                Ok(Self {
+                    grain,
+                    where_filter: None,
+                    kind: FoldKind::Derived {
+                        inputs: resolved,
+                        expr: Box::new(validate_scalar_expr(expr).map_err(|source| {
+                            CompileError::MalformedExpr {
+                                metric: metric.key.clone(),
+                                source,
+                            }
+                        })?),
                     },
                 })
             }
@@ -143,16 +190,20 @@ impl<'a> Fold<'a> {
     }
 
     /// The measures the value is computed from, each tagged with the part it
-    /// plays, so a ratio's two halves stay distinguishable.
-    pub fn inputs(&self) -> Vec<(&'static str, &'a MeasureDefinition)> {
-        match self.kind {
-            FoldKind::Aggregate(measure) | FoldKind::Quantile { measure, .. } => {
+    /// plays, so a composed metric's inputs stay distinguishable. A derived
+    /// input plays the part its own alias names.
+    pub fn inputs(&self) -> Vec<(&'a str, &'a MeasureDefinition)> {
+        match &self.kind {
+            FoldKind::Aggregate(measure)
+            | FoldKind::Quantile { measure, .. }
+            | FoldKind::Deviation { measure } => {
                 vec![(ROLE_VALUE, measure)]
             }
             FoldKind::Ratio {
                 numerator,
                 denominator,
             } => vec![(ROLE_NUMERATOR, numerator), (ROLE_DENOMINATOR, denominator)],
+            FoldKind::Derived { inputs, .. } => inputs.clone(),
         }
     }
 
@@ -162,7 +213,7 @@ impl<'a> Fold<'a> {
         metric: &MetricDefinition,
         params: &mut Vec<QueryParam>,
     ) -> Result<String, CompileError> {
-        let value = match self.kind {
+        let value = match &self.kind {
             FoldKind::Aggregate(measure) => aggregate_expr(measure)?,
             FoldKind::Ratio {
                 numerator,
@@ -188,6 +239,38 @@ impl<'a> Fold<'a> {
                 let value = self.row_value_expr(metric)?;
                 format!("quantileExact({quantile})({value})")
             }
+            FoldKind::Deviation { .. } => {
+                // INVARIANT: this ranks the measure's own per-row values, and
+                // a spread nothing was observed for reads NULL, never zero.
+                let value = self.row_value_expr(metric)?;
+                format!("stddevSampIfOrNull({value}, {value} IS NOT NULL)")
+            }
+            FoldKind::Derived { inputs, expr } => {
+                // INVARIANT: an input that matched no row folds to NULL and
+                // arithmetic propagates it, so the value stays unknown.
+                let mut folded = Vec::with_capacity(expr.references.len());
+                for alias in &expr.references {
+                    let (_, measure) =
+                        inputs
+                            .iter()
+                            .find(|(name, _)| name == alias)
+                            .ok_or_else(|| CompileError::UnknownDerivedInput {
+                                metric: metric.key.clone(),
+                                alias: alias.clone(),
+                            })?;
+                    folded.push(conditional_aggregate_expr(
+                        measure,
+                        &fold_condition(measure, params)?,
+                        EmptyFold::Null,
+                    )?);
+                }
+
+                expr.render(&folded)
+                    .map_err(|source| CompileError::MalformedExpr {
+                        metric: metric.key.clone(),
+                        source,
+                    })?
+            }
         };
 
         Ok(format!("toFloat64({value})"))
@@ -196,26 +279,26 @@ impl<'a> Fold<'a> {
     /// The per-row value the fold ranks; only a distribution over per-row
     /// values has one.
     pub fn row_value_expr(&self, metric: &MetricDefinition) -> Result<&'a str, CompileError> {
-        match self.kind {
-            FoldKind::Quantile { measure, .. } => {
-                measure
-                    .value_expr
-                    .as_deref()
-                    .ok_or_else(|| CompileError::PercentileWithoutValue {
-                        metric: metric.key.clone(),
-                        measure: measure.key.clone(),
-                    })
+        match &self.kind {
+            FoldKind::Quantile { measure, .. } | FoldKind::Deviation { measure } => measure
+                .value_expr
+                .as_deref()
+                .ok_or_else(|| CompileError::DistributionWithoutValue {
+                    metric: metric.key.clone(),
+                    measure: measure.key.clone(),
+                }),
+            FoldKind::Aggregate(_) | FoldKind::Ratio { .. } | FoldKind::Derived { .. } => {
+                Err(CompileError::UnsupportedView {
+                    metric: metric.key.clone(),
+                    view: "bins",
+                    reason: "it needs a percentile or stddev computation, the only ones taken over the measure's own per-row values",
+                })
             }
-            FoldKind::Aggregate(_) | FoldKind::Ratio { .. } => Err(CompileError::UnsupportedView {
-                metric: metric.key.clone(),
-                view: "bins",
-                reason: "it needs a percentile computation, which is the only one taken over the measure's own per-row values",
-            }),
         }
     }
 }
 
-/// The rows one half of a ratio folds over, as an aggregate-function condition.
+/// The rows one input folds over, as an aggregate-function condition.
 fn fold_condition(
     measure: &MeasureDefinition,
     params: &mut Vec<QueryParam>,
@@ -226,32 +309,35 @@ fn fold_condition(
     }
 }
 
-/// INVARIANT: one scan is grained one way only, so a ratio's two halves must
-/// read the same rows about the same subject at the same time.
-fn agree_on(
-    metric: &MetricDefinition,
-    numerator: &MeasureDefinition,
-    denominator: &MeasureDefinition,
-) -> Result<(), CompileError> {
-    let disagreement = if numerator.dataset != denominator.dataset {
-        Some("the dataset they read")
-    } else if numerator.entity != denominator.entity {
-        Some("the field they identify an entity by")
-    } else if numerator.event_time != denominator.event_time {
-        Some("the field they take an event time from")
-    } else {
-        None
+/// INVARIANT: one scan is grained one way only, so every input of a composed
+/// metric must read the same rows about the same subject at the same time.
+fn agree_on(metric: &MetricDefinition, inputs: &[&MeasureDefinition]) -> Result<(), CompileError> {
+    let Some((first, rest)) = inputs.split_first() else {
+        return Ok(());
     };
 
-    match disagreement {
-        None => Ok(()),
-        Some(aspect) => Err(CompileError::RatioInputsDisagree {
-            metric: metric.key.clone(),
-            numerator: numerator.key.clone(),
-            denominator: denominator.key.clone(),
-            aspect,
-        }),
+    for other in rest {
+        let disagreement = if first.dataset != other.dataset {
+            Some("the dataset they read")
+        } else if first.entity != other.entity {
+            Some("the field they identify an entity by")
+        } else if first.event_time != other.event_time {
+            Some("the field they take an event time from")
+        } else {
+            None
+        };
+
+        if let Some(aspect) = disagreement {
+            return Err(CompileError::InputsDisagree {
+                metric: metric.key.clone(),
+                first: first.key.clone(),
+                other: other.key.clone(),
+                aspect,
+            });
+        }
     }
+
+    Ok(())
 }
 
 /// INVARIANT: the row ceiling binds last, after everything the read wrote.

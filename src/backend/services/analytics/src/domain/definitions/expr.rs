@@ -1,7 +1,8 @@
-//! Scalar-expression validator for measure `value_expr` / `subject_expr`
-//! fragments: parsed with sqlparser's ClickHouse dialect, and admitted only if
-//! the AST holds nothing but bare column references, literals, arithmetic and
-//! functions on [`ALLOWED_FUNCTIONS`].
+//! Scalar-expression validator for measure operands and for a derived metric's
+//! expression over its input aliases: parsed with sqlparser's ClickHouse
+//! dialect, admitted only if the AST holds nothing but bare references,
+//! literals, arithmetic and functions on [`ALLOWED_FUNCTIONS`], and renderable
+//! back out with each reference replaced by SQL of the caller's own.
 
 use std::collections::BTreeSet;
 
@@ -33,11 +34,33 @@ pub enum ScalarExprError {
     Subquery,
     #[error("{0} is not allowed in a scalar expression")]
     UnsupportedConstruct(&'static str),
+    #[error("the expression makes {expected} references and {found} were substituted")]
+    SubstitutionArity { expected: usize, found: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScalarExpr {
     pub columns: BTreeSet<String>,
+    /// Every reference in the order the expression writes it, so a caller
+    /// substituting them binds its parameters in statement order.
+    pub references: Vec<String>,
+    ast: Expr,
+}
+
+impl ScalarExpr {
+    /// The expression written back out from the admitted AST, its `i`-th
+    /// reference replaced by the `i`-th substitution and parenthesized.
+    pub fn render(&self, substitutions: &[String]) -> Result<String, ScalarExprError> {
+        if substitutions.len() != self.references.len() {
+            return Err(ScalarExprError::SubstitutionArity {
+                expected: self.references.len(),
+                found: substitutions.len(),
+            });
+        }
+
+        let mut next = 0;
+        render(&self.ast, substitutions, &mut next)
+    }
 }
 
 pub fn validate_scalar_expr(input: &str) -> Result<ScalarExpr, ScalarExprError> {
@@ -54,18 +77,54 @@ pub fn validate_scalar_expr(input: &str) -> Result<ScalarExpr, ScalarExprError> 
     if parser.peek_token().token != Token::EOF {
         return Err(ScalarExprError::TrailingInput);
     }
-    let mut columns = BTreeSet::new();
-    walk(&expr, &mut columns)?;
-    Ok(ScalarExpr { columns })
+    let mut references = Vec::new();
+    walk(&expr, &mut references)?;
+    Ok(ScalarExpr {
+        columns: references.iter().cloned().collect(),
+        references,
+        ast: expr,
+    })
 }
 
-fn walk(expr: &Expr, columns: &mut BTreeSet<String>) -> Result<(), ScalarExprError> {
+/// INVARIANT: this and [`render`] traverse in the same order, so the `i`-th
+/// reference collected here is the `i`-th one written back out.
+fn render(
+    expr: &Expr,
+    substitutions: &[String],
+    next: &mut usize,
+) -> Result<String, ScalarExprError> {
+    match expr {
+        Expr::Identifier(_) => {
+            let Some(substitution) = substitutions.get(*next) else {
+                return Err(ScalarExprError::SubstitutionArity {
+                    expected: *next + 1,
+                    found: substitutions.len(),
+                });
+            };
+            *next += 1;
+            Ok(format!("({substitution})"))
+        }
+        Expr::Value(value) => Ok(value.to_string()),
+        Expr::BinaryOp { left, op, right } => Ok(format!(
+            "{} {op} {}",
+            render(left, substitutions, next)?,
+            render(right, substitutions, next)?
+        )),
+        Expr::UnaryOp { op, expr } => Ok(format!("{op}{}", render(expr, substitutions, next)?)),
+        Expr::Nested(inner) => Ok(format!("({})", render(inner, substitutions, next)?)),
+        _ => Err(ScalarExprError::UnsupportedConstruct(
+            "an unsupported expression construct",
+        )),
+    }
+}
+
+fn walk(expr: &Expr, references: &mut Vec<String>) -> Result<(), ScalarExprError> {
     match expr {
         Expr::Identifier(ident) => {
             if ident.quote_style.is_some() {
                 return Err(ScalarExprError::QuotedIdentifier);
             }
-            columns.insert(ident.value.clone());
+            references.push(ident.value.clone());
             Ok(())
         }
         Expr::CompoundIdentifier(_) => Err(ScalarExprError::QualifiedColumn),
@@ -74,14 +133,14 @@ fn walk(expr: &Expr, columns: &mut BTreeSet<String>) -> Result<(), ScalarExprErr
             if !is_arithmetic(op) {
                 return Err(ScalarExprError::NonArithmeticOperator(op.to_string()));
             }
-            walk(left, columns)?;
-            walk(right, columns)
+            walk(left, references)?;
+            walk(right, references)
         }
         Expr::UnaryOp { op, expr } => match op {
-            UnaryOperator::Plus | UnaryOperator::Minus => walk(expr, columns),
+            UnaryOperator::Plus | UnaryOperator::Minus => walk(expr, references),
             other => Err(ScalarExprError::NonArithmeticOperator(other.to_string())),
         },
-        Expr::Nested(inner) => walk(inner, columns),
+        Expr::Nested(inner) => walk(inner, references),
         Expr::Function(function) => {
             let name = function.name.to_string();
             if ALLOWED_FUNCTIONS
@@ -227,5 +286,50 @@ mod tests {
     #[test]
     fn empty_input_is_rejected() {
         assert_eq!(validate_scalar_expr("  "), Err(ScalarExprError::Empty));
+    }
+
+    #[test]
+    fn references_are_collected_in_the_order_the_expression_writes_them() {
+        let parsed = validate_scalar_expr("(b + a) / b").expect("validates");
+
+        assert_eq!(parsed.references, ["b", "a", "b"]);
+        assert_eq!(
+            parsed.columns.into_iter().collect::<Vec<_>>(),
+            ["a", "b"],
+            "the column set stays deduplicated"
+        );
+    }
+
+    #[test]
+    fn rendering_substitutes_each_reference_in_place_and_parenthesizes_it() {
+        let cases = [
+            ("a / b", vec!["X", "Y"], "(X) / (Y)"),
+            ("(a + b) * 2", vec!["X", "Y"], "((X) + (Y)) * 2"),
+            ("-a", vec!["X"], "-(X)"),
+            ("a - a", vec!["X", "X"], "(X) - (X)"),
+            ("a % 7 + 1.5", vec!["X"], "(X) % 7 + 1.5"),
+        ];
+
+        for (input, substitutions, expected) in cases {
+            let parsed = validate_scalar_expr(input).expect("validates");
+            let substitutions: Vec<String> = substitutions.into_iter().map(str::to_owned).collect();
+
+            let rendered = parsed.render(&substitutions).expect("renders");
+
+            assert_eq!(rendered, expected, "should render: {input}");
+        }
+    }
+
+    #[test]
+    fn rendering_with_the_wrong_number_of_substitutions_is_rejected() {
+        let parsed = validate_scalar_expr("a / b").expect("validates");
+
+        assert_eq!(
+            parsed.render(&["X".to_owned()]),
+            Err(ScalarExprError::SubstitutionArity {
+                expected: 2,
+                found: 1,
+            })
+        );
     }
 }

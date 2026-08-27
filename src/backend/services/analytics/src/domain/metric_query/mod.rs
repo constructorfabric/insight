@@ -50,10 +50,12 @@ mod fixtures {
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
             grain,
+            filters: Vec::new(),
             split: (!dimensions.is_empty()).then(|| ValidatedSplit {
                 dimensions: dimensions.iter().map(|key| (*key).to_owned()).collect(),
                 limit: None,
             }),
+            compare: None,
             shape,
         }
     }

@@ -93,6 +93,59 @@
         ],
         "type": "string"
       },
+      "Compare": {
+        "additionalProperties": false,
+        "description": "Asks the same question again over an earlier window, and reports the change.",
+        "properties": {
+          "offset": {
+            "$ref": "#/components/schemas/CompareOffset"
+          }
+        },
+        "required": [
+          "offset"
+        ],
+        "type": "object"
+      },
+      "CompareOffset": {
+        "description": "How far back the compared window sits: `previous_period` shifts it by its\nown length, and a calendar offset shifts both endpoints, clamping a day the\nearlier month does not have to that month's last day.",
+        "enum": [
+          "previous_period",
+          "month",
+          "quarter",
+          "year"
+        ],
+        "type": "string"
+      },
+      "Comparison": {
+        "description": "The compared window's value and the two ways of reading the change.",
+        "properties": {
+          "delta": {
+            "description": "Current minus compared; absent when either side is unknown.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ratio": {
+            "description": "Current over compared; absent when the compared value is unknown or\nzero, which no ratio is defined against.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "value": {
+            "description": "What the same question answered over the compared window.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "ComputationDto": {
         "oneOf": [
           {
@@ -466,6 +519,27 @@
         ],
         "type": "object"
       },
+      "DimensionFilter": {
+        "additionalProperties": false,
+        "description": "Keeps only the rows whose dimension holds one of the named values.",
+        "properties": {
+          "dimension": {
+            "description": "A dimension key the metric's grain measure declares.",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "dimension",
+          "values"
+        ],
+        "type": "object"
+      },
       "EntityType": {
         "enum": [
           "person",
@@ -694,6 +768,17 @@
       },
       "GroupedSeries": {
         "properties": {
+          "compare": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Comparison",
+                "description": "The window total beside the compared window's. A series is compared at\nthe total only; the points carry no comparison of their own."
+              }
+            ]
+          },
           "group": {
             "oneOf": [
               {
@@ -717,7 +802,7 @@
             ]
           },
           "total": {
-            "description": "The whole window folded once, which is not the sum of the points for\nevery computation.",
+            "description": "The whole window folded once, not the sum of the points.",
             "format": "double",
             "type": [
               "number",
@@ -732,6 +817,17 @@
       },
       "GroupedValue": {
         "properties": {
+          "compare": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Comparison",
+                "description": "Absent when the question asked for no comparison."
+              }
+            ]
+          },
           "group": {
             "oneOf": [
               {
@@ -744,7 +840,7 @@
             ]
           },
           "subject": {
-            "description": "The person this value belongs to. Absent when the subjects folded into\none value.",
+            "description": "Absent when the subjects folded into one value.",
             "type": [
               "string",
               "null"
@@ -2214,7 +2310,7 @@
         "description": "What produced this answer.",
         "properties": {
           "definition_version": {
-            "description": "The definition version the store holds for this metric. Absent when the\nstore carries no row for it.",
+            "description": "The definition version the store holds; absent when it carries no row.",
             "format": "int32",
             "type": [
               "integer",
@@ -2555,7 +2651,7 @@
             ]
           },
           "remainder": {
-            "description": "Whether everything outside the kept groups is reported as one remainder\ngroup, or dropped.",
+            "description": "Whether everything outside the kept groups is one group, or dropped.",
             "type": "boolean"
           },
           "top": {
@@ -2572,7 +2668,7 @@
         "type": "object"
       },
       "Subjects": {
-        "description": "Whose values the question is about.\n\nInternally tagged on `type`, so a subject kind carries only its own fields\nand a new kind adds a variant rather than a nullable field:\n`{\"type\": \"persons\", \"ids\": [...]}` or `{\"type\": \"tenant\"}`.",
+        "description": "Whose values the question is about, internally tagged on `type` so a\nsubject kind carries only its own fields.",
         "oneOf": [
           {
             "properties": {
@@ -3042,6 +3138,23 @@
       "ValuesQuery": {
         "additionalProperties": false,
         "properties": {
+          "compare": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Compare"
+              }
+            ]
+          },
+          "filters": {
+            "description": "Narrows every measure the metric reads. Absent means no narrowing.",
+            "items": {
+              "$ref": "#/components/schemas/DimensionFilter"
+            },
+            "type": "array"
+          },
           "fold": {
             "$ref": "#/components/schemas/Fold"
           },

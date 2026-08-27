@@ -19,8 +19,8 @@ use super::sql::{
     value_operand,
 };
 
-/// The part an input plays in the metric's value. Every row carries the tag of
-/// the input it belongs to, so a ratio's two pages read back apart.
+/// The part an input plays in the metric's value, tagged on every row so a
+/// composed metric's pages read back apart. A derived input is tagged by alias.
 pub const ROLE_VALUE: &str = "value";
 pub const ROLE_NUMERATOR: &str = "numerator";
 pub const ROLE_DENOMINATOR: &str = "denominator";
@@ -74,8 +74,8 @@ pub struct CompiledDrilldown {
     pub columns: Vec<DrilldownColumn>,
 }
 
-/// One page of rows per input of the metric's computation: one for a direct or
-/// percentile metric, two for a ratio.
+/// One page of rows per input of the metric's computation: one for a metric
+/// over a single measure, one per composed input otherwise.
 pub fn compile_drilldown(
     catalog: &FieldCatalog,
     metric: &MetricDefinition,
@@ -413,8 +413,8 @@ mod tests {
 
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        direct, drilldown_query, labelled_measure, lines, measure, measures, metric, people,
-        people_params, percentile, pool_head, query, ratio, sized_measure, text,
+        derived, direct, drilldown_query, labelled_measure, lines, measure, measures, metric,
+        people, people_params, percentile, pool_head, query, ratio, sized_measure, stddev, text,
     };
     use crate::domain::compiler::metric::compile_metric_query;
     use crate::domain::compiler::request::{
@@ -673,6 +673,52 @@ mod tests {
         assert_eq!(compiled[1].params[0], text("denominator"));
         assert!(compiled[0].sql.contains("  AND state = ?"));
         assert!(compiled[1].sql.contains("  AND state IN (?, ?)"));
+    }
+
+    #[test]
+    fn a_derived_metric_pages_each_input_under_the_alias_it_is_read_by() {
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+        let opened = measure("prs_opened", None);
+
+        let compiled = rows(
+            &metric(derived(
+                &[("merged", "prs_merged"), ("opened", "prs_opened")],
+                "merged / opened",
+            )),
+            &[merged, opened],
+            &drilldown_query(),
+        );
+
+        assert_eq!(
+            compiled
+                .iter()
+                .map(|page| page.input_role.as_str())
+                .collect::<Vec<_>>(),
+            ["merged", "opened"]
+        );
+        assert_eq!(compiled[0].params[0], text("merged"));
+        assert_eq!(compiled[1].params[0], text("opened"));
+        assert!(compiled[0].sql.contains("  AND state = ?"));
+        assert!(!compiled[1].sql.contains("  AND state"));
+    }
+
+    #[test]
+    fn a_stddev_pages_the_rows_its_spread_was_measured_over() {
+        let compiled = only(
+            &metric(stddev("pr_size")),
+            &[sized_measure("pr_size")],
+            &drilldown_query(),
+        );
+
+        assert_eq!(compiled.input_role, ROLE_VALUE);
+        assert!(
+            compiled
+                .sql
+                .contains("    toFloat64(lines_added) AS contribution,")
+        );
     }
 
     #[test]

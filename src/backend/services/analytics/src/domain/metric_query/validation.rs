@@ -5,11 +5,16 @@
 
 use std::collections::BTreeSet;
 
-use chrono::NaiveDate;
+use chrono::{Days, Months, NaiveDate};
 use uuid::Uuid;
 
+use crate::domain::compiler::request::DimensionFilter;
+
 use super::catalog::MetricCatalog;
-use super::dto::{Fold, Grain, Split, SplitLimit, Subjects, ValuesQuery, ValuesRequest};
+use super::dto::{
+    Compare, CompareOffset, DimensionFilter as FilterDto, Fold, Grain, Split, SplitLimit, Subjects,
+    ValuesQuery, ValuesRequest,
+};
 use super::error::QueryError;
 
 const MAX_QUERIES: usize = 50;
@@ -17,6 +22,9 @@ const MAX_SUBJECTS: usize = 1000;
 const MAX_WINDOW_DAYS: i64 = 400;
 const MAX_SPLIT_DIMENSIONS: usize = 10;
 const MAX_SPLIT_TOP: u32 = 50;
+const MAX_FILTERS: usize = 10;
+const MAX_FILTER_VALUES: usize = 100;
+const MAX_FILTER_VALUE_BYTES: usize = 512;
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
 /// Rows one question may report; the read binds one more, so exceeding the
@@ -66,6 +74,13 @@ pub struct ValidatedSplit {
     pub limit: Option<ValidatedSplitLimit>,
 }
 
+/// The earlier window a question is compared against, already shifted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComparedWindow {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct ValidatedQuery {
     pub metric_key: String,
@@ -73,7 +88,9 @@ pub struct ValidatedQuery {
     pub from: NaiveDate,
     pub to: NaiveDate,
     pub grain: Grain,
+    pub filters: Vec<DimensionFilter>,
     pub split: Option<ValidatedSplit>,
+    pub compare: Option<ComparedWindow>,
     pub shape: QueryShape,
 }
 
@@ -142,9 +159,14 @@ fn validate_query(
     let metric_key = defined_metric(catalog, &query.metric)?;
     let subjects = subjects(query.subjects)?;
     let (from, to) = window(&query.time.from, &query.time.to)?;
+    let filters = validate_filters(catalog, &metric_key, query.filters)?;
     let split = query
         .split
         .map(|split| validate_split(catalog, &metric_key, split))
+        .transpose()?;
+    let compare = query
+        .compare
+        .map(|compare| compared_window(from, to, compare))
         .transpose()?;
     let shape = shape(query.time.grain, query.fold, split.as_ref(), &subjects)?;
 
@@ -154,9 +176,102 @@ fn validate_query(
         from,
         to,
         grain: query.time.grain,
+        filters,
         split,
+        compare,
         shape,
     })
+}
+
+/// INVARIANT: a filter narrows every measure the metric reads in one scan, so
+/// it may only name a dimension every one of those measures declares.
+fn validate_filters(
+    catalog: &MetricCatalog,
+    metric_key: &str,
+    filters: Vec<FilterDto>,
+) -> Result<Vec<DimensionFilter>, QueryError> {
+    if filters.len() > MAX_FILTERS {
+        return Err(QueryError::TooManyFilters { limit: MAX_FILTERS });
+    }
+
+    let declared = catalog.dimension_keys(metric_key);
+    let mut seen = BTreeSet::new();
+    let mut validated = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let key = filter.dimension.trim().to_owned();
+        if !declared.iter().any(|declared| *declared == key) {
+            return Err(QueryError::UnknownFilterDimension { dimension: key });
+        }
+        if !seen.insert(key.clone()) {
+            return Err(QueryError::DuplicateFilterDimension { dimension: key });
+        }
+        validated.push(DimensionFilter {
+            values: filter_values(&key, filter.values)?,
+            key,
+        });
+    }
+
+    Ok(validated)
+}
+
+fn filter_values(dimension: &str, values: Vec<String>) -> Result<Vec<String>, QueryError> {
+    if values.is_empty() {
+        return Err(QueryError::NoFilterValues {
+            dimension: dimension.to_owned(),
+        });
+    }
+    if values.len() > MAX_FILTER_VALUES {
+        return Err(QueryError::TooManyFilterValues {
+            dimension: dimension.to_owned(),
+            limit: MAX_FILTER_VALUES,
+        });
+    }
+    if let Some(oversized) = values
+        .iter()
+        .find(|value| value.len() > MAX_FILTER_VALUE_BYTES)
+    {
+        return Err(QueryError::FilterValueTooLong {
+            dimension: dimension.to_owned(),
+            limit: MAX_FILTER_VALUE_BYTES,
+            length: oversized.len(),
+        });
+    }
+
+    Ok(values)
+}
+
+/// The window the comparison reads. INVARIANT: it spans the same number of
+/// days as the current one, so both values fold over comparable spans.
+fn compared_window(
+    from: NaiveDate,
+    to: NaiveDate,
+    compare: Compare,
+) -> Result<ComparedWindow, QueryError> {
+    let shifted = match compare.offset {
+        CompareOffset::PreviousPeriod => {
+            let length = Days::new((to - from).num_days().unsigned_abs() + 1);
+            from.checked_sub_days(length)
+                .zip(to.checked_sub_days(length))
+        }
+        CompareOffset::Month | CompareOffset::Quarter | CompareOffset::Year => {
+            let months = Months::new(calendar_months(compare.offset));
+            from.checked_sub_months(months)
+                .zip(to.checked_sub_months(months))
+        }
+    };
+
+    let Some((from, to)) = shifted else {
+        return Err(QueryError::CompareOutOfRange);
+    };
+    Ok(ComparedWindow { from, to })
+}
+
+fn calendar_months(offset: CompareOffset) -> u32 {
+    match offset {
+        CompareOffset::PreviousPeriod | CompareOffset::Month => 1,
+        CompareOffset::Quarter => 3,
+        CompareOffset::Year => 12,
+    }
 }
 
 fn defined_metric(catalog: &MetricCatalog, metric: &str) -> Result<String, QueryError> {
@@ -230,10 +345,14 @@ fn validate_split(
         });
     }
 
+    let declared = catalog.dimension_keys(metric_key);
     let mut seen = BTreeSet::new();
     let mut dimensions = Vec::with_capacity(split.dimensions.len());
     for dimension in split.dimensions {
         let dimension = dimension.trim().to_owned();
+        if !declared.iter().any(|declared| *declared == dimension) {
+            return Err(QueryError::UnknownSplitDimension { dimension });
+        }
         if !seen.insert(dimension.clone()) {
             return Err(QueryError::DuplicateSplitDimension { dimension });
         }
@@ -382,6 +501,227 @@ mod tests {
         split
     }
 
+    fn filtered_query(filters: serde_json::Value) -> serde_json::Value {
+        let mut query = persons_query("total", "per_subject", serde_json::Value::Null);
+        query["filters"] = filters;
+        query
+    }
+
+    fn compared_query(offset: &str) -> serde_json::Value {
+        let mut query = persons_query("total", "per_subject", serde_json::Value::Null);
+        query["compare"] = serde_json::json!({ "offset": offset });
+        query
+    }
+
+    /// A ratio whose inputs declare different dimension sets, so the metric's
+    /// capability is narrower than either input's.
+    const COMPOSED_METRIC: &str = "git.commits_per_active_day";
+    /// Declared by that metric's first input and not by its second.
+    const UNSHARED_DIMENSION: &str = "branch_scope";
+
+    #[test]
+    fn a_split_naming_a_dimension_the_metric_does_not_declare_is_refused() {
+        let query = persons_query(
+            "total",
+            "per_subject",
+            serde_json::json!({ "dimensions": ["not_a_dimension"] }),
+        );
+
+        let error = one(query).expect_err("an undeclared dimension names no column");
+
+        assert!(
+            matches!(error, QueryError::UnknownSplitDimension { .. }),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_composed_metric_accepts_only_the_dimensions_every_input_declares() {
+        let mut split = persons_query(
+            "total",
+            "per_subject",
+            serde_json::json!({ "dimensions": [UNSHARED_DIMENSION] }),
+        );
+        split["metric"] = COMPOSED_METRIC.into();
+        let mut filter = persons_query("total", "per_subject", serde_json::Value::Null);
+        filter["metric"] = COMPOSED_METRIC.into();
+        filter["filters"] =
+            serde_json::json!([{ "dimension": UNSHARED_DIMENSION, "values": ["default"] }]);
+
+        assert!(
+            matches!(
+                one(split).expect_err("one input cannot resolve it"),
+                QueryError::UnknownSplitDimension { .. }
+            ),
+            "a split names a key the metric's capability does not carry"
+        );
+        assert!(
+            matches!(
+                one(filter).expect_err("one input cannot resolve it"),
+                QueryError::UnknownFilterDimension { .. }
+            ),
+            "a filter names a key the metric's capability does not carry"
+        );
+
+        let mut shared = persons_query(
+            "total",
+            "per_subject",
+            serde_json::json!({ "dimensions": [SHIPPED_DIMENSION] }),
+        );
+        shared["metric"] = COMPOSED_METRIC.into();
+        one(shared).expect("a key both inputs declare stays answerable");
+    }
+
+    #[test]
+    fn a_filter_becomes_the_dimension_narrowing_the_compiler_reads() {
+        let validated = one(filtered_query(serde_json::json!([
+            { "dimension": SHIPPED_DIMENSION, "values": ["example/app", "example/api"] },
+        ])))
+        .expect("a declared dimension narrows the read");
+
+        assert_eq!(
+            validated.filters,
+            vec![DimensionFilter {
+                key: SHIPPED_DIMENSION.to_owned(),
+                values: vec!["example/app".to_owned(), "example/api".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn a_question_with_no_filters_narrows_nothing() {
+        let validated = one(persons_query(
+            "total",
+            "per_subject",
+            serde_json::Value::Null,
+        ))
+        .expect("filters are optional");
+
+        assert!(validated.filters.is_empty());
+    }
+
+    #[test]
+    fn a_filter_that_could_never_narrow_a_read_is_refused() {
+        let cases: [(serde_json::Value, Refusal); 6] = [
+            (
+                serde_json::json!([{ "dimension": "not_a_dimension", "values": ["x"] }]),
+                |error| matches!(error, QueryError::UnknownFilterDimension { .. }),
+            ),
+            (
+                serde_json::json!([
+                    { "dimension": SHIPPED_DIMENSION, "values": ["x"] },
+                    { "dimension": SHIPPED_DIMENSION, "values": ["y"] },
+                ]),
+                |error| matches!(error, QueryError::DuplicateFilterDimension { .. }),
+            ),
+            (
+                serde_json::json!([{ "dimension": SHIPPED_DIMENSION, "values": [] }]),
+                |error| matches!(error, QueryError::NoFilterValues { .. }),
+            ),
+            (
+                serde_json::json!([{
+                    "dimension": SHIPPED_DIMENSION,
+                    "values": vec!["x"; MAX_FILTER_VALUES + 1],
+                }]),
+                |error| matches!(error, QueryError::TooManyFilterValues { .. }),
+            ),
+            (
+                serde_json::json!([{
+                    "dimension": SHIPPED_DIMENSION,
+                    "values": ["x".repeat(MAX_FILTER_VALUE_BYTES + 1)],
+                }]),
+                |error| matches!(error, QueryError::FilterValueTooLong { .. }),
+            ),
+            (
+                serde_json::Value::Array(
+                    (0..=MAX_FILTERS)
+                        .map(|index| {
+                            serde_json::json!({
+                                "dimension": format!("dimension_{index}"),
+                                "values": ["x"],
+                            })
+                        })
+                        .collect(),
+                ),
+                |error| matches!(error, QueryError::TooManyFilters { .. }),
+            ),
+        ];
+
+        for (filters, refusal) in cases {
+            let named = filters.to_string();
+
+            let error = one(filtered_query(filters)).expect_err("should refuse");
+
+            assert!(refusal(&error), "should refuse: {named} — got {error}");
+        }
+    }
+
+    #[test]
+    fn each_offset_shifts_the_window_the_way_it_is_documented() {
+        let cases = [
+            ("previous_period", "2025-12-01", "2025-12-31"),
+            ("month", "2025-12-01", "2025-12-31"),
+            ("quarter", "2025-10-01", "2025-10-31"),
+            ("year", "2025-01-01", "2025-01-31"),
+        ];
+
+        for (offset, from, to) in cases {
+            let validated = one(compared_query(offset)).expect("the window shifts");
+
+            assert_eq!(
+                validated.compare,
+                Some(ComparedWindow {
+                    from: NaiveDate::parse_from_str(from, DATE_FORMAT).expect("valid date"),
+                    to: NaiveDate::parse_from_str(to, DATE_FORMAT).expect("valid date"),
+                }),
+                "should shift: {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_previous_period_shift_moves_the_window_by_its_own_inclusive_length() {
+        let mut query = persons_query("total", "per_subject", serde_json::Value::Null);
+        query["time"] = serde_json::json!({
+            "from": "2026-03-05",
+            "to": "2026-03-06",
+            "grain": "total",
+        });
+        query["compare"] = serde_json::json!({ "offset": "previous_period" });
+
+        let validated = one(query).expect("the window shifts");
+
+        assert_eq!(
+            validated.compare,
+            Some(ComparedWindow {
+                from: NaiveDate::from_ymd_opt(2026, 3, 3).expect("valid date"),
+                to: NaiveDate::from_ymd_opt(2026, 3, 4).expect("valid date"),
+            }),
+            "two inclusive days shift back by two days, leaving no overlap"
+        );
+    }
+
+    #[test]
+    fn a_calendar_shift_clamps_a_day_the_earlier_month_does_not_have() {
+        let mut query = persons_query("total", "per_subject", serde_json::Value::Null);
+        query["time"] = serde_json::json!({
+            "from": "2026-03-31",
+            "to": "2026-03-31",
+            "grain": "total",
+        });
+        query["compare"] = serde_json::json!({ "offset": "month" });
+
+        let validated = one(query).expect("the window shifts");
+
+        assert_eq!(
+            validated.compare,
+            Some(ComparedWindow {
+                from: NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date"),
+                to: NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date"),
+            })
+        );
+    }
+
     #[test]
     fn a_question_becomes_the_typed_values_it_names() {
         let validated = one(persons_query(
@@ -399,7 +739,9 @@ mod tests {
                 from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
                 to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
                 grain: Grain::Total,
+                filters: Vec::new(),
                 split: None,
+                compare: None,
                 shape: QueryShape::SubjectTotal,
             }
         );

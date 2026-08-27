@@ -1,6 +1,7 @@
 //! Why a definition and a request cannot be turned into a statement: every
 //! variant names a request that contradicts the measure or the dataset it reads.
 
+use crate::domain::definitions::expr::ScalarExprError;
 use crate::domain::definitions::filter::FilterError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -36,17 +37,27 @@ pub enum CompileError {
     },
     #[error("metric `{metric}` reads measure `{measure}`, which the request did not carry")]
     MeasureNotFound { metric: String, measure: String },
-    #[error(
-        "metric `{metric}` divides `{numerator}` by `{denominator}`, and they disagree on {aspect}"
-    )]
-    RatioInputsDisagree {
+    #[error("metric `{metric}` composes `{first}` with `{other}`, and they disagree on {aspect}")]
+    InputsDisagree {
         metric: String,
-        numerator: String,
-        denominator: String,
+        first: String,
+        other: String,
         aspect: &'static str,
     },
-    #[error("metric `{metric}` takes a percentile of measure `{measure}`, which folds no value")]
-    PercentileWithoutValue { metric: String, measure: String },
+    #[error(
+        "metric `{metric}` reads the distribution of measure `{measure}`, which folds no value"
+    )]
+    DistributionWithoutValue { metric: String, measure: String },
+    #[error("metric `{metric}` composes no measure, so it folds nothing")]
+    NoInputs { metric: String },
+    #[error("metric `{metric}` expression names `{alias}`, which is not one of its inputs")]
+    UnknownDerivedInput { metric: String, alias: String },
+    #[error("metric `{metric}` expression is not admissible: {source}")]
+    MalformedExpr {
+        metric: String,
+        #[source]
+        source: ScalarExprError,
+    },
     #[error("metric `{metric}` cannot be read as a {view} view: {reason}")]
     UnsupportedView {
         metric: String,
