@@ -124,14 +124,12 @@ deduplicated_file_changes AS (
 authored_commit_file_lines AS (
     SELECT
         tenant_id,
-        source_id,
-        project_key,
-        repo_slug,
+        data_source,
         commit_hash,
         sum(lines_added) AS lines_added,
         sum(lines_removed) AS lines_removed
     FROM deduplicated_file_changes
-    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+    GROUP BY tenant_id, data_source, commit_hash
 ),
 authored_commits AS (
     SELECT
@@ -184,17 +182,17 @@ authored_commits AS (
             ))
         ) AS lines_removed
     FROM {{ ref('git_authored_commits') }} AS commits
+    -- The canonical commit grain, the one git_authored_commits collapses to and
+    -- git_commit_file_changes already attaches on. Null-safe on tenant_id: it
+    -- is Nullable on the class, and a plain `=` never matches NULL to NULL —
+    -- which would read a whole tenant's commits as having no collected change.
     LEFT JOIN {{ ref('git_commit_file_line_totals') }} AS reported
-        ON reported.tenant_id = commits.tenant_id
-        AND reported.source_id = commits.source_id
-        AND reported.project_key = commits.project_key
-        AND reported.repo_slug = commits.repo_slug
+        ON reported.tenant_id IS NOT DISTINCT FROM commits.tenant_id
+        AND reported.data_source = commits.data_source
         AND reported.commit_hash = commits.commit_hash
     LEFT JOIN authored_commit_file_lines AS authored
-        ON authored.tenant_id = commits.tenant_id
-        AND authored.source_id = commits.source_id
-        AND authored.project_key = commits.project_key
-        AND authored.repo_slug = commits.repo_slug
+        ON authored.tenant_id IS NOT DISTINCT FROM commits.tenant_id
+        AND authored.data_source = commits.data_source
         AND authored.commit_hash = commits.commit_hash
 ),
 file_changes_source AS (

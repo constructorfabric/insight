@@ -1010,40 +1010,80 @@ models:
           Cohort membership value: org unit id when present, department name
           fallback otherwise. NULL when the person has neither.
 
+  - name: git_commit_file_line_totals
+    description: >
+      Per-commit totals over the file changes AS COLLECTED — before the content
+      dedup removes what an earlier commit already carries. Keyed on the
+      canonical commit grain (tenant, data_source, commit_hash), the one
+      git_authored_commits collapses to. file_change_rows is the membership
+      answer the evidence build reads: a count rather than a sum, because the
+      line columns are Nullable and an all-NULL group sums to NULL, which no
+      join could tell from a commit the file-change stream never reached.
+    columns:
+      - name: commit_hash
+        description: "Commit the totals belong to"
+        tests:
+          - not_null
+      - name: file_change_rows
+        description: "Collected file-change rows for the commit, pre-dedup"
+        tests:
+          - not_null
+      - name: lines_added
+        description: "Sum of collected added lines, pre-dedup"
+      - name: lines_removed
+        description: "Sum of collected removed lines, pre-dedup"
+
   - name: git_file_change_coverage
     description: >
-      How much of each git source's authored work arrived with its file
-      changes. One row per data_source, materialized in the same gold build as
-      the serving relations. This is the measuring device for diff collection:
-      the size metrics report a commit's own total when its changes were never
-      collected, which is the right number to serve and the wrong place to
-      keep a collection alarm. Judge a live source by recent_collected_pct —
-      the all-time share carries history no re-read can reach, so it is a
-      floor that never fully recovers.
+      How much of each connector instance's authored work arrived with its file
+      changes — the measuring device for diff collection, since the size
+      metrics report a commit's own total when its changes were never collected
+      and so no longer show the gap themselves. Measured on the class relations
+      and grouped per source_id on purpose: collection is a property of a
+      connector instance, and the gold commit set deliberately collapses one
+      hash across a fork and its upstream, which would let a healthy instance
+      hide a broken one. Merge commits are excluded — every connector skips
+      their diffs by design. Judge a live instance by recent_collected_pct; the
+      all-time share carries history no re-read can reach.
     columns:
       - name: data_source
         description: "Git source discriminator (insight_github, insight_gitlab, ...)"
         tests:
           - not_null
-          - unique
+      - name: source_id
+        description: "Connector instance the commits were collected by"
       - name: commits
-        description: "Authored commits counted for the source"
+        description: "Non-merge commits the instance delivered"
+      - name: commits_requiring_file_changes
+        description: >
+          Of those, the commits whose source reported a non-zero size — the
+          only class coverage is measured over, because a diff must exist.
+      - name: known_zero_size_commits
+        description: >
+          Commits the source reported as 0 added and 0 removed. No file detail
+          was ever due, so counting them would move coverage with the share of
+          empty commits rather than with collection health.
+      - name: unknown_size_commits
+        description: >
+          Commits whose source reported no size at all — neither a collection
+          success nor a failure, and a data-quality signal of its own.
       - name: commits_with_file_changes
-        description: "Of those, the commits the file-change stream reached"
+        description: "Of commits_requiring_file_changes, those the file-change stream reached"
       - name: collected_pct
-        description: "Share of commits with collected file changes, all time, percent (1 decimal)"
-      - name: recent_commits
-        description: "Commits inside the git_coverage_recent_days window"
+        description: >
+          Share of commits_requiring_file_changes with collected changes, all
+          time, percent (1 decimal). NULL when nothing required a diff.
+      - name: recent_commits_requiring_file_changes
+        description: "Requiring commits inside the git_coverage_recent_days window"
       - name: recent_collected_pct
         description: >
-          Share with collected file changes inside the recent window, percent
-          (1 decimal). NULL when the window holds no commits. This is the
-          number a collection regression moves.
+          The same share inside the recent window. This is the number a live
+          collection regression moves, and what the data-quality test reads.
       - name: uncollected_lines
         description: >
-          Added plus removed lines described by a commit row and nothing
-          finer — the prioritisation signal for how much authored volume has
-          no file grain.
+          Added plus removed lines reported by commits that required a diff and
+          have none — the prioritisation signal for how much authored volume
+          has no file grain.
 
   - name: identity_resolution_coverage
     description: >

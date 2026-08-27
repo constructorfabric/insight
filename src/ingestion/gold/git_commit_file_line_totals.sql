@@ -17,15 +17,17 @@
 -- sum for a reason: the line columns are Nullable, so a group of all-NULL rows
 -- sums to NULL and could not be told apart from a commit the stream never
 -- reached. The count is what says "collected", the sums say how much.
+--
+-- Keyed on the canonical commit grain, the one git_authored_commits collapses
+-- to and git_commit_file_changes already attaches on. Every row there carries
+-- the surviving commit's coordinates, so grouping by the repository tuple would
+-- produce the same groups through two more Nullable join keys.
 SELECT
     tenant_id,
-    source_id,
-    project_key,
-    repo_slug,
-    commit_hash,
     data_source,
+    commit_hash,
     count() AS file_change_rows,
     sum(lines_added) AS lines_added,
     sum(lines_removed) AS lines_removed
 FROM {{ ref('git_commit_file_changes') }}
-GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash, data_source
+GROUP BY tenant_id, data_source, commit_hash
