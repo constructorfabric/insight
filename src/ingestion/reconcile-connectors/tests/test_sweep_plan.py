@@ -10,9 +10,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import unittest
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
@@ -86,7 +85,7 @@ def syncs(plan):
     return [row for row in plan.rows if row.event == SYNC_COMPLETED]
 
 
-class TestAJobWithNoReadableStartTime:
+class TestAJobWithNoReadableStartTime(unittest.TestCase):
     """A job the mover has not started is recorded; one it cannot place is not."""
 
     def test_a_job_not_started_yet_is_still_recorded_with_no_start_time(self):
@@ -115,7 +114,7 @@ class TestAJobWithNoReadableStartTime:
         assert plan.undatable_jobs == ["77"]
 
 
-class TestAJobStillRunning:
+class TestAJobStillRunning(unittest.TestCase):
     """A provisional row must not close the job that will get an outcome."""
 
     def test_a_running_job_is_recorded_again_once_it_finishes(self):
@@ -139,20 +138,21 @@ class TestAJobStillRunning:
         (row,) = syncs(plan)
         assert row.status == "failed"
 
-    @pytest.mark.parametrize("provisional", ["running", "queued", "a_word_added_later"])
-    def test_a_job_in_any_non_terminal_state_is_recorded_again(self, provisional):
+    def test_a_job_in_any_non_terminal_state_is_recorded_again(self):
         # Fail-closed: only the outcomes that END a job count as coverage. A
         # status this build does not know must not close it, or the tick that
         # could record the real outcome skips it forever.
-        plan = plan_sweep(
-            request(
-                jobs=[job(status="succeeded")],
-                ledger=[ledger_row(status=provisional, claim=CLAIMED)],
-            )
-        )
+        for provisional in ("running", "queued", "a_word_added_later"):
+            with self.subTest(provisional=provisional):
+                plan = plan_sweep(
+                    request(
+                        jobs=[job(status="succeeded")],
+                        ledger=[ledger_row(status=provisional, claim=CLAIMED)],
+                    )
+                )
 
-        (row,) = syncs(plan)
-        assert row.status == "ok", f"should re-cover a job left in {provisional!r}"
+                (row,) = syncs(plan)
+                assert row.status == "ok", f"should re-cover a job left in {provisional!r}"
 
     def test_the_pipelines_outcome_does_not_close_a_job_the_sweep_saw_running(self):
         # The two halves must come from ONE row. Tick 1 records the job running
@@ -181,7 +181,7 @@ class TestAJobStillRunning:
         assert syncs(plan) == []
 
 
-class TestCoverage:
+class TestCoverage(unittest.TestCase):
     def test_a_job_the_ledger_does_not_hold_is_recorded_from_the_movers_history(self):
         plan = plan_sweep(request(jobs=[job()]))
 
@@ -212,7 +212,7 @@ class TestCoverage:
         assert plan.unmappable_jobs == ["77"]
 
 
-class TestCorroboration:
+class TestCorroboration(unittest.TestCase):
     def test_not_collecting_counters_does_not_stop_corroboration(self):
         """The bug this rule exists for: skipping a covered job must not freeze
         its claim, or a job seen once while the records were unreachable would
@@ -265,14 +265,17 @@ class TestCorroboration:
 
         assert syncs(plan) == [], "past the horizon unclaimed is final, not out-of-band"
 
-    @pytest.mark.parametrize("settled", [CLAIMED, OUT_OF_BAND])
-    def test_a_settled_job_is_not_re_corroborated(self, settled):
-        plan = plan_sweep(request(ledger=[ledger_row(claim=settled)], workflow_claims={"77": "wf-9"}))
+    def test_a_settled_job_is_not_re_corroborated(self):
+        for settled in (CLAIMED, OUT_OF_BAND):
+            with self.subTest(settled=settled):
+                plan = plan_sweep(
+                    request(ledger=[ledger_row(claim=settled)], workflow_claims={"77": "wf-9"})
+                )
 
-        assert syncs(plan) == []
+                assert syncs(plan) == []
 
 
-class TestConfiguredSnapshot:
+class TestConfiguredSnapshot(unittest.TestCase):
     def test_every_managed_connector_is_recorded_under_one_tick(self):
         plan = plan_sweep(request(configured=["alpha", "beta"], tick_run_id="tick-7"))
 
@@ -301,19 +304,18 @@ class TestConfiguredSnapshot:
         assert plan.seal.run_id == "tick-1"
 
 
-class TestVocabularyAtTheBoundary:
-    @pytest.mark.parametrize(
-        ("mover", "ledger"),
-        [
+class TestVocabularyAtTheBoundary(unittest.TestCase):
+    def test_the_movers_outcome_words_become_the_ledgers(self):
+        cases = [
             ("succeeded", "ok"),
             ("failed", "failed"),
             ("cancelled", "cancelled"),
             ("running", "running"),
             ("incomplete", "failed"),
-        ],
-    )
-    def test_the_movers_outcome_words_become_the_ledgers(self, mover, ledger):
-        assert ledger_status(mover) == ledger, f"should map: {mover!r}"
+        ]
+        for mover, ledger in cases:
+            with self.subTest(mover=mover):
+                assert ledger_status(mover) == ledger, f"should map: {mover!r}"
 
     def test_a_word_outside_that_vocabulary_is_named_unknown(self):
         # Closed set in, closed set out. Passing a vendor word straight through
@@ -327,9 +329,8 @@ class TestVocabularyAtTheBoundary:
         (row,) = syncs(plan)
         assert row.status == "unknown"
 
-    @pytest.mark.parametrize(
-        ("duration", "expected"),
-        [
+    def test_the_movers_duration_becomes_milliseconds(self):
+        cases = [
             ("PT1M37S", 97000),
             ("PT17M31S", 1051000),
             ("PT0S", 0),
@@ -342,15 +343,18 @@ class TestVocabularyAtTheBoundary:
             ("PT1M37", None),
             ("PT", None),
             (12.5, 12500),
-        ],
-    )
-    def test_the_movers_duration_becomes_milliseconds(self, duration, expected):
+        ]
+        for duration, expected in cases:
+            with self.subTest(duration=duration):
+                self._assert_duration(duration, expected)
+
+    def _assert_duration(self, duration, expected):
         # None, not zero: the page states elapsed time as a fact, and "PT0S" —
         # a real zero — must stay distinguishable from nobody having timed it.
         assert duration_ms(duration) == expected, f"should convert: {duration!r}"
 
 
-class TestCli:
+class TestCli(unittest.TestCase):
     def test_the_planner_round_trips_json_over_stdio(self):
         payload = json.dumps(request(jobs=[job()], configured=["alpha"]))
 

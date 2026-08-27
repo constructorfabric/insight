@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 import sys
+import unittest
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
@@ -28,7 +27,7 @@ def workflow(name="wf-1", created="2026-08-25T09:00:00Z", trigger_result="77", n
     return {"metadata": {"name": name, "creationTimestamp": created}, "status": {"nodes": nodes}}
 
 
-class TestWorkflowClaims:
+class TestWorkflowClaims(unittest.TestCase):
     def test_a_run_claims_the_job_its_sync_step_triggered(self):
         result = read_claims({"items": [workflow(name="wf-9", trigger_result="1083")]})
 
@@ -66,7 +65,7 @@ class TestWorkflowClaims:
         assert result["claims"] == {"2": "new", "1": "ancient"}
 
 
-class TestConnectionJoin:
+class TestConnectionJoin(unittest.TestCase):
     def test_a_managed_connector_maps_to_its_connection_id(self):
         connections = [{"name": "alpha-alpha-main-default-conn", "connectionId": "id-1"}]
 
@@ -96,7 +95,7 @@ class TestConnectionJoin:
         assert result["connections"] == {"id-2": "claude-team-invoices"}
 
 
-class TestRequestAssembly:
+class TestRequestAssembly(unittest.TestCase):
     def test_a_sweep_row_marks_a_job_collected_and_a_pipeline_row_does_not(self):
         collected = ledger_row(
             {
@@ -142,12 +141,13 @@ class TestRequestAssembly:
         assert request["horizon_epoch"] == 5
         assert request["tick_run_id"] == "tick-1"
 
-    @pytest.mark.parametrize("bad", ["", None, "not-a-time"])
-    def test_an_unparseable_stamp_is_zero_rather_than_an_exception(self, bad):
-        assert epoch(bad) == 0, f"should tolerate: {bad!r}"
+    def test_an_unparseable_stamp_is_zero_rather_than_an_exception(self):
+        for bad in ("", None, "not-a-time"):
+            with self.subTest(bad=bad):
+                assert epoch(bad) == 0, f"should tolerate: {bad!r}"
 
 
-class TestInsertRendering:
+class TestInsertRendering(unittest.TestCase):
     def row(self, **overrides):
         base = {
             "run_id": "tick-1",
@@ -180,11 +180,13 @@ class TestInsertRendering:
         assert sql.count("toDateTime64") == 2
         assert sql.count("INSERT INTO") == 1
 
-    @pytest.mark.parametrize(("value", "expected"), [("it's", "\\'"), ("a\\b", "\\\\"), ("plain", "plain")])
-    def test_a_value_carrying_quotes_or_backslashes_is_escaped(self, value, expected):
-        sql = statement("ledger", [self.row(connector=value)])
+    def test_a_value_carrying_quotes_or_backslashes_is_escaped(self):
+        cases = [("it's", "\\'"), ("a\\b", "\\\\"), ("plain", "plain")]
+        for value, expected in cases:
+            with self.subTest(value=value):
+                sql = statement("ledger", [self.row(connector=value)])
 
-        assert expected in sql, f"should escape: {value!r}"
+                assert expected in sql, f"should escape: {value!r}"
 
     def test_the_rendered_statement_survives_a_json_round_trip(self):
         rows = json.loads(json.dumps([self.row()]))
@@ -192,7 +194,7 @@ class TestInsertRendering:
         assert statement("ledger", rows) == statement("ledger", [self.row()])
 
 
-class TestTheCoverageFrontier:
+class TestTheCoverageFrontier(unittest.TestCase):
     """The watermark is how far the SWEEP has read, not what the ledger holds."""
 
     def test_the_watermark_moves_along_the_listings_own_ordering_field(self):
@@ -229,7 +231,7 @@ class TestTheCoverageFrontier:
         assert "orderBy=createdAt%7CDESC" not in airbyte
 
 
-class TestPlacingAJobInTime:
+class TestPlacingAJobInTime(unittest.TestCase):
     """Two axes, kept apart: when a sync began, and where the frontier is."""
 
     def test_an_absent_start_time_is_not_filled_in_from_the_listing_order(self):
@@ -253,7 +255,7 @@ class TestPlacingAJobInTime:
         assert request["jobs"][0]["createdAtEpoch"] == 0
 
 
-class TestReadingOnePlan:
+class TestReadingOnePlan(unittest.TestCase):
     """One parse, and a shape the shell can split without another process."""
 
     @staticmethod
