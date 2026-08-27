@@ -22,6 +22,11 @@ pub struct SavedQueryError;
 #[resource_error("gts.cf.insight.analytics_api.usage.v1~")]
 pub struct UsageError;
 
+/// Resource namespace for `/v1/connector-health*` (the operator's view of what
+/// the data mover reports about every connector's syncs).
+#[resource_error("gts.cf.insight.analytics_api.connector_health.v1~")]
+pub struct ConnectorHealthError;
+
 /// Resource namespace for `/v1/feedback*` (in-product feedback + the admin
 /// read model).
 #[resource_error("gts.cf.insight.analytics_api.feedback.v1~")]

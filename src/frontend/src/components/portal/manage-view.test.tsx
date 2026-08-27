@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 /**
  * Manage-zone surfaces read the UNIFIED registry, not the legacy catalog:
- * the table lists `metric_key`s `/v1/metric-results` actually serves, spells
- * out an unobserved definition as "no data yet" rather than hiding it, and
- * Data health separates "schema checks out" from "has ever produced a row".
+ * the table lists `metric_key`s `/v1/metric-results` actually serves and
+ * spells out an unobserved definition as "no data yet" rather than hiding it.
+ *
+ * Connector health has its own test file; here only its place in the zone and
+ * its gate are under test.
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -43,6 +45,12 @@ vi.mock("@/components/portal/identities-view", () => ({
   IdentitiesView: () => <div data-testid="identities-view" />,
 }));
 
+vi.mock("@/components/portal/connector-health", () => ({
+  ConnectorHealthPane: () => <div data-testid="connector-health-pane" />,
+}));
+
+import { MANAGE_ITEMS } from "@/lib/portal/nav-model";
+
 import { ManageView } from "./manage-view";
 
 function def(over: Partial<MetricDefinition>): MetricDefinition {
@@ -68,6 +76,14 @@ beforeEach(() => {
   mocks.q.refetch.mockClear();
   mocks.q.isLoading = false;
   mocks.q.isError = false;
+  // The gate is hoisted module state, so a test that flips it leaves it flipped
+  // for every test below — order-dependent today, wrong tomorrow.
+  adminGate.value = {
+    isAdmin: false,
+    isPending: false,
+    isError: false,
+    retry: () => undefined,
+  };
   mocks.q.data = [
     {
       prefix: "git",
@@ -148,17 +164,33 @@ describe("Manage · What's new", () => {
   });
 });
 
-describe("Manage · Data health", () => {
-  it("counts schema statuses and, separately, definitions with no data", () => {
-    render(<ManageView item="data-health" />);
-    expect(screen.getByText(/across 3 metrics/)).toBeInTheDocument();
-    // 2 ok · 1 error · 0 unchecked · 1 without any observation
-    const tile = (label: string) =>
-      screen.getByText(label).closest("div")?.parentElement?.textContent ?? "";
-    expect(tile("ok")).toMatch(/^2/);
-    expect(tile("error")).toMatch(/^1/);
-    expect(tile("unchecked")).toMatch(/^0/);
-    expect(tile("no data yet")).toMatch(/^1/);
+describe("Manage · Connector health", () => {
+  it("is instance-wide, so a non-admin is refused rather than shown an empty page", () => {
+    adminGate.value = { ...adminGate.value, isAdmin: false };
+    render(<ManageView item="connector-health" />);
+
+    expect(
+      screen.queryByTestId("connector-health-pane"),
+    ).not.toBeInTheDocument();
+    // A gate rendering nothing at all would satisfy the line above, and would
+    // leave a non-admin on a blank screen with nothing to act on.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("opens for an operator", () => {
+    adminGate.value = { ...adminGate.value, isAdmin: true };
+    render(<ManageView item="connector-health" />);
+
+    expect(screen.getByTestId("connector-health-pane")).toBeInTheDocument();
+  });
+
+  it("no longer offers the pane it replaced", () => {
+    // Asserting what `ManageView` does with `item="data-health"` would be
+    // unfalsifiable: `item` is always the output of `resolveZoneItem`, and
+    // `data-health` is no longer a manage item, so the app can never pass it.
+    // What is reachable — and what a stale bookmark meets — is the nav model.
+    expect(MANAGE_ITEMS.map((entry) => entry.id)).toContain("connector-health");
+    expect(MANAGE_ITEMS.map((entry) => entry.id)).not.toContain("data-health");
   });
 });
 

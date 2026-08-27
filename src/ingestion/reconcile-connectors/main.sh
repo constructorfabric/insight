@@ -38,6 +38,8 @@ source "${SCRIPT_DIR}/lib/validate.sh"
 source "${SCRIPT_DIR}/lib/reconcile.sh"
 # shellcheck source=lib/adopt.sh
 source "${SCRIPT_DIR}/lib/adopt.sh"
+# shellcheck source=lib/sweep.sh
+source "${SCRIPT_DIR}/lib/sweep.sh"
 
 # ---------------------------------------------------------------------------
 # usage — print CLI help and exit. Called for -h/--help and on bad args.

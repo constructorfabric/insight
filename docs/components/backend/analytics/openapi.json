@@ -194,6 +194,73 @@
           }
         ]
       },
+      "ConnectorHealth": {
+        "properties": {
+          "configured": {
+            "description": "Present in the newest sealed snapshot of the set the controller manages.",
+            "type": "boolean"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "last_sync": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SyncFact",
+                "description": "Absent for a configured connector that has never synced."
+              }
+            ]
+          }
+        },
+        "required": [
+          "connector",
+          "configured"
+        ],
+        "type": "object"
+      },
+      "ConnectorHealthResponse": {
+        "properties": {
+          "as_of": {
+            "description": "When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.",
+            "type": "string"
+          },
+          "checked_at": {
+            "description": "When the mover was last read. Absent before the first sweep sealed.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectorHealth"
+            },
+            "type": "array"
+          },
+          "history_available": {
+            "description": "False when nothing has been recorded at all, so the page can say so\ninstead of implying health.",
+            "type": "boolean"
+          },
+          "typical_read_interval_ms": {
+            "description": "The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "as_of",
+          "history_available",
+          "connectors"
+        ],
+        "type": "object"
+      },
       "ContextEntryResponse": {
         "properties": {
           "body": {
@@ -2276,6 +2343,74 @@
         ],
         "type": "object"
       },
+      "SyncFact": {
+        "properties": {
+          "duration_ms": {
+            "description": "Absent for a job still in flight, and for one the mover gave no usable\npair of stamps for. Never zero to mean absent.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "job_id": {
+            "description": "The mover's own job identity.",
+            "type": "string"
+          },
+          "records_reported": {
+            "description": "What the mover states it moved. Absent where it reported no count at\nall, which is a different answer from a reported zero.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "started_at": {
+            "description": "Absent for a job the mover had not started.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "The mover's own word for how the sync ended, or `unknown` where the\nrecorded word was outside its documented vocabulary.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SyncHistoryResponse": {
+        "properties": {
+          "connector": {
+            "type": "string"
+          },
+          "syncs": {
+            "description": "A bounded window, newest first — not the full retained history.",
+            "items": {
+              "$ref": "#/components/schemas/SyncFact"
+            },
+            "type": "array"
+          },
+          "window": {
+            "description": "How many rows this window holds at most, so the page can say the list\nis a window rather than everything.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connector",
+          "syncs",
+          "window"
+        ],
+        "type": "object"
+      },
       "TelemetryRecord": {
         "properties": {
           "context_app_name": {
@@ -3834,6 +3969,203 @@
           }
         ],
         "summary": "Replace this tenant's system prompt"
+      }
+    },
+    "/v1/connector-health": {
+      "get": {
+        "operationId": "analytics_api.connector_health.summary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorHealthResponse"
+                }
+              }
+            },
+            "description": "One row per connector, ordered by what needs acting on"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Recorded sync state of every connector"
+      }
+    },
+    "/v1/connector-health/{connector}/syncs": {
+      "get": {
+        "operationId": "analytics_api.connector_health.syncs",
+        "parameters": [
+          {
+            "description": "Connector name, as the descriptors spell it",
+            "in": "path",
+            "name": "connector",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncHistoryResponse"
+                }
+              }
+            },
+            "description": "A bounded window of recorded syncs"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Recent syncs of one connector, newest first"
       }
     },
     "/v1/feedback": {
