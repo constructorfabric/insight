@@ -111,8 +111,12 @@ sweep__build_work() {
     fi
   done < <(disc_load_descriptors | tr '\t' '\037')
 
-  local joined
-  joined="$(IFS=,; printf '%s' "${entries[*]:-}")"
-  jq -cn --arg t "${tick_id}" --argjson c "[${joined}]" \
+  # `jq -s` slurps the stream into an array, so the objects never have to be
+  # joined by hand — no separator to get wrong and no `IFS` to reassign.
+  local connectors_json='[]'
+  if (( ${#entries[@]} > 0 )); then
+    connectors_json="$(printf '%s\n' "${entries[@]}" | jq -sc '.')"
+  fi
+  jq -cn --arg t "${tick_id}" --argjson c "${connectors_json}" \
     '{tick_id: $t, connectors: $c}'
 }
