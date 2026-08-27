@@ -77,6 +77,17 @@
               "number",
               "null"
             ]
+          },
+          "windows": {
+            "description": "One entry per requested extra window, in request order; empty when the\nrequest asked for none.",
+            "items": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1759,6 +1770,13 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricResultsPeriod"
+          },
+          "windows": {
+            "description": "Extra windows served alongside `period` in the same response, in request\norder. Carried by the `period` and `breakdown` views only; every other\nview kind answers over `period` alone.",
+            "items": {
+              "$ref": "#/components/schemas/MetricResultsPeriod"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -2101,6 +2119,17 @@
               "number",
               "null"
             ]
+          },
+          "windows": {
+            "description": "One entry per requested extra window, in request order; empty when the\nrequest asked for none, keeping the single-window wire form unchanged.",
+            "items": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "type": "array"
           }
         },
         "required": [

@@ -22,6 +22,10 @@ const MAX_METRICS: usize = 50;
 // would turn a legal request into a 400 from a service the caller never named.
 const MAX_PERSON_IDS: usize = 1000;
 const MAX_PERIOD_DAYS: i64 = 400;
+// Extra windows are columns, not rows: each one widens the batched period
+// aggregate by one conditional term. The cap bounds the widening a single
+// request can ask for.
+const MAX_WINDOWS: usize = 4;
 const MAX_FILTERS: usize = 10;
 const MAX_FILTER_VALUES: usize = 100;
 const MAX_FILTER_VALUE_BYTES: usize = 512;
@@ -90,12 +94,24 @@ impl ValidatedEntitySelection {
     }
 }
 
+/// One closed day range. `from <= to` holds for every value the validator
+/// admits, so the compiler binds a window without re-checking it.
+#[derive(Debug, Clone, Copy)]
+pub struct DateWindow {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+}
+
 #[derive(Debug)]
 pub struct ValidatedMetricResultsRequest {
     pub tenant_id: Uuid,
     pub entity: ValidatedEntitySelection,
     pub from: NaiveDate,
     pub to: NaiveDate,
+    /// Extra windows the `period` and `breakdown` views carry alongside
+    /// `from..to`, in request order. Empty for a single-window request, and the
+    /// compiler emits byte-identical SQL in that case.
+    pub windows: Vec<DateWindow>,
     pub metrics: Vec<ValidatedMetricRequest>,
     /// Whether the compiler injects the per-tenant observation filter (#1967).
     /// Set from the `metric_catalog.enforce_tenant_scope` config key by the handler; the
@@ -152,6 +168,7 @@ struct RequestShape {
     entity: ValidatedEntitySelection,
     from: NaiveDate,
     to: NaiveDate,
+    windows: Vec<DateWindow>,
     metric_keys: Vec<String>,
 }
 
@@ -165,6 +182,7 @@ pub async fn validate_request(
         entity,
         from,
         to,
+        windows,
         metric_keys,
     } = shape;
 
@@ -249,6 +267,7 @@ pub async fn validate_request(
         entity,
         from,
         to,
+        windows,
         metrics,
         // Off unless the handler turns it on from config; the ingest tenant is
         // not yet aligned to the JWT tenant (#1829), so enforcing here empties
@@ -313,6 +332,31 @@ fn validate_request_shape(
         );
     }
 
+    if req.windows.len() > MAX_WINDOWS {
+        return invalid(
+            "windows",
+            format!("at most {MAX_WINDOWS} extra windows per request"),
+        );
+    }
+    let mut windows = Vec::with_capacity(req.windows.len());
+    for (index, window) in req.windows.iter().enumerate() {
+        let from = parse_date("windows.from", &window.from)?;
+        let to = parse_date("windows.to", &window.to)?;
+        if from > to {
+            return invalid(
+                "windows",
+                format!("windows[{index}].from must be before or equal to windows[{index}].to"),
+            );
+        }
+        if (to - from).num_days() >= MAX_PERIOD_DAYS {
+            return invalid(
+                "windows",
+                format!("windows[{index}] must not exceed {MAX_PERIOD_DAYS} days"),
+            );
+        }
+        windows.push(DateWindow { from, to });
+    }
+
     let mut seen_metric_keys = BTreeSet::new();
     let mut metric_keys = Vec::with_capacity(req.metrics.len());
     for metric in &req.metrics {
@@ -333,6 +377,7 @@ fn validate_request_shape(
         entity,
         from,
         to,
+        windows,
         metric_keys,
     })
 }
@@ -784,6 +829,7 @@ mod tests {
                 from: from.to_owned(),
                 to: to.to_owned(),
             },
+            windows: Vec::new(),
             metrics: metric_keys
                 .into_iter()
                 .map(|key| super::super::dto::MetricRequest {
@@ -984,6 +1030,60 @@ mod tests {
             "2026-01-01",
             vec!["ai.x"],
         );
+        assert!(validate_request_shape(&req, Uuid::nil()).is_err());
+    }
+
+    fn window(from: &str, to: &str) -> super::super::dto::MetricResultsPeriod {
+        super::super::dto::MetricResultsPeriod {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        }
+    }
+
+    #[test]
+    fn shape_keeps_extra_windows_in_request_order() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.windows = vec![window("2026-01-01", "2026-01-31")];
+
+        let Ok(shape) = validate_request_shape(&req, Uuid::nil()) else {
+            panic!("expected the shape to validate");
+        };
+
+        assert_eq!(shape.windows.len(), 1);
+        assert_eq!(shape.windows[0].from, day("2026-01-01"));
+        assert_eq!(shape.windows[0].to, day("2026-01-31"));
+    }
+
+    #[test]
+    fn shape_rejects_a_reversed_window() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.windows = vec![window("2026-01-31", "2026-01-01")];
+
+        assert!(validate_request_shape(&req, Uuid::nil()).is_err());
+    }
+
+    #[test]
+    fn shape_rejects_more_windows_than_the_cap() {
+        let mut req = shape_request(
+            vec!["019e27bc-dec0-7626-81a9-c5524662a6a9"],
+            "2026-02-01",
+            "2026-02-28",
+            vec!["ai.x"],
+        );
+        req.windows = (0..=MAX_WINDOWS)
+            .map(|_| window("2026-01-01", "2026-01-31"))
+            .collect();
+
         assert!(validate_request_shape(&req, Uuid::nil()).is_err());
     }
 
@@ -1423,6 +1523,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-03-31"),
+            windows: Vec::new(),
             metrics: vec![ValidatedMetricRequest {
                 def,
                 filters: vec![],
@@ -1456,6 +1557,7 @@ mod tests {
             },
             from: day("2025-07-21"),
             to: day("2026-07-20"),
+            windows: Vec::new(),
             metrics: (0..4)
                 .map(|_| ValidatedMetricRequest {
                     def: def.clone(),
@@ -1489,6 +1591,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-01-31"),
+            windows: Vec::new(),
             metrics: vec![ValidatedMetricRequest {
                 def: median_definition(),
                 filters: vec![],
@@ -1517,6 +1620,7 @@ mod tests {
             },
             from: day("2026-01-01"),
             to: day("2026-01-31"),
+            windows: Vec::new(),
             metrics: vec![ValidatedMetricRequest {
                 def,
                 filters: vec![],

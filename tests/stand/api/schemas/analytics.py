@@ -678,6 +678,7 @@ class PeriodValueDto(BaseModel):
     )
     entity_id: str
     value: float | None = None
+    windows: list[float | None] | None = Field(None, description='One entry per requested extra window, in request order; empty when the\nrequest asked for none, keeping the single-window wire form unchanged.')
 
 
 class Problem(BaseModel):
@@ -965,6 +966,7 @@ class BreakdownValueDto(BaseModel):
     dimensions: list[MetricDimensionDto]
     entity_id: str
     value: float | None = None
+    windows: list[float | None] | None = Field(None, description='One entry per requested extra window, in request order; empty when the\nrequest asked for none.')
 
 
 class ConnectorHealth(BaseModel):
@@ -1196,6 +1198,7 @@ class MetricResultsRequest(BaseModel):
     entity: MetricResultsEntity
     metrics: list[MetricRequest]
     period: MetricResultsPeriod
+    windows: list[MetricResultsPeriod] | None = Field(None, description='Extra windows served alongside `period` in the same response, in request\norder. Carried by the `period` and `breakdown` views only; every other\nview kind answers over `period` alone.')
 
 
 class MetricSnapshot(BaseModel):

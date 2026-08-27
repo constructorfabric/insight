@@ -11,14 +11,21 @@ use chrono::NaiveDate;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-use super::batch::{RankedDimension, RankedGroup, ResolvedGroupLimit};
-use super::builder::build_timeseries_view;
-use super::compiler::{CompiledQuery, TimeseriesQueryRow, compile_timeseries_query};
+use super::batch::{
+    BatchItem, PeriodWideRow, RankedDimension, RankedGroup, ResolvedGroupLimit, demux_period_rows,
+};
+use super::builder::{build_breakdown_view, build_period_view, build_timeseries_view};
+use super::compiler::{
+    BreakdownQueryRow, CompiledQuery, TimeseriesQueryRow, compile_breakdown_query,
+    compile_period_batch_query, compile_timeseries_query,
+};
 use super::dto::MetricResultViewDto;
 use super::dto::MetricViewErrorCode;
 use super::failure::ViewFailure;
-use super::validation::{ValidatedEntitySelection, ValidatedMetricResultsRequest};
+use super::validation::{DateWindow, ValidatedEntitySelection, ValidatedMetricResultsRequest};
 use super::view::Bucket;
+use crate::domain::external_links::ExternalSourceRegistry;
+use crate::domain::metric_definitions::definition::ValueTransform;
 use crate::domain::metric_definitions::definition::{
     AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition,
     MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
@@ -104,6 +111,7 @@ fn request() -> ValidatedMetricResultsRequest {
         entity: ValidatedEntitySelection::Person { ids: vec![PERSON] },
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default(),
+        windows: Vec::new(),
         metrics: Vec::new(),
         enforce_tenant_scope: true,
     }
@@ -126,6 +134,119 @@ async fn fetch_rows<T: DeserializeOwned>(
         .filter(|line| !line.is_empty())
         .map(|line| serde_json::from_slice(line).map_err(Into::into))
         .collect()
+}
+
+/// The four observations of `nullable_date_sql` split across two windows:
+/// 2026-08-13..14 carry 1 + 2, and 2026-08-15..16 carry 3 + 4. A windowed
+/// request must read both out of ONE scan of the union.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.windows = vec![DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    }];
+
+    // The second pass adds a transform, so the batch's projection stage has to
+    // re-select every window's column and not just the primary one.
+    for multiplier in [None, Some(10.0)] {
+        let mut def = nullable_date_metric();
+        def.transform = multiplier.map(|multiplier| ValueTransform {
+            multiplier: Some(multiplier),
+            offset: None,
+            clamp_min: None,
+            clamp_max: None,
+        });
+        let scale = multiplier.unwrap_or(1.0);
+
+        let query = compile_period_batch_query(&[&def], &req, &[]);
+        let rows: Vec<PeriodWideRow> = fetch_rows(&ch, &query)
+            .await
+            .map_err(|e| anyhow::anyhow!("multiplier {multiplier:?}: {e}"))?;
+        let items = vec![BatchItem {
+            metric_index: 0,
+            view_index: 0,
+            def: def.clone(),
+        }];
+        let per_item = demux_period_rows(&items, rows, req.windows.len())?;
+
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&def, &req, per_item.into_iter().next().unwrap_or_default())
+        else {
+            anyhow::bail!("multiplier {multiplier:?}: expected a period view");
+        };
+        let [ref one] = values[..] else {
+            anyhow::bail!(
+                "multiplier {multiplier:?}: expected one entity, got {}",
+                values.len()
+            );
+        };
+        anyhow::ensure!(
+            one.value == Some(7.0 * scale),
+            "multiplier {multiplier:?}: the primary window must sum 3 + 4, got {:?}",
+            one.value
+        );
+        anyhow::ensure!(
+            one.windows == vec![Some(3.0 * scale)],
+            "multiplier {multiplier:?}: the extra window must sum 1 + 2, got {:?}",
+            one.windows
+        );
+    }
+    Ok(())
+}
+
+/// The breakdown's window columns, through the transform projection stage that
+/// re-selects every one of them by name.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let mut def = nullable_date_metric();
+    def.base.allowed_dimensions = vec!["tool".to_owned()];
+    def.transform = Some(ValueTransform {
+        multiplier: Some(10.0),
+        offset: None,
+        clamp_min: None,
+        clamp_max: None,
+    });
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.windows = vec![DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    }];
+    let dimensions = vec!["tool".to_owned()];
+
+    let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
+    let rows: Vec<BreakdownQueryRow> = fetch_rows(&ch, &query).await?;
+
+    let view = build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())?;
+    let MetricResultViewDto::Breakdown { values, .. } = view else {
+        anyhow::bail!("expected a breakdown view");
+    };
+    let [ref one] = values[..] else {
+        anyhow::bail!("expected one dimension group, got {}", values.len());
+    };
+    anyhow::ensure!(
+        one.value == Some(70.0),
+        "the primary window must be the transformed 3 + 4, got {:?}",
+        one.value
+    );
+    anyhow::ensure!(
+        one.windows == vec![Some(30.0)],
+        "the extra window must be transformed too, got {:?}",
+        one.windows
+    );
+    Ok(())
 }
 
 #[tokio::test]

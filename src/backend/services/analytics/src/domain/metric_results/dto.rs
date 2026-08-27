@@ -8,6 +8,11 @@ use crate::domain::metric_drilldown::MetricDrilldownCapability;
 pub struct MetricResultsRequest {
     pub entity: MetricResultsEntity,
     pub period: MetricResultsPeriod,
+    /// Extra windows served alongside `period` in the same response, in request
+    /// order. Carried by the `period` and `breakdown` views only; every other
+    /// view kind answers over `period` alone.
+    #[serde(default)]
+    pub windows: Vec<MetricResultsPeriod>,
     pub metrics: Vec<MetricRequest>,
 }
 
@@ -250,6 +255,10 @@ pub struct MetricDimensionDto {
 pub struct PeriodValueDto {
     pub entity_id: String,
     pub value: Option<f64>,
+    /// One entry per requested extra window, in request order; empty when the
+    /// request asked for none, keeping the single-window wire form unchanged.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<Option<f64>>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -290,6 +299,10 @@ pub struct BreakdownValueDto {
     pub entity_id: String,
     pub dimensions: Vec<MetricDimensionDto>,
     pub value: Option<f64>,
+    /// One entry per requested extra window, in request order; empty when the
+    /// request asked for none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<Option<f64>>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

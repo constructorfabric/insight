@@ -427,6 +427,21 @@ pub(crate) fn period_alias(item_index: usize) -> String {
     format!("m{item_index}")
 }
 
+/// The alias carrying one item's value over an extra window. The primary
+/// window keeps the bare `period_alias`, so a single-window batch is unchanged.
+pub(crate) fn period_window_alias(item_index: usize, window_index: usize) -> String {
+    format!("m{item_index}_w{window_index}")
+}
+
+/// The alias of one item's value column, by column index: 0 is the primary
+/// window, and the rest follow the request's extra windows in order.
+pub(crate) fn period_column_alias(item_index: usize, column_index: usize) -> String {
+    match column_index.checked_sub(1) {
+        None => period_alias(item_index),
+        Some(window_index) => period_window_alias(item_index, window_index),
+    }
+}
+
 pub(crate) struct PeerAliases {
     pub target: String,
     pub p25: String,
@@ -466,12 +481,18 @@ pub struct PeerWideRow {
 pub fn demux_period_rows(
     items: &[BatchItem],
     rows: Vec<PeriodWideRow>,
+    window_count: usize,
 ) -> Result<Vec<Vec<PeriodQueryRow>>, CanonicalError> {
     let mut per_item: Vec<Vec<PeriodQueryRow>> = items.iter().map(|_| Vec::new()).collect();
     for row in rows {
         for (item_index, item_rows) in per_item.iter_mut().enumerate() {
             let value = wide_field(&row.extra, &period_alias(item_index))?;
-            let narrow = json!({ "entity_id": row.entity_id, "value": value });
+            let windows = (0..window_count)
+                .map(|window_index| {
+                    wide_field(&row.extra, &period_window_alias(item_index, window_index))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let narrow = json!({ "entity_id": row.entity_id, "value": value, "windows": windows });
             item_rows.push(decode_narrow_row(narrow)?);
         }
     }
@@ -579,6 +600,7 @@ mod tests {
             },
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
+            windows: Vec::new(),
             metrics,
             enforce_tenant_scope: true,
         }
@@ -830,7 +852,7 @@ mod tests {
             .into_iter()
             .collect(),
         }];
-        let Ok(per_item) = demux_period_rows(&items(2), rows) else {
+        let Ok(per_item) = demux_period_rows(&items(2), rows, 0) else {
             panic!("expected demux to succeed");
         };
         assert_eq!(per_item[0][0].value, Some(1.5));
@@ -840,6 +862,37 @@ mod tests {
                 .iter()
                 .all(|rows| rows[0].entity_id == "00000000-0000-0000-0000-00000000000a")
         );
+    }
+
+    #[test]
+    fn demux_period_reads_one_window_column_per_requested_window() {
+        let rows = vec![PeriodWideRow {
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
+            extra: [
+                ("m0".to_owned(), json!(4.0)),
+                ("m0_w0".to_owned(), json!(2.0)),
+                ("m0_w1".to_owned(), json!(null)),
+            ]
+            .into_iter()
+            .collect(),
+        }];
+
+        let Ok(per_item) = demux_period_rows(&items(1), rows, 2) else {
+            panic!("expected demux to succeed");
+        };
+
+        assert_eq!(per_item[0][0].value, Some(4.0));
+        assert_eq!(per_item[0][0].windows, vec![Some(2.0), None]);
+    }
+
+    #[test]
+    fn demux_period_fails_when_a_window_column_is_absent() {
+        let rows = vec![PeriodWideRow {
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
+            extra: [("m0".to_owned(), json!(4.0))].into_iter().collect(),
+        }];
+
+        assert!(demux_period_rows(&items(1), rows, 1).is_err());
     }
 
     #[test]
@@ -875,7 +928,7 @@ mod tests {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             extra: HashMap::new(),
         }];
-        assert!(demux_period_rows(&items(1), period_rows).is_err());
+        assert!(demux_period_rows(&items(1), period_rows, 0).is_err());
 
         let peer_rows = vec![PeerWideRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
