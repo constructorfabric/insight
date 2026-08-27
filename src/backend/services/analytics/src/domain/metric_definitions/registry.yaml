@@ -1021,6 +1021,7 @@ metrics:
       - input_role: value
         measure_key: non_default_commit_count
     dimensions:
+      - hour_block
       - project
       - repository
       - source

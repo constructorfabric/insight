@@ -172,6 +172,7 @@ export function DomainLensView({
   // than rendering a screen about a value this lens does not group by.
   const { repo } = usePortalSearch();
   const { openRepository } = usePortalNavActions();
+  const evidence = useMetricEvidenceOptional();
   const scoped = repo && declared.drilldown ? repo : null;
   const scopeDimension = scoped ? (declared.drilldown?.dimension ?? null) : null;
   const config = useMemo(
@@ -532,6 +533,31 @@ export function DomainLensView({
   // disagree: under a flat policy that roster is the whole organisation, and
   // under an org chart it is the viewer's own subtree — the permission
   // boundary identity already enforces.
+  // One hour block over the whole period — the narrowest slice of a heatmap the
+  // evidence request can express. A single cell is that block on ONE weekday,
+  // and there is no weekday predicate to ask for.
+  const openHourBlock = (block: string) => {
+    const heat = config.sections.find(
+      (section): section is Extract<SectionSpec, { kind: "heatmap-hours" }> =>
+        section.kind === "heatmap-hours"
+    );
+    const carrier = heat && grid.byKey.get(evidenceMetricFor(heat.metric));
+    if (!evidence || !carrier?.drilldown) return;
+    const selection = narrowedEvidenceSelection(carrier, memberIds, {
+      filters: [
+        ...(scopeDimension && scoped
+          ? [{ dimension: scopeDimension, value: scoped }]
+          : []),
+        { dimension: HOUR_BLOCK_DIMENSION, value: block },
+      ],
+    });
+    if (selection) {
+      evidence.openEvidenceTargets([{ selection, label: carrier.label }], {
+        activeMetricKey: selection.metric_key,
+      });
+    }
+  };
+
   const openTrendDrilldown = (chart: TrendChart, bucketStart?: string) => {
     // A clicked point asks about its own bucket; the card asks about the
     // period. The label says which, so the dialog never looks like the other.
@@ -619,6 +645,7 @@ export function DomainLensView({
               ? (value) => openRepository(value)
               : undefined
           }
+          onOpenBlock={openHourBlock}
         />
       ))}
 
@@ -676,6 +703,7 @@ function Section({
   personIdByEntity,
   onOpenChart,
   onOpenValue,
+  onOpenBlock,
 }: {
   spec: SectionSpec;
   grid: GridData;
@@ -699,6 +727,8 @@ function Section({
   onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
   /** Descend into one dimension value; absent when the lens has no screen for one. */
   onOpenValue?: (value: string) => void;
+  /** The records of one hour block of a heatmap. */
+  onOpenBlock?: (block: string) => void;
 }) {
   switch (spec.kind) {
     case "headline":
@@ -796,10 +826,10 @@ function Section({
       return (
         <HeatmapHoursSection
           spec={spec}
-          grid={grid}
           hourByKey={hourByKey}
           hourIsError={hourIsError}
           memberIds={memberIds}
+          onOpenBlock={onOpenBlock}
         />
       );
     case "dimension-table":
@@ -2009,6 +2039,7 @@ function CompositionSection({
       unit={r?.unit ?? null}
       notes={spec.notes}
       onOpen={openBar}
+      canOpen={(_row, segment) => segment?.seed !== UNSPLIT_SEGMENT}
     />
   );
 }
@@ -2079,16 +2110,22 @@ function ContributorsSection({
  */
 function HeatmapHoursSection({
   spec,
-  grid,
   hourByKey,
   hourIsError,
   memberIds,
+  onOpenBlock,
 }: {
   spec: Extract<SectionSpec, { kind: "heatmap-hours" }>;
-  grid: GridData;
   hourByKey: Map<string, NormalizedMetricResult>;
   hourIsError: boolean;
   memberIds: readonly string[];
+  /**
+   * The records of one hour block, across the whole period. A CELL cannot be
+   * opened: it is one weekday of one block, and the evidence request has no
+   * weekday predicate to express that — a dialog for the block alone would
+   * answer a wider question than the cell asks.
+   */
+  onOpenBlock?: (block: string) => void;
 }) {
   if (hourIsError) return null;
   const r = hourByKey.get(spec.metric);
@@ -2099,11 +2136,10 @@ function HeatmapHoursSection({
   );
   if (total <= 0 || max <= 0) return null;
 
-  const unit = grid.byKey.get(spec.metric)?.unit ?? null;
   return (
     <section className="flex flex-col gap-3">
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title} · {fmtCompact(total)}
+        {spec.title} · {formatMetricValue(total, r.format, r.unit)}
       </p>
       <Card>
         <CardContent className="flex flex-col gap-3 p-4">
@@ -2116,7 +2152,21 @@ function HeatmapHoursSection({
             <div />
             {HOUR_BLOCKS.map((block, index) => (
               <div key={block} className="text-center text-muted-foreground">
-                {index % 2 === 0 ? block : ""}
+                {index % 2 !== 0 ? (
+                  ""
+                ) : onOpenBlock ? (
+                  <button
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-label={`Open the records from the ${block}:00 block`}
+                    onClick={() => onOpenBlock(block)}
+                    className="cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    {block}
+                  </button>
+                ) : (
+                  block
+                )}
               </div>
             ))}
             {WEEKDAY_LABELS.map((day, dayIndex) => (
@@ -2127,7 +2177,7 @@ function HeatmapHoursSection({
                   return (
                     <div
                       key={block}
-                      title={`${day} ${block}:00 · ${formatMetricValue(value, "integer", unit)}`}
+                      title={`${day} ${block}:00 · ${formatMetricValue(value, r.format, r.unit)}`}
                       className="aspect-square rounded-[3px]"
                       style={{
                         backgroundColor: value
@@ -2860,6 +2910,7 @@ export function BarList({
   showShare = true,
   notes,
   onOpen,
+  canOpen,
 }: {
   title: string;
   rows: BarRow[];
@@ -2875,6 +2926,12 @@ export function BarList({
    * than offering a dialog that would answer a different question.
    */
   onOpen?: (row: BarRow, segment?: BarSegment) => void;
+  /**
+   * Whether ONE piece can be narrowed, when the list as a whole can. A
+   * segment the response did not name has no value to filter on, and an
+   * affordance that opens an empty dialog is worse than none.
+   */
+  canOpen?: (row: BarRow, segment?: BarSegment) => boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
@@ -2967,7 +3024,10 @@ export function BarList({
                                   backgroundColor: colors[segment.seed],
                                 }}
                                 onOpen={
-                                  onOpen ? () => onOpen(row, segment) : undefined
+                                  onOpen &&
+                                  (canOpen?.(row, segment) ?? true)
+                                    ? () => onOpen(row, segment)
+                                    : undefined
                                 }
                                 label={`${row.label} · ${segment.label}`}
                               />
@@ -2984,7 +3044,11 @@ export function BarList({
                     ) : (
                       <BarPiece
                         className="h-full w-full rounded bg-primary/25"
-                        onOpen={onOpen ? () => onOpen(row) : undefined}
+                        onOpen={
+                          onOpen && (canOpen?.(row) ?? true)
+                            ? () => onOpen(row)
+                            : undefined
+                        }
                         label={row.label}
                       />
                     )}

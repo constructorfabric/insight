@@ -718,6 +718,85 @@ describe("composition (rule 7: only real server dimensions)", () => {
     ]);
   });
 
+  it("leaves a segment the response never named inert", async () => {
+    const openEvidenceTargets = vi.fn();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/api", label: "acme/api" },
+              { key: "branch_scope", value: "default", label: "Default branch" },
+            ],
+            value: 30,
+          },
+          // No `branch_scope` at all: the row lands in the synthetic segment.
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/web", label: "acme/web" },
+            ],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", IDS.map((id) => [id, 10] as [string, number]), {
+          label: "Commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        } as Partial<NormalizedMetricResult>),
+      ],
+    ]);
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView
+          config={{
+            title: "T",
+            sections: [
+              {
+                kind: "composition",
+                metric: "t.commits",
+                dimension: "repository",
+                splitBy: "branch_scope",
+                title: "Lines by repository",
+              },
+            ],
+          }}
+        />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    // The named segment offers its records; the unnamed one has no value to
+    // filter on, so it must not offer a dialog that would come back empty.
+    expect(
+      screen.getByRole("button", { name: /acme\/api · Default branch/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /acme\/web · unsplit/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("leaves the bars inert when the carrier's records cannot be read", () => {
     const comp = emptyCollection();
     comp.byKey.set("t.commits", {
@@ -1419,6 +1498,76 @@ describe("descending into one dimension value", () => {
         { dimension: "repository", values: ["src:acme/api"] },
       ]);
     }
+  });
+
+  it("opens an hour block from its column, and leaves the cells inert", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = vi.fn();
+    const hours = emptyCollection();
+    hours.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      timeseries: {
+        view: "timeseries",
+        bucket: "day",
+        dimensions: ["hour_block"],
+        series: IDS.map((id) => ({
+          entity_id: id,
+          dimensions: [{ key: "hour_block", value: "08", label: "08–10" }],
+          points: [{ bucket_start: "2026-10-05", value: 3 }],
+        })),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      hours,
+    ];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", IDS.map((id) => [id, 10] as [string, number]), {
+          label: "Commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        } as Partial<NormalizedMetricResult>),
+      ],
+    ]);
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView config={SCOPED_CONFIG} />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open the records from the 08:00 block",
+      }),
+    );
+
+    const [targets] = openEvidenceTargets.mock.calls[0]!;
+    // The block across the period, and still inside the repository. A CELL is
+    // that block on ONE weekday, which the request has no predicate for — so
+    // the cells stay inert rather than answering a wider question.
+    expect(targets[0].selection.filters).toEqual([
+      { dimension: "repository", values: ["src:acme/api"] },
+      { dimension: "hour_block", values: ["08"] },
+    ]);
+    expect(screen.getByTitle(/^Mon 08:00/).tagName).toBe("DIV");
   });
 
   it("ignores a value the lens has no screen for", () => {
