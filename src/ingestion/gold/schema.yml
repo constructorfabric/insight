@@ -1010,6 +1010,41 @@ models:
           Cohort membership value: org unit id when present, department name
           fallback otherwise. NULL when the person has neither.
 
+  - name: git_file_change_coverage
+    description: >
+      How much of each git source's authored work arrived with its file
+      changes. One row per data_source, materialized in the same gold build as
+      the serving relations. This is the measuring device for diff collection:
+      the size metrics report a commit's own total when its changes were never
+      collected, which is the right number to serve and the wrong place to
+      keep a collection alarm. Judge a live source by recent_collected_pct —
+      the all-time share carries history no re-read can reach, so it is a
+      floor that never fully recovers.
+    columns:
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+          - unique
+      - name: commits
+        description: "Authored commits counted for the source"
+      - name: commits_with_file_changes
+        description: "Of those, the commits the file-change stream reached"
+      - name: collected_pct
+        description: "Share of commits with collected file changes, all time, percent (1 decimal)"
+      - name: recent_commits
+        description: "Commits inside the git_coverage_recent_days window"
+      - name: recent_collected_pct
+        description: >
+          Share with collected file changes inside the recent window, percent
+          (1 decimal). NULL when the window holds no commits. This is the
+          number a collection regression moves.
+      - name: uncollected_lines
+        description: >
+          Added plus removed lines described by a commit row and nothing
+          finer — the prioritisation signal for how much authored volume has
+          no file grain.
+
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
