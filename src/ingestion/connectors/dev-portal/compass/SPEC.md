@@ -24,7 +24,8 @@ In scope — six streams:
 | `deployment_events` | one event of Compass type `DEPLOYMENT` on a component |
 
 `links`, `labels`, `event_sources` and `relationships` are JSON columns on
-`components` rather than streams of their own — see the deltas above.
+`components` rather than streams of their own — see [Links](#33-links-a-column-not-a-stream)
+and [Dependency edges](#34-dependency-edges-a-column-not-a-stream).
 
 Out of scope for v1, with reasons:
 
@@ -361,7 +362,9 @@ resolve details per team via `teamV2`.
 | `organizationId` | `ID` | |
 | `isVerified` | `Boolean` | |
 | `memberCount` | `Int` | not returned by the search field |
-| `type` | `TeamType` | |
+
+`TeamV2.type` is deliberately not selected: it is an object needing its own
+subselection, and nothing downstream asks what kind of team a team is.
 
 Sync: full refresh. `unique_key = id`. Dated snapshots required.
 
@@ -642,11 +645,12 @@ produced them.
 
 Per the connector skill:
 
-- [ ] `descriptor.yaml` with strict semver, `type: nocode`, namespace, schedule, secret fields, `dbt_select`
-- [ ] `connector.yaml` — declarative manifest; named operations; `errors[]` response filters; per-stream traversal per [Traversal](#4-traversal-contracts)
-- [ ] `connectors-config.yaml` entry (bootstrap-db) — without it the bronze database is never created
-- [ ] `class_people.sql` `depends_on` entry, if any stream feeds people
-- [ ] connectors-ddl snapshot regenerated per the bootstrap-db README
-- [ ] per-stream mock tests — 100% stream coverage, including a `QueryError`-in-200 case and a `hasNextPage`-lies case per [Traversal](#4-traversal-contracts)
-- [ ] `scripts/ci/connector_wiring.py` green
-- [ ] dbt conventions checked (RMT engine, `order_by=['unique_key']`, read-time dedup, `delete+insert` on silver)
+- [x] `descriptor.yaml` with strict semver, `type: nocode`, namespace, schedule, secret fields, `dbt_select`
+- [x] `connector.yaml` — declarative manifest; named operations; `errors[]` response filters; per-stream traversal per [Traversal](#4-traversal-contracts)
+- [x] `connectors-config.yaml` entry (bootstrap-db) — without it the bronze database is never created
+- [x] connectors-ddl snapshot regenerated per the bootstrap-db README
+- [x] per-stream mock tests — 100% stream coverage, including a `QueryError`-in-200 case and a `hasNextPage`-lies case per [Traversal](#4-traversal-contracts)
+- [x] `scripts/ci/connector_wiring.py` green
+- [x] bronze dbt conventions (RMT engine, `order_by=['unique_key']`) — the promotion model
+- [ ] `class_people.sql` `depends_on` entry — not applicable while no stream feeds people; revisit with the account-id join in §9
+- [ ] silver dbt conventions (read-time dedup, `delete+insert`) — deferred with silver itself (§7)
