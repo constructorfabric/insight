@@ -29,6 +29,7 @@ pub struct PreviewsGear {
 impl Gear for PreviewsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let config: GearConfig = ctx.config()?;
+        config.validate()?;
         tracing::info!(namespace = config.namespace, "starting previews gear");
 
         let cluster = Cluster::connect(config.namespace.clone()).await?;
@@ -41,7 +42,11 @@ impl Gear for PreviewsGear {
             config.sweep_interval_secs,
         ));
 
-        let state = AppState { cluster, config };
+        let state = AppState {
+            cluster,
+            config,
+            create_gate: tokio::sync::Mutex::new(()),
+        };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;

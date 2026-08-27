@@ -34,6 +34,10 @@ on:
       - ".github/workflows/openapi-specs.yml"
   workflow_dispatch:
 
+# Drift gates only read the checkout and build from it — no write-back.
+permissions:
+  contents: read
+
 # A new push obsoletes any run still in flight for the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

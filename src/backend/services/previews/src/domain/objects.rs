@@ -247,6 +247,18 @@ pub fn experiment_from_deployment(
     })
 }
 
+/// How many experiments count against the live cap: expired ones are already
+/// condemned (the TTL sweep removes them on its next pass), so they must not
+/// block a new create in the meantime.
+#[must_use]
+pub fn live_experiment_count(deployments: &[Deployment], now: DateTime<Utc>) -> usize {
+    deployments
+        .iter()
+        .filter_map(|d| experiment_from_deployment(d, now))
+        .filter(|e| e.status != super::experiment::ExperimentStatus::Expired)
+        .count()
+}
+
 /// One route per experiment, attaching itself to the shared Gateway via
 /// `parentRefs`: creating it ADDS the `/exp/<name>` path and deleting it
 /// REMOVES it — no central config is rewritten. `URLRewrite

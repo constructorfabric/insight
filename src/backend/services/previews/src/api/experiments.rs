@@ -132,12 +132,17 @@ pub async fn create_experiment(
             .create());
     }
 
-    let live = state
+    // INVARIANT: held across the list+create awaits below — the hold IS the
+    // cap enforcement: concurrent creates would otherwise all pass the count
+    // before any write lands and exceed `max_experiments`.
+    let _admission = state.create_gate.lock().await;
+
+    let deployments = state
         .cluster
         .list_experiment_deployments()
         .await
-        .map_err(list_err)?
-        .len();
+        .map_err(list_err)?;
+    let live = objects::live_experiment_count(&deployments, Utc::now());
     if live >= state.config.max_experiments {
         return Err(ExperimentError::resource_exhausted(format!(
             "the cap of {} live experiments is reached; delete one first",

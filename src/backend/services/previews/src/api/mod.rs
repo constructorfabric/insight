@@ -14,12 +14,15 @@ use toolkit::api::{OpenApiInfo, OpenApiRegistry, OpenApiRegistryImpl, OperationB
 use crate::config::GearConfig;
 use crate::infra::cluster::Cluster;
 
-/// Shared application state, injected into handlers via `Extension`.
-#[derive(Clone)]
+/// Shared application state, injected into handlers via `Extension` (as one
+/// `Arc`, never cloned per request).
 pub struct AppState {
     /// Kubernetes access, scoped to the one configured namespace.
     pub cluster: Cluster,
     pub config: GearConfig,
+    /// Serializes create admission (count-then-create); see the INVARIANT at
+    /// its lock site.
+    pub create_gate: tokio::sync::Mutex<()>,
 }
 
 /// Mount the previews routes onto the host's router. Gateway-JWT identity is

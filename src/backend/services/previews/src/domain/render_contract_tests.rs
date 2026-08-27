@@ -252,3 +252,25 @@ fn a_foreign_deployment_is_not_an_experiment() {
 
     assert!(objects::experiment_from_deployment(&foreign, Utc::now()).is_none());
 }
+
+#[test]
+fn expired_experiments_do_not_count_against_the_cap() {
+    let live = objects::deployment(&name(), &tag(), &stamp());
+    let expired = {
+        let past = stamp().created_at - chrono::Duration::days(30);
+        objects::deployment(
+            &name(),
+            &tag(),
+            &objects::ExperimentStamp {
+                expires_at: past,
+                ..stamp()
+            },
+        )
+    };
+    let foreign = k8s_openapi::api::apps::v1::Deployment::default();
+
+    let now = stamp().created_at;
+    let count = objects::live_experiment_count(&[live, expired, foreign], now);
+
+    assert_eq!(count, 1, "only the unexpired experiment counts");
+}

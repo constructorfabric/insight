@@ -30,7 +30,9 @@ gears:
       cors_enabled: true
       openapi:
         title: "Insight Previews API"
-        version: "0.1.0"
+        # Kept in step with api::openapi_info() — the two describe the same
+        # surface and should not disagree.
+        version: "1.0.0"
         description: "Preview experiments API"
       # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT and
       # maps its claims into the SecurityContext. No auth_disabled path.
