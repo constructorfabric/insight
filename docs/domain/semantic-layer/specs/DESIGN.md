@@ -648,12 +648,21 @@ choices.
 
 Four groups; the query contract is stable, the rest additive.
 
-- **Query** — request by metric key with entity scope, range, grain,
-  dimensions, filters, view. Responses are self-describing and carry
-  provenance: definition version, cache-or-computed, data-available-from,
-  availability state. Drilldown is the row mode of the same contract:
-  the metric's contributing rows under the same scope, range, and
-  filters, paginated and exportable.
+- **Query** — four questions, not one endpoint with view modes. A
+  *values* query is the workhorse: metric key, subjects, range, and the
+  orthogonal parameters grain (whole-range or a bucket), split (zero or
+  more dimensions with an optional top-N cap), and fold (per subject or
+  combined across them) — one shape covering every tabular and series
+  answer, with totals as an explicit response field, never a sentinel
+  row. A *comparison* query evaluates a metric for targets against a
+  population (declared cohort or tenant) and returns target values with
+  the population's floor-suppressed distribution — comparison is its own
+  question, not a view of rows. A *distribution* query returns the shape
+  of per-event values (bins, quantiles). A *rows* query is drilldown:
+  the rows behind any values query under the same predicates, paginated
+  and exportable. Responses are self-describing and carry provenance:
+  definition version, cache-or-computed, data-available-from,
+  availability state.
 - **Discovery** — the catalog of visible metrics and measures with their
   capability; dataset field catalogs with roles, retention, origin,
   display body, and lineage; paginated dimension values with an explicit
