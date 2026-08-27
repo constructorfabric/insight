@@ -156,6 +156,7 @@ authored_commits AS (
         commits.repository_label AS repository_label,
         commits.source_value AS source_value,
         commits.branch_scope_value AS branch_scope_value,
+        commits.branch_scope_label AS branch_scope_label,
         commits.source_dimensions AS source_dimensions,
         -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
         -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
@@ -477,6 +478,8 @@ pull_request_measures AS (
         pr_measure.2 AS contribution,
         repository_label,
         repository_value,
+        branch_scope_label,
+        destination_branch_label,
         source_dimensions
     FROM pull_requests_source AS pull_request
     ARRAY JOIN CAST(arrayConcat(
@@ -761,6 +764,7 @@ SELECT
         'title', message,
         'repository', repository_label,
         'author', author_name,
+        'branch_scope', branch_scope_label,
         'lines_added', coalesce(toString(lines_added), ''),
         'lines_removed', coalesce(toString(lines_removed), '')
     ) AS details
@@ -806,7 +810,9 @@ SELECT
         'ref', toString(pr_number),
         'title', title,
         'repository', repository_label,
-        'author', author_name
+        'author', author_name,
+        'branch_scope', branch_scope_label,
+        'destination_branch', destination_branch_label
     ) AS details
 FROM pull_request_measures
 WHERE tenant_id IS NOT NULL
@@ -846,7 +852,8 @@ SELECT
         'ref', toString(pr_number),
         'title', title,
         'repository', repository_label,
-        'author', author_name
+        'author', author_name,
+        'destination_branch', destination_branch_label
     ) AS details
 FROM {{ ref('git_review_events') }}
 WHERE tenant_id IS NOT NULL
