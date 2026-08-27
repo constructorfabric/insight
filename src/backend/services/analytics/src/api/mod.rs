@@ -3,6 +3,7 @@
 pub(crate) mod ai;
 pub(crate) mod error;
 mod feedback;
+mod ingestion;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
@@ -206,6 +207,38 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(usage::get_usage_summary)
+        .register(router, openapi);
+
+    // Ingestion intensity (ops). Admin-gated inside the handler, like the usage
+    // read model: bronze rows carry no tenant, so this surface is
+    // infrastructure-wide and cannot be scoped by the caller's tenant.
+    router = OperationBuilder::get("/v1/ingestion/intensity")
+        .operation_id("analytics_api.ingestion.intensity")
+        .summary("Bronze extraction intensity per bucket")
+        .authenticated()
+        .no_license_required()
+        .query_param_typed("grain", false, "Bucket width: 15m or 1s", "string")
+        .query_param_typed(
+            "scope",
+            false,
+            "Bronze database to scope to, e.g. bronze_bamboohr",
+            "string",
+        )
+        .query_param_typed(
+            "series",
+            false,
+            "What one band counts: connector, stream or total",
+            "string",
+        )
+        .query_param_typed("from", false, "Inclusive lower bound, RFC 3339", "string")
+        .query_param_typed("to", false, "Exclusive upper bound, RFC 3339", "string")
+        .json_response_with_schema::<ingestion::IngestionIntensityResponse>(
+            openapi,
+            StatusCode::OK,
+            "Extraction intensity buckets",
+        )
+        .standard_errors(openapi)
+        .handler(ingestion::get_ingestion_intensity)
         .register(router, openapi);
 
     // Sending is open to any signed-in caller; the listing is admin-gated

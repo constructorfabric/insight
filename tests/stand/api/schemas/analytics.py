@@ -205,6 +205,15 @@ class ImportCustomMetricsResponse(BaseModel):
     skipped: list[str]
 
 
+class IngestionPoint(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bucket: str = Field(..., description="Bucket start as `YYYY-MM-DD HH:MM:SS`, always UTC — the reader's own\nzone would re-cut buckets the server already decided.")
+    key: str = Field(..., description='Connector slug, stream name, or `all`, per the resolved `series`.')
+    rows: int = Field(..., ge=0)
+
+
 class MetricComputation(StrEnum):
     sum = 'sum'
     ratio = 'ratio'
@@ -961,6 +970,19 @@ class CustomMetricSummary(BaseModel):
     label: str
     metric_key: str
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
+
+
+class IngestionIntensityResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    grain: str = Field(..., description='Echoed resolved, not as asked: the caller may have pinned neither bound.')
+    points: list[IngestionPoint]
+    scope: str | None = Field(None, description='The `source_database` the read was scoped to; absent when org-wide.')
+    series: str
+    to: str
+    truncated: bool = Field(..., description='The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.')
 
 
 class MetricDefinitionView(BaseModel):

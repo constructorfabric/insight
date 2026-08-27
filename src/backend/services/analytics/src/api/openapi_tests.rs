@@ -34,6 +34,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
         "/v1/ai/explain",
         "/v1/ai/settings",
         "/v1/feedback",
+        "/v1/ingestion/intensity",
         "/v1/metric-definitions",
         "/v1/metric-drilldown",
         "/v1/metric-drilldown/export",
@@ -53,7 +54,7 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     }
     assert_eq!(
         paths.len(),
-        21,
+        22,
         "the contract must carry exactly the surviving paths, got {:?}",
         paths.keys().collect::<Vec<_>>()
     );
