@@ -61,6 +61,10 @@ class Mover:
         token = source.get("AIRBYTE_TOKEN")
         if not url:
             raise MoverError("AIRBYTE_URL is not set")
+        # SAFETY: urllib honours `file://`, so the scheme is pinned rather than
+        # taken on trust from the environment.
+        if not url.startswith(("http://", "https://")):
+            raise MoverError("AIRBYTE_URL must be an http or https URL")
         if not token:
             raise MoverError("AIRBYTE_TOKEN is not set")
         return cls(url, token)
@@ -112,6 +116,7 @@ class Mover:
         request.add_header("Accept", "application/json")
         request.add_header("Authorization", f"Bearer {self._token}")
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(request, timeout=_TIMEOUT_SECS) as response:
                 decoded = json.load(response)
         except urllib.error.HTTPError as error:

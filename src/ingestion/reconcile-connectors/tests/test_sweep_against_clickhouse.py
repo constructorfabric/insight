@@ -166,9 +166,13 @@ class _StubMover:
 
 
 def _query(sql: str) -> str:
+    # SAFETY: urllib honours `file://`. The URL is an opt-in env var, so the
+    # scheme is pinned rather than taken on trust.
+    assert CH_URL and CH_URL.startswith(("http://", "https://")), CH_URL
     request = urllib.request.Request(f"{CH_URL}/", data=sql.encode(), method="POST")
     request.add_header("X-ClickHouse-User", CH_USER)
     request.add_header("X-ClickHouse-Key", CH_PASSWORD)
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
     with urllib.request.urlopen(request, timeout=30) as response:
         return response.read().decode()
 

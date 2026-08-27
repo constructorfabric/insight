@@ -71,6 +71,10 @@ class Ledger:
             raise LedgerError(f"ClickHouse env incomplete: {', '.join(missing)}")
         proto_key = "RECONCILE_DEST_CLICKHOUSE_PROTOCOL"
         protocol = source.get(proto_key, "http")  # RULE-DEFAULTS-OK: chart-rendered constant, same fallback the Bronze destination config uses
+        # SAFETY: urllib honours `file://`, so the scheme is pinned rather than
+        # taken on trust from the environment.
+        if protocol not in ("http", "https"):
+            raise LedgerError(f"{proto_key} must be http or https, not {protocol!r}")
         host = source["RECONCILE_DEST_CLICKHOUSE_HOST"]
         port = source["RECONCILE_DEST_CLICKHOUSE_PORT"]
         return cls(
@@ -87,6 +91,7 @@ class Ledger:
         request.add_header("X-ClickHouse-User", self._user)
         request.add_header("X-ClickHouse-Key", self._password)
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(request, timeout=_TIMEOUT_SECS) as response:
                 return response.read().decode()
         except urllib.error.HTTPError as error:
