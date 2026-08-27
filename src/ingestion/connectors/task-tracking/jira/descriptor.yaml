@@ -22,7 +22,12 @@ name: jira
 # event_kind gains the 'availability' and 'lifecycle' values — and per
 # ADR-0015 a major bump dispatches the one-shot sync with dbt --full-refresh
 # that rebuilds those tables; no ALTER migrations are shipped.
-version: "4.0.0"
+# 5.0.0 (major): jira-enrich carries the issue summary into the class contract's
+# `title`, so task evidence rows can name the work item. MAJOR because the fix
+# only reaches rows the binary writes, and it skips any issue that already has
+# them — the deploy hook empties the staging table and the one-shot sync a major
+# dispatches is what re-bootstraps every issue with its summary (#2738).
+version: "5.0.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
