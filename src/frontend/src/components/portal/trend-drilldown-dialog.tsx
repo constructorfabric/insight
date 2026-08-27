@@ -242,20 +242,32 @@ function PeriodTable({ state }: { state: TrendDrilldownState }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-36 capitalize">{state.bucketLabel}</TableHead>
-          <TableHead className="w-28 text-right">Total</TableHead>
-          <TableHead className="w-28 text-right">Active</TableHead>
+          {/* INVARIANT: the fixed columns must not wrap. `table-layout` is auto
+            here, so the unbounded "Who" column can squeeze them below their
+            content width — and a date breaks at its own hyphens, landing
+            "2026-" above "08-26". */}
+          <TableHead className="w-36 whitespace-nowrap capitalize">
+            {state.bucketLabel}
+          </TableHead>
+          <TableHead className="w-28 text-right whitespace-nowrap">
+            Total
+          </TableHead>
+          <TableHead className="w-28 text-right whitespace-nowrap">
+            Active
+          </TableHead>
           <TableHead>Who</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {state.breakdown.map((row) => (
           <TableRow key={row.date}>
-            <TableCell className="tabular-nums">{row.date}</TableCell>
-            <TableCell className="text-right tabular-nums">
+            <TableCell className="whitespace-nowrap tabular-nums">
+              {row.date}
+            </TableCell>
+            <TableCell className="text-right whitespace-nowrap tabular-nums">
               {formatMetricNumber(row.total, "decimal")}
             </TableCell>
-            <TableCell className="text-right tabular-nums">
+            <TableCell className="text-right whitespace-nowrap tabular-nums">
               {row.contributors.length}
             </TableCell>
             <TableCell className="text-muted-foreground">

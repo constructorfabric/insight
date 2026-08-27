@@ -78,12 +78,8 @@ run_rows AS (
                 tuple('outcome', outcome, toNullable(outcome)),
                 tuple(
                     'hour_block',
-                    leftPad(toString(intDiv(toHour(started_at), 2) * 2), 2, '0'),
-                    toNullable(concat(
-                        leftPad(toString(intDiv(toHour(started_at), 2) * 2), 2, '0'),
-                        '–',
-                        leftPad(toString(intDiv(toHour(started_at), 2) * 2 + 2), 2, '0')
-                    ))
+                    {{ hour_block_value('started_at') }},
+                    toNullable({{ hour_block_label('started_at') }})
                 )
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS run_dimensions

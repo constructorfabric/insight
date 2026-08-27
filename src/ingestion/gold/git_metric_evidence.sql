@@ -757,7 +757,18 @@ SELECT
     if(message = '', commit_hash, message) AS record_label,
     toNullable(toFloat64(commit_measure.2)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
-    source_dimensions AS dimensions,
+    -- The hour block rides HERE and not on git_authored_commits: the
+    -- `commit_day` rows group by that model's own dimension tuple, so a
+    -- dimension added there would split one active day into one row per
+    -- block and inflate every active-day reading.
+    arrayConcat(
+        source_dimensions,
+        [tuple(
+            'hour_block',
+            {{ hour_block_value('observed_at') }},
+            toNullable({{ hour_block_label('observed_at') }})
+        )]
+    ) AS dimensions,
     map(
         'source_id', coalesce(toString(source_id), ''),
         'ref', commit_hash,

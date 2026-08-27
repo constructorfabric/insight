@@ -1,7 +1,7 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -77,6 +77,7 @@ import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import {
+  labelForDimensionValue,
   toBarRows,
   UNSPLIT_SEGMENT,
   type BarEntry,
@@ -85,6 +86,11 @@ import {
 } from "@/lib/portal/bar-rows";
 import { narrowedEvidenceSelection } from "@/lib/metrics/evidence-targets";
 import { evidenceMetricFor } from "@/lib/metrics/evidence-via";
+import {
+  dayHourMatrix,
+  HOUR_BLOCKS,
+  WEEKDAY_LABELS,
+} from "@/lib/portal/day-hour-matrix";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
@@ -119,6 +125,7 @@ import {
   type TrendDrilldownState,
 } from "@/components/portal/trend-drilldown-dialog";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
+import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
@@ -159,9 +166,36 @@ export function DomainLensView({
   // takes its tile with it, and a section left with none of its own is gone
   // rather than drawn empty (`visibleSections`).
   const showPlanned = usePortalShowPlanned();
+  // One repository under inspection turns the lens into that repository's
+  // screen: the drilldown's own sections, every request filtered to the value,
+  // and a breadcrumb back. A `repo` that outlives its lens is ignored rather
+  // than rendering a screen about a value this lens does not group by.
+  const { repo } = usePortalSearch();
+  const { openRepository } = usePortalNavActions();
+  const scoped = repo && declared.drilldown ? repo : null;
+  const scopeDimension = scoped ? (declared.drilldown?.dimension ?? null) : null;
   const config = useMemo(
-    () => visibleSections(declared, showPlanned),
-    [declared, showPlanned]
+    () =>
+      visibleSections(
+        scoped && declared.drilldown
+          ? {
+              ...declared,
+              tagline: declared.drilldown.tagline ?? declared.tagline,
+              sections: declared.drilldown.sections,
+            }
+          : declared,
+        showPlanned
+      ),
+    [declared, showPlanned, scoped]
+  );
+  // Every request the screen makes carries this, so no section can forget it
+  // and quietly answer about the whole tenant instead.
+  const scopeFilters = useMemo(
+    () =>
+      scopeDimension && scoped
+        ? [{ dimension: scopeDimension, values: [scoped] }]
+        : undefined,
+    [scopeDimension, scoped]
   );
 
 
@@ -208,10 +242,11 @@ export function DomainLensView({
     () => ({
       metrics: fetchKeys.map((key) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "period" as const }, { view: "peer" as const }],
       })),
     }),
-    [fetchKeys]
+    [fetchKeys, scopeFilters]
   );
   const grid = useMemberGridData(
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
@@ -243,11 +278,12 @@ export function DomainLensView({
       metrics: trendBucket
         ? trendKeys.map((key) => ({
             key,
+            ...(scopeFilters ? { filters: scopeFilters } : {}),
             views: [{ view: "timeseries" as const, bucket: trendBucket }],
           }))
         : [],
     }),
-    [trendKeys, trendBucket]
+    [trendKeys, trendBucket, scopeFilters]
   );
   const trend = useMetricCollection(
     trendCollection.metrics.length && memberIds.length
@@ -283,10 +319,11 @@ export function DomainLensView({
     return {
       metrics: [...dims].map(([key, set]) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "breakdown" as const, dimensions: [...set] }],
       })),
     };
-  }, [breakdownSections]);
+  }, [breakdownSections, scopeFilters]);
   const compData = useMetricCollection(
     breakdownSections.length && memberIds.length
       ? compCollection
@@ -311,10 +348,11 @@ export function DomainLensView({
     () => ({
       metrics: eventSections.map((s) => ({
         key: s.metric,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "histogram" as const }],
       })),
     }),
-    [eventSections]
+    [eventSections, scopeFilters]
   );
   const eventData = useMetricCollection(
     eventSections.length && memberIds.length
@@ -347,15 +385,53 @@ export function DomainLensView({
     return {
       metrics: [...dimensionByMetric].map(([key, dimension]) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "rollup" as const, dimensions: [dimension] }],
       })),
     };
-  }, [tableSections]);
+  }, [tableSections, scopeFilters]);
   const tableData = useMetricCollection(
     tableSections.length && memberIds.length
       ? tableCollection
       : EMPTY_COLLECTION,
     tableSections.length && memberIds.length
+      ? { type: "person", ids: memberIds }
+      : { type: "person", ids: [] },
+    dateRange
+  );
+
+  // Heatmap: a timeseries of its own, because the same metric cannot carry two
+  // timeseries views in one request — and the trend already claims that view
+  // for the metrics it charts. Bucketed by DAY whatever the trend chose: the
+  // matrix reads the weekday off each bucket, so a week-sized bucket would
+  // collapse five weekdays into one cell.
+  const hourSections = useMemo(
+    () =>
+      config.sections.filter(
+        (s): s is Extract<SectionSpec, { kind: "heatmap-hours" }> =>
+          s.kind === "heatmap-hours"
+      ),
+    [config]
+  );
+  const hourCollection = useMemo<MetricCollectionConfig>(
+    () => ({
+      metrics: hourSections.map((s) => ({
+        key: s.metric,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
+        views: [
+          {
+            view: "timeseries" as const,
+            bucket: "day" as const,
+            dimensions: [HOUR_BLOCK_DIMENSION],
+          },
+        ],
+      })),
+    }),
+    [hourSections, scopeFilters]
+  );
+  const hourData = useMetricCollection(
+    hourSections.length && memberIds.length ? hourCollection : EMPTY_COLLECTION,
+    hourSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
     dateRange
@@ -431,6 +507,18 @@ export function DomainLensView({
     );
   }
 
+  // The value's own label, found wherever the responses named it. The URL
+  // carries the id, which is `<source>:<owner>/<repo>` and not what a reader
+  // recognises; the id stands in until a row arrives that knows better.
+  const scopedLabel = scoped
+    ? (labelForDimensionValue(
+        scopeDimension,
+        scoped,
+        compData.byKey,
+        tableData.byKey
+      ) ?? null)
+    : null;
+
   // The affordance sits with the page title, not on the chart: it explains the
   // view, and a chart that grows a second card would carry two of them.
   const trendSpec = config.sections.find(
@@ -462,9 +550,26 @@ export function DomainLensView({
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
+      {scoped ? (
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => openRepository("")}
+            className="cursor-pointer text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {declared.title}
+          </button>
+          <span aria-hidden className="text-muted-foreground">
+            ›
+          </span>
+          <span className="font-medium">{scopedLabel ?? scoped}</span>
+        </nav>
+      ) : null}
       <div className="relative flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            {scoped ? (scopedLabel ?? scoped) : config.title}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
             {config.tagline ?? "trend & balance"}
@@ -496,6 +601,8 @@ export function DomainLensView({
           compRefetch={compData.refetch}
           eventByKey={eventData.byKey}
           eventIsError={eventData.isError}
+          hourByKey={hourData.byKey}
+          hourIsError={hourData.isError}
           tableByKey={tableData.byKey}
           tableIsError={tableData.isError}
           tableRefetch={tableData.refetch}
@@ -505,6 +612,13 @@ export function DomainLensView({
           nameByEntity={nameByEntity}
           personIdByEntity={personIdByEntity}
           onOpenChart={openTrendDrilldown}
+          onOpenValue={
+            // Only from the listing screen: a table INSIDE the drilldown is
+            // already about one value, so descending again means nothing.
+            !scoped && declared.drilldown
+              ? (value) => openRepository(value)
+              : undefined
+          }
         />
       ))}
 
@@ -550,6 +664,8 @@ function Section({
   compRefetch,
   eventByKey,
   eventIsError,
+  hourByKey,
+  hourIsError,
   tableByKey,
   tableIsError,
   tableRefetch,
@@ -559,6 +675,7 @@ function Section({
   nameByEntity,
   personIdByEntity,
   onOpenChart,
+  onOpenValue,
 }: {
   spec: SectionSpec;
   grid: GridData;
@@ -569,6 +686,8 @@ function Section({
   compRefetch: () => void;
   eventByKey: Map<string, NormalizedMetricResult>;
   eventIsError: boolean;
+  hourByKey: Map<string, NormalizedMetricResult>;
+  hourIsError: boolean;
   tableByKey: Map<string, NormalizedMetricResult>;
   tableIsError: boolean;
   tableRefetch: () => void;
@@ -578,6 +697,8 @@ function Section({
   cohortOf: (id: string) => string | null;
   cohortLabel: string;
   onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
+  /** Descend into one dimension value; absent when the lens has no screen for one. */
+  onOpenValue?: (value: string) => void;
 }) {
   switch (spec.kind) {
     case "headline":
@@ -662,6 +783,25 @@ function Section({
           memberIds={memberIds}
         />
       );
+    case "contributors":
+      return (
+        <ContributorsSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+        />
+      );
+    case "heatmap-hours":
+      return (
+        <HeatmapHoursSection
+          spec={spec}
+          grid={grid}
+          hourByKey={hourByKey}
+          hourIsError={hourIsError}
+          memberIds={memberIds}
+        />
+      );
     case "dimension-table":
       return (
         <DimensionTableSection
@@ -669,6 +809,7 @@ function Section({
           tableByKey={tableByKey}
           tableIsError={tableIsError}
           tableRefetch={tableRefetch}
+          onOpenValue={onOpenValue}
         />
       );
     case "ownership":
@@ -1872,9 +2013,146 @@ function CompositionSection({
   );
 }
 
+/* ── contributors + heatmap-hours (inside a drilldown) ───────────────── */
+
+const CONTRIBUTOR_ROWS = 8;
+
+/**
+ * The people who carried this one value, ranked.
+ *
+ * Named, unlike every roster-wide section: the subject is already one
+ * repository, and "who works on this" is the question a reader descends to ask.
+ * The roster-wide screens stay anonymous — see `AttentionSection` for the only
+ * other place a name appears.
+ */
+function ContributorsSection({
+  spec,
+  grid,
+  memberIds,
+  nameByEntity,
+}: {
+  spec: Extract<SectionSpec, { kind: "contributors" }>;
+  grid: GridData;
+  memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+}) {
+  const r = grid.byKey.get(spec.metric);
+  if (!r) return null;
+
+  const ranked = entityValues(r, memberIds)
+    .filter((e) => e.value > 0)
+    .sort((a, b) => b.value - a.value);
+  if (ranked.length < 2) return null;
+
+  const limit = spec.limit ?? CONTRIBUTOR_ROWS;
+  const bucket = new Map<string, BarEntry>();
+  for (const entry of ranked.slice(0, limit)) {
+    bucket.set(entry.id, {
+      label: nameByEntity.get(entry.id) ?? entry.id,
+      value: entry.value,
+    });
+  }
+  const rest = ranked.slice(limit);
+  if (rest.length) {
+    bucket.set("__rest__", {
+      label: `${rest.length} more ${rest.length === 1 ? "person" : "people"}`,
+      value: rest.reduce((sum, e) => sum + e.value, 0),
+    });
+  }
+
+  return (
+    <BarList
+      title={spec.title}
+      rows={toBarRows(bucket)}
+      format={r.format}
+      unit={r.unit}
+    />
+  );
+}
+
+/**
+ * Weekday × two-hour block: when the work lands.
+ *
+ * The weekday comes from each bucket's own date and the block from the
+ * metric's `hour_block` dimension, which is why the request behind this is
+ * bucketed by DAY — a week-sized bucket has no weekday to read.
+ */
+function HeatmapHoursSection({
+  spec,
+  grid,
+  hourByKey,
+  hourIsError,
+  memberIds,
+}: {
+  spec: Extract<SectionSpec, { kind: "heatmap-hours" }>;
+  grid: GridData;
+  hourByKey: Map<string, NormalizedMetricResult>;
+  hourIsError: boolean;
+  memberIds: readonly string[];
+}) {
+  if (hourIsError) return null;
+  const r = hourByKey.get(spec.metric);
+  if (!r) return null;
+
+  const { cells, max, total } = dayHourMatrix(
+    memberIds.flatMap((id) => forEntity(r, id).series)
+  );
+  if (total <= 0 || max <= 0) return null;
+
+  const unit = grid.byKey.get(spec.metric)?.unit ?? null;
+  return (
+    <section className="flex flex-col gap-3">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {spec.title} · {fmtCompact(total)}
+      </p>
+      <Card>
+        <CardContent className="flex flex-col gap-3 p-4">
+          <div
+            className="grid gap-px text-xs"
+            style={{
+              gridTemplateColumns: `3rem repeat(${HOUR_BLOCKS.length}, 1fr)`,
+            }}
+          >
+            <div />
+            {HOUR_BLOCKS.map((block, index) => (
+              <div key={block} className="text-center text-muted-foreground">
+                {index % 2 === 0 ? block : ""}
+              </div>
+            ))}
+            {WEEKDAY_LABELS.map((day, dayIndex) => (
+              <Fragment key={day}>
+                <div className="self-center text-muted-foreground">{day}</div>
+                {HOUR_BLOCKS.map((block, blockIndex) => {
+                  const value = cells[dayIndex]?.[blockIndex] ?? 0;
+                  return (
+                    <div
+                      key={block}
+                      title={`${day} ${block}:00 · ${formatMetricValue(value, "integer", unit)}`}
+                      className="aspect-square rounded-[3px]"
+                      style={{
+                        backgroundColor: value
+                          ? `color-mix(in oklab, var(--primary) ${Math.round((value / max) * 100)}%, var(--muted))`
+                          : "var(--muted)",
+                      }}
+                    />
+                  );
+                })}
+              </Fragment>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{spec.caption}</p>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
 /* ── dimension-table (rollup: one row per dimension value) ───────────── */
 
 const DIMENSION_TABLE_ROWS = 12;
+
+/** The dimension a `heatmap-hours` section reads. */
+const HOUR_BLOCK_DIMENSION = "hour_block";
 
 function tableCellText(
   value: number | null | undefined,
@@ -1888,11 +2166,14 @@ function DimensionTableSection({
   tableByKey,
   tableIsError,
   tableRefetch,
+  onOpenValue,
 }: {
   spec: Extract<SectionSpec, { kind: "dimension-table" }>;
   tableByKey: Map<string, NormalizedMetricResult>;
   tableIsError: boolean;
   tableRefetch: () => void;
+  /** Descend into one row; absent when the lens has no screen for a value. */
+  onOpenValue?: (value: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (tableIsError) {
@@ -2016,7 +2297,17 @@ function DimensionTableSection({
                     className="max-w-64 truncate text-sm font-medium"
                     title={row.label}
                   >
-                    {row.label}
+                    {onOpenValue ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenValue(row.value)}
+                        className="max-w-full cursor-pointer truncate underline-offset-2 hover:underline"
+                      >
+                        {row.label}
+                      </button>
+                    ) : (
+                      row.label
+                    )}
                   </TableCell>
                   {results.map((r) => (
                     <TableCell

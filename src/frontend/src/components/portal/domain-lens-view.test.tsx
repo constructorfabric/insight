@@ -37,6 +37,14 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   call: 0,
+  /** Every collection the view asked for, in call order. */
+  requested: [] as Array<{
+    metrics: Array<{
+      key: string;
+      filters?: Array<{ dimension: string; values: string[] }>;
+      views: unknown[];
+    }>;
+  }>,
   collectionSet: new Map<string, unknown>(),
   definitions: [] as unknown[],
   collections: [] as Array<{
@@ -80,13 +88,18 @@ vi.mock("@/queries/visible-roster", () => ({
 vi.mock("@/queries/member-grid", () => ({
   useMemberGridData: () => mocks.grid,
 }));
-// DomainLensView calls useMetricCollection four times (trend, composition,
-// event-histogram, dimension-table rollup) in that order on every render. The
-// counter is reset per test (see beforeEach): left running, each caller's slot
-// would depend on how many renders every earlier test happened to do.
+// DomainLensView calls useMetricCollection five times (trend, composition,
+// event-histogram, dimension-table rollup, hour-block heatmap) in that order on
+// every render. The counter is reset per test (see beforeEach): left running,
+// each caller's slot would depend on how many renders every earlier test
+// happened to do.
+const COLLECTION_CALLS = 5;
 vi.mock("@/queries/metric-results", () => ({
-  useMetricCollection: () => {
-    const r = mocks.collections[mocks.call % 4] ?? emptyCollection();
+  useMetricCollection: (collection: unknown) => {
+    mocks.requested.push(
+      collection as (typeof mocks.requested)[number],
+    );
+    const r = mocks.collections[mocks.call % COLLECTION_CALLS] ?? emptyCollection();
     mocks.call += 1;
     return r;
   },
@@ -202,11 +215,12 @@ const HEADLINE_CONFIG: LensConfig = {
 
 beforeEach(() => {
   mocks.call = 0;
+  mocks.requested = [];
   seedHappyOrg();
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
   act(() => {
-    portalRouter.set({ slice: undefined });
+    portalRouter.set({ slice: undefined, repo: undefined });
     portalRouter.set({ scope: undefined, direct: false });
   });
 });
@@ -1305,5 +1319,160 @@ describe("ownership (concentration risk per dimension value)", () => {
     mocks.collections = [emptyCollection(), comp, emptyCollection(), emptyCollection()];
     render(<DomainLensView config={OWNERSHIP_CONFIG} />);
     expect(screen.queryByText("Ownership concentration")).not.toBeInTheDocument();
+  });
+});
+
+describe("descending into one dimension value", () => {
+  const SCOPED_CONFIG: LensConfig = {
+    title: "Dev · Repositories",
+    tagline: "activity, reach & risk",
+    sections: [
+      { kind: "headline", metrics: ["t.commits"] },
+      {
+        kind: "dimension-table",
+        title: "Repositories ranked",
+        dimension: "repository",
+        noun: "repositories",
+        limit: 2,
+        metrics: ["t.commits"],
+      },
+    ],
+    drilldown: {
+      dimension: "repository",
+      tagline: "one repository",
+      sections: [
+        { kind: "headline", metrics: ["t.commits"] },
+        {
+          kind: "contributors",
+          metric: "t.commits",
+          title: "Top contributors",
+        },
+        {
+          kind: "heatmap-hours",
+          metric: "t.commits",
+          title: "When commits land",
+          caption: "Weekday × two-hour block, in UTC.",
+        },
+      ],
+    },
+  };
+
+  function rollupOf(values: Array<[string, string, number, number]>) {
+    const table = emptyCollection();
+    table.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      rollup: {
+        view: "rollup",
+        dimensions: ["repository"],
+        values: values.map(([value, label, v, persons]) => ({
+          dimensions: [{ key: "repository", value, label }],
+          value: v,
+          contributing_entity_count: persons,
+        })),
+      },
+    } as never);
+    return table;
+  }
+
+  it("opens the value from a table row and comes back through the breadcrumb", async () => {
+    const user = userEvent.setup();
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      rollupOf([
+        ["src:acme/api", "acme/api", 60, 3],
+        ["src:acme/web", "acme/web", 40, 2],
+      ]),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    await user.click(screen.getByRole("button", { name: "acme/api" }));
+    expect(portalRouter.search.repo).toBe("src:acme/api");
+
+    // The URL is what makes a shared link reproduce this screen, so the id and
+    // not the label is what it carries — the heading shows the label.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "acme/api" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Repositories ranked · 2 repositories"),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Dev · Repositories" }),
+    );
+    expect(portalRouter.search.repo).toBeUndefined();
+  });
+
+  it("filters every request it makes to the value under inspection", () => {
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    const asked = mocks.requested.flatMap((c) => c.metrics);
+    expect(asked.length).toBeGreaterThan(0);
+    // Not one request may answer about the whole tenant: a section that
+    // forgot the filter would read as this repository carrying everyone's work.
+    for (const metric of asked) {
+      expect(metric.filters, metric.key).toEqual([
+        { dimension: "repository", values: ["src:acme/api"] },
+      ]);
+    }
+  });
+
+  it("ignores a value the lens has no screen for", () => {
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(
+      <DomainLensView
+        config={{
+          title: "Dev · Test",
+          sections: [{ kind: "headline", metrics: ["t.commits"] }],
+        }}
+      />,
+    );
+
+    // A `repo` left over from another lens must not turn this one into a
+    // screen about a value it does not group by.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Dev · Test" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    for (const metric of mocks.requested.flatMap((c) => c.metrics)) {
+      expect(metric.filters, metric.key).toBeUndefined();
+    }
+  });
+
+  it("draws the heatmap from the hour blocks the metric reported", () => {
+    const hours = emptyCollection();
+    hours.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      timeseries: {
+        view: "timeseries",
+        bucket: "day",
+        dimensions: ["hour_block"],
+        series: IDS.map((id) => ({
+          entity_id: id,
+          dimensions: [{ key: "hour_block", value: "08", label: "08–10" }],
+          // 2026-10-05 is a Monday.
+          points: [{ bucket_start: "2026-10-05", value: 3 }],
+        })),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      hours,
+    ];
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    // 4 members × 3 = 12, all in Monday's 08 block.
+    expect(screen.getByText(/When commits land · 12/)).toBeInTheDocument();
+    expect(screen.getByTitle(/^Mon 08:00 · 12/)).toBeInTheDocument();
+    // A block nobody committed in stays empty rather than borrowing a number.
+    expect(screen.getByTitle(/^Tue 08:00 · 0/)).toBeInTheDocument();
   });
 });

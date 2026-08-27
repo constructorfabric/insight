@@ -41,6 +41,12 @@ export interface PortalSearch {
   /** Expanded direction + its active lens, within the Directions zone. */
   dir?: string;
   lens?: string;
+  /**
+   * One repository under inspection, by its dimension VALUE (`<source>:<owner>/<repo>`).
+   * The value and not the label, because two repositories can share a display
+   * name and a link has to reproduce the one that was opened.
+   */
+  repo?: string;
   /** Org-scope root: a manager's person id. Absent = the viewer's own subtree. */
   scope?: string;
   /** Narrow the scope to direct reports only. */
@@ -90,6 +96,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     find: str(raw.find),
     dir: str(raw.dir),
     lens: str(raw.lens),
+    repo: str(raw.repo),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
     // link, an identity record or a hand-edited URL, and the resolver compares
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
@@ -116,6 +123,7 @@ export const PORTAL_SEARCH_KEYS = [
   "find",
   "dir",
   "lens",
+  "repo",
   "scope",
   "direct",
   "slice",

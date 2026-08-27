@@ -90,3 +90,44 @@ export function toBarRows(
     }))
     .sort((a, b) => b.value - a.value);
 }
+
+/**
+ * The label a response gave one dimension value, from whichever view named it.
+ *
+ * A URL carries the value — `<source>:<owner>/<repo>` — because that is the id
+ * two look-alike rows are told apart by. What a reader recognises is the label,
+ * and only the rows know it, so a screen about one value has to look it up
+ * rather than parse the id.
+ */
+export function labelForDimensionValue(
+  dimension: string | null,
+  value: string,
+  ...sources: ReadonlyArray<
+    ReadonlyMap<
+      string,
+      {
+        breakdown?: { values: readonly { dimensions: readonly DimensionRef[] }[] };
+        rollup?: { values: readonly { dimensions: readonly DimensionRef[] }[] };
+      }
+    >
+  >
+): string | undefined {
+  if (!dimension) return undefined;
+  for (const byKey of sources) {
+    for (const result of byKey.values()) {
+      for (const view of [result.breakdown, result.rollup]) {
+        for (const row of view?.values ?? []) {
+          const dim = row.dimensions.find((d) => d.key === dimension);
+          if (dim?.value === value && dim.label?.trim()) return dim.label.trim();
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+interface DimensionRef {
+  key: string;
+  value: string;
+  label?: string | null;
+}
