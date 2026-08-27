@@ -99,7 +99,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 22 operations.
+#: analytics — 26 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -115,6 +115,13 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     # before content negotiation happens, which is exactly what the sweep
     # asserts about every other one.
     _a("POST", "/v1/metric-drilldown/export"),
+    # The question surface over the semantic definitions: one route per kind of
+    # question the definitions answer. All four take a body and no path
+    # parameter, so each is one literal url.
+    _a("POST", "/v1/query/values"),
+    _a("POST", "/v1/query/comparisons"),
+    _a("POST", "/v1/query/distributions"),
+    _a("POST", "/v1/query/rows"),
     # Custom-metric CRUD + export/import. `export`/`import` stay literal paths;
     # `{metric_key}` is a dotted string, so its stand-in is a dotted key and a
     # literal sibling always wins the template match.
