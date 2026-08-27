@@ -5,7 +5,6 @@ import {
   activityEventLabel,
   evidenceRefText,
   isTaskMetric,
-  withSourceDimension,
   withTypeDimension,
 } from "@/lib/metrics/provider-links";
 
@@ -21,23 +20,6 @@ function selection(
     display_dimensions: displayDimensions,
   };
 }
-
-describe("withSourceDimension", () => {
-  it("asks for source only where links may need provider context", () => {
-    expect(
-      withSourceDimension(
-        selection("git.commits", ["repository"]),
-        new Set(["repository", "source"])
-      ).display_dimensions
-    ).toEqual(["repository", "source"]);
-  });
-
-  it("does not request an undeclared source dimension", () => {
-    const original = selection("git.commits");
-
-    expect(withSourceDimension(original, new Set())).toBe(original);
-  });
-});
 
 describe("withTypeDimension", () => {
   it("asks for task types when declared", () => {

@@ -73,7 +73,9 @@ pub struct PeerQueryRow {
 pub struct BreakdownQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
+    #[serde(rename = "link_source_provider")]
     pub source_provider: Option<String>,
+    #[serde(rename = "link_source_id")]
     pub source_id: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
@@ -1329,8 +1331,8 @@ fn hidden_source_context(dimensions: &[String]) -> (String, String) {
     let provider = dimension_value_expr("source");
     let source_id = dimension_value_expr("source_id");
     (
-        format!(", {provider} AS source_provider, {source_id} AS source_id"),
-        ", source_provider, source_id".to_owned(),
+        format!(", {provider} AS link_source_provider, {source_id} AS link_source_id"),
+        ", link_source_provider, link_source_id".to_owned(),
     )
 }
 
@@ -1913,13 +1915,14 @@ mod tests {
     }
 
     #[test]
-    fn repository_breakdown_selects_hidden_source_context() {
+    fn repository_breakdown_namespaces_hidden_source_context() {
         let query =
             compile_breakdown_query(&sum_metric(), &request(), &["repository".to_owned()], &[]);
 
-        assert!(query.sql.contains("AS source_provider"));
-        assert!(query.sql.contains("AS source_id"));
-        assert!(query.sql.contains("source_provider, source_id"));
+        assert!(query.sql.contains("AS link_source_provider"));
+        assert!(query.sql.contains("AS link_source_id"));
+        assert!(query.sql.contains("link_source_provider, link_source_id"));
+        assert!(!query.sql.contains(" AS source_id"));
     }
 
     #[test]

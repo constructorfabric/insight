@@ -329,13 +329,12 @@ describe("MetricEvidenceTable", () => {
       { key: "repository", label: "Repository", type: "string" as const },
     ];
 
-    function linkRow(overrides: Record<string, unknown> = {}) {
+    function linkRow() {
       return {
         values: {
           ref: SHA,
           title: "the subject line\n\nand a trailer nobody clicks",
           repository: "owner/repo",
-          ...overrides,
         },
         links: {
           ref: `https://git.example/owner/repo/commit/${SHA}`,

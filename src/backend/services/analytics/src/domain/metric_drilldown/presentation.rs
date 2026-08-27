@@ -275,14 +275,14 @@ fn row_links(
         record_ref,
     );
     let mut links = BTreeMap::new();
-    if values.contains_key("repository")
+    if values.get("repository").is_some_and(visible_value)
         && let Some(href) = resolved.repository
     {
         links.insert("repository".to_owned(), href);
     }
     if let Some(href) = resolved.record {
         for key in ["ref", "title"] {
-            if values.contains_key(key) {
+            if values.get(key).is_some_and(visible_value) {
                 links.insert(key.to_owned(), href.clone());
             }
         }
@@ -630,6 +630,30 @@ mod tests {
             Some("https://code.example.test/org/repo/commit/abc123")
         );
         assert!(!response.rows[0].values.contains_key("source_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn response_does_not_link_empty_record_cells() -> anyhow::Result<()> {
+        let request = validated(commit_plan());
+        let mut evidence = row();
+        evidence.dimensions_json = r#"[
+            {"key":"source","value":"github","label":"GitHub"},
+            {"key":"repository","value":"source-a:group/repository","label":"group/repository"}
+        ]"#
+        .to_owned();
+        evidence.details["source_id"] = serde_json::json!("source-a");
+        evidence.details["title"] = serde_json::json!("");
+        let registry = ExternalSourceRegistry::new(&[ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let response = build_response(&request, vec![evidence], &registry)?;
+
+        assert!(response.rows[0].links.contains_key("ref"));
+        assert!(!response.rows[0].links.contains_key("title"));
         Ok(())
     }
 

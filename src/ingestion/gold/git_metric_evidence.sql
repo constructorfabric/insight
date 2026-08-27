@@ -221,7 +221,7 @@ file_changes_source AS (
                 tuple('change_type', change_type, change_type_label),
                 tuple('repository', repository_value, repository_label),
                 tuple('project', commits.project_value, commits.project_label),
-                tuple('source_id', toString(commits.source_id), toString(commits.source_id)),
+                tuple('source_id', coalesce(toString(commits.source_id), ''), coalesce(toString(commits.source_id), '')),
                 tuple('source', commits.source_value, commits.source_label)
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS file_source_dimensions,
@@ -233,7 +233,7 @@ file_changes_source AS (
                 tuple('change_type', change_type, change_type_label),
                 tuple('repository', repository_value, repository_label),
                 tuple('project', commits.project_value, commits.project_label),
-                tuple('source_id', toString(commits.source_id), toString(commits.source_id)),
+                tuple('source_id', coalesce(toString(commits.source_id), ''), coalesce(toString(commits.source_id), '')),
                 tuple('source', commits.source_value, commits.source_label)
             ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS category_source_dimensions
@@ -408,7 +408,7 @@ pull_requests_source AS (
                 tuple('destination_branch', destination_branch_value, destination_branch_label),
                 tuple('repository', repository_value, repository_label),
                 tuple('project', project_value, project_label),
-                tuple('source_id', toString(source_id), toString(source_id)),
+                tuple('source_id', coalesce(toString(source_id), ''), coalesce(toString(source_id), '')),
                 tuple('source', source_value, source_label)
             ]
             AS Array(Tuple(key String, value String, label Nullable(String)))
@@ -724,7 +724,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     source_dimensions AS dimensions,
     map(
-        'source_id', toString(source_id),
+        'source_id', coalesce(toString(source_id), ''),
         'ref', commit_hash,
         'title', message,
         'repository', repository_label,
@@ -770,7 +770,7 @@ SELECT
     CAST(NULL AS Nullable(String)) AS subject_key,
     source_dimensions AS dimensions,
     map(
-        'source_id', toString(source_id),
+        'source_id', coalesce(toString(source_id), ''),
         'ref', toString(pr_number),
         'title', title,
         'repository', repository_label,

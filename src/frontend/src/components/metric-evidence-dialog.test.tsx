@@ -332,10 +332,7 @@ describe("MetricEvidenceDialog", () => {
     });
   });
 
-  // The dimension that makes a row linkable is asked for, hidden from the
-  // table, and must not reach the file: an export that carries a column the
-  // screen does not show is not an export OF that screen.
-  it("asks for the source dimension but keeps it out of the export", async () => {
+  it("does not add presentation dimensions for link resolution", async () => {
     const user = userEvent.setup();
     mocks.declaredDimensions = new Map([
       ["git.commits", new Set(["repository", "source"])],
@@ -352,7 +349,7 @@ describe("MetricEvidenceDialog", () => {
     const requested = (mocks.queryOptions?.queryKey as unknown[])[2] as {
       display_dimensions: string[];
     };
-    expect(requested.display_dimensions).toContain("source");
+    expect(requested.display_dimensions).toEqual([]);
 
     await user.click(screen.getByRole("button", { name: /CSV/ }));
     await waitFor(() =>
@@ -365,7 +362,7 @@ describe("MetricEvidenceDialog", () => {
     const [exported] = mocks.downloadMetricDrilldown.mock.calls[0]!;
     expect(
       (exported as { display_dimensions: string[] }).display_dimensions
-    ).not.toContain("source");
+    ).toEqual([]);
   });
 
   it("asks for the issue type and exports it, since the reader can see it", async () => {
@@ -390,14 +387,13 @@ describe("MetricEvidenceDialog", () => {
     const requested = (mocks.queryOptions?.queryKey as unknown[])[2] as {
       display_dimensions: string[];
     };
-    expect(requested.display_dimensions).toEqual(["source", "type"]);
+    expect(requested.display_dimensions).toEqual(["type"]);
 
     await user.click(screen.getByRole("button", { name: /CSV/ }));
     await waitFor(() => expect(mocks.downloadMetricDrilldown).toHaveBeenCalled());
     const [exported] = mocks.downloadMetricDrilldown.mock.calls[0]!;
     const dimensions = (exported as { display_dimensions: string[] })
       .display_dimensions;
-    // The type is a column on screen; the source only backs a link.
     expect(dimensions).toEqual(["type"]);
   });
 

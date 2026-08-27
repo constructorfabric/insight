@@ -263,13 +263,7 @@ export function DomainLensView({
         views: [
           {
             view: "breakdown" as const,
-            // `source` rides along so a row knows which provider it came
-            // from — the only thing that makes a link safe to build.
-            dimensions: [
-              s.dimension,
-              ...(s.splitBy ? [s.splitBy] : []),
-              ...(s.dimension === LINKABLE_DIMENSION ? [SOURCE_DIMENSION] : []),
-            ],
+            dimensions: [s.dimension, ...(s.splitBy ? [s.splitBy] : [])],
           },
         ],
       })),
@@ -1980,12 +1974,6 @@ function shareLabel(pct: number): string {
 
 /** Same dwell as every other hover explanation in the product. */
 const HOVER_DELAY_MS = 400;
-
-/** The dimension whose rows can address something outside the product. */
-const LINKABLE_DIMENSION = "repository";
-
-/** Names the provider a git row came from. */
-const SOURCE_DIMENSION = "source";
 
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;

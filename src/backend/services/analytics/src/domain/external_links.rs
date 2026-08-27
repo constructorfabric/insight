@@ -241,7 +241,11 @@ fn append_segments<'a>(base: &Url, segments: impl IntoIterator<Item = &'a str>) 
 }
 
 fn valid_segment(segment: &str) -> bool {
-    !segment.is_empty() && segment != "." && segment != ".." && !segment.contains('/')
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && !segment.contains('/')
+        && !segment.contains(':')
 }
 
 #[cfg(test)]
@@ -467,16 +471,68 @@ mod tests {
     fn refuses_links_without_valid_context() -> anyhow::Result<()> {
         let registry = ExternalSourceRegistry::new(&sources())?;
 
-        let links = registry.evidence_links(
-            "github",
-            "missing-source",
-            "commit",
-            Some("group/repository"),
-            Some("a1b2c3"),
-        );
+        for (provider, source_id, kind, repository, reference) in [
+            (
+                "github",
+                "missing-source",
+                "commit",
+                Some("group/repository"),
+                Some("a1b2c3"),
+            ),
+            (
+                "github",
+                "github-source",
+                "commit",
+                Some("source-a:group/repository"),
+                Some("a1b2c3"),
+            ),
+            (
+                "github",
+                "github-source",
+                "commit",
+                Some("repository"),
+                Some("a1b2c3"),
+            ),
+            (
+                "github",
+                "github-source",
+                "commit",
+                Some("group/../repository"),
+                Some("a1b2c3"),
+            ),
+            (
+                "github",
+                "github-source",
+                "commit",
+                Some("group/./repository"),
+                Some("a1b2c3"),
+            ),
+            (
+                "github",
+                "github-source",
+                "commit",
+                Some("group/repository"),
+                Some(""),
+            ),
+            (
+                "github",
+                "github-source",
+                "issue",
+                None,
+                Some("not-an-issue-ref"),
+            ),
+            (
+                "github",
+                "github-source",
+                "unsupported",
+                Some("group/repository"),
+                Some("42"),
+            ),
+        ] {
+            let links = registry.evidence_links(provider, source_id, kind, repository, reference);
 
-        assert!(links.repository.is_none());
-        assert!(links.record.is_none());
+            assert!(links.record.is_none(), "should reject: {kind}");
+        }
         Ok(())
     }
 }

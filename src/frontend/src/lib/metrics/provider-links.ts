@@ -13,21 +13,6 @@ export function evidenceRefText(metricKey: string, value: string): string {
   return matched ? `#${matched[2]}` : value;
 }
 
-export const SOURCE_DIMENSION = "source";
-
-export function withSourceDimension(
-  selection: MetricEvidenceSelection,
-  declared: ReadonlySet<string> | null | undefined
-): MetricEvidenceSelection {
-  if (
-    !isTaskMetric(selection.metric_key) &&
-    !selection.metric_key.startsWith("git.")
-  ) {
-    return selection;
-  }
-  return withDimension(selection, SOURCE_DIMENSION, declared);
-}
-
 export const TYPE_DIMENSION = "type";
 
 export function withTypeDimension(
