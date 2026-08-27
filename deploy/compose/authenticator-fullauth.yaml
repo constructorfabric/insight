@@ -117,10 +117,6 @@ gears:
         issuer_url: ""
         client_id: ""
         client_secret: ""
-        # This stand's journal was imported from a deployment whose accounts are
-        # GitHub, not Keycloak, so no login-bootstrap `value_type='id'` row
-        # exists for the realm's `sub`. Resolve by the roster's address instead.
-        resolve_by: email
         # id_token claim naming the user's single tenant (string; an array is
         # tolerated — first entry wins). Keycloak emits `tenant_id`;
         # Entra emits `tid`.
