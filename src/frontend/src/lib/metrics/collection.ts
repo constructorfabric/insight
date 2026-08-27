@@ -6,6 +6,7 @@ import type {
   MetricComputation,
   MetricDirection,
   MetricDimensionFilter,
+  MetricErrorView,
   MetricFormat,
   MetricGroupLimit,
   MetricResult,
@@ -89,10 +90,11 @@ export function filterCollectionByKey(
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
-export interface MetricCollectionEntity {
-  type: "person";
-  ids: string[];
-}
+export type MetricCollectionEntity =
+  // The tenant variant carries no ids: the backend derives the organization
+  // from the session, and a client-supplied identifier is rejected outright.
+  | { type: "person"; ids: string[] }
+  | { type: "tenant" };
 
 export type NormalizedMetricResult = {
   metric_key: string;
@@ -111,6 +113,8 @@ export type NormalizedMetricResult = {
   peer?: PeerView;
   breakdown?: BreakdownView;
   histogram?: HistogramView;
+  /** Set when a view's computation failed server-side (first error wins). */
+  error?: Pick<MetricErrorView, "code" | "message">;
   drilldown?: MetricResult["drilldown"];
   selection?: MetricResult["selection"];
 };
@@ -138,7 +142,10 @@ export function buildMetricCollectionRequest(
   period: DateRange
 ): MetricResultsRequest {
   return {
-    entity: { type: entity.type, ids: entity.ids },
+    entity:
+      entity.type === "person"
+        ? { type: "person", ids: entity.ids }
+        : { type: "tenant" },
     period,
     metrics: collection.metrics.map((metric) => ({
       metric_key: metric.key,
@@ -205,6 +212,12 @@ export function normalizeMetricResult(
         break;
       case "histogram":
         normalized.histogram = view;
+        break;
+      case "error":
+        // A failed view arrives in its requested slot; the slot's field stays
+        // unset and downstream reads are optional-chained already. First
+        // error wins — one message per metric is enough to render.
+        normalized.error ??= { code: view.code, message: view.message };
         break;
       default:
         // Forward-compat: the server may ship new view kinds before this
@@ -337,6 +350,7 @@ export function mergeNormalizedResults(
       } else if (result.peer) {
         existing.peer = { ...result.peer, values: [...result.peer.values] };
       }
+      existing.error ??= result.error;
     }
   }
   return out;

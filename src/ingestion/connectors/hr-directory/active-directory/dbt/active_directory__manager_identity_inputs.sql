@@ -18,7 +18,7 @@
       (current bronze `managerDn = manager's distinguishedName`).
 
    AD's manager is stored as a Distinguished Name (DN), not an email — e.g.
-   `CN=John Doe,OU=R\&D,...,DC=corp,DC=acronis,DC=com`. The C# seeder's org_chart
+   `CN=John Doe,OU=R\&D,...,DC=corp,DC=acronis,DC=com`. The seeder's org_chart
    rebuild joins `parent_email` against `email` observations, so we resolve the DN
    to the manager's email via a self-join on `distinguishedName`.
 

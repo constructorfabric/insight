@@ -35,6 +35,21 @@ COMPONENTS = [
         "package": "insight-clickhouse",
         "paths": ["src/backend/libs/insight-clickhouse"],
     },
+    # cover=False (mirrors identity-resolution): the crate is an I/O shell over
+    # a `MariaDB` session — connect, `GET_LOCK`, the ledger read, the schema
+    # probes — exercised by the env-gated live tests in the two services that
+    # depend on it, which skip cleanly in CI, so only a handful of pure-logic
+    # lines would count and the crate would gate far below the 80% line. fmt +
+    # clippy + tests still run and gate the pipeline. Re-enable coverage when
+    # the crate carries its own MariaDB-backed suite.
+    {
+        "name": "insight-migration",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "insight-migration",
+        "cover": False,
+        "paths": ["src/backend/libs/insight-migration"],
+    },
     {
         "name": "analytics",
         "lang": "rust",
@@ -54,6 +69,7 @@ COMPONENTS = [
         # service happens to exercise. Scope the report to this service's code.
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/analytics"],
+        "triggered_by": ["insight-migration"],
     },
     # cover=False (mirrors authenticator): the crate's business logic
     # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
@@ -80,7 +96,7 @@ COMPONENTS = [
         # must re-run this crate's tests too. A shared path in `paths` would
         # NOT do that (component_for() picks a single owner — always the lib's
         # own component); `triggered_by` is the registry's co-trigger for this.
-        "triggered_by": ["insight-clickhouse"],
+        "triggered_by": ["insight-clickhouse", "insight-migration"],
     },
     # git-cli-proxy shells out to the git CLI; its integration tests build
     # fixture repos with `git init` + file:// origins in tempdirs (hermetic —

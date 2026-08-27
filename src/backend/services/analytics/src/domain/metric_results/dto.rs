@@ -151,8 +151,16 @@ pub struct MetricDimensionFilterDto {
 #[serde(tag = "computation", rename_all = "snake_case")]
 pub enum ComputationDto {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+    },
     Median,
+    Percentile {
+        /// The quantile — a probability, matching the definition validation.
+        #[schema(minimum = 0, maximum = 1)]
+        q: f64,
+    },
+    Stddev,
     DistinctCount,
 }
 
@@ -180,6 +188,23 @@ pub enum MetricResultViewDto {
     Histogram {
         values: Vec<HistogramValueDto>,
     },
+    /// This view's computation failed; sibling views and metrics are
+    /// unaffected. `message` detail depends on the caller's role: admins get
+    /// the underlying description, everyone else a generic one.
+    Error {
+        code: MetricViewErrorCode,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MetricViewErrorCode {
+    SourceRelationMissing,
+    ResourceExhausted,
+    QueryTimeout,
+    ResultParseFailed,
+    QueryFailed,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

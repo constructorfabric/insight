@@ -111,6 +111,7 @@ export const DIRECTIONS: readonly Direction[] = [
       "Activity",
       "Flow",
       "Quality",
+      "CI",
       "Continuity",
       "Repositories",
       "Elements",

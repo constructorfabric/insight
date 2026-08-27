@@ -1,11 +1,10 @@
 //! ClickHouse reader for `identity.identity_inputs` — the raw observation
 //! stream that feeds the persons-seed. Concrete `IdentityInputsReader` over the
-//! shared `insight-clickhouse` client. Query ported from the .NET
-//! `ClickHouseIdentityInputsReader`. Verified against a live dev ClickHouse
+//! shared `insight-clickhouse` client. Verified against a live dev ClickHouse
 //! (the persons-seed reads its whole input through this).
 //!
 //! NOTE: this materializes the filtered input into a `Vec` rather than
-//! streaming row-by-row like the .NET `IAsyncEnumerable`. Fine at current
+//! streaming row-by-row. Fine at current
 //! deployment sizes; row-streaming is deferred to the hardening pass (#1753).
 
 use std::time::Duration;
@@ -30,10 +29,9 @@ use crate::domain::seed_service::IdentityInputsReader;
 /// — wrapped in `ifNull` because the column is `Nullable(String)` in the dbt
 /// table (`toString` of a Nullable stays Nullable, which the strict decoder
 /// rejects against the non-null `String` field); a NULL becomes `''` and fails
-/// the UUID reparse, failing the seed exactly like the .NET reader's
-/// `Guid.Parse(GetString(...))` throw.
+/// the UUID reparse, failing the seed.
 ///
-/// HOTFIX(#1550) — TEMPORARY, ported from the .NET reader (3256f707). This is
+/// HOTFIX(#1550) — TEMPORARY. This is
 /// the ANCHOR of the hotfix: every piece of code whose behavior exists only
 /// because of it carries the literal tag `HOTFIX(#1550)` — grep for it to
 /// find the full blast radius when unwinding the hotfix. The dbt
@@ -53,19 +51,18 @@ use crate::domain::seed_service::IdentityInputsReader;
 /// re-file under itself) all other tenants' rows. Restoring it requires the
 /// producer side to be fixed first (dbt resolves real tenant UUIDs instead of
 /// hashing free-form connector strings), then reinstate
-/// `WHERE insight_tenant_id = ?` here and in the .NET reader.
+/// `WHERE insight_tenant_id = ?` here.
 ///
 /// The text columns have mixed nullability in `identity_inputs` (e.g.
 /// `insight_source_type` is `String`, `source_account_id` is `Nullable(String)`),
 /// and the clickhouse decoder is strict in both directions — so most are coerced
 /// to a non-null `String` with `ifNull(col, '')` and decoded uniformly.
 /// `source_account_id` is the exception: it is decoded as `Option<String>` and a
-/// NULL fails the read — parity with .NET, whose `reader.GetString()` throws on
-/// NULL and fails the seed, instead of silently minting a `''` pseudo-account.
+/// NULL fails the read rather than silently minting a `''` pseudo-account.
 /// Crucially the aliases DIFFER from the source column names (`val`, `op_type`,
 /// …): a same-name `ifNull(value,'') AS value` would shadow the `value`
-/// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error (the
-/// .NET reader avoids this the same way). `is_delete` is derived from
+/// referenced in `WHERE` and can trip a ClickHouse "Cyclic aliases" error.
+/// `is_delete` is derived from
 /// `operation_type`. DELETE rows are closure signals that arrive with an
 /// empty `value` by the write contract, so the non-empty filter applies to
 /// UPSERT rows only — value-filtering DELETEs would drop every tombstone.
@@ -127,8 +124,8 @@ impl ClickHouseIdentityInputsReader {
 impl IdentityInputsReader for ClickHouseIdentityInputsReader {
     async fn stream(&self, tenant_id: Uuid) -> anyhow::Result<Vec<IdentityInputRow>> {
         // tenant_id is intentionally unused while the HOTFIX(#1550) drops the
-        // tenant filter — kept so the `IdentityInputsReader` trait (and the
-        // .NET reader tracking it) stays stable for when the filter comes back.
+        // tenant filter — kept so the `IdentityInputsReader` trait stays
+        // stable for when the filter comes back.
         let _ = tenant_id;
         let rows: Vec<InputRow> = self.client.query(STREAM_SQL).fetch_all().await?;
         rows.into_iter().map(map_row).collect()

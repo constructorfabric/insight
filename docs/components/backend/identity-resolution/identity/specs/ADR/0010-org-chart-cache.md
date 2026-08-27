@@ -92,7 +92,7 @@ Phase 1.
 
 Adopt `org_chart`: a materialized SCD2 cache of direct edges,
 rebuilt from `persons` by the Python seeder
-(`seed-persons-from-identity-input.py` step 9) using the same
+(the persons-seed) using the same
 two-table-swap pattern as `account_person_map`. The rebuild sources
 edges from a UNION of two queries:
 
@@ -176,8 +176,7 @@ the schema can be promoted to multi-parent by one ALTER:
 `ALTER TABLE org_chart DROP PRIMARY KEY, ADD PRIMARY KEY
 (insight_tenant_id, insight_source_type, insight_source_id,
 child_person_id, parent_person_id, valid_from)`. The read API
-(`IPersonsReader.GetCurrentParentsAsync` / `GetCurrentChildrenAsync`)
-already returns a list, so the contract does not change; only the
+(current parents / current children) already returns a list, so the contract does not change; only the
 list length grows. No source today produces this, so the change is
 not in Phase 1 scope.
 
@@ -281,10 +280,9 @@ pending-iresolution duplicates.
   edge will be skipped and surface in the warn-log line of the
   seeder. Operators see ingestion gaps rather than silent
   half-truths.
-- The .NET service does not own the rebuild path; it only reads via
-  `IPersonsReader.GetCurrentParentsAsync` and `GetCurrentChildrenAsync`,
-  backed by `SqlOrgChart` SELECTs over the `idx_current_parent` /
-  `idx_current_children` indexes.
+- The serving path does not own the rebuild; it only reads current
+  parents / current children, backed by SELECTs over the
+  `idx_current_parent` / `idx_current_children` indexes.
 - SCD2 history is preserved indefinitely. A future GC policy may
   trim closed edges older than retention `T`; not in Phase 1 scope.
 - Drift between `persons` and `org_chart` is possible if a
@@ -295,7 +293,7 @@ pending-iresolution duplicates.
 ### Confirmation
 
 Confirmed by integration tests in
-`Insight.Identity.Tests.Integration/OrgChartTests.cs`:
+the org-chart integration tests:
 
 Reader correctness (six baseline tests):
 - `GetCurrentParents_returns_one_edge_per_source_instance` — a person
@@ -385,7 +383,7 @@ historical edges (deactivated and not re-activated).
 
 - Good, because immediate consistency — no rebuild lag.
 - Bad, because trigger logic lives in MariaDB SQL where it is
-  harder to test, version, and observe than Python or C# code.
+  harder to test, version, and observe than application code.
 - Bad, because each writer (seed, future reconciliation service,
   operator flows) must respect trigger semantics or risk
   inconsistent edges; a single BULK INSERT with `INSERT IGNORE`
@@ -406,7 +404,7 @@ historical edges (deactivated and not re-activated).
   side of the resolution JOIN trims and lowercases for symmetry.
 - ADR-0007 — `value_type` routing into `value_id` /
   `value_full_text` / `value` (the rebuild's SELECT shape).
-- `seed-persons-from-identity-input.py` step 9 — the canonical
+- The persons-seed's org_chart rebuild — the canonical
   rebuild SQL.
 
 ## Traceability

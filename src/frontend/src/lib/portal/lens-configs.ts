@@ -97,8 +97,181 @@ export interface LensRoadmap {
   comingSoon: string;
 }
 
+/**
+ * A lens over ORG-grain (tenant-entity) metrics — CI is the first. Rendered by
+ * TenantLensView: no roster, no peer view, no per-person anything; the entity
+ * is the organization and every value is one number per period/bucket/row.
+ */
+export interface TenantLensConfig {
+  title: string;
+  tagline?: string;
+  entity: "tenant";
+  sections: readonly TenantSectionSpec[];
+  /** Whole-tab message when no metric of the lens is observed (rule 6). */
+  notIngested: string;
+}
+
+export type TenantSectionSpec =
+  | { kind: "headline"; metrics: readonly string[] }
+  | { kind: "stat-tiles"; title: string; metrics: readonly string[] }
+  // One chart per section: volume and rate never share an axis, so a lens
+  // draws them as two sections rather than one chart with two scales.
+  | {
+      kind: "trend";
+      title: string;
+      description?: string;
+      metrics: readonly string[];
+      plot?: "line" | "step" | "area";
+      /** Draw the window average of the FIRST metric as a reference rule. */
+      referenceMean?: boolean;
+      /** List buckets that fell 2σ below their trailing mean under the chart. */
+      flagOutliers?: boolean;
+    }
+  | {
+      kind: "composition";
+      metric: string;
+      dimension: string;
+      title: string;
+      splitBy?: string;
+      /** Reader-facing names for split values the vendor words misleadingly. */
+      segmentLabels?: Readonly<Record<string, string>>;
+    }
+  | { kind: "histogram"; metric: string; title: string; caption: string }
+  // Weekly columns of one metric cut by a dimension; share=true draws the
+  // same data as a 100% composition instead of absolute volume.
+  | {
+      kind: "stacked-trend";
+      metric: string;
+      splitBy: string;
+      title: string;
+      description?: string;
+      share?: boolean;
+      segmentLabels?: Readonly<Record<string, string>>;
+    }
+  // A grid of small line charts, one per dimension value, identical y-axis.
+  | {
+      kind: "small-multiples";
+      metric: string;
+      dimension: string;
+      title: string;
+      top?: number;
+    }
+  // Two measures per dimension value at once; size (optional) is a third.
+  // quadrants=true rules the medians and labels the four cells.
+  | {
+      kind: "scatter";
+      x: string;
+      y: string;
+      size?: string;
+      dimension: string;
+      title: string;
+      description?: string;
+      quadrants?: boolean;
+    }
+  // Day-of-week × two-hour block magnitude ramp of one metric.
+  | { kind: "heatmap-hours"; metric: string; title: string }
+  // Per-hour-block columns of a rate with a ±1σ band around its mean.
+  | { kind: "hour-columns"; metric: string; title: string; description?: string }
+  // First half of the window against the second, one slope per dimension value.
+  | {
+      kind: "slope";
+      metric: string;
+      dimension: string;
+      title: string;
+      description?: string;
+    }
+  // Signed change between the window's two halves, one bar per value.
+  | {
+      kind: "momentum";
+      metric: string;
+      dimension: string;
+      title: string;
+      description?: string;
+    }
+  // Derived signals over the gate population (computed from ci.runs rows):
+  // what fixing the worst pipelines would buy.
+  | { kind: "marginal-impact"; title: string; description?: string }
+  // The org headline rate against the unweighted mean over a dimension.
+  | { kind: "callout-pair"; metric: string; dimension: string; title: string }
+  // Median of one metric split two ways per dimension value (fail vs pass).
+  | {
+      kind: "dumbbell";
+      metric: string;
+      dimension: string;
+      splitBy: string;
+      left: string;
+      right: string;
+      title: string;
+      description?: string;
+    }
+  // Cumulative share curve of one metric over a ranked dimension.
+  | { kind: "cumulative"; metric: string; dimension: string; title: string; description?: string }
+  // One 100% bar of a metric split by a dimension.
+  | {
+      kind: "decomposition";
+      metric: string;
+      splitBy: string;
+      title: string;
+      segmentLabels?: Readonly<Record<string, string>>;
+    }
+  // Mean weekly value and its volatility per dimension value, resolved to a
+  // verdict (computed client-side from the weekly series).
+  | {
+      kind: "verdict-table";
+      metric: string;
+      dimension: string;
+      title: string;
+      description?: string;
+      minWeeks?: number;
+    };
+
+/** Metric keys a tenant lens fetches — deliberately NOT part of the person
+ *  grid union: a tenant-entity key inside a person-entity request would fail
+ *  the whole batch. */
+export function tenantSectionMetricKeys(config: TenantLensConfig): string[] {
+  const keys = new Set<string>();
+  for (const s of config.sections) {
+    switch (s.kind) {
+      case "headline":
+      case "stat-tiles":
+      case "trend":
+        for (const k of s.metrics) keys.add(k);
+        break;
+      case "composition":
+      case "histogram":
+      case "stacked-trend":
+      case "small-multiples":
+      case "heatmap-hours":
+      case "hour-columns":
+      case "slope":
+      case "momentum":
+      case "callout-pair":
+      case "dumbbell":
+      case "cumulative":
+      case "decomposition":
+      case "verdict-table":
+        keys.add(s.metric);
+        break;
+      case "scatter":
+        keys.add(s.x);
+        keys.add(s.y);
+        if (s.size) keys.add(s.size);
+        break;
+      case "marginal-impact":
+        // Derived from the ci.runs rows the lens fetches anyway.
+        keys.add("ci.runs");
+        break;
+      default: {
+        const _exhaustive: never = s;
+        throw new Error(`Unhandled tenant section: ${JSON.stringify(_exhaustive)}`);
+      }
+    }
+  }
+  return [...keys];
+}
+
 /** Either a lens we render or one we only name — the pane treats the two differently. */
-export type LensEntry = LensConfig | LensRoadmap;
+export type LensEntry = LensConfig | LensRoadmap | TenantLensConfig;
 
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
@@ -409,6 +582,218 @@ const DEV: Record<string, LensEntry> = {
   },
   Activity: PRODUCT_GAP("Per-person activity-day metrics"),
   Quality: PRODUCT_GAP("Review / reopen quality metrics"),
+  // Org-grain (issue #2803): a pipeline run belongs to the organization, so
+  // this lens renders tenant-entity metrics — no roster, no peer, no person.
+  CI: {
+    title: "Development · CI",
+    tagline: "pipelines, org-wide",
+    entity: "tenant",
+    notIngested:
+      "No CI metrics here yet — tenant metrics are opt-in per installation (metricCatalog.tenantMetricsEnabled), and a GitHub source must be collecting runs.",
+    sections: [
+      {
+        kind: "headline",
+        metrics: ["ci.gate_pass_rate", "ci.runs", "ci.gate_first_try_pass_rate"],
+      },
+      {
+        kind: "stat-tiles",
+        title: "Gate run durations & retries",
+        metrics: [
+          "ci.run_duration_min",
+          "ci.run_duration_min_p90",
+          "ci.run_duration_min_stddev",
+          "ci.gate_retry_share",
+        ],
+      },
+      {
+        kind: "trend",
+        title: "Runs over time",
+        description: "Decided runs, all triggers.",
+        metrics: ["ci.runs"],
+        plot: "area",
+      },
+      {
+        kind: "trend",
+        title: "Gate pass rate over time",
+        description:
+          "Success share of commit-triggered runs; first-try shows what green cost in retries.",
+        metrics: ["ci.gate_pass_rate", "ci.gate_first_try_pass_rate"],
+      },
+      {
+        kind: "composition",
+        metric: "ci.runs",
+        dimension: "repository",
+        splitBy: "outcome",
+        title: "Runs by repository",
+      },
+      {
+        kind: "composition",
+        metric: "ci.run_hours",
+        dimension: "repository",
+        splitBy: "outcome",
+        title: "CI hours by repository",
+      },
+      // Data-trust panel: how far CI joins to git history. PR runs build
+      // synthetic merge refs the commit stream never sees, so the matched
+      // line sitting far below runs is the known join defect (#2803) made
+      // visible — the reader learns how much any commit-joined CI reading
+      // can be trusted, per bucket.
+      {
+        kind: "trend",
+        title: "CI ↔ commit join coverage",
+        description:
+          "Runs, collected commits, and runs whose head commit was collected — the gap is data the two streams cannot join.",
+        metrics: [
+          "ci.runs",
+          "ci.commits_observed",
+          "ci.runs_matched_commit",
+        ],
+      },
+      {
+        kind: "histogram",
+        metric: "ci.run_duration_min",
+        title: "How long a gate run takes",
+        caption:
+          "Each bar is a duration range, and how many runs fall in it. The tail is what people wait for.",
+      },
+      {
+        kind: "composition",
+        metric: "ci.deployments",
+        dimension: "environment",
+        splitBy: "outcome",
+        title: "Deployments by environment",
+        // GitHub marks a deployment superseded by a newer one "inactive" —
+        // reading that as broken would make every busy environment look red.
+        segmentLabels: { inactive: "superseded" },
+      },
+      {
+        kind: "stacked-trend",
+        metric: "ci.runs",
+        splitBy: "outcome",
+        title: "Run outcomes over time",
+        description: "Every decided run classified, nothing dropped.",
+      },
+      {
+        kind: "stacked-trend",
+        metric: "ci.runs",
+        splitBy: "outcome",
+        share: true,
+        title: "Outcome mix as shares",
+        description: "The same runs, composition instead of volume.",
+      },
+      {
+        kind: "trend",
+        title: "Median gate run duration",
+        description: "A step reads as \"held at\", not \"drifted to\".",
+        metrics: ["ci.run_duration_min"],
+        plot: "step",
+      },
+      {
+        kind: "trend",
+        title: "Gate pass rate against its window mean",
+        description:
+          "The rule is the window average; flagged buckets fell 2σ below their own trailing mean.",
+        metrics: ["ci.gate_pass_rate"],
+        referenceMean: true,
+        flagOutliers: true,
+      },
+      {
+        kind: "small-multiples",
+        metric: "ci.runs",
+        dimension: "repository",
+        title: "Runs per repository",
+        top: 12,
+      },
+      {
+        kind: "slope",
+        metric: "ci.gate_pass_rate",
+        dimension: "repository",
+        title: "Pass rate, first half against second half",
+        description: "The window split at its midpoint; direction labelled, not colour-only.",
+      },
+      {
+        kind: "momentum",
+        metric: "ci.gate_pass_rate",
+        dimension: "repository",
+        title: "Momentum: second half against the first",
+        description: "Change in pass rate, in points.",
+      },
+      {
+        kind: "scatter",
+        x: "ci.runs",
+        y: "ci.gate_pass_rate",
+        size: "ci.run_hours",
+        dimension: "repository",
+        title: "Volume against reliability",
+        description: "Bubble area is CI hours consumed.",
+      },
+      {
+        kind: "scatter",
+        x: "ci.run_duration_min",
+        y: "ci.gate_pass_rate",
+        size: "ci.run_hours",
+        dimension: "pipeline",
+        title: "Slow and red — where to spend the effort",
+        description: "Median duration against pass rate; bubble area is CI hours.",
+        quadrants: true,
+      },
+      {
+        kind: "heatmap-hours",
+        metric: "ci.runs",
+        title: "When CI actually runs",
+      },
+      {
+        kind: "hour-columns",
+        metric: "ci.gate_pass_rate",
+        title: "Is CI riskier at some hours?",
+        description: "Pass rate by two-hour block of the run's start, UTC; the band is ±1σ around the mean.",
+      },
+      {
+        kind: "marginal-impact",
+        title: "What fixing the worst pipelines would buy",
+        description:
+          "Gate pass rate if the top N failing pipelines produced no failures.",
+      },
+      {
+        kind: "callout-pair",
+        metric: "ci.gate_pass_rate",
+        dimension: "repository",
+        title: "Headline rate versus typical repository",
+      },
+      {
+        kind: "dumbbell",
+        metric: "ci.run_duration_min",
+        dimension: "pipeline",
+        splitBy: "outcome",
+        left: "failure",
+        right: "success",
+        title: "Does a pipeline fail fast, or fail slow?",
+        description: "Median duration of failing runs against passing runs.",
+      },
+      {
+        kind: "cumulative",
+        metric: "ci.run_hours",
+        dimension: "pipeline",
+        title: "Compute concentrates harder than failure does",
+        description: "Cumulative share of all CI hours across pipelines, busiest first.",
+      },
+      {
+        kind: "decomposition",
+        metric: "ci.run_hours",
+        splitBy: "outcome",
+        title: "Where the CI hours actually went",
+      },
+      {
+        kind: "verdict-table",
+        metric: "ci.gate_pass_rate",
+        dimension: "pipeline",
+        title: "Stability verdict per pipeline",
+        description:
+          "Mean weekly pass rate and its volatility resolve to a verdict; thin histories stay unjudged.",
+        minWeeks: 5,
+      },
+    ],
+  },
   Continuity: PRODUCT_GAP("Longitudinal continuity metrics"),
   Repositories: SCREEN_GAP("Repository-level rollups"),
   Elements: SCREEN_GAP("Element-level (file/module) analytics"),
@@ -685,7 +1070,9 @@ export const DIRECTION_LENSES: Record<string, Record<string, LensEntry>> = {
 export function directionMetricKeys(dir: string): string[] {
   const keys = new Set<string>();
   for (const entry of Object.values(DIRECTION_LENSES[dir] ?? {})) {
-    if ("comingSoon" in entry) continue;
+    // ComingSoon entries contribute nothing; tenant lenses fetch their own
+    // tenant-entity collection and must stay out of the person grid.
+    if ("comingSoon" in entry || "entity" in entry) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
   return [...keys];

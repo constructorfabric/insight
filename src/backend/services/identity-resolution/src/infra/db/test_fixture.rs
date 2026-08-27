@@ -115,6 +115,35 @@ impl Fixture {
         .await
     }
 
+    /// The same observation, but stated by a DIFFERENT source. For the cases
+    /// where WHICH source said it is the point — a login resolved by address is
+    /// confined to the roster, so an address only a chat or an issue tracker
+    /// ever observed must admit nobody.
+    pub(crate) async fn observed_from(
+        &self,
+        source_type: &str,
+        person: Uuid,
+        value_type: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO persons (value_type, insight_source_type, insight_source_id,
+                 insight_tenant_id, value_id, person_id, author_person_id, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                value_type.into(),
+                source_type.into(),
+                bytes(self.source_id),
+                bytes(self.tenant),
+                value.into(),
+                bytes(person),
+                bytes(person),
+                FIXTURE_REASON.into(),
+            ],
+        )
+        .await
+    }
+
     /// The same, observed `seconds_ago`. Explicit age is what tells "superseded"
     /// apart from "inserted first": the currency rule reads the timestamp, and
     /// two rows written in one test would otherwise differ by microseconds.

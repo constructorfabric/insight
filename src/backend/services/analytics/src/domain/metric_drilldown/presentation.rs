@@ -206,6 +206,10 @@ fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn 
             MetricDrilldownColumnType::String,
         ),
         "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
+        "env_kind" => (
+            "Environment type".to_owned(),
+            MetricDrilldownColumnType::String,
+        ),
         _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
     };
     MetricDrilldownColumn {
@@ -286,6 +290,24 @@ pub(super) fn evidence_presentation(
         ("ai_cost", _) => EvidencePresentation {
             detail_keys: &["billing_month", "ceiling_usd"],
             show_value: true,
+        },
+        // A counted run needs no value column — the row IS the run; a duration
+        // or an hour figure is only readable with its number.
+        ("ci", "runs" | "runs_matched_commit") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: false,
+        },
+        ("ci", "commits_observed") => EvidencePresentation {
+            detail_keys: &["repository"],
+            show_value: false,
+        },
+        ("ci", "run_duration_min" | "run_hours") => EvidencePresentation {
+            detail_keys: &["repository", "pipeline", "branch", "outcome"],
+            show_value: true,
+        },
+        ("ci", "deployments") => EvidencePresentation {
+            detail_keys: &["repository", "environment", "outcome", "env_kind"],
+            show_value: false,
         },
         _ => EvidencePresentation {
             detail_keys: &[],
@@ -386,6 +408,41 @@ mod tests {
             unnamed.is_empty(),
             "event measures with no detail columns — their drilldown shows only a date: {unnamed:?}"
         );
+    }
+
+    #[test]
+    fn ci_measures_declare_run_columns_and_the_env_kind_label_reads_as_prose() {
+        let runs = evidence_presentation("ci", "runs", EvidenceGranularity::Event);
+        assert_eq!(
+            runs.detail_keys,
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure in ["run_duration_min", "run_hours"] {
+            let p = evidence_presentation("ci", measure, EvidenceGranularity::Event);
+            assert!(p.show_value, "{measure} is unreadable without its number");
+        }
+
+        let deployments = evidence_presentation("ci", "deployments", EvidenceGranularity::Event);
+        assert_eq!(
+            deployments.detail_keys,
+            ["repository", "environment", "outcome", "env_kind"]
+        );
+
+        let value = input(MetricInputRole::Value, "deployments");
+        let deployments_plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                measure_key: value.measure_key,
+                presentation: deployments,
+            }],
+        );
+        let column = presentation_column("env_kind", &deployments_plan);
+        assert_eq!(column.label, "Environment type");
     }
 
     #[test]

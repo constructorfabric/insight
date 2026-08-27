@@ -112,9 +112,12 @@ function buildInputs(draft: MetricDraft): MetricInput[] {
   return [{ role: "value", measure_key: draft.value_measure.trim() }];
 }
 
-/** Parse a draft into the wire graph. `scale` is sent only for ratios. */
+/** Parse a draft into the wire graph. `scale` rides only where the backend
+ *  requires it: the ratio's scale factor, or the percentile's quantile — one
+ *  storage slot whose meaning is keyed by the computation. */
 export function draftToGraph(draft: MetricDraft): CustomMetricGraph {
-  const isRatio = draft.computation === "ratio";
+  const carriesScale =
+    draft.computation === "ratio" || draft.computation === "percentile";
   return {
     metric_key: draft.metric_key.trim(),
     label: draft.label.trim(),
@@ -126,7 +129,7 @@ export function draftToGraph(draft: MetricDraft): CustomMetricGraph {
     format: draft.format,
     direction: draft.direction,
     computation: draft.computation,
-    scale: isRatio ? toNullableNumber(draft.scale) : null,
+    scale: carriesScale ? toNullableNumber(draft.scale) : null,
     peer_cohort_key: toNullableString(draft.peer_cohort_key),
     transform: buildTransform(draft),
     source_key: draft.source_key.trim(),
@@ -191,6 +194,11 @@ export function draftIsSubmittable(draft: MetricDraft): boolean {
       // parse `draftToGraph` applies, so a non-numeric scale is not submittable.
       toNullableNumber(draft.scale) !== null
     );
+  }
+  if (draft.computation === "percentile") {
+    const q = toNullableNumber(draft.scale);
+    // The quantile rides the scale slot and must be a probability.
+    return draft.value_measure.trim() !== "" && q !== null && q >= 0 && q <= 1;
   }
   return draft.value_measure.trim() !== "";
 }

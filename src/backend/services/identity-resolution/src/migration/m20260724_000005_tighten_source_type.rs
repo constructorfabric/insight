@@ -1,6 +1,3 @@
-//! Ported verbatim from the .NET `DbUp` script `005_tighten_source_type.sql` — the SQL file is
-//! a byte-for-byte copy; see the module docs in `migration/mod.rs`.
-
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]

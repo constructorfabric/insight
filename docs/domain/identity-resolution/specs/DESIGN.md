@@ -61,7 +61,6 @@ The implemented architecture is a **journal model** with one source of truth and
 - The **persons-seed** (a subcommand of the Rust `identity-resolution` service, run as a scheduled job) folds new observations into the append-only MariaDB **`persons`** observation log: reuse an account's existing binding; else link the group to the person its e-mail already maps to (`LinkedByEmail`); else mint a new person; accounts without e-mail are skipped. It never merges two existing persons. Known gap: when accounts of one e-mail group are bound to *different* persons, the current seed collapses the group onto the first binding and can thereby silently re-derive a binding — the hardening that makes it respect per-account (in particular operator-authored) bindings ships with the manual-resolution feature.
 - **Operator corrections** (merge, detach/split, bind, exclude — ADR-0003, reviewed design in constructorfabric/insight#2180) are appended to the same `persons` journal as binding observations authored by a real operator UUID — the same currency the seed reads, so durability requires no parallel store; the seed hardening above closes the one path that could overwrite them.
 - The service's **persons-sync** runner republishes the journal into ClickHouse (`identity.identity_persons`) via an atomic table swap. Nothing schedules it on its own: it runs as the final step of every persons-seed run and after every applied operator correction, and the `sync` subcommand remains as the manual repair tool for a snapshot that has fallen behind; the dbt `resolve_person_id` macro resolves `person_id` at build time from that mirror. The v1 macro resolves **by e-mail only** (latest `value_type='email'` observation per normalized e-mail); the manual-resolution feature upgrades it to **account-first with e-mail fallback** (§4.4) — required for corrections, which are `value_type='id'` bindings, to reach gold.
-- `account_person_map` (MariaDB) is a derived SCD2 cache rebuilt from the journal — never a source of truth.
 
 The v2.0 ClickHouse-native plan — a resolution store in `aliases` plus `match_rules`/`unmapped`/`conflicts`/`merge_audits` tables operated by a BootstrapJob/MatchingEngine/ResolutionService pipeline — **was not built**. Its matching-engine material is retained as future direction (§4.1, §4.2, §3.7 future tables); its snapshot-based merge/split mechanism is superseded by the journal-based operator flow of ADR-0003 (§4.3).
 
@@ -135,8 +134,7 @@ This domain is deliberately narrow: it owns the account-to-person binding (the `
 │  │ /exclude + queue  │                                        │             │
 │  └───────────────────┘                                        │             │
 │                                                               ▼             │
-│  DERIVED READ PATHS:   account_person_map (SCD2 cache, MariaDB)              │
-│                        identity.identity_persons (CH mirror, persons-sync)  │
+│  DERIVED READ PATHS:   identity.identity_persons (CH mirror, persons-sync)  │
 │                        dbt resolve_person_id macro → gold metrics           │
 │                        identity-resolution service read API                 │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -147,7 +145,7 @@ This domain is deliberately narrow: it owns the account-to-person binding (the `
 | Ingestion (evidence) | Connectors write identity observations to `identity_inputs` | ClickHouse (MergeTree) |
 | Binding (automation) | persons-seed folds new observations into `persons` (reuse / link-by-e-mail / mint / skip); scheduled runs, guarded and journaled in `operations` | Rust (`seed` subcommand of the identity-resolution service) |
 | Corrections (human) | Operator verbs append binding observations to `persons` (ADR-0003; design #2180) | Rust (identity-resolution service, planned endpoints) |
-| Storage (journal) | `persons` (append-only observation log — source of truth), `account_person_map` (derived SCD2 cache), `operations` (admin-operation journal) | MariaDB (InnoDB) |
+| Storage (journal) | `persons` (append-only observation log — source of truth), `org_chart` (derived SCD2 edges), `operations` (admin-operation journal) | MariaDB (InnoDB) |
 | Mirror + analytics | persons-sync republishes the journal to `identity.identity_persons`; dbt `resolve_person_id` macro resolves at build time | ClickHouse + dbt |
 | API | Person lookup (`/v1/profiles`, `/v1/visible-persons`) + planned operator resolution endpoints | Rust (`identity-resolution` service, axum) |
 | Future | MatchingEngine over `match_rules` with confidence-scored proposals | Not built (§4.2) |
@@ -169,7 +167,7 @@ Identity resolution is fundamentally an alias mapping problem. Every identity si
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-principle-ch-native-v2`
 
-Evidence is analytical, decisions are transactional. Connector observations (`identity_inputs`) and the read-side mirror of the journal (`identity.identity_persons`) reside in ClickHouse — event-stream-scale, append-heavy, consumed by dbt at build time. The `persons` observation journal, its derived `account_person_map` SCD2 cache, and the `operations` admin journal live in MariaDB and are owned by the Rust `identity-resolution` service — the binding decisions need transactional writes, row-level operator access, and audit-friendly history, and the dataset is tenant-metadata-scale. See §3.7 and ADR-0002 / ADR-0003; migrations are service-owned per ADR-0006.
+Evidence is analytical, decisions are transactional. Connector observations (`identity_inputs`) and the read-side mirror of the journal (`identity.identity_persons`) reside in ClickHouse — event-stream-scale, append-heavy, consumed by dbt at build time. The `persons` observation journal, its derived `org_chart` edges, and the `operations` admin journal live in MariaDB and are owned by the Rust `identity-resolution` service — the binding decisions need transactional writes, row-level operator access, and audit-friendly history, and the dataset is tenant-metadata-scale. See §3.7 and ADR-0002 / ADR-0003; migrations are service-owned per ADR-0006.
 
 (v1 of this principle placed the whole resolution store — `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits` — in ClickHouse; that architecture was not built and its tables remain future material, see §3.7.)
 
@@ -187,7 +185,7 @@ One deliberate exception lives outside the decision journal: GDPR right-to-erasu
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-principle-domain-isolation`
 
-Identity resolution owns alias-to-person mapping and the `persons` / `account_person_map` identity-history tables, and nothing else. Person-level golden-record assembly, person-level conflict detection, org hierarchy, and assignments belong to their respective domains. This boundary is enforced by table ownership: identity resolution writes only to its own tables and references `persons.person_id` as the logical FK target for aliases.
+Identity resolution owns alias-to-person mapping and the `persons` identity-history journal, and nothing else. Person-level golden-record assembly, person-level conflict detection, org hierarchy, and assignments belong to their respective domains. This boundary is enforced by table ownership: identity resolution writes only to its own tables and references `persons.person_id` as the logical FK target for aliases.
 
 
 #### Fail-Safe Defaults
@@ -210,9 +208,9 @@ Deterministic matching first (exact email, exact HR ID). Fuzzy matching is opt-i
 
 - [ ] `p2` - **ID**: `cpt-insightspec-ir-constraint-storage-split-v2`
 
-ClickHouse holds the evidence and read-side tables: `identity_inputs` (connector observations) and `identity.identity_persons` (the persons-sync mirror of the journal consumed by dbt). The legacy `identity.aliases` table also physically exists in ClickHouse but is not part of the resolution path (see §3.7).
+ClickHouse holds the evidence and read-side tables: `identity_inputs` (connector observations) and `identity.identity_persons` (the persons-sync mirror of the journal consumed by dbt).
 
-The journal tables — `persons` (append-only observation log), `account_person_map` (derived SCD2 cache), `operations` (admin-operation journal) — are stored in MariaDB (see §3.7): a transactional store is the right fit for binding decisions, row-level operator corrections, and audit history. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see ADR-0006).
+The journal tables — `persons` (append-only observation log), `operations` (admin-operation journal) — are stored in MariaDB (see §3.7): a transactional store is the right fit for binding decisions, row-level operator corrections, and audit history. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see ADR-0006).
 
 
 #### PR #55 Naming Conventions
@@ -242,7 +240,7 @@ All tables and columns follow the PR #55 glossary naming conventions:
 
 Identity resolution owns:
 - The `identity_inputs` evidence contract and table in ClickHouse (§3.7), and the `identity.identity_persons` mirror published by persons-sync
-- The MariaDB `persons` journal, `account_person_map` cache, and `operations` journal (§3.7), the persons-seed that populates them (ADR-0002), and the operator correction flow that appends to them (ADR-0003)
+- The MariaDB `persons` journal and `operations` journal (§3.7), the persons-seed that populates them (ADR-0002), and the operator correction flow that appends to them (ADR-0003)
 - The legacy ClickHouse `aliases` table and the future matching/conflict/merge tables, if and when built (§3.7 future tables)
 
 Identity resolution does NOT own or write to:
@@ -252,7 +250,7 @@ Identity resolution does NOT own or write to:
 - `person_assignments` table (org-chart domain)
 - Any permission/RBAC tables (separate domain)
 
-The person domain reads `persons` observations to build its golden record; identity resolution links aliases to `person_id`s. `person_id` is a random UUIDv7 minted at first observation of each source-account and persisted in `account_person_map`; it is the stable join key across both domains and never re-derived from mutable attributes (see ADR-0002).
+The person domain reads `persons` observations to build its golden record; identity resolution links aliases to `person_id`s. `person_id` is a random UUIDv7 minted at first observation of each source-account and persisted in the `persons` journal; it is the stable join key across both domains and never re-derived from mutable attributes (see ADR-0002).
 
 
 #### No Fuzzy Auto-Link
@@ -283,7 +281,6 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 |---|---|---|---|
 | `identity_inputs` | ClickHouse | Identity observations from connectors — one row per changed value per source account | `(insight_tenant_id, insight_source_id, value_type, value)` |
 | `persons` | MariaDB | Append-only observation journal — the source of truth for the account→person binding; every row carries `author_person_id` and `reason` | natural key ending in `created_at` (see §3.7) |
-| `account_person_map` | MariaDB | Derived SCD2 cache of the binding, rebuilt from `persons` | `(tenant, source_type, source_id, account, valid_from)` |
 | `operations` | MariaDB | Journal of admin operations (seed runs, future operator corrections) — request, summary, lifecycle | `id` |
 | `identity.identity_persons` | ClickHouse | Read-side mirror of `persons`, republished atomically by persons-sync; consumed by the dbt `resolve_person_id` macro | mirror of `persons` |
 
@@ -291,7 +288,6 @@ All temporal ranges use `[effective_from, effective_to)` half-open intervals. `e
 
 **Relationships**:
 - `identity_inputs` → (folded by persons-seed, ADR-0002) → `persons`
-- `persons` → (deterministic rebuild) → `account_person_map`
 - `persons` → (persons-sync atomic swap) → `identity.identity_persons` → (dbt `resolve_person_id`) → gold `person_id` columns
 - Operator corrections (ADR-0003) → append to `persons`; payloads journaled in `operations`
 - `persons.person_id` is the stable cross-domain join key (random UUIDv7, never re-derived; ADR-0002)
@@ -337,7 +333,7 @@ Implemented behaviour (groups accounts by normalized current e-mail, then resolv
 - Branch 1 — reuse: a group containing an already-bound account reuses that binding. **Known gap**: if the group's accounts are bound to *different* persons, the whole group currently collapses onto the first binding (with `known_binding_conflicts` counted and logged) — which can silently re-bind the other accounts.
 - Branch 2 — `LinkedByEmail`: an unbound group whose e-mail already maps to an existing person is linked to that person automatically.
 - Branch 3 — mint: a new person for a group with a new e-mail (at least one active profile); groups with no e-mail, or wholly closed, are skipped.
-- Writes observations via `INSERT IGNORE` (idempotent for re-emitted observations under the natural key, which includes `created_at` taken from `_synced_at`); rebuilds `account_person_map` atomically.
+- Writes observations via `INSERT IGNORE` (idempotent for re-emitted observations under the natural key, which includes `created_at` taken from `_synced_at`); rebuilds `org_chart` atomically.
 - Guards destructive/suspicious runs (empty input, foreign tenant) with an explicit `--force` override; journals every run in `operations` (queued → running → completed/failed with summary counters).
 
 Hardening shipped with the manual-resolution feature (required by ADR-0003; not yet implemented):
@@ -508,7 +504,7 @@ All write verbs append to the `persons` journal (never update/delete), record th
 
 **Dependency Rules**:
 - No circular dependencies between identity-resolution and person domains
-- Identity resolution writes only to its own tables (`persons`, `account_person_map`, `operations`, the mirror)
+- Identity resolution writes only to its own tables (`persons`, `org_chart`, `operations`, the mirror)
 - Person domain does not depend on identity-resolution internals; it consumes `persons` observations read-only
 - Analytics never reads MariaDB directly — only the ClickHouse mirror through the macro
 
@@ -520,7 +516,7 @@ All write verbs append to the `persons` journal (never update/delete), record th
 
 | Aspect | Value |
 |---|---|
-| Tables | `identity_inputs` (MergeTree, connector-written), `identity.identity_persons` (mirror, swapped atomically), legacy `identity.aliases` |
+| Tables | `identity_inputs` (MergeTree, connector-written), `identity.identity_persons` (mirror, swapped atomically) |
 | Version | 24.x+ (for `generateUUIDv7()` support) |
 | Access | Read by persons-seed; written by dbt (inputs) and persons-sync (mirror) |
 | Connection | HTTP interface / native protocol |
@@ -529,7 +525,7 @@ All write verbs append to the `persons` journal (never update/delete), record th
 
 | Aspect | Value |
 |---|---|
-| Database | `identity` — `persons`, `account_person_map`, `operations` (+ service-owned auxiliary tables) |
+| Database | `identity` — `persons`, `org_chart`, `operations` (+ service-owned auxiliary tables) |
 | Schema ownership | `identity-resolution` service via embedded SeaORM `Migrator` (ADR-0006) |
 | Access | Written by persons-seed and (planned) the operator resolution API; read by the service APIs and persons-sync |
 
@@ -554,7 +550,7 @@ sequenceDiagram
     participant Seed as persons-seed
     participant BI as identity_inputs (CH)
     participant P as persons (MariaDB)
-    participant M as account_person_map (MariaDB)
+    participant OC as org_chart (MariaDB)
     participant OPS as operations (MariaDB)
 
     Sched ->> Seed: run(tenant)
@@ -576,7 +572,7 @@ sequenceDiagram
         end
     end
 
-    Seed ->> M: transactional rebuild (tenant-scoped DELETE + INSERT, same txn)
+    Seed ->> OC: transactional rebuild (tenant-scoped DELETE + INSERT, same txn)
     Seed ->> OPS: UPDATE run (completed + summary counters)
 ```
 
@@ -592,14 +588,12 @@ sequenceDiagram
     participant API as OperatorResolutionApi
     participant P as persons (MariaDB)
     participant OPS as operations (MariaDB)
-    participant M as account_person_map (MariaDB)
 
     Op ->> API: POST /v1/resolution/{bind|merge|detach|exclude}
     API ->> P: validate targets (accounts, persons, tenant)
     API ->> OPS: INSERT operation (actor, request, comment)
     API ->> P: APPEND binding observation(s), author = operator UUID
     Note over P: never UPDATE/DELETE - corrections are new facts
-    API ->> M: rebuild affected bindings (atomic)
     API -->> Op: result (e.g. new_person_id for detach; per-item report for bulk bind)
     Note over P: next persons-sync publish + next gold build<br/>re-attribute all history to the corrected persons
 ```
@@ -632,7 +626,7 @@ sequenceDiagram
 
 - [ ] `p3` - **ID**: `cpt-insightspec-ir-db-schemas`
 
-Implemented tables: `identity_inputs` (ClickHouse, evidence), `identity.identity_persons` (ClickHouse, persons-sync mirror of the journal), `persons` / `account_person_map` / `operations` (MariaDB, owned by the Rust `identity-resolution` service — see ADR-0002, ADR-0003, ADR-0006). The ClickHouse `aliases` table exists but is legacy (below). The remaining v2.0 tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) were never built — see "Future tables" at the end of this section. Naming follows PR #55 conventions. For ClickHouse tables: no Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
+Implemented tables: `identity_inputs` (ClickHouse, evidence), `identity.identity_persons` (ClickHouse, persons-sync mirror of the journal), `persons` / `org_chart` / `operations` (MariaDB, owned by the Rust `identity-resolution` service — see ADR-0002, ADR-0003, ADR-0006). The remaining v2.0 tables (`match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) were never built — see "Future tables" at the end of this section. Naming follows PR #55 conventions. For ClickHouse tables: no Nullable unless semantically required; use empty string (`''`) or zero sentinel (`'1970-01-01'`) instead.
 
 #### Table: `identity_inputs`
 
@@ -684,55 +678,6 @@ The models are incremental (`append` strategy): each run processes only `fields_
 | `t-001` | `src-bamboo` | `bamboohr` | `E123` | `employee_id` | `E123` | `bronze_bamboohr.employees.id` | `UPSERT` |
 | `t-001` | `src-gitlab` | `gitlab` | `42` | `email` | `anna.ivanova@acme.com` | `bronze_gitlab.users.email` | `UPSERT` |
 | `t-001` | `src-gitlab` | `gitlab` | `42` | `username` | `aivanova` | `bronze_gitlab.users.username` | `UPSERT` |
-
----
-
-#### Table: `aliases` (LEGACY)
-
-**ID**: `cpt-insightspec-ir-dbtable-aliases`
-
-> **Status: legacy.** The table physically exists in ClickHouse and is populated by dbt seed models only (always with `confidence = 1.0`), but it is **not consumed by the resolution path** — analytics resolves through the `identity.identity_persons` mirror and the `resolve_person_id` macro, and the service resolves through `persons`. Retirement candidate; retained here for reference until the future MatchingEngine decides whether to reuse or replace it.
-
-Resolved alias-to-person mapping. Each row links one `(value_type, value)` from one source to one person.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | `UUID DEFAULT generateUUIDv7()` | PK |
-| `insight_tenant_id` | `UUID` | Tenant isolation |
-| `person_id` | `UUID` | Logical FK → `persons.person_id` |
-| `value_type` | `LowCardinality(String)` | `id`, `email`, `username`, `employee_id`, `display_name`, `platform_id` |
-| `value` | `String` | Normalized alias value |
-| `value_field_name` | `String` | Fully-qualified source field path (from identity_inputs) |
-| `insight_source_id` | `UUID` | Source system that provided this alias |
-| `insight_source_type` | `LowCardinality(String)` | Source type |
-| `source_account_id` | `String` | Raw account ID in the source system |
-| `confidence` | `Float32` | Match confidence (1.0 = exact) |
-| `is_active` | `UInt8` | 1 = active, 0 = deactivated |
-| `effective_from` | `DateTime64(3, 'UTC')` | When this alias mapping became effective |
-| `effective_to` | `DateTime64(3, 'UTC')` | When this alias mapping ceased (`'1970-01-01'` = current) |
-| `first_observed_at` | `DateTime64(3, 'UTC')` | First time this alias was seen from this source |
-| `last_observed_at` | `DateTime64(3, 'UTC')` | Last time this alias was confirmed from this source |
-| `created_at` | `DateTime64(3, 'UTC')` | Row creation time |
-| `updated_at` | `DateTime64(3, 'UTC')` | Last modification time |
-| `is_deleted` | `UInt8` | Soft-delete flag (0 = active, 1 = deleted) |
-
-**PK**: `id`
-
-**ORDER BY**: `(insight_tenant_id, value_type, value, insight_source_id, id)`
-
-**Engine**: `ReplacingMergeTree(updated_at)`
-
-**Constraints**:
-- Logical uniqueness: one active alias per `(insight_tenant_id, value_type, value, insight_source_id)` at any time — enforced at application level since ClickHouse lacks unique constraints
-- `is_deleted = 1` rows are excluded from resolution lookups
-
-**Example**:
-
-| insight_tenant_id | person_id | value_type | value | insight_source_type | confidence | is_active |
-|---|---|---|---|---|---|---|
-| `t-001` | `p-1001` | `email` | `anna.ivanova@acme.com` | `bamboohr` | 1.0 | 1 |
-| `t-001` | `p-1001` | `employee_id` | `E123` | `bamboohr` | 1.0 | 1 |
-| `t-001` | `p-1001` | `username` | `aivanova` | `gitlab` | 0.95 | 1 |
 
 ---
 
@@ -807,48 +752,6 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 
 ---
 
-#### Table: `account_person_map` (MariaDB)
-
-**ID**: `cpt-insightspec-ir-dbtable-account-person-map`
-
-**SCD2 materialized cache** of the source-account → `person_id` binding, derived deterministically from `persons` rows where `value_type='id'`. Never the source of truth; rebuilt from scratch at the end of every seed run (and by future operator flows). Exists purely for fast lookup and temporal "as of date T" queries — equivalent to a window-function scan over `persons.value_type='id'`, but O(1)–O(rows-in-tenant) instead of O(observations-in-tenant).
-
-**Database**: MariaDB, database `identity` (same as `persons`). Defined by a SeaORM migration in `src/backend/services/identity-resolution/src/migration/` (applied by the service's `migrate` subcommand).
-
-##### Columns
-
-| Column | Type | Description |
-|---|---|---|
-| `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID |
-| `insight_source_type` | `VARCHAR(30) NOT NULL` | Source system: `bamboohr`, `zoom`, etc. Tiny tier (see glossary §11) |
-| `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID |
-| `source_account_id` | `VARCHAR(320) NOT NULL` | Source-native account identifier (same type as `persons.value_id`, same domain) |
-| `person_id` | `BINARY(16) NOT NULL` | Person UUID (random UUIDv7); derived from `persons.person_id` of the opening observation |
-| `author_person_id` | `BINARY(16) NOT NULL` | Forwarded from the `persons` observation. Sentinel `00000000-0000-0000-0000-000000000000` = auto-minted by seed |
-| `reason` | `VARCHAR(50) NOT NULL` | `initial-bootstrap` \| `new-account` \| `operator-merge` \| ... — forwarded from the `persons` observation |
-| `valid_from` | `DATETIME(6) NOT NULL` (migration 014) | When this binding became current (microsecond precision; = `created_at` of the opening `persons` observation). Sub-second precision is required because `valid_from` is part of the PRIMARY KEY — second-level resolution would risk PK collisions for closely-spaced events |
-| `valid_to` | `DATETIME(6) NULL` (migration 014) | When this binding ended (= next observation's `created_at`). `NULL` = currently active binding |
-
-**Primary key**: `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id, valid_from)` — one row per historical binding period. An account with N historical bindings has N rows; the latest has `valid_to = NULL`.
-
-**Indexes**:
-- `idx_current (insight_tenant_id, insight_source_type, insight_source_id, source_account_id, valid_to)` — fast "current binding" lookup via `WHERE valid_to IS NULL`
-- `idx_person_id (person_id)` — list all accounts currently bound to a person
-- `idx_tenant_person (insight_tenant_id, person_id)` — tenant-scoped person accounts
-- `idx_valid_from (insight_tenant_id, valid_from)` — "bindings changed in date range" queries for dashboards
-
-##### Semantics
-
-- `persons` is the **source of truth**; `account_person_map` is **derived**. Drift is impossible by construction because rebuild re-derives every row from `persons`.
-- **"Current binding"**: `WHERE valid_to IS NULL`.
-- **"Binding as of date T"**: `WHERE valid_from <= T AND (valid_to > T OR valid_to IS NULL)` — one row per source-account, O(log N) range lookup.
-- **"Full history of an account"**: all rows with the account's PK tuple, ordered by `valid_from`.
-- **Rebuild** (at the end of every seed run + every future operator flow) — **transactional, tenant-scoped**: within the same transaction that applies the observations, the seed issues `DELETE FROM account_person_map WHERE insight_tenant_id = ?` followed by `INSERT ... SELECT ... LEAD() OVER (PARTITION BY tenant, source_type, source_id, account ORDER BY created_at)` from `persons.value_type='id'` rows. The journal write and the cache rebuild commit atomically — readers see either the pre-run or the post-run state, and the log and cache are never observably inconsistent. (An earlier design described a `RENAME TABLE` two-table swap; the implemented mechanism is the transactional delete-and-insert above.)
-
-See ADR-0002 for the full decision record (why a derived cache instead of a second authoritative table, alternatives considered).
-
----
-
 ##### Seed (idempotent fold from `identity_inputs`)
 
 **Implementation** — the seed is the `seed` subcommand of the Rust `identity-resolution` service (issue #1690), sharing the service's SeaORM models and configuration:
@@ -859,9 +762,9 @@ See ADR-0002 for the full decision record (why a derived cache instead of a seco
 | Concurrency | A run-lock guarantees a single active run; a concurrent invocation exits with a warning |
 | Guards | Suspicious inputs (empty `identity_inputs`, foreign-tenant universe) are refused unless the operator passes an explicit `--force`; the scheduled job itself never forces |
 | Audit | Every run is journaled in `operations` (queued → running → completed/failed) with summary counters per mode, including `known_binding_conflicts` |
-| History | The original one-shot Python seed (`seed/seed-persons-from-identity-input.py` + `seed-persons.sh`) performed the initial bootstrap and remains in the tree for reference; the Rust subcommand is the operative mechanism |
+| History | A one-shot Python seed performed the initial bootstrap and has since been removed; the Rust subcommand is the operative mechanism |
 
-**Schema ownership**: the `persons` and `account_person_map` table DDL
+**Schema ownership**: the `persons` and `org_chart` table DDL
 lives inside the identity-resolution service at
 `src/backend/services/identity-resolution/src/migration/`
 and is applied by the service's own SeaORM migrator via the
@@ -871,21 +774,21 @@ for the service-owned-migrations policy. The seed operates on the
 already-created tables and never issues DDL; `persons` is never
 deleted from or updated, and the only row deletion in the
 transactional apply is the tenant-scoped rebuild of the derived
-`account_person_map` cache.
+`org_chart` edges.
 
 **Process** (data flow executed by each seed run):
 
 1. Read `identity.identity_inputs` (ClickHouse): UPSERT observation rows plus DELETE closure signals (never persisted). **Known gap**: DELETE rows carry an empty `value` by contract while the reader filters non-empty values only, so closure signals are currently dropped before the fold — the reader fix ships with the manual-resolution feature. **The full set each run** — no incremental watermark yet (REC-IR-02) — and currently without a tenant predicate (single-tenant deployments; multi-tenant prerequisite). Order by `_synced_at DESC` within each source-account so that the latest email observation is picked deterministically in step 5.
 2. Group observations by `(insight_tenant_id, insight_source_type, insight_source_id, source_account_id)` — a "source account" = one user in one connector instance.
 3. Connect to MariaDB. Load known bindings: for each source-account key, find the latest `value_type='id'` observation in `persons` and capture its `person_id`. This becomes the **known-account** set.
-4. Load the current e-mail map: for each normalized e-mail (lowercased, not trimmed — ADR-0011 parity), take the **latest** `value_type='email'` observation (`created_at DESC, id DESC`) and its `person_id`, producing `normalized_email → person_id`. Latest-wins over the append-only journal; the map is empty on the very first run (initial bootstrap) and non-empty afterwards — the same code path handles both, there is no mode flag. (Contested-claim detection on this map ships with the manual-resolution hardening; see §3.2.)
-5. Group accounts by normalized current e-mail; resolve each group in priority order (mirrors the .NET resolver; `domain/seed.rs::resolve_assignments`):
+4. Load the current e-mail map: for each normalized e-mail (lowercased, not trimmed — ADR-0011), take the **latest** `value_type='email'` observation (`created_at DESC, id DESC`) and its `person_id`, producing `normalized_email → person_id`. Latest-wins over the append-only journal; the map is empty on the very first run (initial bootstrap) and non-empty afterwards — the same code path handles both, there is no mode flag. (Contested-claim detection on this map ships with the manual-resolution hardening; see §3.2.)
+5. Group accounts by normalized current e-mail; resolve each group in priority order (`domain/seed.rs::resolve_assignments`):
    - **Group with a bound account** (step 3 set): reuse that `person_id` for the whole group; no new binding decision. **Known gap**: if the group's accounts are bound to *different* persons, the group currently collapses onto the first binding (counted in `known_binding_conflicts`, logged) and can thereby silently re-derive a binding — the manual-resolution hardening replaces this with per-account binding respect and surfacing.
    - **Unbound group, e-mail present in step 4 set**: link the group to that person (`LinkedByEmail`) — the account joins an existing person automatically when the e-mail is unambiguous.
    - **Unbound group, new e-mail, at least one active profile**: mint a new `person_id` (random UUIDv7); accounts sharing the new e-mail within the run share the person.
    - **No e-mail, or all profiles closed**: skip — no binding is created. Skipped active accounts are not hidden: the review queue surfaces them from `identity_inputs` as no-evidence items awaiting an operator bind. E-mail remains the sole automatic identity anchor for this seed.
 
-   > ADR-0002 additionally specified a quarantine mode (`reason='pending-iresolution'`) for contested e-mails; the implemented port kept .NET-parity auto-linking instead. Contested-evidence handling (no auto-link when an e-mail maps to more than one person) ships with the manual-resolution feature.
+   > ADR-0002 additionally specified a quarantine mode (`reason='pending-iresolution'`) for contested e-mails; the implementation auto-links instead. Contested-evidence handling (no auto-link when an e-mail maps to more than one person) ships with the manual-resolution feature.
 6. Write observations to `persons` via `INSERT IGNORE`. Routing rules (hardcoded in the seed's `route_value`, mirrored by the dbt macro):
    - id-like types (`id`, `email`, `username`, `employee_id`, `parent_email`, `parent_id`, `parent_person_id`) → `value_id = value`, others NULL
    - name-like types (`display_name`, `first_name`, `last_name`, `department`, `division`, `job_title`, `status`) → `value_full_text = value`, others NULL
@@ -894,18 +797,18 @@ transactional apply is the tenant-scoped rebuild of the derived
    **Timestamp-uniqueness obligation (seed side)**: `created_at` comes from `_synced_at`, and the natural key has no account discriminator — two accounts of the same source resolving to one person at the same `_synced_at` would collide on their `value_type='id'` rows and `INSERT IGNORE` would silently drop one binding. The seed write path must disambiguate per account (same obligation as the operator path, §3.7 index note); until that hardening ships this is a known gap of the same family as the divergent-group collapse.
 
    `author_person_id` is the all-zero sentinel `00000000-0000-0000-0000-000000000000` for auto-minted bindings; the `uq_person_observation` UNIQUE key (on `created_at`, migration 004) dedupes re-runs. `created_at` is taken from each observation's `identity_inputs._synced_at`, not from the seed wall-clock, so chronology in `persons` reflects the source's view of when each value was seen — and re-runs over the same input reproduce the same keys.
-7. **Rebuild `account_person_map`** from `persons.value_type='id'` observations — tenant-scoped `DELETE` + `INSERT ... SELECT ... LEAD()` inside the same transaction as the observation writes (see the account_person_map Semantics block). Drift relative to `persons` is impossible by construction.
+7. **Rebuild `org_chart`** from the parent, status and e-mail observations — tenant-scoped `DELETE` + `INSERT ... SELECT` inside the same transaction as the observation writes. Drift relative to `persons` is impossible by construction.
 
-**Re-run semantics**: idempotent on `persons` (UNIQUE key dedupe — same input reproduces the same `created_at` keys), bit-identical on `account_person_map` (deterministic rebuild from same `persons` state). Adding a new source between runs creates new accounts; each is linked by e-mail when unambiguous or minted fresh. A consistently-bound account is never re-derived; the divergent-group collapse above is the one remaining path that can override a binding, and closing it is a precondition of ADR-0003 correction durability.
+**Re-run semantics**: idempotent on `persons` (UNIQUE key dedupe — same input reproduces the same `created_at` keys), bit-identical on `org_chart` (deterministic rebuild from same `persons` state). Adding a new source between runs creates new accounts; each is linked by e-mail when unambiguous or minted fresh. A consistently-bound account is never re-derived; the divergent-group collapse above is the one remaining path that can override a binding, and closing it is a precondition of ADR-0003 correction durability.
 
 **Conflict classification (ships with manual resolution)**: when an e-mail group's accounts are bound to more than one person, the seed will inspect the authors of the divergent bindings: any operator-authored binding marks the divergence as an intentional resolved state (not counted, not surfaced); all-seed divergence is counted in `known_binding_conflicts` and surfaced for review — and never reconciled by rewriting history. Prerequisite: the bindings loader must return `author_person_id` alongside `person_id` (today it returns only the person).
 
 See [ADR-0002](ADR/0002-stable-person-id-via-persons-observations.md) for the full decision record.
 
 **Safety / idempotency**:
-- Re-running the script is **safe**: the `account_person_map` lookup keeps `person_id` stable across runs, and `INSERT IGNORE` on `persons` skips duplicates.
+- Re-running the script is **safe**: the known-bindings lookup over `persons` keeps `person_id` stable across runs, and `INSERT IGNORE` on `persons` skips duplicates.
 - Steady-state re-runs never merge two **existing** persons — no such code path exists. New accounts join an existing person only via the unambiguous e-mail link (`LinkedByEmail`); merging existing persons is an operator-only action (ADR-0003).
-- The seed never issues `TRUNCATE`, `DELETE`, or `UPDATE` against `persons`. The only `DELETE` it performs is the tenant-scoped rebuild of the derived `account_person_map` cache, inside the same transaction as the observation writes. Wipe-and-reseed of `persons` is an explicit operator action outside the seed.
+- The seed never issues `TRUNCATE`, `DELETE`, or `UPDATE` against `persons`. The only `DELETE` it performs is the tenant-scoped rebuild of the derived `org_chart` edges, inside the same transaction as the observation writes. Wipe-and-reseed of `persons` is an explicit operator action outside the seed.
 
 **Prerequisites and ordering** (end-to-end bootstrap):
 
@@ -1168,7 +1071,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 
 ### 4.7 Deployment
 
-**Hybrid storage** — ClickHouse for analytical identity tables, MariaDB for transactional identity-history (`persons`, `account_person_map`).
+**Hybrid storage** — ClickHouse for analytical identity tables, MariaDB for transactional identity-history (`persons`, `org_chart`).
 
 **Kubernetes (production)**:
 
@@ -1181,7 +1084,7 @@ This walkthrough demonstrates the min-propagation algorithm (§4.1) as a verific
 | persons-seed | Scheduled job (umbrella chart) running the service image with the `seed` subcommand; run-locked, guarded, journaled in `operations` | 0.25 CPU, 256 MB RAM per run |
 | MatchingEngine (future, not built) | TBD with the matcher design | — |
 
-**identity-resolution** is a stateless Rust (axum) service. It owns the MariaDB `identity` database — `persons` (observation journal), `account_person_map` (SCD2 cache rebuilt from `persons.value_type='id'`), `operations` (admin-operation journal) — with migrations applied at startup via SeaORM `Migrator` (see ADR-0006). The service does not read Bronze tables directly; observations flow in through `identity.identity_inputs` (populated by the per-connector dbt models that use the `identity_inputs_from_history` macro) and are folded into `persons` by the seed. The persons-sync worker republishes the journal to ClickHouse for analytics. Horizontal scaling via Kubernetes replicas.
+**identity-resolution** is a stateless Rust (axum) service. It owns the MariaDB `identity` database — `persons` (observation journal), `org_chart` (SCD2 edges rebuilt from `persons`), `operations` (admin-operation journal) — with migrations applied at startup via SeaORM `Migrator` (see ADR-0006). The service does not read Bronze tables directly; observations flow in through `identity.identity_inputs` (populated by the per-connector dbt models that use the `identity_inputs_from_history` macro) and are folded into `persons` by the seed. The persons-sync worker republishes the journal to ClickHouse for analytics. Horizontal scaling via Kubernetes replicas.
 
 **persons-seed** runs as a scheduled job (the service image with the `seed` subcommand — issue #1690): run-locked, input-guarded (`--force` for deliberate overrides), journaled in `operations`, idempotent via `INSERT IGNORE`. See ADR-0002. The original one-shot Python seed remains under `seed/` for reference.
 
@@ -1250,23 +1153,22 @@ Phase 1 seed and connector models derive `insight_tenant_id` (UUID) and `insight
 **Why temporary**: The PR #55 convention requires `insight_tenant_id` / `insight_source_id` to be real UUIDv7 foreign keys referencing future `tenants` / `sources` tables. Until those exist, the deterministic hash ensures:
 - The same Bronze identifier always produces the same UUID across all models.
 - No collision risk within realistic tenant counts (sipHash128 is 128-bit).
-- `insight_source_id` is query-joinable across `persons`, `account_person_map`, `aliases`, and `identity_inputs` — the journal inherits it from the evidence rows.
+- `insight_source_id` is query-joinable across `persons` and `identity_inputs` — the journal inherits it from the evidence rows.
 - `insight_tenant_id` is **not** cross-store joinable: the evidence carries the producer-side hash while the journal carries the caller's tenant (see §3.2 PersonsSeed and §4.4). Tenant joins across stores become possible only once the `tenants` table replaces the hash.
 
-**Migration path**: When `tenants` / `sources` tables are created, replace all `toUUID(UUIDNumToString(sipHash128(...)))` calls with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). All affected files are marked with `-- TEMPORARY: sipHash128` comments. Search: `grep -r "TEMPORARY.*sipHash128" src/ingestion/`.
+**Migration path**: When `tenants` / `sources` tables are created, replace every `toUUID(UUIDNumToString(sipHash128(...)))` call with a lookup join (e.g., `JOIN tenants t ON t.external_id = cm.tenant_id`). The authoritative search is the formula itself — `grep -rn "sipHash128" src/ingestion/` — not a marker comment: the convention of tagging call sites `-- TEMPORARY: sipHash128` was never applied consistently, so a marker search under-reports.
 
-**Affected files** (Phase 1):
-- `dbt/macros/identity_inputs_from_history.sql` — computes both for bamboohr/zoom connector models
-- `dbt/identity/seed_persons_from_cursor.sql`, `seed_persons_from_claude_admin.sql` — compute the hash
-- `dbt/identity/seed_aliases_from_cursor.sql`, `seed_aliases_from_claude_admin.sql` — use it in tenant-scoped JOINs
-- `dbt/identity/seed_identity_inputs_from_cursor.sql`, `seed_identity_inputs_from_claude_admin.sql` — compute the hash
-- `scripts/adhoc/seed_from_cursor_manual.sql`, `scripts/adhoc/seed_from_claude_admin_manual.sql` — ad-hoc Play UI testing SQL (point-in-time snapshots, not kept in sync with dbt models)
+**Where the hash is computed** (categories, since the file list moves with the connector set):
+- `dbt/macros/identity_inputs_from_history.sql` — the shared macro, and with it every connector model that goes through it
+- per-connector `*__identity_inputs.sql` models that compute it inline instead of via the macro
+- `dbt/identity/seed_identity_inputs_from_cursor.sql` — Cursor's contributor to the union
+- the gold `*_metric_evidence.sql` models, which re-derive the tenant hash on the serving side
 
 ### REC-IR-05: Explicit canonical id emission per connector (Phase 2)
 
 **Status**: deferred to follow-up PR.
 
-**Context**: the `identity_inputs_from_history` dbt macro currently emits the canonical `value_type='id'` binding observation via two implicit CTEs (`id_upserts`, `id_deletes`) in addition to the per-field `upserts`/`deletes` blocks driven by the connector's `identity_fields` list. Connectors that go through the macro (BambooHR, Zoom, future) get this row automatically; connectors that bypass the macro (`seed_identity_inputs_from_cursor`, `seed_identity_inputs_from_claude_admin`, plus the `scripts/adhoc/seed_from_*_manual.sql` companions) emit it explicitly as a UNION-ALL branch. The contract that "every connector emits a `value_type='id'` observation" is therefore convention-driven, not declarative at the call site.
+**Context**: the `identity_inputs_from_history` dbt macro currently emits the canonical `value_type='id'` binding observation via two implicit CTEs (`id_upserts`, `id_deletes`) in addition to the per-field `upserts`/`deletes` blocks driven by the connector's `identity_fields` list. Connectors that go through the macro (BambooHR, Zoom, future) get this row automatically; connectors that bypass the macro (`seed_identity_inputs_from_cursor` and any sibling written by hand) emit it explicitly as a UNION-ALL branch. The contract that "every connector emits a `value_type='id'` observation" is therefore convention-driven, not declarative at the call site.
 
 **Why follow up**: a connector author looking at `zoom__identity_inputss.sql` sees `identity_fields=[email, employee_id, display_name]` and no mention of the account identifier itself. The relationship is invisible without reading the macro. The macro also hardcodes `value_field_name = '{source_type}.entity_id'` for the implicit row instead of the canonical `bronze_<src>.<table>.id` path that explicit entries produce elsewhere.
 

@@ -24,7 +24,7 @@
 ## Context and Problem Statement
 
 ADR-0012 gates every read of the OrgChart Visibility tables behind
-`CallerAdminCheck`, and names as a decision driver that the whole family
+the shared admin gate, and names as a decision driver that the whole family
 "behaves identically under the same filter". It also leaves the door open:
 a later ADR may relax specific reads, and offers
 `GET /v1/person-roles?person=<self>` as the example.

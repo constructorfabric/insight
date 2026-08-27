@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.05.07-9623811" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.27.02.04-744219f" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.05.07-9623811" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.27.02.04-744219f" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -386,12 +386,47 @@ authenticator:
     clientId: "insight-authenticator"
     clientSecret: ""
     redirectUri: "" # browser-facing callback, through the gateway edge
+    # How a login finds its person. Two modes, declared — never a fallback
+    # chain, so a token that cannot answer the configured question is refused
+    # rather than quietly answered a different way:
+    #
+    #   external_id (default) — by the IdP's own stable user id under
+    #     `sourceType`. Right whenever a connector observes the provider's
+    #     accounts: the id is immutable and belongs to the directory the
+    #     person authenticated against.
+    #   email — by the token's standard `email` claim, matched against the
+    #     addresses the ROSTER states (identityResolution.rosterSourceType).
+    #     For installs whose IdP has no directory connector of its own:
+    #     nothing seeds an id binding for the provider, so external_id matches
+    #     nobody and EVERY sign-in is refused. Needs no claim mapping — the
+    #     `email` claim rides the standard `email` scope — and reads neither
+    #     `sourceType` nor `externalIdClaim`. Requires rosterSourceType to be
+    #     set; identity refuses the lookup without one rather than matching an
+    #     address any source at all happened to state.
+    #
+    # What `email` mode additionally requires, both enforced at render:
+    #   - `provisionOnLogin: false` — minting needs a source-native id, so no
+    #     login provisions in this mode;
+    #   - identityResolution.rosterSourceType set.
+    # NOT enforced: that `scopes` names `email`. The claim need not be
+    # requested to arrive — an IdP may emit it from an always-on client scope,
+    # and Keycloak 26 errors on a scope the client is not assigned, so
+    # demanding it here refuses working installs.
+    # It also refuses a token whose `email_verified` is explicitly false: in
+    # this mode the address IS the credential. An IdP that lets a user edit
+    # their own address unverified must be fixed at the IdP.
+    # ROLLING BACK to a chart that predates this key: put `sourceType` back in
+    # the same commit — the older chart requires it unconditionally and will
+    # refuse to render without it.
+    resolveBy: external_id
     # The identity-resolution source_type this IdP is seeded under (e.g.
-    # "ms-entra") — required; the login-bootstrap person lookup is scoped to
-    # it. No default: an empty value fails config validation at boot.
+    # "ms-entra") — the login-bootstrap person lookup is scoped to it. Required
+    # when resolveBy is external_id (an empty value fails config validation at
+    # boot); unread when resolveBy is email.
     sourceType: ""
     # id_token claim carrying the IdP's stable external user id for
-    # sourceType (e.g. Entra's "oid"). Defaults to "sub".
+    # sourceType (e.g. Entra's "oid"). Defaults to "sub". Unread when
+    # resolveBy is email.
     externalIdClaim: "sub"
     # Provision a person on first successful login instead of refusing one the
     # journal has no binding for yet.
@@ -441,6 +476,13 @@ keycloak:
     passwordSecret: {name: "", key: ""}
   route:
     enabled: false
+  # Login theme, shipped with this Keycloak. Inert until a realm sets
+  # `loginTheme: insight` — never set that when keycloakConfig points at a
+  # Keycloak this chart does not deploy. `returnUrl` is where the overridden
+  # page hands the browser back to (relative to the Gateway host the SPA and
+  # Keycloak share).
+  theme:
+    returnUrl: "/?auth_error=kc_page_expired"
 # ─── keycloakConfig (broker realms as code — ADR-0003, EPIC #2193) ──────────
 # Hook Job applying the env's versioned realm YAML (pre-created ConfigMap from
 # the gitops `keycloak-broker-realms` target) with keycloak-config-cli on every
@@ -490,6 +532,9 @@ analytics:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
   metricCatalog:
+    # Tenant-grain metrics (the ci.* family, #2803) are opt-in per
+    # installation; when off, the catalog omits them and the CI lens renders
+    # its honest not-enabled state.
     tenantMetricsEnabled: false
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at
@@ -514,6 +559,12 @@ analytics:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-analytics-config"
+  # Hook-rendered twin the pre-install migrate Job reads (templates/
+  # secrets.yaml): `existingSecret` is a release resource a pre-install hook
+  # cannot see on a fresh install. Composed only when
+  # `credentials.autoGenerate: true`; on the gitops path the config Secret
+  # pre-exists and this ref stays an inert optional.
+  migrateEnvSecret: "insight-analytics-migrate-env"
   # Metric Catalog single-tenant fallback comes from
   # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
   # default). The session-bound tenant from the gateway ALWAYS wins; this
@@ -531,17 +582,17 @@ analytics:
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
-# The persons-store API. Reads from MariaDB `persons` written by the seed
-# pipeline (src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
-# fed off ClickHouse `identity.identity_inputs`. NOT an OIDC provider.
+# The persons-store API. Reads from MariaDB `persons`, written by the seed
+# CronJob (the service's own `seed` subcommand) fed off ClickHouse
+# `identity.identity_inputs`. NOT an OIDC provider.
 # Consumers reach it at `http://<release>-identity-resolution:8082`.
 # `deploy: true` is mandatory: the authenticator's login-bootstrap resolve
 # (GET /internal/persons/by-external-id / by-email-override) lives here
 # (constructorfabric/insight#1960), and the authenticator is always installed
 # (its "no deploy flag" app-service contract); `insight.validate` fails the
 # render otherwise.
-# SCHEMA OWNER: identity-resolution's migrate initContainer applies the
-# migrations + first-admin bootstrap against `databaseName` — see ADR-0006
+# SCHEMA OWNER: identity-resolution's pre-install/pre-upgrade migrate hook
+# Job applies the migrations + first-admin bootstrap against `databaseName`
 # (service-owned migrations).
 # Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
 # Airbyte-only consumer: no gateway route, no platform-config entry (other
@@ -642,9 +693,11 @@ identityResolution:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-identity-resolution-config"
+  # Same hook-twin arrangement as analytics.migrateEnvSecret above.
+  migrateEnvSecret: "insight-identity-resolution-migrate-env"
   # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
-  # daily to rebuild the identity org projection (persons / account_person_map
-  # / org_chart) from ClickHouse identity_inputs — without it the projection
+  # daily to rebuild the identity org projection (persons / org_chart) from
+  # ClickHouse identity_inputs — without it the projection
   # freezes at the last manual run and Team-view rosters go stale. Runs
   # serialize on a per-tenant MariaDB advisory lock; input guards abort on an
   # empty identity_inputs read or a tenant mismatch (`--force` overrides).

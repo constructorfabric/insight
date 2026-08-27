@@ -107,10 +107,10 @@ export function formatDate(iso: string, pattern = "d MMM"): string {
 
 /**
  * Format an instant the identity service journals. Its timestamps are UTC
- * clock readings serialized WITHOUT a zone designator (`.NET` wire parity:
- * `2026-08-01T10:15:00.000000`); `parseISO` would read that as local time and
- * shift every audit entry by the viewer's UTC offset. Zone-suffixed input is
- * passed through untouched, so the helper is safe for either shape.
+ * clock readings serialized WITHOUT a zone designator
+ * (`2026-08-01T10:15:00.000000`); `parseISO` would read that as local time
+ * and shift every audit entry by the viewer's UTC offset. Zone-suffixed
+ * input is passed through untouched, so the helper is safe for either shape.
  */
 export function formatUtcInstant(iso: string, pattern = "d MMM"): string {
   return formatDate(withZone(iso), pattern);
@@ -131,7 +131,7 @@ export function formatUtcAge(iso: string, now = new Date()): string {
   });
 }
 
-/** The identity journal serializes UTC without a designator (.NET parity). */
+/** The identity journal serializes UTC without a zone designator. */
 function withZone(iso: string): string {
   return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
 }

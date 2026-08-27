@@ -1,14 +1,11 @@
 //! Read queries against the identity store (`persons`).
 //!
-//! Ported from the .NET service's `Sql.Profiles.cs`. The resolution queries use
-//! window functions (`ROW_NUMBER()` over the canonical partition) that have no
+//! The resolution queries use window functions (`ROW_NUMBER()` over the canonical partition) that have no
 //! first-class SeaORM query-builder form and no `toolkit-db` equivalent (see
 //! `infra::db` module docs + constructorfabric/gears-rust#4239), so we run them
 //! as **raw SQL** via SeaORM's `Statement` and read columns off the
-//! `QueryResult`. Running the same SQL as the .NET service keeps resolution
-//! behaviour identical — with ONE deliberate deviation the .NET service never
-//! needed: rows naming the excluded-person sentinel (ADR-0003; only the Rust
-//! correction verbs can mint them) are filtered AFTER the latest-wins ranking,
+//! `QueryResult`. Rows naming the excluded-person sentinel (ADR-0003; only
+//! the correction verbs mint them) are filtered AFTER the latest-wins ranking,
 //! so an excluded account resolves as no person rather than as the shared
 //! sentinel, and an older binding is never resurrected past an exclusion.
 
@@ -31,7 +28,7 @@ use crate::domain::resolution::EXCLUDED_PERSON;
 /// The caller maps the result to the contract: 0 rows → 404 `person_not_found`,
 /// 1 → resolved, >1 → 422 `ambiguous_profile`.
 ///
-/// Case handling matches the .NET service (ADR-0011): the input is trimmed
+/// Case handling (ADR-0011): the input is trimmed
 /// only — the `value_id` column collation does case-insensitive matching.
 ///
 /// # Errors
@@ -42,7 +39,6 @@ pub async fn resolve_person_ids_by_email(
     tenant_id: Uuid,
     email: &str,
 ) -> anyhow::Result<Vec<Uuid>> {
-    // Verbatim from Sql.Profiles.cs::ResolvePersonIdsByEmail, `@param` -> `?`.
     const SQL: &str = r"
         WITH ranked AS (
             SELECT
@@ -85,7 +81,7 @@ pub async fn resolve_person_ids_by_email(
 /// yet known, so the tenant filter is dropped and any matching tenant's
 /// latest observation wins. Returns the single winning `person_id`, or
 /// `None` when the email is unknown. Ported
-/// verbatim from `Sql.cs::ResolvePersonIdByEmailAnyTenant` (window `ROW_NUMBER()`
+/// a window `ROW_NUMBER()`
 /// → raw SQL, see `infra::db` module docs + constructorfabric/gears-rust#4239).
 ///
 /// # Errors
@@ -133,6 +129,139 @@ pub async fn resolve_person_id_by_email_any_tenant(
         }
         None => Ok(None),
     }
+}
+
+/// Roster-email → candidate `person_id`s for the login bootstrap of an install
+/// that resolves logins by address (`idp.resolve_by = email`,
+/// `GET /internal/persons/by-roster-email`).
+///
+/// A SEPARATE function from `resolve_person_id_by_email_any_tenant` on purpose,
+/// even though both match on an address: that one serves the admin `__override`
+/// and matches an address stated by ANY source in ANY tenant, which is the right
+/// latitude for an operator typing a name and far too much for a sign-in. This
+/// one is confined three ways.
+///
+/// **To the caller's tenant.** Unlike the two any-tenant resolvers, the tenant
+/// IS known here: the authenticator denies a login whose `id_token` named
+/// no tenant before it ever calls identity, and mints its service JWT with that
+/// tenant, so the handler reads it off the `SecurityContext`. An address cannot
+/// carry the uniqueness a directory id does — every tenant's roster writes into
+/// the same `(source_type, address)` key space, and one customer adding another
+/// customer's address to its own HR system would otherwise resolve that
+/// customer's login to a person of its choosing.
+///
+/// **To the source the install declares as its roster** (`roster_source_type`),
+/// so an address only a chat or an issue tracker ever observed admits nobody.
+///
+/// **To a person the roster still holds a live account for.** Exclusion
+/// (ADR-0003) is recorded only against an ACCOUNT, as a `value_type='id'` row
+/// naming the sentinel, and the seed then stops re-emitting that account's
+/// values — so the address row written before the exclusion stays newest
+/// forever and would keep resolving the person it named. Filtering the sentinel
+/// out of THIS query cannot help: no `email` row ever names it. The live-binding
+/// requirement is what makes an exclusion bite at the door, and it also answers
+/// "may an address observed with no account behind it admit anyone" with no.
+///
+/// Returns every distinct candidate, newest observation first. More than one
+/// means the roster states one address for two people — the seed refuses to
+/// auto-link that shape (`skipped_contested_email`) and an operator may have
+/// split them deliberately, so the caller decides what to do rather than being
+/// handed a silent winner.
+///
+/// Case handling matches the rest of the resolvers: the input is trimmed only,
+/// and `value_id`'s collation does case-insensitive matching (migration 004).
+///
+/// **To the address the roster states now.** `persons` is append-only, so a
+/// person keeps every address they were ever observed under. Matching any of
+/// them would mean a leaver's alias, handed to a new hire, still signs the new
+/// hire in as the leaver. Only the newest address observation per roster
+/// account counts.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn resolve_person_ids_by_roster_email(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    roster_source_type: &str,
+    email: &str,
+) -> anyhow::Result<Vec<Uuid>> {
+    const SQL: &str = r"
+        WITH addressed AS (
+            SELECT DISTINCT insight_source_id, person_id
+            FROM persons
+            WHERE value_type = 'email'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+              AND value_id = ?
+        ),
+        current_address AS (
+            SELECT
+                p.person_id,
+                p.value_id,
+                p.created_at,
+                p.id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.insight_source_id, p.person_id
+                    ORDER BY p.created_at DESC, p.id DESC
+                ) AS rn
+            FROM persons p
+            JOIN addressed a
+              ON a.insight_source_id = p.insight_source_id
+             AND a.person_id = p.person_id
+            WHERE p.value_type = 'email'
+              AND p.insight_tenant_id = ?
+              AND p.insight_source_type = ?
+        ),
+        bindings AS (
+            SELECT
+                person_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY insight_source_id, value_id
+                    ORDER BY created_at DESC, id DESC
+                ) AS rn
+            FROM persons
+            WHERE value_type = 'id'
+              AND insight_tenant_id = ?
+              AND insight_source_type = ?
+        )
+        SELECT c.person_id
+        FROM current_address c
+        WHERE c.rn = 1
+          AND c.value_id = ?
+          AND c.person_id != ?
+          AND EXISTS (
+              SELECT 1 FROM bindings b
+              WHERE b.rn = 1 AND b.person_id = c.person_id
+          )
+        GROUP BY c.person_id
+        ORDER BY MAX(c.created_at) DESC, MAX(c.id) DESC
+    ";
+
+    let tenant_bytes = tenant_id.as_bytes().to_vec();
+    let source = roster_source_type.trim().to_owned();
+    let address = email.trim().to_owned();
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [
+            // addressed: who ever stated it (index-friendly, narrows the rest)
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            address.clone().into(),
+            // current_address: their newest address, for just those pairs
+            tenant_bytes.clone().into(),
+            source.clone().into(),
+            // bindings: accounts the roster currently holds
+            tenant_bytes.into(),
+            source.into(),
+            // and the newest address must still be the one presented
+            address.into(),
+            EXCLUDED_PERSON.as_bytes().to_vec().into(),
+        ],
+    );
+
+    person_ids_from_rows(db.query_all_raw(stmt).await?)
 }
 
 /// Tenant-AGNOSTIC `(source_type, external_id)` → `person_id` resolution for the
@@ -212,7 +341,7 @@ pub async fn resolve_person_id_by_source_any_tenant(
 
 /// Resolve the set of `person_id`s whose CURRENT `value_type='id'` observation
 /// on the given source instance (`source_type` + `source_id`) equals `value`.
-/// Source-instance scoped, ported from .NET `Sql.Profiles.cs::ResolvePersonIdsBySourceId`.
+/// Source-instance scoped.
 ///
 /// # Errors
 ///
@@ -253,8 +382,7 @@ pub async fn resolve_person_ids_by_source_id(
             tenant_id.as_bytes().to_vec().into(),
             source_type.to_owned().into(),
             source_id.as_bytes().to_vec().into(),
-            // Source-native ids are matched as-is (the .NET service trims only
-            // email, not the id path).
+            // Source-native ids are matched as-is; only the email path trims.
             value.to_owned().into(),
             EXCLUDED_PERSON.as_bytes().to_vec().into(),
         ],
@@ -412,7 +540,7 @@ pub async fn person_cards(
         r"
         SELECT id, value_type, insight_source_type, insight_source_id,
                insight_tenant_id, value_id, value_full_text, value,
-               value_effective, value_hash, person_id, author_person_id,
+               value_effective, person_id, author_person_id,
                reason, created_at
         FROM (
             SELECT p.*,
@@ -468,7 +596,7 @@ pub struct SourceIdRow {
 
 /// All current source-native ids for one person — one row per source instance
 /// (latest `value_type='id'` per (tenant, person, `source_type`, `source_id`)),
-/// ordered by source. Ported from `Sql.Profiles.cs::CurrentSourceIdsForPerson`.
+/// ordered by source.
 ///
 /// # Errors
 ///
@@ -479,7 +607,6 @@ pub async fn current_source_ids_for_person(
     tenant_id: Uuid,
     person_id: Uuid,
 ) -> anyhow::Result<Vec<SourceIdRow>> {
-    // Verbatim from Sql.Profiles.cs::CurrentSourceIdsForPerson, `@param` -> `?`.
     const SQL: &str = r"
         WITH ranked AS (
             SELECT
@@ -528,7 +655,7 @@ pub async fn current_source_ids_for_person(
 }
 
 /// One current parent edge for a child, scoped to one source instance
-/// (repo-level row). Ported from the .NET `OrgChartEdge`.
+/// (repo-level row).
 pub struct OrgChartEdge {
     pub source_type: String,
     pub source_id: Uuid,
@@ -537,10 +664,9 @@ pub struct OrgChartEdge {
 
 /// Current parent edges for one child (`valid_to IS NULL`), across every source
 /// instance, ordered by source. The caller filters to the configured
-/// `org_chart` source. Ported from `Sql.OrgChart.cs::CurrentParentsForChild`.
+/// `org_chart` source.
 ///
-/// The `parent_person_id IS NOT NULL` filter matches
-/// `Sql.OrgChart.cs::CurrentParentsForChild`: the seed writes Path-B
+/// The `parent_person_id IS NOT NULL` filter is deliberate: the seed writes Path-B
 /// root/membership rows with a NULL parent, and a parent edge with no parent is
 /// not an edge — skipping it also avoids decoding a NULL into the non-nullable
 /// `parent_person_id`.
@@ -596,8 +722,7 @@ pub struct OrgChartChildEdge {
 
 /// Current direct-children edges for one parent (`valid_to IS NULL`), across
 /// every source instance, ordered by source then child. The caller filters to
-/// the configured source and de-dupes. Ported from
-/// `Sql.OrgChart.cs::CurrentChildrenForParent`.
+/// the configured source and de-dupes.
 ///
 /// # Errors
 ///

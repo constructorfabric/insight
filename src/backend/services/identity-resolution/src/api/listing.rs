@@ -26,8 +26,8 @@ pub(crate) trait PagePosition: Serialize + DeserializeOwned {
     const KIND: &'static str;
 }
 
-/// Clamp `?limit=` to `[1, max]`; negatives → 1, absent → `default` (parity
-/// with the .NET `int?` clamp — a nonsense value never 400s the request).
+/// Clamp `?limit=` to `[1, max]`; negatives → 1, absent → `default` — a
+/// nonsense value never 400s the request.
 pub(crate) fn clamp_limit(limit: Option<i64>, default: u64, max: u64) -> u64 {
     limit.map_or(default, |l| u64::try_from(l).unwrap_or(1).clamp(1, max))
 }

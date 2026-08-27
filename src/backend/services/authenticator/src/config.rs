@@ -23,6 +23,33 @@ pub enum NoRefreshTokenPolicy {
     LoginOnly,
 }
 
+/// How a login resolves to a person (§4.1 `idp.resolve_by`).
+///
+/// A declared mode, not a fallback chain: the install states which question
+/// the login bootstrap asks, and a token that cannot answer it is refused
+/// rather than quietly answered a different way. Trying one and then the other
+/// is what made a login resolvable by an address it was never meant to be
+/// resolvable by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolveBy {
+    /// The IdP's own stable external user id under `idp.source_type`. The
+    /// default, and the right answer whenever a connector observes the
+    /// provider's accounts: the id is immutable and belongs to the directory
+    /// the person authenticated against.
+    ExternalId,
+    /// The token's standard `email` claim, matched against the addresses the
+    /// install's ROSTER states (identity-resolution's `roster_source_type`).
+    ///
+    /// For installs whose IdP has no directory connector of its own — nothing
+    /// ever seeds a `value_type='id'` row for the provider, so `ExternalId`
+    /// matches nobody and every sign-in is refused. The address is weaker
+    /// evidence than a directory id (it can be reassigned when someone
+    /// leaves), which is why it is confined to the one source already trusted
+    /// to say who exists rather than to any source that ever stated one.
+    Email,
+}
+
 /// One host-keyed issuer entry: the issuer and its client registration —
 /// the only per-realm settings; everything else in [`IdpConfig`] is global.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -69,8 +96,12 @@ pub struct IdpConfig {
     /// Entra's `oid`; the generic OIDC `sub` is NOT the same thing for
     /// directory-backed IdPs, see the `ms-entra` connector schema). Defaults
     /// to `sub` (fine for IdPs where `sub` IS the stable directory id, e.g.
-    /// Keycloak).
+    /// Keycloak). Unused when `resolve_by` is `email`.
     pub external_id_claim: String,
+    /// Which question the login bootstrap asks to find the person — see
+    /// [`ResolveBy`]. Defaults to `external_id`, so an install that says
+    /// nothing keeps the directory-id behaviour it had before this existed.
+    pub resolve_by: ResolveBy,
     // INVARIANT: off by default — it widens who may ENTER, which is a
     // deployment's policy to set. Identity refuses to mint for a principal no
     // connector has observed, so it never widens who exists.
@@ -119,6 +150,7 @@ impl Default for IdpConfig {
             tenant_claim: "tenant_id".to_owned(),
             source_type: String::new(),
             external_id_claim: "sub".to_owned(),
+            resolve_by: ResolveBy::ExternalId,
             provision_on_login: false,
             default_tenant_id: String::new(),
             extra_ca_cert_path: String::new(),
@@ -482,10 +514,34 @@ impl AuthenticatorConfig {
             ("redirect_uri", &self.redirect_uri),
             ("signing_keys_path", &self.signing_keys_path),
             ("identity_url", &self.identity_url),
-            ("idp.source_type", &self.idp.source_type),
-            ("idp.external_id_claim", &self.idp.external_id_claim),
         ] {
             anyhow::ensure!(!value.trim().is_empty(), "{name} is required (empty)");
+        }
+
+        // Only the external-id mode reads these. Requiring them in email mode
+        // would make an install name a source_type its login never asks about,
+        // and a stale value there reads as if it were in force.
+        // Provisioning mints by the source-native id the roster observed, and
+        // an address is not one — `provisionable_external_id` returns None for
+        // every address target. Accepting the pair would leave an operator with
+        // the flag on, provisioning off, and nothing but
+        // `login_denied_unknown_person` for every person not already seeded.
+        anyhow::ensure!(
+            !(self.idp.resolve_by == ResolveBy::Email && self.idp.provision_on_login),
+            "idp.provision_on_login cannot be used with idp.resolve_by=email — minting needs \
+             the source-native id the roster observed, so no login provisions in this mode"
+        );
+
+        if self.idp.resolve_by == ResolveBy::ExternalId {
+            for (name, value) in [
+                ("idp.source_type", &self.idp.source_type),
+                ("idp.external_id_claim", &self.idp.external_id_claim),
+            ] {
+                anyhow::ensure!(
+                    !value.trim().is_empty(),
+                    "{name} is required (empty) when idp.resolve_by is external_id"
+                );
+            }
         }
 
         if self.idp.hosts.is_empty() {
@@ -627,6 +683,89 @@ mod tests {
             };
             assert!(cfg.validate().is_err(), "should reject prefix {bad:?}");
         }
+    }
+
+    #[test]
+    fn resolve_by_defaults_to_external_id() {
+        // The mode is opt-in and never inferred: an install that says nothing
+        // keeps the directory-id behaviour it had before the knob existed.
+        let idp: IdpConfig = serde_yaml::from_str("source_type: faketest").expect("parses");
+        assert_eq!(idp.resolve_by, ResolveBy::ExternalId);
+
+        let idp: IdpConfig =
+            serde_yaml::from_str("source_type: faketest\nresolve_by: email").expect("parses");
+        assert_eq!(idp.resolve_by, ResolveBy::Email);
+    }
+
+    #[test]
+    fn every_mode_literal_the_deploy_surfaces_emit_round_trips() {
+        // The chart renders `resolve_by: "external_id"` and the gitops script
+        // writes the same word; Rust is the last of the three to agree on it.
+        // Without this, renaming the serde convention (say to camelCase) leaves
+        // `"email"` parsing — it is one lowercase word — while every DEFAULT
+        // install fails to boot on a config-deserialize error.
+        for (yaml, expected) in [
+            ("resolve_by: external_id", ResolveBy::ExternalId),
+            ("resolve_by: email", ResolveBy::Email),
+        ] {
+            let idp: IdpConfig = serde_yaml::from_str(yaml).expect("parses");
+            assert_eq!(idp.resolve_by, expected, "{yaml}");
+        }
+
+        // A typo must not deserialize into anything. The chart and the script
+        // both refuse an unknown word; this is what stops one slipping past
+        // them (a hand-set env var, a compose file) into a silent default.
+        for bad in [
+            "resolve_by: e-mail",
+            "resolve_by: External_Id",
+            "resolve_by: EMAIL",
+        ] {
+            assert!(
+                serde_yaml::from_str::<IdpConfig>(bad).is_err(),
+                "{bad} must not parse",
+            );
+        }
+    }
+
+    #[test]
+    fn provisioning_is_refused_in_email_mode_rather_than_silently_inert() {
+        let mut cfg = valid_config();
+        cfg.idp.resolve_by = ResolveBy::Email;
+        cfg.idp.provision_on_login = true;
+        assert!(
+            cfg.validate().is_err(),
+            "the pair must be refused at boot, not discovered as blanket refusals",
+        );
+
+        cfg.idp.provision_on_login = false;
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn external_id_knobs_are_required_only_in_that_mode() {
+        // The default mode resolves through both, so both must be stated.
+        let mut cfg = valid_config();
+        cfg.idp.source_type = String::new();
+        assert!(cfg.validate().is_err(), "source_type required by default");
+
+        let mut cfg = valid_config();
+        cfg.idp.external_id_claim = String::new();
+        assert!(
+            cfg.validate().is_err(),
+            "external_id_claim required by default"
+        );
+
+        // Email mode consults neither. Requiring them anyway would make an
+        // install name a source_type its login never asks about — and a stale
+        // value sitting there reads as if it were in force.
+        let mut cfg = valid_config();
+        cfg.idp.resolve_by = ResolveBy::Email;
+        cfg.idp.source_type = String::new();
+        cfg.idp.external_id_claim = String::new();
+        assert!(
+            cfg.validate().is_ok(),
+            "email mode needs neither external-id knob"
+        );
     }
 
     #[test]
