@@ -20,30 +20,52 @@ TICK = "tick-1"
 CONNECTION = "connection-under-test"
 CONNECTORS = {CONNECTION: CONNECTOR}
 
-CREATED = "2026-08-27T08:00:00Z"
 STARTED = "2026-08-27T08:00:30Z"
+UPDATED = "2026-08-27T08:02:52Z"
+
+#: Every key the listing serves, and nothing it does not. Kept as data because a
+#: fixture that invents a field name is how a planner comes to read one the
+#: mover never sends: every entry is then refused, and a page reporting every
+#: connector as never synced cannot be told apart from a mover that ran nothing.
+SERVED_KEYS = frozenset(
+    {
+        "jobId",
+        "connectionId",
+        "jobType",
+        "status",
+        "startTime",
+        "lastUpdatedAt",
+        "duration",
+        "bytesSynced",
+        "rowsSynced",
+    }
+)
 
 
-def entry(**overrides) -> dict:
+def entry(**overrides: object) -> dict[str, object]:
     """One entry of the mover's job listing, in the shape it serves.
 
     Flat, ISO-8601 stamps, an ISO-8601 duration, and the record count on the
-    entry itself — there is no nested job or attempts array on this listing.
+    entry itself — there is no nested job or attempts array on this listing, and
+    no creation stamp: the listing accepts a creation filter but reports only
+    when a job started and when it was last updated.
     """
     listing_entry = {
         "jobId": 8412,
         "connectionId": CONNECTION,
+        "jobType": "sync",
         "status": "succeeded",
-        "createdAt": CREATED,
         "startTime": STARTED,
+        "lastUpdatedAt": UPDATED,
         "duration": "PT2M22S",
+        "bytesSynced": 3_100_000,
         "rowsSynced": 12_400,
     }
     listing_entry.update(overrides)
     return listing_entry
 
 
-def row(**overrides) -> dict:
+def row(**overrides: object) -> dict[str, object]:
     planned = plan.sync_row(entry(**overrides), CONNECTORS, TICK)
     assert not isinstance(planned, plan.Skipped), planned
     return planned
@@ -78,14 +100,14 @@ class StatusKeepsTheMoversWord(unittest.TestCase):
 
 
 class AJobMustBePlaceable(unittest.TestCase):
-    def test_a_job_with_no_creation_time_is_refused(self) -> None:
+    def test_a_job_with_no_update_time_is_refused(self) -> None:
         for absent in (None, 0, -1, "yesterday", True):
             with self.subTest(absent=absent):
                 planned = plan.sync_row(
-                    entry(createdAt=absent), CONNECTORS, TICK
+                    entry(lastUpdatedAt=absent), CONNECTORS, TICK
                 )
                 self.assertIsInstance(
-                    planned, plan.Skipped, f"should refuse createdAt={absent!r}"
+                    planned, plan.Skipped, f"should refuse lastUpdatedAt={absent!r}"
                 )
 
     def test_a_job_with_no_identity_is_refused(self) -> None:
@@ -97,8 +119,8 @@ class AJobMustBePlaceable(unittest.TestCase):
         self.assertIsInstance(planned, plan.Skipped)
 
     def test_a_refusal_carries_its_reason(self) -> None:
-        planned = plan.sync_row(entry(createdAt=None), CONNECTORS, TICK)
-        self.assertIn("creation time", planned.reason)
+        planned = plan.sync_row(entry(lastUpdatedAt=None), CONNECTORS, TICK)
+        self.assertIn("update time", planned.reason)
 
 
 class AbsenceIsNotZero(unittest.TestCase):
@@ -107,7 +129,7 @@ class AbsenceIsNotZero(unittest.TestCase):
             "jobId": 1,
             "connectionId": CONNECTION,
             "status": "pending",
-            "createdAt": CREATED,
+            "lastUpdatedAt": UPDATED,
         }
         planned = plan.sync_row(bare, CONNECTORS, TICK)
         self.assertIsNone(planned["started_at"])
@@ -153,17 +175,27 @@ class AbsenceIsNotZero(unittest.TestCase):
 class WhatIsRead(unittest.TestCase):
     def test_the_stamps_are_read_as_iso_8601(self) -> None:
         planned = row()
-        self.assertEqual(planned["job_created_at"], "2026-08-27 08:00:00.000")
+        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:02:52.000")
         self.assertEqual(planned["started_at"], "2026-08-27 08:00:30.000")
 
     def test_a_stamp_with_an_offset_is_normalised_to_utc(self) -> None:
-        planned = row(createdAt="2026-08-27T11:00:00+03:00")
-        self.assertEqual(planned["job_created_at"], "2026-08-27 08:00:00.000")
+        planned = row(lastUpdatedAt="2026-08-27T11:00:00+03:00")
+        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:00:00.000")
+
+    def test_the_placing_stamp_is_the_last_update_not_the_start(self) -> None:
+        """Two stamps arrive and only one places the job.
+
+        Reading the other would still produce a row, so nothing but naming the
+        expected value catches a planner that took `startTime` for the axis the
+        watermark moves along.
+        """
+        self.assertEqual(row()["job_updated_at"], "2026-08-27 08:02:52.000")
+        self.assertNotEqual(row()["job_updated_at"], row()["started_at"])
 
     def test_an_epoch_number_is_not_a_stamp(self) -> None:
         """The listing sends strings. A number here would be a different
         endpoint's shape, and guessing at it would date every job to 1970."""
-        planned = plan.sync_row(entry(createdAt=1_700_000_000), CONNECTORS, TICK)
+        planned = plan.sync_row(entry(lastUpdatedAt=1_700_000_000), CONNECTORS, TICK)
         self.assertIsInstance(planned, plan.Skipped)
 
     def test_the_duration_is_read_as_an_iso_8601_duration(self) -> None:
@@ -212,7 +244,7 @@ class CoverageSkipsWhatIsClosed(unittest.TestCase):
 
     def test_refusals_are_reported_beside_the_rows(self) -> None:
         planned = plan.plan_syncs(
-            [entry(), entry(jobId=7, createdAt=None)], CONNECTORS, TICK, frozenset()
+            [entry(), entry(jobId=7, lastUpdatedAt=None)], CONNECTORS, TICK, frozenset()
         )
         self.assertEqual(len(planned.rows), 1)
         self.assertEqual(len(planned.skipped), 1)
@@ -236,7 +268,7 @@ class EveryRowClassFillsEveryColumn(unittest.TestCase):
         self.assertEqual(snapshot["event"], plan.CONNECTOR_CONFIGURED)
         self.assertEqual(snapshot["job_id"], "")
         self.assertEqual(snapshot["status"], "")
-        self.assertIsNone(snapshot["job_created_at"])
+        self.assertIsNone(snapshot["job_updated_at"])
 
     def test_the_seal_names_no_connector(self) -> None:
         seal = plan.plan_seal(TICK)
@@ -251,3 +283,61 @@ class EveryRowClassFillsEveryColumn(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheListingsOwnShape(unittest.TestCase):
+    """The fixture above is the mover's shape, not a convenient stand-in for it.
+
+    A field the mover never sends refuses every real entry while every test
+    passes, and the page then reports every connector as never synced — which
+    reads exactly like a mover that has run no syncs at all.
+    """
+
+    def test_the_fixture_carries_exactly_the_keys_the_listing_serves(self) -> None:
+        self.assertEqual(frozenset(entry()), SERVED_KEYS)
+
+    def test_a_creation_stamp_does_not_place_a_job(self) -> None:
+        """The listing filters on creation and reports none, so an entry
+        carrying only a creation stamp is one the mover cannot have sent."""
+        invented = {k: v for k, v in entry().items() if k != "lastUpdatedAt"}
+        invented["createdAt"] = "2026-08-27T08:00:00Z"
+
+        planned = plan.sync_row(invented, CONNECTORS, TICK)
+
+        self.assertIsInstance(planned, plan.Skipped)
+
+
+class AnIgnoredFilterIsVisible(unittest.TestCase):
+    """The mover answers 200 and drops a parameter it does not recognise.
+
+    So a filter renamed by a later release stops filtering rather than failing:
+    the read restarts at the beginning of history and a capped pass never
+    reaches the newest jobs. Counting what came back below the watermark is the
+    only signal that separates that from a page with nothing new to say.
+    """
+
+    WATERMARK = "2026-08-27 08:00:00.000"
+
+    def test_entries_below_the_watermark_are_counted(self) -> None:
+        older = entry(jobId=1, lastUpdatedAt="2026-08-26T23:59:59Z")
+        at_the_mark = entry(jobId=2, lastUpdatedAt="2026-08-27T08:00:00Z")
+        newer = entry(jobId=3, lastUpdatedAt="2026-08-27T09:00:00Z")
+
+        self.assertEqual(
+            plan.unfiltered_count([older, at_the_mark, newer], self.WATERMARK), 1
+        )
+
+    def test_a_filtered_listing_counts_nothing(self) -> None:
+        self.assertEqual(plan.unfiltered_count([entry()], self.WATERMARK), 0)
+
+    def test_the_first_sweep_sent_no_watermark_so_nothing_is_out_of_place(self) -> None:
+        older = entry(lastUpdatedAt="2020-01-01T00:00:00Z")
+
+        self.assertEqual(plan.unfiltered_count([older], None), 0)
+
+    def test_an_unplaceable_entry_is_not_evidence_of_an_ignored_filter(self) -> None:
+        """It is refused for its own reason; counting it here would report a
+        working filter as broken on every tick that meets one."""
+        self.assertEqual(
+            plan.unfiltered_count([entry(lastUpdatedAt=None)], self.WATERMARK), 0
+        )

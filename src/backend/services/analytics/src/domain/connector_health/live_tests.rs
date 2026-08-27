@@ -108,7 +108,7 @@ struct Row<'a> {
     event: &'a str,
     status: &'a str,
     started_at: Option<&'a str>,
-    job_created_at: Option<&'a str>,
+    job_updated_at: Option<&'a str>,
     duration_ms: Option<u64>,
     records_reported: Option<u64>,
 }
@@ -132,7 +132,7 @@ impl Row<'_> {
             self.event,
             self.status,
             moment(self.started_at),
-            moment(self.job_created_at),
+            moment(self.job_updated_at),
             number(self.duration_ms),
             number(self.records_reported),
         )
@@ -143,22 +143,22 @@ async fn insert(ch: &insight_clickhouse::Client, rows: &[Row<'_>]) {
     let values: Vec<String> = rows.iter().map(Row::values).collect();
     let sql = format!(
         "INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, \
-         started_at, job_created_at, duration_ms, records_reported) VALUES {}",
+         started_at, job_updated_at, duration_ms, records_reported) VALUES {}",
         values.join(", ")
     );
     ch.query(&sql).execute().await.expect("insert");
 }
 
-fn sync<'a>(job_id: &'a str, connector: &'a str, status: &'a str, created: &'a str) -> Row<'a> {
+fn sync<'a>(job_id: &'a str, connector: &'a str, status: &'a str, updated: &'a str) -> Row<'a> {
     Row {
-        ts: created,
+        ts: updated,
         tick_id: "tick-1",
         job_id,
         connector,
         event: "sync.completed",
         status,
-        started_at: Some(created),
-        job_created_at: Some(created),
+        started_at: Some(updated),
+        job_updated_at: Some(updated),
         duration_ms: Some(1_000),
         records_reported: Some(7),
     }
@@ -173,7 +173,7 @@ fn configured<'a>(connector: &'a str, tick_id: &'a str, at: &'a str) -> Row<'a> 
         event: "connector.configured",
         status: "",
         started_at: None,
-        job_created_at: None,
+        job_updated_at: None,
         duration_ms: None,
         records_reported: None,
     }
@@ -188,7 +188,7 @@ fn seal<'a>(tick_id: &'a str, at: &'a str) -> Row<'a> {
         event: "sweep.completed",
         status: "",
         started_at: None,
-        job_created_at: None,
+        job_updated_at: None,
         duration_ms: None,
         records_reported: None,
     }
@@ -240,7 +240,7 @@ async fn the_ledger_reads_answer_from_real_rows() {
 /// server before the shape was replaced.
 ///
 /// It sorted the relation and read the winner off the top, which meant: job ids
-/// compared as text so `"9"` beat `"10"`; a NULL creation stamp sorting last in
+/// compared as text so `"9"` beat `"10"`; a NULL update stamp sorting last in
 /// BOTH directions so an older job won outright; and two rows of one job
 /// sharing a millisecond decided by physical row order. Each produced a
 /// confident wrong answer rather than an absence.
@@ -251,7 +251,7 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
     insert(
         ch,
         &[
-            // Same creation moment, ids 9 and 10: text order says 9 is newer.
+            // Same update moment, ids 9 and 10: text order says 9 is newer.
             sync("9", "numeric", "succeeded", &at.job_older),
             Row {
                 ts: &at.tick_1,
@@ -264,11 +264,11 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
                 records_reported: Some(0),
                 ..sync("10", "numeric", "failed", &at.job_older)
             },
-            // A newer job the mover gave no creation stamp for.
+            // A newer job the mover gave no update stamp for.
             sync("1", "unplaced", "succeeded", &at.job_older),
             Row {
                 ts: &at.tick_3,
-                job_created_at: None,
+                job_updated_at: None,
                 ..sync("2", "unplaced", "failed", &at.job_newer)
             },
         ],
@@ -298,12 +298,12 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
     let resolved = unplaced.last_sync.as_ref().expect("unplaced has synced");
     assert_eq!(
         resolved.job_id, "2",
-        "a job with no creation stamp must not hand the answer to an older one"
+        "a job with no update stamp must not hand the answer to an older one"
     );
     assert!(
-        resolved.job_created_at.is_none(),
+        resolved.job_updated_at.is_none(),
         "the resolved row must be one real row, not a mix of two: job 2 has no \
-         creation stamp, so this must be absent rather than job 1's stamp"
+         update stamp, so this must be absent rather than job 1's stamp"
     );
     assert_eq!(resolved.status, SyncStatus::Failed);
 }

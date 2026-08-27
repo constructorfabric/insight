@@ -94,8 +94,8 @@ Two failure classes are invisible today even to a diligent operator reading dash
 | **Connector** | one ingestion source type configured on the install; its raw data lands in a per-connector bronze schema |
 | **Sync** | one execution of the data mover for one connector's connection |
 | **Sync ledger** | the append-only record of sync outcomes this PRD introduces |
-| **Sweep** | the periodic reconciliation that copies sync outcomes from the mover's job history into the ledger, and records which connectors it manages |
-| **Configured connector** | a connector present in the controller's newest COMPLETE snapshot of the set it manages; absence from that snapshot means no longer configured. A snapshot still being written is not one |
+| **Sweep** | the periodic reconciliation that copies sync outcomes from the mover's job history into the ledger, and records which connectors the install has configured |
+| **Configured connector** | a connector the install has supplied credentials for — which is the criterion the controller itself acts on — and which is present in its newest COMPLETE snapshot; absence from that snapshot means no longer configured. A snapshot still being written is not one. Every connector the build ships is a wider set and is not this one |
 | **Reported records** | the record count the mover states for a sync. It describes what the mover sent, not what storage kept |
 
 ## 2. Actors

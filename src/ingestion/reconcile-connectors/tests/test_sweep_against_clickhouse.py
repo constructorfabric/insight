@@ -64,6 +64,13 @@ def _ch_stamp(iso: str) -> str:
     return iso.replace("T", " ").replace("Z", "") + ".000"
 
 
+#: Every parameter the sweep is allowed to send. A name outside it is a filter
+#: the real listing would silently ignore.
+_LISTING_PARAMETERS = frozenset(
+    {"jobType", "orderBy", "limit", "offset", "updatedAtStart"}
+)
+
+
 def _parse_iso(stamp: str) -> datetime:
     """Refuses anything that is not ISO-8601, so a mis-sent watermark fails the
     test rather than quietly matching every entry."""
@@ -75,7 +82,7 @@ def _closed_job(index: int) -> dict:
         "jobId": 500 + index,
         "connectionId": CONNECTION,
         "status": "succeeded",
-        "createdAt": _stamp(index),
+        "lastUpdatedAt": _stamp(index),
         "startTime": _stamp(index),
         "duration": "PT3M10S",
         "rowsSynced": 100 * index,
@@ -88,7 +95,7 @@ def _running_job() -> dict:
         "jobId": 999,
         "connectionId": CONNECTION,
         "status": "running",
-        "createdAt": _stamp(8),
+        "lastUpdatedAt": _stamp(8),
     }
 
 
@@ -97,7 +104,7 @@ def _finished_job() -> dict:
         "jobId": 999,
         "connectionId": CONNECTION,
         "status": "failed",
-        "createdAt": _stamp(8),
+        "lastUpdatedAt": _stamp(8),
         "startTime": _stamp(8),
         "duration": "PT5M",
         "rowsSynced": 0,
@@ -108,13 +115,21 @@ class _StubMover:
     """The public job listing, serving only what the sweep asks it for.
 
     Asserts the two query parameters the sweep's correctness rests on: ascending
-    creation order, so a capped read leaves only NEWER jobs unread, and the
+    update order, so a capped read leaves only NEWER jobs unread, and the
     watermark filter, so a steady tick does not re-read the whole history.
+
+    Stricter than the real listing on one point, deliberately: the real one
+    answers 200 and drops a parameter it does not recognise, so a filter under
+    the wrong name reads here as a filter that works and there as no filter at
+    all. This stub refuses the unknown name instead.
     """
 
-    def __init__(self, page_size: int = 100) -> None:
+    def __init__(self, page_size: int = 100, *, honours_filter: bool = True) -> None:
         self.oldest_first = [_closed_job(i) for i in range(7)] + [_running_job()]
         self.page_size = page_size
+        #: False imitates the real listing meeting a parameter name it does not
+        #: know: it answers 200 and serves the whole history unfiltered.
+        self.honours_filter = honours_filter
         self.requests: list[dict[str, str]] = []
         stub = self
 
@@ -127,17 +142,20 @@ class _StubMover:
                 flat = {key: value[0] for key, value in query.items()}
                 stub.requests.append(flat)
 
-                assert flat.get("orderBy") == "createdAt|ASC", flat
+                assert flat.get("orderBy") == "updatedAt|ASC", flat
                 assert flat.get("jobType") == "sync", flat
+                assert set(flat) <= _LISTING_PARAMETERS, flat
 
                 entries = stub.oldest_first
-                since = flat.get("createdAtStart")
+                since = flat.get("updatedAtStart") if stub.honours_filter else None
                 if since is not None:
                     # A real listing parses this. Comparing the two stamp forms
                     # as raw strings is what let a wrongly-formatted watermark
                     # look like a working filter.
                     edge = _parse_iso(since)
-                    entries = [e for e in entries if _parse_iso(e["createdAt"]) >= edge]
+                    entries = [
+                        e for e in entries if _parse_iso(e["lastUpdatedAt"]) >= edge
+                    ]
                 offset = int(flat.get("offset", "0"))
                 window = entries[offset : offset + stub.page_size]
 
@@ -227,7 +245,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         with _StubMover() as mover:
             self.assertEqual(self._tick("tick-a"), 0)
             self.assertIsNone(
-                mover.requests[0].get("createdAtStart"),
+                mover.requests[0].get("updatedAtStart"),
                 "an empty ledger reads everything, unfiltered",
             )
 
@@ -242,7 +260,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             mover.requests.clear()
             self._tick("tick-b")
 
-            since = mover.requests[0].get("createdAtStart")
+            since = mover.requests[0].get("updatedAtStart")
             self.assertIsNotNone(since, "a populated ledger must filter")
             # Not merely "a stamp": one the listing can parse. The ledger's own
             # form differs by a space, and a listing handed that form filters on
@@ -261,7 +279,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             mover.requests.clear()
             self._tick("tick-b")
 
-        since = mover.requests[0]["createdAtStart"]
+        since = mover.requests[0]["updatedAtStart"]
         self.assertLessEqual(
             _parse_iso(since),
             _parse_iso(_stamp(8)),
@@ -324,10 +342,10 @@ class SweptRowsLandAndResolve(unittest.TestCase):
 
         summary = _rows(
             "SELECT connector, job_id, status FROM ("
-            f"  SELECT connector, job_id, status, job_created_at FROM {TABLE}"
+            f"  SELECT connector, job_id, status, job_updated_at FROM {TABLE}"
             "   WHERE event = 'sync.completed'"
             "   ORDER BY job_id, ts DESC LIMIT 1 BY job_id"
-            ") ORDER BY connector, job_created_at DESC, job_id DESC LIMIT 1 BY connector"
+            ") ORDER BY connector, job_updated_at DESC, job_id DESC LIMIT 1 BY connector"
         )
         self.assertEqual(len(summary), 1)
         self.assertEqual(summary[0]["job_id"], "999")
@@ -373,6 +391,40 @@ class SweptRowsLandAndResolve(unittest.TestCase):
                 f"an unread tick must write no {event} row",
             )
 
+    def test_a_listing_that_ignores_the_watermark_records_nothing(self) -> None:
+        """An unapplied filter is a failed read, not a noisy one.
+
+        Two things follow from serving the whole history, and neither survives
+        a log line. Every terminal job below the watermark would be recorded
+        again on every tick — the closed-job read is bounded by that same
+        watermark, so it cannot filter them out. And a capped pass would stop
+        short of current jobs while still sealing, dating the page as freshly
+        checked on facts it never reached.
+        """
+        with _StubMover():
+            self._tick("tick-a")
+        before = _count(f"SELECT count() AS n FROM {TABLE}")
+        seals = _count(
+            f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'"
+        )
+
+        with _StubMover(honours_filter=False):
+            code = self._tick("tick-b")
+
+        self.assertEqual(code, 1, "the caller learns the tick was incomplete")
+        self.assertEqual(
+            _count(f"SELECT count() AS n FROM {TABLE}"),
+            before,
+            "an unfiltered listing must not re-record the history it served",
+        )
+        self.assertEqual(
+            _count(
+                f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'"
+            ),
+            seals,
+            "and must not seal, or the page reports itself freshly checked",
+        )
+
     def test_a_connector_awaiting_its_first_connection_is_still_configured(self) -> None:
         """Configured is the first thing the page answers, and it does not
         depend on whether the mover has caught up yet."""
@@ -408,7 +460,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         stale = _stamp(-24 * 60)
         _query(
             f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
-            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            "started_at, job_updated_at, duration_ms, records_reported) VALUES "
             f"(now64(3), 'old', 'stranded', '{CONNECTOR}', 'sync.completed', 'running', "
             f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
         )
@@ -441,7 +493,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         stale = _stamp(-24 * 60)
         _query(
             f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
-            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            "started_at, job_updated_at, duration_ms, records_reported) VALUES "
             f"(now64(3), 'old', 'stranded', '{CONNECTOR}', 'sync.completed', 'running', "
             f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
         )
@@ -463,7 +515,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         stale = _stamp(-24 * 60)  # a month back, in the same shape the mover sends
         _query(
             f"INSERT INTO {TABLE} (ts, tick_id, job_id, connector, event, status, "
-            "started_at, job_created_at, duration_ms, records_reported) VALUES "
+            "started_at, job_updated_at, duration_ms, records_reported) VALUES "
             f"(now64(3), 'old', 'stuck', '{CONNECTOR}', 'sync.completed', 'running', "
             f"NULL, toDateTime64('{_ch_stamp(stale)}', 3, 'UTC'), NULL, NULL)"
         )
@@ -472,7 +524,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             mover.requests.clear()
             self._tick("tick-b")
 
-        since = _parse_iso(mover.requests[0]["createdAtStart"])
+        since = _parse_iso(mover.requests[0]["updatedAtStart"])
         self.assertGreater(
             since,
             _parse_iso(stale),
