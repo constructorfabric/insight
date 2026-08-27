@@ -9,19 +9,35 @@ pub struct ExternalSourceRegistry {
     sources: HashMap<(ExternalSourceProvider, String), Url>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ExternalSourceRegistryError {
+    #[error("external source id must be non-empty and trimmed")]
+    InvalidId,
+    #[error("external source provider and id must be unique")]
+    DuplicateProviderAndId,
+    #[error("external source web_base_url is not a valid URL")]
+    InvalidWebBaseUrl(#[from] url::ParseError),
+    #[error("external source web_base_url must be an absolute HTTP(S) URL")]
+    InvalidWebBaseUrlSchemeOrHost,
+    #[error("external source web_base_url must not include userinfo")]
+    WebBaseUrlIncludesUserInfo,
+    #[error("external source web_base_url must not include a query or fragment")]
+    WebBaseUrlIncludesQueryOrFragment,
+}
+
 impl ExternalSourceRegistry {
-    pub fn new(sources: &[ExternalSourceConfig]) -> anyhow::Result<Self> {
+    pub fn new(sources: &[ExternalSourceConfig]) -> Result<Self, ExternalSourceRegistryError> {
         let mut registry = HashMap::with_capacity(sources.len());
         for source in sources {
             let id = source.id.trim();
             if id.is_empty() || id != source.id {
-                anyhow::bail!("external source id must be non-empty and trimmed");
+                return Err(ExternalSourceRegistryError::InvalidId);
             }
 
             let url = parse_web_base_url(&source.web_base_url)?;
             let key = (source.provider, id.to_owned());
             if registry.insert(key, url).is_some() {
-                anyhow::bail!("external source provider and id must be unique");
+                return Err(ExternalSourceRegistryError::DuplicateProviderAndId);
             }
         }
         Ok(Self { sources: registry })
@@ -80,16 +96,16 @@ pub struct ExternalRecordLinks {
     pub record: Option<String>,
 }
 
-fn parse_web_base_url(value: &str) -> anyhow::Result<Url> {
+fn parse_web_base_url(value: &str) -> Result<Url, ExternalSourceRegistryError> {
     let mut url = Url::parse(value.trim())?;
     if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
-        anyhow::bail!("external source web_base_url must be an absolute HTTP(S) URL");
+        return Err(ExternalSourceRegistryError::InvalidWebBaseUrlSchemeOrHost);
     }
     if !url.username().is_empty() || url.password().is_some() {
-        anyhow::bail!("external source web_base_url must not include userinfo");
+        return Err(ExternalSourceRegistryError::WebBaseUrlIncludesUserInfo);
     }
     if url.query().is_some() || url.fragment().is_some() {
-        anyhow::bail!("external source web_base_url must not include a query or fragment");
+        return Err(ExternalSourceRegistryError::WebBaseUrlIncludesQueryOrFragment);
     }
     let path = url.path().trim_end_matches('/').to_owned();
     url.set_path(&path);
@@ -130,48 +146,60 @@ fn record_url(
     record_ref: Option<&str>,
 ) -> Option<String> {
     let record_ref = record_ref?.trim();
-    match (provider, record_kind) {
-        (ExternalSourceProvider::Github, "commit") => append_segments(
-            base,
-            repository?.iter().copied().chain(["commit", record_ref]),
-        ),
-        (ExternalSourceProvider::Gitlab, "commit") => append_segments(
-            base,
-            repository?
-                .iter()
-                .copied()
-                .chain(["-", "commit", record_ref]),
-        ),
-        (ExternalSourceProvider::BitbucketCloud, "commit") => append_segments(
-            base,
-            repository?.iter().copied().chain(["commits", record_ref]),
-        ),
-        (ExternalSourceProvider::Github, "pull_request") => append_segments(
-            base,
-            repository?.iter().copied().chain(["pull", record_ref]),
-        ),
-        (ExternalSourceProvider::Gitlab, "pull_request") => append_segments(
-            base,
-            repository?
-                .iter()
-                .copied()
-                .chain(["-", "merge_requests", record_ref]),
-        ),
-        (ExternalSourceProvider::BitbucketCloud, "pull_request") => append_segments(
-            base,
-            repository?
-                .iter()
-                .copied()
-                .chain(["pull-requests", record_ref]),
-        ),
-        (ExternalSourceProvider::Jira, "issue") => append_segments(base, ["browse", record_ref]),
-        (ExternalSourceProvider::Youtrack, "issue") => append_segments(base, ["issue", record_ref]),
-        (ExternalSourceProvider::Github, "issue") => issue_url(base, &["issues"], record_ref),
-        (ExternalSourceProvider::Gitlab, "issue") => issue_url(base, &["-", "issues"], record_ref),
-        (ExternalSourceProvider::BitbucketCloud, "issue") => {
-            issue_url(base, &["issues"], record_ref)
-        }
-        _ => None,
+    match provider {
+        ExternalSourceProvider::Github => match record_kind {
+            "commit" => append_segments(
+                base,
+                repository?.iter().copied().chain(["commit", record_ref]),
+            ),
+            "pull_request" => append_segments(
+                base,
+                repository?.iter().copied().chain(["pull", record_ref]),
+            ),
+            "issue" => issue_url(base, &["issues"], record_ref),
+            _ => None,
+        },
+        ExternalSourceProvider::Gitlab => match record_kind {
+            "commit" => append_segments(
+                base,
+                repository?
+                    .iter()
+                    .copied()
+                    .chain(["-", "commit", record_ref]),
+            ),
+            "pull_request" => append_segments(
+                base,
+                repository?
+                    .iter()
+                    .copied()
+                    .chain(["-", "merge_requests", record_ref]),
+            ),
+            "issue" => issue_url(base, &["-", "issues"], record_ref),
+            _ => None,
+        },
+        ExternalSourceProvider::BitbucketCloud => match record_kind {
+            "commit" => append_segments(
+                base,
+                repository?.iter().copied().chain(["commits", record_ref]),
+            ),
+            "pull_request" => append_segments(
+                base,
+                repository?
+                    .iter()
+                    .copied()
+                    .chain(["pull-requests", record_ref]),
+            ),
+            "issue" => issue_url(base, &["issues"], record_ref),
+            _ => None,
+        },
+        ExternalSourceProvider::Jira => match record_kind {
+            "issue" => append_segments(base, ["browse", record_ref]),
+            _ => None,
+        },
+        ExternalSourceProvider::Youtrack => match record_kind {
+            "issue" => append_segments(base, ["issue", record_ref]),
+            _ => None,
+        },
     }
 }
 
@@ -384,7 +412,33 @@ mod tests {
             web_base_url: "https://alternate.example.test".to_owned(),
         });
 
-        assert!(ExternalSourceRegistry::new(&entries).is_err());
+        assert!(matches!(
+            ExternalSourceRegistry::new(&entries),
+            Err(ExternalSourceRegistryError::DuplicateProviderAndId)
+        ));
+    }
+
+    #[test]
+    fn reports_invalid_ids_and_unparseable_urls() {
+        let invalid_id = ExternalSourceConfig {
+            id: " github-source".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://github.example.test".to_owned(),
+        };
+        assert!(matches!(
+            ExternalSourceRegistry::new(&[invalid_id]),
+            Err(ExternalSourceRegistryError::InvalidId)
+        ));
+
+        let invalid_url = ExternalSourceConfig {
+            id: "github-source".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "://".to_owned(),
+        };
+        assert!(matches!(
+            ExternalSourceRegistry::new(&[invalid_url]),
+            Err(ExternalSourceRegistryError::InvalidWebBaseUrl(_))
+        ));
     }
 
     #[test]
