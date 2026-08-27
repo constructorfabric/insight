@@ -40,6 +40,24 @@ const VIEW: &str = "insight.bronze_insert_events";
 /// The response reports when it clipped rather than lying by omission.
 const MAX_POINTS: usize = 50_000;
 
+/// Settings that bound the aggregation itself.
+///
+/// `LIMIT` is applied AFTER grouping, so on its own it caps what is returned
+/// and not what is built: the window bounds the bucket count, but the band
+/// count is whatever the bronze databases happen to hold. `break` stops the
+/// aggregation from taking on new keys instead of failing the query, which
+/// turns an over-wide read into a short answer — and a short answer is only
+/// honest because it is reported as `truncated`.
+///
+/// The shared client already applies `max_execution_time`, `max_threads` and
+/// `max_memory_usage`; this is the cardinality bound those do not express.
+pub(crate) fn aggregation_settings() -> [(&'static str, String); 2] {
+    [
+        ("max_rows_to_group_by", MAX_POINTS.to_string()),
+        ("group_by_overflow_mode", "break".to_owned()),
+    ]
+}
+
 /// Bucket width. The set is closed and validated server-side: the view is a
 /// `merge()` over every bronze database, so an operator-supplied interval
 /// expression would be a direct route into that scan.
@@ -323,9 +341,11 @@ pub async fn get_ingestion_intensity(
     let to = Window::bound(window.to);
     let mut request = state
         .ch
-        .query(&intensity_sql(grain, series, scope.is_some()))
-        .bind(from.clone())
-        .bind(to.clone());
+        .query(&intensity_sql(grain, series, scope.is_some()));
+    for (setting, value) in aggregation_settings() {
+        request = request.with_setting(setting, value);
+    }
+    request = request.bind(from.clone()).bind(to.clone());
     if let Some(ref database) = scope {
         request = request.bind(database.clone());
     }
@@ -334,7 +354,10 @@ pub async fn get_ingestion_intensity(
         .fetch_all::<IngestionPoint>()
         .await
         .map_err(read_error)?;
-    let truncated = points.len() > MAX_POINTS;
+    // At or above the cap the aggregation may have stopped taking new keys, so
+    // the answer is short. Erring toward saying so is the safe direction: the
+    // alternative is presenting a partial chart as a complete one.
+    let truncated = points.len() >= MAX_POINTS;
     points.truncate(MAX_POINTS);
 
     Ok(Json(IngestionIntensityResponse {

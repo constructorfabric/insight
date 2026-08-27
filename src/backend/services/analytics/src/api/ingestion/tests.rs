@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
 
-use super::{Grain, MAX_POINTS, Series, Window, intensity_sql, parse_scope};
+use super::{Grain, MAX_POINTS, Series, Window, aggregation_settings, intensity_sql, parse_scope};
 
 /// Fixed instants for the window tests. `single()` cannot be `None` for the
 /// literals below; defaulting instead of unwrapping keeps the lint config
@@ -238,6 +238,27 @@ fn sql_never_deduplicates() {
     let sql = intensity_sql(Grain::FifteenMinutes, Series::Connector, false);
     assert!(!sql.contains("FINAL"));
     assert!(!sql.contains("LIMIT 1 BY"));
+}
+
+#[test]
+fn the_aggregation_is_bounded_where_the_limit_cannot_reach() {
+    // `LIMIT` runs after GROUP BY, so it bounds the answer and not the work.
+    // The window caps buckets; nothing caps how many bands the bronze
+    // databases hold, which is what these settings are for.
+    let settings = aggregation_settings();
+    let by_name = |name: &str| {
+        settings
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.clone())
+    };
+    assert_eq!(
+        by_name("max_rows_to_group_by"),
+        Some(MAX_POINTS.to_string())
+    );
+    // `break` rather than `throw`: an over-wide read should come back short and
+    // say so, not fail in the reader's face.
+    assert_eq!(by_name("group_by_overflow_mode"), Some("break".to_owned()));
 }
 
 #[test]
