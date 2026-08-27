@@ -6,6 +6,7 @@ members = [
     "services/analytics",
     "services/git-cli-proxy",
     "services/identity-resolution",
+    "services/previews",
     "services/authenticator",
     # Build-time CLI: compiles the gateway routes.yaml into nginx.conf
     # (gateway DESIGN DD-GW-02). Never shipped in a runtime image.
@@ -124,6 +125,10 @@ single-tenant-tr-plugin = { package = "cf-gears-single-tenant-tr-plugin", versio
 grpc_hub = { package = "cf-gears-grpc-hub", version = "0.2.8" }
 gear_orchestrator = { package = "cf-gears-gear-orchestrator", version = "0.1.27" }
 types_registry = { package = "cf-gears-types-registry", version = "0.1.23" }
+
+# Kubernetes client (previews gear). Same versions/features as gears-rust.
+kube = { version = "3.0", default-features = false }
+k8s-openapi = { version = "0.27", default-features = false }
 
 # Config
 figment = { version = "0.10", features = ["yaml", "env"] }

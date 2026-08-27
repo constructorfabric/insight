@@ -98,6 +98,19 @@ COMPONENTS = [
         # own component); `triggered_by` is the registry's co-trigger for this.
         "triggered_by": ["insight-clickhouse", "insight-migration"],
     },
+    # cover=False (mirrors identity-resolution): the crate is a thin HTTP
+    # shell over the Kubernetes API — the pure domain (object builders,
+    # slug/tag validation, TTL/status rules) is unit-tested, but the kube I/O
+    # and host wiring need a cluster, so coverage would gate far below the 80%
+    # line. fmt + clippy + tests still run and gate the pipeline.
+    {
+        "name": "previews",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "previews",
+        "cover": False,
+        "paths": ["src/backend/services/previews"],
+    },
     # git-cli-proxy shells out to the git CLI; its integration tests build
     # fixture repos with `git init` + file:// origins in tempdirs (hermetic —
     # the CI runner's git suffices, no service container).

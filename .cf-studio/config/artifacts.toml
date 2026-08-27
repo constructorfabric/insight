@@ -35,6 +35,12 @@ path = "docs/components/backend/authenticator/specs/ADR/0003-keycloak-identity-b
 name = "ADR-0003: Keycloak as the Identity Broker (Configured as Code)"
 
 [[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/previews/specs/PRD.md"
+name = "Previews Service PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
 kind = "DESIGN"
 path = "docs/components/backend/gateway/DESIGN.md"
 name = "Gateway (nginx edge) Design"
