@@ -11,9 +11,9 @@ use serde_json::Value;
 use crate::domain::compiler::dimensions::dimension_aliases;
 use crate::domain::compiler::request::{GroupRankingQuery, RankedDimension, RankedGroup};
 
-use super::catalog::MetricCatalog;
-use super::error::QueryError;
-use super::execute::fetch;
+use super::super::catalog::MetricCatalog;
+use super::super::error::QueryError;
+use super::super::execute::fetch;
 
 /// One ranked group: the dimension columns of the position it earned. The
 /// value it was ordered by is not read back — the order is the answer.
@@ -101,8 +101,8 @@ fn text(value: &Value) -> Option<String> {
 mod tests {
     use chrono::NaiveDate;
 
-    use super::super::catalog::product_metric_catalog;
-    use super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse};
+    use super::super::super::catalog::product_metric_catalog;
+    use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse};
     use super::*;
     use crate::domain::compiler::request::EntityScope;
 

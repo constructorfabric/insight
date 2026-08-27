@@ -8,8 +8,9 @@ use toolkit_security::SecurityContext;
 
 use crate::api::AppState;
 use crate::domain::metric_access::authorize_tenant_metrics;
-use crate::domain::metric_query::{
-    ValidatedBatch, ValuesRequest, ValuesResponse, answer, product_metric_catalog, validate_request,
+use crate::domain::metric_query::product_metric_catalog;
+use crate::domain::metric_query::values::{
+    ValidatedBatch, ValuesRequest, ValuesResponse, answer, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
 

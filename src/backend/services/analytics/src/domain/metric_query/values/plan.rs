@@ -15,13 +15,13 @@ use crate::domain::compiler::request::{
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 use crate::domain::identity_binding::{IdentitySet, resolve_identities};
 
-use super::catalog::MetricCatalog;
+use super::super::catalog::MetricCatalog;
+use super::super::error::QueryError;
+use super::super::question::query_row_limit;
 use super::dto::Grain;
-use super::error::QueryError;
 use super::group_cap::ranked_groups;
 use super::validation::{
     ComparedWindow, QueryShape, ValidatedBatch, ValidatedQuery, ValidatedSplit, ValidatedSubjects,
-    query_row_limit,
 };
 
 /// The statements one question runs: its own, and the compared window's when
@@ -203,23 +203,14 @@ fn entity_scope(
             ids.iter()
                 .map(|id| ResolvedPerson {
                     person_ref: id.to_string(),
-                    identities: resolved_identities(identities.get(id)),
+                    identities: identities
+                        .get(id)
+                        .map(IdentitySet::values)
+                        .unwrap_or_default(),
                 })
                 .collect(),
         ),
     }
-}
-
-/// One person's identity values, deduplicated: an identity a source recorded
-/// under both an address and an account id must not attribute its rows twice.
-fn resolved_identities(set: Option<&IdentitySet>) -> Vec<String> {
-    let Some(set) = set else {
-        return Vec::new();
-    };
-
-    let mut values: BTreeSet<&String> = set.emails.iter().collect();
-    values.extend(set.account_ids.iter());
-    values.into_iter().cloned().collect()
 }
 
 async fn cap(
@@ -286,8 +277,9 @@ fn scoped_refs(scope: &EntityScope) -> Vec<String> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::catalog::product_metric_catalog;
-    use super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, validated};
+    use super::super::super::catalog::product_metric_catalog;
+    use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse};
+    use super::super::fixtures::validated;
     use super::*;
     use crate::domain::compiler::sql::QueryParam;
 

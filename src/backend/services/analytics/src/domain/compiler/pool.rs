@@ -148,7 +148,7 @@ pub(super) fn carried_entity<'a>(
 mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, labelled_measure, lines, measure, metric, people,
+        bins_view, compile, compile_err, direct, labelled_measure, lines, measure, metric, people,
         people_params, percentile, pool_head, query, sized_measure, text,
     };
     use crate::domain::compiler::request::{
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn a_bins_read_over_people_bins_each_persons_own_observations() {
-        let mut request = query(ViewKind::Bins);
+        let mut request = query(bins_view(10));
         request.entity_scope = people();
 
         let compiled = compile(

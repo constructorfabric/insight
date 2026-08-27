@@ -12,21 +12,21 @@ use crate::domain::field_catalog::model::CatalogDataset;
 use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
 use super::pool::{Pool, first_cte, joined_entity, scan_clause};
-use super::request::MetricQuery;
+use super::request::{BinsView, MetricQuery};
 use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
-
-/// How many bins an entity's range is cut into.
-const BINS: u32 = 10;
-const LAST_BIN: u32 = BINS - 1;
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
+    view: BinsView,
     pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let row_value = fold.row_value_expr(metric)?;
+    let bins = view.bins.get();
+    let last_bin = bins - 1;
+
+    let row_value = fold.row_value_expr(metric, "bins")?;
     let binned = transform_in_place(metric.transform.as_ref(), row_value);
 
     let mut params = Vec::new();
@@ -80,10 +80,10 @@ pub(super) fn compile(
     let _ = writeln!(sql, "    if(");
     let _ = writeln!(sql, "        events.entity_hi = events.entity_lo,");
     let _ = writeln!(sql, "        0,");
-    let _ = writeln!(sql, "        toUInt32(least({LAST_BIN}, toInt64(floor(");
+    let _ = writeln!(sql, "        toUInt32(least({last_bin}, toInt64(floor(");
     let _ = writeln!(
         sql,
-        "            (events.event_value - events.entity_lo) * {BINS} / (events.entity_hi - events.entity_lo)"
+        "            (events.event_value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)"
     );
     let _ = writeln!(sql, "        ))))");
     let _ = writeln!(sql, "    ) AS bin_idx,");
@@ -103,10 +103,9 @@ pub(super) fn compile(
 mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile, query,
-        sized_measure, text,
+        bins_view, compile, compile_err, direct, lines, measure, metric, percent_of_total,
+        percentile, query, sized_measure, text,
     };
-    use crate::domain::compiler::request::ViewKind;
     use crate::domain::compiler::sql::QueryParam;
 
     #[test]
@@ -114,7 +113,7 @@ mod tests {
         let compiled = compile(
             &metric(percentile("pr_size", 0.5)),
             &[sized_measure("pr_size")],
-            &query(ViewKind::Bins),
+            &query(bins_view(10)),
         );
 
         assert_eq!(
@@ -168,11 +167,38 @@ mod tests {
     }
 
     #[test]
+    fn the_range_is_cut_into_as_many_bins_as_the_read_asks_for_and_the_last_one_closes_on_it() {
+        for bins in [1_u32, 4, 100] {
+            let compiled = compile(
+                &metric(percentile("pr_size", 0.5)),
+                &[sized_measure("pr_size")],
+                &query(bins_view(bins)),
+            );
+
+            assert!(
+                compiled.sql.contains(&format!(
+                    "        toUInt32(least({}, toInt64(floor(",
+                    bins - 1
+                )),
+                "{bins}: {}",
+                compiled.sql
+            );
+            assert!(
+                compiled.sql.contains(&format!(
+                    "            (events.event_value - events.entity_lo) * {bins} / (events.entity_hi - events.entity_lo)"
+                )),
+                "{bins}: {}",
+                compiled.sql
+            );
+        }
+    }
+
+    #[test]
     fn the_binned_value_is_the_transformed_one_and_the_null_check_the_raw_one() {
         let mut metric = metric(percentile("pr_size", 0.5));
         metric.transform = Some(percent_of_total());
 
-        let compiled = compile(&metric, &[sized_measure("pr_size")], &query(ViewKind::Bins));
+        let compiled = compile(&metric, &[sized_measure("pr_size")], &query(bins_view(10)));
 
         assert!(compiled.sql.contains(
             "        assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added))))) AS event_value"
@@ -186,7 +212,7 @@ mod tests {
             compile_err(
                 &metric(direct("prs_merged")),
                 &[measure("prs_merged", None)],
-                &query(ViewKind::Bins)
+                &query(bins_view(10))
             ),
             CompileError::UnsupportedView {
                 metric: "git.merge_rate".to_owned(),
@@ -202,7 +228,7 @@ mod tests {
             compile_err(
                 &metric(percentile("prs_merged", 0.5)),
                 &[measure("prs_merged", None)],
-                &query(ViewKind::Bins)
+                &query(bins_view(10))
             ),
             CompileError::DistributionWithoutValue {
                 metric: "git.merge_rate".to_owned(),

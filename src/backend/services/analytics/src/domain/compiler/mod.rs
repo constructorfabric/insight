@@ -20,6 +20,7 @@ pub mod group_ranking;
 pub mod measure;
 pub mod metric;
 mod pool;
+mod quantiles;
 pub mod request;
 pub mod sql;
 mod subject_series;
@@ -31,6 +32,7 @@ mod test_catalog;
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod product_tests {
     use std::collections::BTreeMap;
+    use std::num::NonZeroU32;
 
     use chrono::NaiveDate;
 
@@ -46,9 +48,10 @@ mod product_tests {
     use super::group_ranking::compile_group_ranking_query;
     use super::metric::compile_metric_query;
     use super::request::{
-        Bucket, CombinedSplitView, ComparisonPopulation, ComparisonView, DrilldownCursor,
-        DrilldownQuery, EntityScope, GroupLimit, GroupRankingQuery, MetricQuery, RankedDimension,
-        RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
+        BinsView, Bucket, CombinedSplitView, ComparisonPopulation, ComparisonView, DrilldownCursor,
+        DrilldownQuery, EntityScope, GroupLimit, GroupRankingQuery, MetricQuery, QuantilesView,
+        RankedDimension, RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView,
+        ViewKind,
     };
     use super::sql::CompiledMeasureQuery;
 
@@ -221,8 +224,20 @@ mod product_tests {
         })
     }
 
+    fn bins_view(bins: u32) -> ViewKind {
+        ViewKind::Bins(BinsView {
+            bins: NonZeroU32::new(bins).expect("a bins read cuts at least one bin"),
+        })
+    }
+
+    fn quantiles() -> ViewKind {
+        ViewKind::Quantiles(QuantilesView {
+            quantiles: vec![0.1, 0.5, 0.9],
+        })
+    }
+
     /// The computations taken over a measure's own per-row values, which are
-    /// the only ones a histogram can bin.
+    /// the only ones a bins read cuts or a quantile read ranks.
     fn binnable(metric: &MetricDefinition) -> bool {
         matches!(
             metric.computation,
@@ -250,7 +265,9 @@ mod product_tests {
             }));
         }
         if binnable(metric) {
-            views.push(ViewKind::Bins);
+            views.push(bins_view(10));
+            views.push(bins_view(1));
+            views.push(quantiles());
         }
         if let Some(cohort_key) = &metric.cohort_key {
             views.push(comparison_view(cohort_key));
@@ -334,23 +351,22 @@ mod product_tests {
     }
 
     #[test]
-    fn only_a_metric_over_per_row_values_can_be_binned() {
+    fn only_a_metric_over_per_row_values_has_a_distribution() {
         let shipped = shipped();
 
-        for metric in &shipped.metrics {
-            let compiled = shipped.compile(metric, ViewKind::Bins);
+        for (view, name) in [(bins_view(10), "bins"), (quantiles(), "quantiles")] {
+            for metric in &shipped.metrics {
+                let compiled = shipped.compile(metric, view.clone());
 
-            if binnable(metric) {
-                assert!(compiled.is_ok(), "metric `{}`", metric.key);
-            } else {
-                assert!(
-                    matches!(
-                        compiled,
-                        Err(CompileError::UnsupportedView { view: "bins", .. })
-                    ),
-                    "metric `{}`: {compiled:?}",
-                    metric.key
-                );
+                if binnable(metric) {
+                    assert!(compiled.is_ok(), "metric `{}` in {name}", metric.key);
+                } else {
+                    assert!(
+                        matches!(compiled, Err(CompileError::UnsupportedView { view, .. }) if view == name),
+                        "metric `{}` in {name}: {compiled:?}",
+                        metric.key
+                    );
+                }
             }
         }
     }

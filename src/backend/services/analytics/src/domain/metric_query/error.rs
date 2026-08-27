@@ -1,4 +1,4 @@
-//! Why a values question is not answered.
+//! Why a question in this family is not answered.
 //!
 //! INVARIANT: every refusal names the question rather than the machinery, and
 //! a read failure carries no server detail — that is logged where it happened.
@@ -23,11 +23,11 @@ pub enum QueryError {
     #[error("a window spans at most {limit} days")]
     WindowTooLong { limit: i64 },
     #[error("a question about people names at least one")]
-    NoSubjects,
+    NoSubjects { field: &'static str },
     #[error("at most {limit} people per question")]
-    TooManySubjects { limit: usize },
+    TooManySubjects { field: &'static str, limit: usize },
     #[error("`{value}` is not a person id")]
-    MalformedSubjectId { value: String },
+    MalformedSubjectId { field: &'static str, value: String },
     #[error("a split names at least one dimension")]
     NoSplitDimensions,
     #[error("a split names at most {limit} dimensions")]
@@ -56,6 +56,22 @@ pub enum QueryError {
     },
     #[error("the compared window falls outside the range a date can express")]
     CompareOutOfRange,
+    #[error(
+        "metric `{metric}` declares no peer cohort, so there is no population to compare against"
+    )]
+    CohortUndeclared { metric: String },
+    #[error("a histogram cuts a range into between 1 and {limit} bins")]
+    BinsOutOfRange { limit: u32 },
+    #[error("a quantile sits strictly between 0 and 1, and `{quantile}` does not")]
+    QuantileOutOfRange { quantile: f64 },
+    #[error("a question reads at most {limit} quantiles")]
+    TooManyQuantiles { limit: usize },
+    #[error("a question that names quantiles names at least one")]
+    NoQuantiles,
+    /// A metric asked for the shape of its own per-row values, which its
+    /// computation does not take.
+    #[error("{0}")]
+    NoDistribution(CompileError),
     /// A question nothing in the semantic layer can answer, as asked.
     #[error("{reason}")]
     Unanswerable { reason: &'static str },
@@ -63,6 +79,10 @@ pub enum QueryError {
     Uncompilable(#[from] CompileError),
     #[error("the people it asks about could not be resolved into identities")]
     SubjectsUnresolved,
+    #[error("the population it compares against could not be resolved")]
+    PopulationUnresolved,
+    #[error("its population exceeds the {limit} people one comparison may read")]
+    PopulationTooLarge { limit: usize },
     #[error("its split could not be ranked")]
     SplitUnranked,
     #[error("the read did not answer")]
@@ -76,12 +96,12 @@ pub enum QueryError {
 impl QueryError {
     fn field(&self) -> &'static str {
         match self {
-            Self::UnknownMetric { .. } => "queries.metric",
-            Self::MalformedDate { field, .. } => field,
+            Self::UnknownMetric { .. } | Self::NoDistribution(_) => "queries.metric",
+            Self::MalformedDate { field, .. }
+            | Self::NoSubjects { field }
+            | Self::TooManySubjects { field, .. }
+            | Self::MalformedSubjectId { field, .. } => field,
             Self::TimeReversed | Self::WindowTooLong { .. } => "queries.time",
-            Self::NoSubjects | Self::TooManySubjects { .. } | Self::MalformedSubjectId { .. } => {
-                "queries.subjects.ids"
-            }
             Self::NoSplitDimensions
             | Self::TooManySplitDimensions { .. }
             | Self::DuplicateSplitDimension { .. }
@@ -94,12 +114,19 @@ impl QueryError {
             | Self::TooManyFilterValues { .. }
             | Self::FilterValueTooLong { .. } => "queries.filters",
             Self::CompareOutOfRange => "queries.compare",
+            Self::CohortUndeclared { .. } => "queries.population",
+            Self::BinsOutOfRange { .. } => "queries.bins",
+            Self::QuantileOutOfRange { .. } | Self::TooManyQuantiles { .. } | Self::NoQuantiles => {
+                "queries.quantiles"
+            }
             Self::Uncompilable(_)
             | Self::NoQueries
             | Self::TooManyQueries { .. }
             | Self::Unanswerable { .. }
             | Self::ResultTooLarge { .. }
+            | Self::PopulationTooLarge { .. }
             | Self::SubjectsUnresolved
+            | Self::PopulationUnresolved
             | Self::SplitUnranked
             | Self::ReadFailed
             | Self::RowsUndecodable => "queries",
@@ -113,22 +140,29 @@ impl From<QueryError> for CanonicalError {
             QueryError::UnknownMetric { metric } => MetricError::not_found("metric not found")
                 .with_resource(metric.clone())
                 .create(),
-            QueryError::ResultTooLarge { .. } => MetricError::invalid_argument()
-                .with_field_violation(error.field(), error.to_string(), "metric_result_too_large")
-                .create(),
+            QueryError::ResultTooLarge { .. } | QueryError::PopulationTooLarge { .. } => {
+                MetricError::invalid_argument()
+                    .with_field_violation(
+                        error.field(),
+                        error.to_string(),
+                        "metric_result_too_large",
+                    )
+                    .create()
+            }
             QueryError::SubjectsUnresolved
+            | QueryError::PopulationUnresolved
             | QueryError::SplitUnranked
             | QueryError::ReadFailed
             | QueryError::RowsUndecodable => {
-                tracing::error!(%error, "a values question went unanswered");
-                Self::internal("metric values query failed").create()
+                tracing::error!(%error, "a metric question went unanswered");
+                Self::internal("metric query failed").create()
             }
             QueryError::NoQueries
             | QueryError::TooManyQueries { .. }
             | QueryError::MalformedDate { .. }
             | QueryError::TimeReversed
             | QueryError::WindowTooLong { .. }
-            | QueryError::NoSubjects
+            | QueryError::NoSubjects { .. }
             | QueryError::TooManySubjects { .. }
             | QueryError::MalformedSubjectId { .. }
             | QueryError::NoSplitDimensions
@@ -143,6 +177,12 @@ impl From<QueryError> for CanonicalError {
             | QueryError::TooManyFilterValues { .. }
             | QueryError::FilterValueTooLong { .. }
             | QueryError::CompareOutOfRange
+            | QueryError::CohortUndeclared { .. }
+            | QueryError::BinsOutOfRange { .. }
+            | QueryError::QuantileOutOfRange { .. }
+            | QueryError::TooManyQuantiles { .. }
+            | QueryError::NoQuantiles
+            | QueryError::NoDistribution(_)
             | QueryError::Unanswerable { .. }
             | QueryError::Uncompilable(_) => MetricError::invalid_argument()
                 .with_field_violation(error.field(), error.to_string(), "INVALID")
@@ -179,16 +219,32 @@ mod tests {
             QueryError::TooManyQueries { limit: 50 },
             QueryError::TimeReversed,
             QueryError::WindowTooLong { limit: 400 },
-            QueryError::NoSubjects,
+            QueryError::NoSubjects {
+                field: "queries.subjects.ids",
+            },
             QueryError::MalformedSubjectId {
+                field: "queries.targets",
                 value: "nobody".to_owned(),
             },
             QueryError::NoSplitDimensions,
             QueryError::SplitTopOutOfRange { limit: 50 },
+            QueryError::CohortUndeclared {
+                metric: "git.commits".to_owned(),
+            },
+            QueryError::BinsOutOfRange { limit: 100 },
+            QueryError::QuantileOutOfRange { quantile: 1.5 },
+            QueryError::TooManyQuantiles { limit: 10 },
+            QueryError::NoQuantiles,
+            QueryError::NoDistribution(CompileError::UnsupportedView {
+                metric: "git.commits".to_owned(),
+                view: "distributions",
+                reason: "it needs a percentile or stddev computation",
+            }),
             QueryError::Unanswerable {
                 reason: "nothing keys a row by the tenant",
             },
             QueryError::ResultTooLarge { limit: 5000 },
+            QueryError::PopulationTooLarge { limit: 5000 },
         ];
 
         for case in cases {
@@ -206,10 +262,42 @@ mod tests {
         for case in [
             QueryError::ReadFailed,
             QueryError::SubjectsUnresolved,
+            QueryError::PopulationUnresolved,
             QueryError::SplitUnranked,
             QueryError::RowsUndecodable,
         ] {
             assert_eq!(status(case), StatusCode::INTERNAL_SERVER_ERROR.as_u16());
+        }
+    }
+
+    #[test]
+    fn a_refusal_names_the_field_the_question_wrote_it_in() {
+        let cases = [
+            (
+                QueryError::NoSubjects {
+                    field: "queries.subjects.ids",
+                },
+                "queries.subjects.ids",
+            ),
+            (
+                QueryError::NoSubjects {
+                    field: "queries.targets",
+                },
+                "queries.targets",
+            ),
+            (
+                QueryError::CohortUndeclared {
+                    metric: "git.commits".to_owned(),
+                },
+                "queries.population",
+            ),
+            (QueryError::BinsOutOfRange { limit: 100 }, "queries.bins"),
+            (QueryError::NoQuantiles, "queries.quantiles"),
+        ];
+
+        for (error, field) in cases {
+            let named = error.to_string();
+            assert_eq!(error.field(), field, "{named}");
         }
     }
 }

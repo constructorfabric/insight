@@ -10,36 +10,19 @@ use uuid::Uuid;
 
 use crate::domain::compiler::request::DimensionFilter;
 
-use super::catalog::MetricCatalog;
+use super::super::catalog::MetricCatalog;
+use super::super::dto::Subjects;
+use super::super::error::QueryError;
+use super::super::question::{batch_size, defined_metric, filters, person_ids, window};
 use super::dto::{
-    Compare, CompareOffset, DimensionFilter as FilterDto, Fold, Grain, Split, SplitLimit, Subjects,
-    ValuesQuery, ValuesRequest,
+    Compare, CompareOffset, Fold, Grain, Split, SplitLimit, ValuesQuery, ValuesRequest,
 };
-use super::error::QueryError;
 
-const MAX_QUERIES: usize = 50;
-const MAX_SUBJECTS: usize = 1000;
-const MAX_WINDOW_DAYS: i64 = 400;
 const MAX_SPLIT_DIMENSIONS: usize = 10;
 const MAX_SPLIT_TOP: u32 = 50;
-const MAX_FILTERS: usize = 10;
-const MAX_FILTER_VALUES: usize = 100;
-const MAX_FILTER_VALUE_BYTES: usize = 512;
-const DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// Rows one question may report; the read binds one more, so exceeding the
-/// ceiling is detected rather than silently truncated.
-const ROW_LIMIT: usize = 5000;
-
-#[must_use]
-pub const fn row_limit() -> usize {
-    ROW_LIMIT
-}
-
-#[must_use]
-pub const fn query_row_limit() -> u64 {
-    ROW_LIMIT as u64 + 1
-}
+/// The field a values question names its people in.
+const SUBJECTS_FIELD: &str = "queries.subjects.ids";
 
 /// Which read answers one question, decided here and nowhere else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,12 +119,7 @@ pub fn validate_request(
     catalog: &MetricCatalog,
     request: ValuesRequest,
 ) -> Result<ValidatedBatch, QueryError> {
-    if request.queries.is_empty() {
-        return Err(QueryError::NoQueries);
-    }
-    if request.queries.len() > MAX_QUERIES {
-        return Err(QueryError::TooManyQueries { limit: MAX_QUERIES });
-    }
+    batch_size(request.queries.len())?;
 
     let queries = request
         .queries
@@ -159,7 +137,7 @@ fn validate_query(
     let metric_key = defined_metric(catalog, &query.metric)?;
     let subjects = subjects(query.subjects)?;
     let (from, to) = window(&query.time.from, &query.time.to)?;
-    let filters = validate_filters(catalog, &metric_key, query.filters)?;
+    let filters = filters(catalog, &metric_key, query.filters)?;
     let split = query
         .split
         .map(|split| validate_split(catalog, &metric_key, split))
@@ -181,63 +159,6 @@ fn validate_query(
         compare,
         shape,
     })
-}
-
-/// INVARIANT: a filter narrows every measure the metric reads in one scan, so
-/// it may only name a dimension every one of those measures declares.
-fn validate_filters(
-    catalog: &MetricCatalog,
-    metric_key: &str,
-    filters: Vec<FilterDto>,
-) -> Result<Vec<DimensionFilter>, QueryError> {
-    if filters.len() > MAX_FILTERS {
-        return Err(QueryError::TooManyFilters { limit: MAX_FILTERS });
-    }
-
-    let declared = catalog.dimension_keys(metric_key);
-    let mut seen = BTreeSet::new();
-    let mut validated = Vec::with_capacity(filters.len());
-    for filter in filters {
-        let key = filter.dimension.trim().to_owned();
-        if !declared.iter().any(|declared| *declared == key) {
-            return Err(QueryError::UnknownFilterDimension { dimension: key });
-        }
-        if !seen.insert(key.clone()) {
-            return Err(QueryError::DuplicateFilterDimension { dimension: key });
-        }
-        validated.push(DimensionFilter {
-            values: filter_values(&key, filter.values)?,
-            key,
-        });
-    }
-
-    Ok(validated)
-}
-
-fn filter_values(dimension: &str, values: Vec<String>) -> Result<Vec<String>, QueryError> {
-    if values.is_empty() {
-        return Err(QueryError::NoFilterValues {
-            dimension: dimension.to_owned(),
-        });
-    }
-    if values.len() > MAX_FILTER_VALUES {
-        return Err(QueryError::TooManyFilterValues {
-            dimension: dimension.to_owned(),
-            limit: MAX_FILTER_VALUES,
-        });
-    }
-    if let Some(oversized) = values
-        .iter()
-        .find(|value| value.len() > MAX_FILTER_VALUE_BYTES)
-    {
-        return Err(QueryError::FilterValueTooLong {
-            dimension: dimension.to_owned(),
-            limit: MAX_FILTER_VALUE_BYTES,
-            length: oversized.len(),
-        });
-    }
-
-    Ok(values)
 }
 
 /// The window the comparison reads. INVARIANT: it spans the same number of
@@ -274,61 +195,13 @@ fn calendar_months(offset: CompareOffset) -> u32 {
     }
 }
 
-fn defined_metric(catalog: &MetricCatalog, metric: &str) -> Result<String, QueryError> {
-    let key = metric.trim();
-    if catalog.metric(key).is_none() {
-        return Err(QueryError::UnknownMetric {
-            metric: key.to_owned(),
-        });
-    }
-    Ok(key.to_owned())
-}
-
 fn subjects(subjects: Subjects) -> Result<ValidatedSubjects, QueryError> {
     match subjects {
         Subjects::Tenant {} => Ok(ValidatedSubjects::Tenant),
         Subjects::Persons { ids } => {
-            if ids.is_empty() {
-                return Err(QueryError::NoSubjects);
-            }
-            if ids.len() > MAX_SUBJECTS {
-                return Err(QueryError::TooManySubjects {
-                    limit: MAX_SUBJECTS,
-                });
-            }
-
-            let parsed = ids
-                .into_iter()
-                .map(|id| {
-                    Uuid::parse_str(id.trim())
-                        .map_err(|_| QueryError::MalformedSubjectId { value: id })
-                })
-                .collect::<Result<BTreeSet<_>, _>>()?;
-            Ok(ValidatedSubjects::Persons(parsed.into_iter().collect()))
+            Ok(ValidatedSubjects::Persons(person_ids(SUBJECTS_FIELD, ids)?))
         }
     }
-}
-
-fn window(from: &str, to: &str) -> Result<(NaiveDate, NaiveDate), QueryError> {
-    let from = date("queries.time.from", from)?;
-    let to = date("queries.time.to", to)?;
-
-    if from > to {
-        return Err(QueryError::TimeReversed);
-    }
-    if (to - from).num_days() >= MAX_WINDOW_DAYS {
-        return Err(QueryError::WindowTooLong {
-            limit: MAX_WINDOW_DAYS,
-        });
-    }
-    Ok((from, to))
-}
-
-fn date(field: &'static str, value: &str) -> Result<NaiveDate, QueryError> {
-    NaiveDate::parse_from_str(value.trim(), DATE_FORMAT).map_err(|_| QueryError::MalformedDate {
-        field,
-        value: value.to_owned(),
-    })
 }
 
 fn validate_split(
@@ -450,10 +323,14 @@ fn answerable_for(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::catalog::product_metric_catalog;
+    use super::super::super::catalog::product_metric_catalog;
+    use super::super::super::fixtures::SHIPPED_METRIC;
+    use super::super::super::question::{
+        DATE_FORMAT, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_QUERIES,
+        MAX_SUBJECTS,
+    };
     use super::*;
 
-    const SHIPPED_METRIC: &str = "git.commits";
     const SHIPPED_DIMENSION: &str = "repository";
 
     fn catalog() -> &'static MetricCatalog {
@@ -938,7 +815,7 @@ mod tests {
     fn a_subject_list_is_refused_when_it_is_empty_unreadable_or_past_the_cap() {
         let cases: [(serde_json::Value, Refusal); 3] = [
             (serde_json::json!([]), |error| {
-                matches!(error, QueryError::NoSubjects)
+                matches!(error, QueryError::NoSubjects { .. })
             }),
             (serde_json::json!(["not-a-person"]), |error| {
                 matches!(error, QueryError::MalformedSubjectId { .. })

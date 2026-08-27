@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::group_ranking::compile_group_ranking_query;
-use crate::domain::compiler::metric::compile_metric_query;
+use crate::domain::compiler::metric::{check_distribution, compile_metric_query};
 use crate::domain::compiler::request::{GroupRankingQuery, MetricQuery};
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
@@ -102,6 +102,16 @@ impl MetricCatalog {
         }
 
         shared.unwrap_or_default()
+    }
+
+    /// Whether a metric reports the shape of its own per-row values, named as
+    /// the view that asked.
+    pub(super) fn distribution(
+        &self,
+        metric: &MetricDefinition,
+        view: &'static str,
+    ) -> Result<(), CompileError> {
+        check_distribution(metric, &self.measures, view)
     }
 
     pub(super) fn compile(

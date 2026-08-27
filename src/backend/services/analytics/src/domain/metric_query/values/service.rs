@@ -8,17 +8,18 @@ use uuid::Uuid;
 
 use serde::de::DeserializeOwned;
 
+use super::super::catalog::MetricCatalog;
+use super::super::error::QueryError;
+use super::super::execute::fetch;
+use super::super::provenance::{metric_versions, provenance};
+use super::super::question::bounded;
 use super::assemble::{
     CombinedValueRow, SubjectSeriesRow, SubjectValueRow, combined_values, subject_series,
     subject_values,
 };
-use super::catalog::MetricCatalog;
 use super::dto::{QueryResult, ResultBody, ValuesResponse};
-use super::error::QueryError;
-use super::execute::fetch;
 use super::plan::{PlannedQuery, plan};
-use super::provenance::{metric_versions, provenance};
-use super::validation::{QueryShape, ValidatedBatch, ValidatedQuery, row_limit};
+use super::validation::{QueryShape, ValidatedBatch, ValidatedQuery};
 
 /// How many reads this endpoint keeps in flight for one request.
 const QUERY_CONCURRENCY: usize = 4;
@@ -125,15 +126,6 @@ where
     Ok((rows, Some(compared)))
 }
 
-/// INVARIANT: the read binds one row over the ceiling, so an answer past it is
-/// refused rather than served short.
-fn bounded<T>(rows: Vec<T>) -> Result<Vec<T>, QueryError> {
-    if rows.len() > row_limit() {
-        return Err(QueryError::ResultTooLarge { limit: row_limit() });
-    }
-    Ok(rows)
-}
-
 fn shape_name(shape: QueryShape) -> &'static str {
     match shape {
         QueryShape::SubjectTotal => "subject-total",
@@ -148,8 +140,9 @@ fn shape_name(shape: QueryShape) -> &'static str {
 mod tests {
     use crate::domain::compiler::sql::CompiledMeasureQuery;
 
+    use super::super::super::fixtures::offline_clickhouse;
     use super::super::dto::Grain;
-    use super::super::fixtures::{offline_clickhouse, validated};
+    use super::super::fixtures::validated;
     use super::*;
 
     fn query(shape: QueryShape) -> ValidatedQuery {
@@ -164,19 +157,6 @@ mod tests {
             QueryShape::SubjectSplit | QueryShape::CombinedSplit => &["repository"],
         };
         validated(shape, grain, dimensions)
-    }
-
-    #[test]
-    fn an_answer_within_the_ceiling_is_served_and_one_past_it_is_refused() {
-        assert_eq!(
-            bounded(vec![0_u8; row_limit()]).map(|rows| rows.len()).ok(),
-            Some(row_limit())
-        );
-
-        assert!(matches!(
-            bounded(vec![0_u8; row_limit() + 1]).expect_err("one row over the ceiling is refused"),
-            QueryError::ResultTooLarge { .. }
-        ));
     }
 
     fn planned() -> PlannedQuery {

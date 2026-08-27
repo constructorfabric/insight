@@ -468,17 +468,17 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .register(router, openapi);
 
     // The question surface over the semantic definitions. `/v1/query/*` holds
-    // one route per kind of question; values is the first of them.
+    // one route per kind of question the definitions can answer.
     router = OperationBuilder::post("/v1/query/values")
         .operation_id("analytics_api.query.values")
         .summary("Answer metric value questions")
         .authenticated()
         .no_license_required()
-        .json_request::<crate::domain::metric_query::ValuesRequest>(
+        .json_request::<crate::domain::metric_query::values::ValuesRequest>(
             openapi,
             "Metric value questions",
         )
-        .json_response_with_schema::<crate::domain::metric_query::ValuesResponse>(
+        .json_response_with_schema::<crate::domain::metric_query::values::ValuesResponse>(
             openapi,
             StatusCode::OK,
             "One answer per question asked",
@@ -490,6 +490,52 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_415(openapi)
         .error_500(openapi)
         .handler(query::values::query_values)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/query/comparisons")
+        .operation_id("analytics_api.query.comparisons")
+        .summary("Answer metric comparison questions")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::metric_query::comparisons::ComparisonsRequest>(
+            openapi,
+            "Metric comparison questions",
+        )
+        .json_response_with_schema::<crate::domain::metric_query::comparisons::ComparisonsResponse>(
+            openapi,
+            StatusCode::OK,
+            "One answer per question asked",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(query::comparisons::query_comparisons)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/query/distributions")
+        .operation_id("analytics_api.query.distributions")
+        .summary("Answer metric distribution questions")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::metric_query::distributions::DistributionsRequest>(
+            openapi,
+            "Metric distribution questions",
+        )
+        .json_response_with_schema::<crate::domain::metric_query::distributions::DistributionsResponse>(
+            openapi,
+            StatusCode::OK,
+            "One answer per question asked",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(query::distributions::query_distributions)
         .register(router, openapi);
 
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
