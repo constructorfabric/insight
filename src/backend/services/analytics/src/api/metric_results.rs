@@ -309,7 +309,8 @@ async fn build_single_view(
         UnbatchedView::Breakdown { dimensions } => {
             let comment = format!("metric-results:breakdown:{}", def.key());
             let rows = fetch_rows::<BreakdownQueryRow>(state, query, &comment).await?;
-            build_breakdown_view(req, &dimensions, rows).map_err(|e| assembly_failure(&e, &comment))
+            build_breakdown_view(req, &dimensions, rows, &state.external_links)
+                .map_err(|e| assembly_failure(&e, &comment))
         }
         UnbatchedView::Rollup { dimensions } => {
             let comment = format!("metric-results:rollup:{}", def.key());

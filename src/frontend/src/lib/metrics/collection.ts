@@ -90,10 +90,11 @@ export function filterCollectionByKey(
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
-export interface MetricCollectionEntity {
-  type: "person";
-  ids: string[];
-}
+export type MetricCollectionEntity =
+  // The tenant variant carries no ids: the backend derives the organization
+  // from the session, and a client-supplied identifier is rejected outright.
+  | { type: "person"; ids: string[] }
+  | { type: "tenant" };
 
 export type NormalizedMetricResult = {
   metric_key: string;
@@ -141,7 +142,10 @@ export function buildMetricCollectionRequest(
   period: DateRange
 ): MetricResultsRequest {
   return {
-    entity: { type: entity.type, ids: entity.ids },
+    entity:
+      entity.type === "person"
+        ? { type: "person", ids: entity.ids }
+        : { type: "tenant" },
     period,
     metrics: collection.metrics.map((metric) => ({
       metric_key: metric.key,

@@ -10,10 +10,11 @@ use crate::domain::metric_definitions::definition::{
     ObservationSource, SourceKind,
 };
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
+use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 use crate::domain::metric_definitions::repository::{
-    MetricDefinitionValidationSpec, all_managed_sources, managed_definition_validation_specs,
-    source_evidence_granularities, update_definition_status, update_definitions_for_source_status,
-    update_evidence_status, update_source_status,
+    MetricDefinitionValidationSpec, SourceMeasureEvidence, all_managed_sources,
+    managed_definition_validation_specs, source_evidence_contracts, update_definition_status,
+    update_definitions_for_source_status, update_evidence_status, update_source_status,
 };
 use crate::domain::metric_drilldown::with_evidence_query_limits;
 
@@ -150,15 +151,15 @@ impl MetricDefinitionValidator {
                 .await
             {
                 Ok(ColumnCheck::Present) => {
-                    let expected = match source_evidence_granularities(&self.db, source_id).await {
+                    let expected = match source_evidence_contracts(&self.db, source_id).await {
                         Ok(expected) => expected,
                         Err(error) => {
-                            tracing::warn!(error = %error, "metric evidence granularity metadata load failed");
+                            tracing::warn!(error = %error, "metric evidence contract metadata load failed");
                             return;
                         }
                     };
                     match self
-                        .evidence_granularities_match(
+                        .evidence_contract_violation(
                             &relation,
                             &observation_relation,
                             source_key,
@@ -166,18 +167,18 @@ impl MetricDefinitionValidator {
                         )
                         .await
                     {
-                        Ok(true) => Some(ValidationState::Ok),
-                        Ok(false) => {
+                        Ok(None) => Some(ValidationState::Ok),
+                        Ok(Some(error_code)) => {
                             tracing::warn!(
                                 source_key,
                                 evidence_ref,
-                                expected = ?expected,
-                                "metric evidence granularity does not match configured measures"
+                                %error_code,
+                                "metric evidence rows do not match the configured measures"
                             );
-                            Some(ValidationState::Error(MetricSchemaErrorCode::Unknown))
+                            Some(ValidationState::Error(error_code))
                         }
                         Err(error) => {
-                            tracing::warn!(error = %error, "metric evidence granularity validation failed");
+                            tracing::warn!(error = %error, "metric evidence contract validation failed");
                             None
                         }
                     }
@@ -485,15 +486,17 @@ impl MetricDefinitionValidator {
         Ok(ColumnCheck::Present)
     }
 
-    async fn evidence_granularities_match(
+    /// Reads the evidence rows a source's measures actually produced and holds
+    /// them against what those measures declare. `None` is agreement.
+    async fn evidence_contract_violation(
         &self,
         relation: &EvidenceRelation,
         observation_relation: &ObservationRelation,
         source_key: &str,
-        expected: &[(String, Option<String>)],
-    ) -> Result<bool, clickhouse::error::Error> {
+        expected: &[SourceMeasureEvidence],
+    ) -> Result<Option<MetricSchemaErrorCode>, clickhouse::error::Error> {
         if !expected_granularities_are_known(expected) {
-            return Ok(false);
+            return Ok(Some(MetricSchemaErrorCode::Unknown));
         }
 
         let (observation_database, observation_table) = observation_relation.table_ref();
@@ -501,30 +504,34 @@ impl MetricDefinitionValidator {
             evidence_observation_dates_sql(observation_database, observation_table, expected.len());
         let mut observation_query =
             with_evidence_query_limits(self.ch.query(&observation_sql)).bind(source_key);
-        for (measure_key, _) in expected {
-            observation_query = observation_query.bind(measure_key);
+        for measure in expected {
+            observation_query = observation_query.bind(&measure.measure_key);
         }
         let observed_dates = parse_measure_last_dates(observation_query.fetch_all().await?)?;
         let observed_measures = observed_dates.keys().cloned().collect::<BTreeSet<_>>();
         let window_start = evidence_window_start(&observed_dates);
 
         let (database, table) = relation.table_ref();
-        let sql = evidence_granularity_sql(database, table, expected.len(), window_start.is_some());
+        let sql = evidence_contract_sql(database, table, expected.len(), window_start.is_some());
         let mut query = with_evidence_query_limits(self.ch.query(&sql)).bind(source_key);
-        for (measure_key, _) in expected {
-            query = query.bind(measure_key);
+        for measure in expected {
+            query = query.bind(&measure.measure_key);
         }
         if let Some(window_start) = window_start {
             query = query.bind(window_start.to_string());
         }
         let actual = query
-            .fetch_all::<EvidenceGranularityProbeRow>()
+            .fetch_all::<EvidenceContractProbeRow>()
             .await?
             .into_iter()
-            .map(|row| (row.measure_key, row.granularities))
+            .map(|row| (row.measure_key.clone(), row))
             .collect::<HashMap<_, _>>();
 
-        Ok(granularities_match(expected, &actual, &observed_measures))
+        Ok(evidence_contract_violation(
+            expected,
+            &actual,
+            &observed_measures,
+        ))
     }
 
     async fn measure_last_dates(
@@ -655,9 +662,10 @@ struct DimensionCoverageProbeRow {
 
 #[derive(Row, Deserialize)]
 #[cfg_attr(test, derive(serde::Serialize))]
-struct EvidenceGranularityProbeRow {
+struct EvidenceContractProbeRow {
     measure_key: String,
     granularities: Vec<String>,
+    detail_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -798,10 +806,11 @@ fn measure_last_dates_sql(database: &str, table: &str, measure_count: usize) -> 
     )
 }
 
-fn expected_granularities_are_known(expected: &[(String, Option<String>)]) -> bool {
+fn expected_granularities_are_known(expected: &[SourceMeasureEvidence]) -> bool {
     !expected.is_empty()
-        && expected.iter().all(|(_, value)| {
-            value
+        && expected.iter().all(|measure| {
+            measure
+                .evidence_granularity
                 .as_deref()
                 .and_then(EvidenceGranularity::from_db)
                 .is_some()
@@ -818,7 +827,7 @@ fn evidence_observation_dates_sql(database: &str, table: &str, measure_count: us
     )
 }
 
-fn evidence_granularity_sql(
+fn evidence_contract_sql(
     database: &str,
     table: &str,
     measure_count: usize,
@@ -831,7 +840,8 @@ fn evidence_granularity_sql(
         ""
     };
     format!(
-        "SELECT measure_key, groupUniqArray(granularity) AS granularities \
+        "SELECT measure_key, groupUniqArray(granularity) AS granularities, \
+                groupUniqArrayArray(mapKeys(details)) AS detail_keys \
          FROM {database}.{table} \
          WHERE source_key = ? AND measure_key IN ({placeholders}){window_sql} \
          GROUP BY measure_key"
@@ -847,29 +857,81 @@ fn evidence_window_start(observed_dates: &HashMap<String, NaiveDate>) -> Option<
         .map(|date| *date - chrono::Duration::days(i64::from(PROBE_WINDOW_DAYS)))
 }
 
+fn evidence_contract_violation(
+    expected: &[SourceMeasureEvidence],
+    actual: &HashMap<String, EvidenceContractProbeRow>,
+    observed_measures: &BTreeSet<String>,
+) -> Option<MetricSchemaErrorCode> {
+    if !granularities_match(expected, actual, observed_measures) {
+        return Some(MetricSchemaErrorCode::Unknown);
+    }
+    if !declared_details_present(expected, actual) {
+        return Some(MetricSchemaErrorCode::DetailKeyNotFound);
+    }
+    None
+}
+
 fn granularities_match(
-    expected: &[(String, Option<String>)],
-    actual: &HashMap<String, Vec<String>>,
+    expected: &[SourceMeasureEvidence],
+    actual: &HashMap<String, EvidenceContractProbeRow>,
     observed_measures: &BTreeSet<String>,
 ) -> bool {
-    expected.iter().all(|(measure_key, granularity)| {
-        let Some(granularity) = granularity.as_deref() else {
+    expected.iter().all(|measure| {
+        let measure_key = measure.measure_key.as_str();
+        let Some(granularity) = measure.evidence_granularity.as_deref() else {
             return false;
         };
         let matches = match actual.get(measure_key) {
-            Some(values) => values.len() == 1 && values[0] == granularity,
+            Some(probe) => probe.granularities.len() == 1 && probe.granularities[0] == granularity,
             None => !observed_measures.contains(measure_key),
         };
         if !matches {
             tracing::warn!(
                 measure_key,
                 expected_granularity = granularity,
-                actual_granularities = ?actual.get(measure_key),
+                actual_granularities = ?actual.get(measure_key).map(|probe| &probe.granularities),
                 observed = observed_measures.contains(measure_key),
                 "metric evidence measure granularity mismatch"
             );
         }
         matches
+    })
+}
+
+/// Every detail column a measure declares has to occur in the rows it produced,
+/// or the drilldown serves that column blank on every row. A measure with no
+/// rows in the window declares against nothing and passes — the granularity
+/// check above is what catches a measure that should have produced some.
+fn declared_details_present(
+    expected: &[SourceMeasureEvidence],
+    actual: &HashMap<String, EvidenceContractProbeRow>,
+) -> bool {
+    expected.iter().all(|measure| {
+        let measure_key = measure.measure_key.as_str();
+        let declared = match &measure.presentation {
+            StoredPresentation::Absent => return true,
+            StoredPresentation::Declared(declared) => declared,
+            StoredPresentation::Unreadable => {
+                tracing::warn!(measure_key, "metric evidence presentation is not readable");
+                return false;
+            }
+        };
+        let Some(probe) = actual.get(measure_key) else {
+            return true;
+        };
+        let missing = declared
+            .detail_keys()
+            .filter(|key| !probe.detail_keys.iter().any(|written| written == key))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            tracing::warn!(
+                measure_key,
+                ?missing,
+                written = ?probe.detail_keys,
+                "metric evidence rows carry no such detail"
+            );
+        }
+        missing.is_empty()
     })
 }
 
@@ -1037,8 +1099,41 @@ mod tests {
         assert!(cov.contains(&format!("toDate(?) - {PROBE_WINDOW_DAYS}")));
     }
 
-    fn granularity(measure_key: &str, value: Option<&str>) -> (String, Option<String>) {
-        (measure_key.to_owned(), value.map(str::to_owned))
+    fn granularity(measure_key: &str, value: Option<&str>) -> SourceMeasureEvidence {
+        SourceMeasureEvidence {
+            measure_key: measure_key.to_owned(),
+            evidence_granularity: value.map(str::to_owned),
+            presentation: StoredPresentation::Absent,
+        }
+    }
+
+    fn declaring(measure_key: &str, value: &str, presentation: &str) -> SourceMeasureEvidence {
+        SourceMeasureEvidence {
+            measure_key: measure_key.to_owned(),
+            evidence_granularity: Some(value.to_owned()),
+            presentation: StoredPresentation::read(Some(presentation)),
+        }
+    }
+
+    fn probe(
+        measure_key: &str,
+        granularities: &[&str],
+        detail_keys: &[&str],
+    ) -> HashMap<String, EvidenceContractProbeRow> {
+        HashMap::from([(
+            measure_key.to_owned(),
+            EvidenceContractProbeRow {
+                measure_key: measure_key.to_owned(),
+                granularities: granularities
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect(),
+                detail_keys: detail_keys
+                    .iter()
+                    .map(|value| (*value).to_owned())
+                    .collect(),
+            },
+        )])
     }
 
     #[test]
@@ -1077,12 +1172,13 @@ mod tests {
         assert!(dates.contains("max(metric_date)"));
         assert!(!dates.contains("entity_type"));
 
-        let windowed = evidence_granularity_sql("insight", "ai_metric_evidence", 3, true);
+        let windowed = evidence_contract_sql("insight", "ai_metric_evidence", 3, true);
         assert!(windowed.contains("measure_key IN (?, ?, ?)"));
         assert!(windowed.contains("groupUniqArray(granularity)"));
+        assert!(windowed.contains("groupUniqArrayArray(mapKeys(details))"));
         assert!(windowed.contains("AND metric_date >= toDate(?)"));
 
-        let unwindowed = evidence_granularity_sql("insight", "ai_metric_evidence", 1, false);
+        let unwindowed = evidence_contract_sql("insight", "ai_metric_evidence", 1, false);
         assert!(!unwindowed.contains("metric_date >="));
     }
 
@@ -1105,16 +1201,13 @@ mod tests {
         let expected = vec![granularity("a", Some("event"))];
         let observed = BTreeSet::from(["a".to_owned()]);
 
-        let exact = HashMap::from([("a".to_owned(), vec!["event".to_owned()])]);
+        let exact = probe("a", &["event"], &[]);
         assert!(granularities_match(&expected, &exact, &observed));
 
-        let wrong = HashMap::from([("a".to_owned(), vec!["source_summary".to_owned()])]);
+        let wrong = probe("a", &["source_summary"], &[]);
         assert!(!granularities_match(&expected, &wrong, &observed));
 
-        let mixed = HashMap::from([(
-            "a".to_owned(),
-            vec!["event".to_owned(), "source_summary".to_owned()],
-        )]);
+        let mixed = probe("a", &["event", "source_summary"], &[]);
         assert!(!granularities_match(&expected, &mixed, &observed));
 
         assert!(!granularities_match(
@@ -1122,6 +1215,62 @@ mod tests {
             &exact,
             &observed
         ));
+    }
+
+    #[test]
+    fn a_declared_detail_the_rows_never_carry_names_its_own_failure() {
+        let observed = BTreeSet::from(["a".to_owned()]);
+        let declaration = r#"{"detail_columns":[{"key":"ref","label":"Ref"},{"key":"title","label":"Title"}],"show_value":false}"#;
+        let expected = vec![declaring("a", "event", declaration)];
+
+        assert_eq!(
+            evidence_contract_violation(
+                &expected,
+                &probe("a", &["event"], &["ref", "title"]),
+                &observed
+            ),
+            None,
+            "rows carrying every declared detail agree with the declaration"
+        );
+        assert_eq!(
+            evidence_contract_violation(&expected, &probe("a", &["event"], &["ref"]), &observed),
+            Some(MetricSchemaErrorCode::DetailKeyNotFound),
+            "a column the rows never carry would be served blank on every row"
+        );
+        assert_eq!(
+            evidence_contract_violation(
+                &expected,
+                &probe("a", &["source_summary"], &["ref", "title"]),
+                &observed
+            ),
+            Some(MetricSchemaErrorCode::Unknown),
+            "the granularity mismatch is the older, coarser fault"
+        );
+    }
+
+    #[test]
+    fn a_measure_that_produced_no_rows_declares_against_nothing() {
+        let declaration = r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":false}"#;
+        let expected = vec![declaring("a", "event", declaration)];
+
+        assert_eq!(
+            evidence_contract_violation(&expected, &HashMap::new(), &BTreeSet::new()),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unreadable_declaration_is_a_fault_not_an_absent_one() {
+        let expected = vec![declaring("a", "event", "not json")];
+
+        assert_eq!(
+            evidence_contract_violation(
+                &expected,
+                &probe("a", &["event"], &["ref"]),
+                &BTreeSet::from(["a".to_owned()])
+            ),
+            Some(MetricSchemaErrorCode::DetailKeyNotFound)
+        );
     }
 
     #[test]
@@ -1241,11 +1390,11 @@ mod tests {
         assert!(matches!(outcome, ProbeOutcome::Inconclusive));
     }
 
-    // Drives the two-probe granularity check (observation dates, then
-    // granularities) against an in-process mock server, so the bounded query
+    // Drives the two-probe contract check (observation dates, then granularity
+    // and detail keys) against an in-process mock server, so the bounded query
     // paths run end-to-end.
     #[tokio::test]
-    async fn granularity_probe_matches_against_a_mock_server() {
+    async fn contract_probe_matches_against_a_mock_server() {
         use clickhouse::test::{Mock, handlers};
 
         let mock = Mock::new();
@@ -1253,9 +1402,10 @@ mod tests {
             measure_key: "accepted_lines".to_owned(),
             last_date: "2026-07-01".to_owned(),
         }]));
-        mock.add(handlers::provide(vec![EvidenceGranularityProbeRow {
+        mock.add(handlers::provide(vec![EvidenceContractProbeRow {
             measure_key: "accepted_lines".to_owned(),
             granularities: vec!["event".to_owned()],
+            detail_keys: vec!["ref".to_owned()],
         }]));
 
         let validator = MetricDefinitionValidator::new(
@@ -1264,12 +1414,16 @@ mod tests {
         );
         let evidence = EvidenceRelation::parse("git_metric_evidence")
             .unwrap_or_else(|| panic!("evidence relation must parse"));
-        let expected = vec![("accepted_lines".to_owned(), Some("event".to_owned()))];
+        let expected = vec![declaring(
+            "accepted_lines",
+            "event",
+            r#"{"detail_columns":[{"key":"ref","label":"Ref"}],"show_value":false}"#,
+        )];
 
-        let matched = validator
-            .evidence_granularities_match(&evidence, &relation(), "git", &expected)
+        let violation = validator
+            .evidence_contract_violation(&evidence, &relation(), "git", &expected)
             .await
             .unwrap_or_else(|error| panic!("probe queries must succeed: {error}"));
-        assert!(matched, "single observed granularity must match");
+        assert_eq!(violation, None, "the rows carry what the measure declares");
     }
 }

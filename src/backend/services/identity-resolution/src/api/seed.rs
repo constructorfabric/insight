@@ -6,7 +6,7 @@
 //! (#1690). The GETs remain as the observability window over the
 //! `operations` rows the CLI runs write: status, summary, error per run.
 //!
-//! Admin-gated like the .NET `CallerAdminCheck`: the caller is the gateway-JWT
+//! Admin-gated: the caller is the gateway-JWT
 //! subject (`SecurityContext::subject_id`, verified by the host authn pipeline —
 //! `NGINX_BFF` R1) and must hold an active `admin` role in the tenant.
 
@@ -26,16 +26,13 @@ use super::error::PersonsSeedError;
 use super::gate::require_admin;
 use crate::infra::db::ops_repo::{self, Operation, OperationStatus, PERSONS_SEED_OP};
 
-/// Default page size / cap for the list endpoint (parity with the .NET
-/// `PageRequest.DefaultLimit` / `MaxLimit`).
+/// Default page size / cap for the list endpoint.
 const LIST_DEFAULT_LIMIT: u64 = 50;
 const LIST_MAX_LIMIT: u64 = 500;
 
-/// One operation's status. Wire shape mirrors the .NET
-/// `PersonsSeedOperationResponse`: `request` and `summary` are surfaced as
-/// parsed JSON (not double-encoded strings), the tenant/author ids are
-/// included, timestamps are ISO-8601, and null fields are emitted (the .NET
-/// serializer does not drop nulls).
+/// One operation's status. `request` and `summary` are surfaced as parsed
+/// JSON (not double-encoded strings), the tenant/author ids are included,
+/// timestamps are ISO-8601, and null fields are emitted rather than dropped.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedOperationResponse {
     pub operation_id: Uuid,
@@ -64,14 +61,14 @@ impl From<Operation> for PersonsSeedOperationResponse {
             request: parse_or_null(op.request_json.as_deref()),
             summary: parse_or_null(op.summary_json.as_deref()),
             error_message: op.error_message,
-            started_at: fmt_ts(op.started_at),
-            completed_at: op.completed_at.map(fmt_ts),
+            started_at: super::datetime::fmt_ts(op.started_at),
+            completed_at: op.completed_at.map(super::datetime::fmt_ts),
         }
     }
 }
 
 /// Surface a stored JSON column as a parsed value (not a double-encoded string);
-/// `None` for absent/empty/unparseable. Mirrors the .NET `ParseOrNull`.
+/// `None` for absent/empty/unparseable.
 /// `pub(crate)`: shared with the persons-sync journal (same wire conventions).
 pub(crate) fn parse_or_null(json: Option<&str>) -> Option<serde_json::Value> {
     let s = json?;
@@ -81,20 +78,12 @@ pub(crate) fn parse_or_null(json: Option<&str>) -> Option<serde_json::Value> {
     serde_json::from_str(s).ok()
 }
 
-/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator, matching the
-/// .NET `System.Text.Json` `DateTime` output (`NaiveDateTime::to_string` uses a
-/// space, which breaks ISO-8601 parsers).
-pub(crate) fn fmt_ts(dt: sea_orm::prelude::DateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
-}
-
 /// List response wrapper (typed for OpenAPI).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PersonsSeedListResponse {
     pub items: Vec<PersonsSeedOperationResponse>,
-    /// Wire parity with the .NET `ListResponse`: the cursor is declared
-    /// but pagination is not implemented — always `null` (both
-    /// implementations return every row; consumers already tolerate it).
+    /// The cursor is declared but pagination is not implemented — always
+    /// `null`; the route returns every row.
     pub next_cursor: Option<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
@@ -103,7 +92,7 @@ impl toolkit::api::api_dto::ResponseApiDto for PersonsSeedListResponse {}
 pub struct ListParams {
     pub status: Option<String>,
     // Signed so a negative `?limit=` clamps to 1 (parity with the sibling list
-    // routes + the .NET `int?` clamp) rather than failing query deserialization.
+    // routes) rather than failing query deserialization.
     pub limit: Option<i64>,
 }
 
@@ -114,8 +103,8 @@ pub async fn get_persons_seed(
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let tenant = ctx.subject_tenant_id();
-    // Same admin gate as the sibling journal route (parity — the .NET service
-    // gated the whole persons-seed surface).
+    // Same admin gate as the sibling journal route: the whole persons-seed
+    // surface is admin-only.
     require_admin(&state.db, &ctx).await?;
     let op = ops_repo::get_by_id(&state.db, tenant, id)
         .await
@@ -162,7 +151,7 @@ pub async fn list_persons_seed(
 }
 
 /// Map the `?status=` query to a filter. An unknown/blank value is ignored
-/// (returns all statuses), matching the .NET `_ => null` — not a 400.
+/// (returns all statuses) — not a 400.
 pub(crate) fn status_filter(raw: Option<&str>) -> Option<OperationStatus> {
     match raw {
         Some("queued") => Some(OperationStatus::Queued),

@@ -20,16 +20,16 @@ date: 2026-04-24
 
 **ID**: `cpt-ir-adr-stable-person-id`
 
-> **Post-acceptance note (2026-08-05)**: later service migrations and the implemented seed refined the mechanics this ADR describes — migration 004 moved the natural-key UNIQUE from `value_hash` to `created_at` and made `value_id` case-insensitive; migrations 009/014 moved timestamps to `DATETIME(6)` and relaxed `reason` to NULL-able; the `account_person_map` rebuild is a transactional tenant-scoped DELETE+INSERT rather than the RENAME swap sketched below; and the implemented Rust seed kept .NET-parity auto-linking instead of the `pending-iresolution` quarantine of section 6 (contested-evidence handling ships with the manual-resolution feature, ADR-0003). Where this text conflicts with DESIGN par. 3.7, the DESIGN is current. The decision itself (stable random `person_id`; append-only observations; derived `account_person_map`) is unaffected.
+> **Post-acceptance note (2026-08-05)**: later service migrations and the implemented seed refined the mechanics this ADR describes — migration 004 moved the natural-key UNIQUE from `value_hash` to `created_at` and made `value_id` case-insensitive; migrations 009/014 moved timestamps to `DATETIME(6)` and relaxed `reason` to NULL-able; the `account_person_map` rebuild is a transactional tenant-scoped DELETE+INSERT rather than the RENAME swap sketched below; and the implemented seed auto-links instead of applying the `pending-iresolution` quarantine of section 6 (contested-evidence handling ships with the manual-resolution feature, ADR-0003). Where this text conflicts with DESIGN par. 3.7, the DESIGN is current. The decision itself (stable random `person_id`; append-only observations; derived `account_person_map`) is unaffected.
 
 ## Context
 
 The `persons` table (MariaDB, see
 `cpt-insightspec-ir-dbtable-persons-mariadb`) records identity-attribute
 history per source-account per person. It is populated initially from
-ClickHouse `identity.identity_inputs` via a one-time seed script
-(`src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py`),
-and maintained thereafter by operator flows (future PR).
+ClickHouse `identity.identity_inputs` via the persons-seed (today the
+service's `seed` subcommand; a one-time Python script when this was
+written), and maintained thereafter by operator flows.
 
 `person_id` is the join key across the whole system: everything
 downstream (`aliases.person_id`, analytics joins, the Person-domain

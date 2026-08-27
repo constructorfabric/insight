@@ -51,7 +51,7 @@ pub async fn query_metric_drilldown(
     let rows = fetch_rows(&state, &req, &log_comment).await?;
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
-    let response = build_response(&req, rows)?;
+    let response = build_response(&req, rows, &state.external_links)?;
     tracing::info!(
         duration_ms = started.elapsed().as_millis(),
         rows = response.rows.len(),

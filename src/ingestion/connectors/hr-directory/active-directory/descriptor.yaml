@@ -1,6 +1,6 @@
 name: active-directory
 type: cdk
-version: "1.8.0"
+version: "1.9.0"
 # On-prem Active Directory user directory via LDAP/LDAPS (ldap3).
 # Sibling of ms-entra (cloud Entra ID): same class_people / identity_inputs
 # Silver contract, different transport (LDAP, not Microsoft Graph).
@@ -15,7 +15,7 @@ images:
     name: source-active-directory-insight
     dockerfile: ./Dockerfile
     context: .
-    image: ghcr.io/constructorfabric/source-active-directory-insight:2026.08.19.14.27-6346c92
+    image: ghcr.io/constructorfabric/source-active-directory-insight:2026.08.27.01.53-f3716b6
 connection:
   namespace: bronze_active_directory
 secret:

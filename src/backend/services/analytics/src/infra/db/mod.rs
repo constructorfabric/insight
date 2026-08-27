@@ -2,6 +2,10 @@
 
 pub mod check_probe;
 pub mod entities;
+#[cfg(test)]
+mod live_tests;
+
+use std::time::Duration;
 
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
@@ -21,14 +25,23 @@ pub async fn connect(database_url: &str) -> anyhow::Result<DatabaseConnection> {
     Ok(db)
 }
 
-/// Run pending migrations.
+/// Name of the cross-process advisory lock serializing schema migration runs.
+pub const MIGRATION_LOCK: &str = "analytics_migrations";
+
+/// How long a second migrator waits for the lock before giving up.
+pub const MIGRATION_LOCK_TIMEOUT: Duration = Duration::from_mins(5);
+
+/// Refuse to serve unless the live schema carries every migration this build
+/// embeds.
+///
+/// The server never applies migrations — the `migrate` entrypoint does. Rows
+/// applied by a newer release are tolerated so an application image can be
+/// rolled back over a forward-only schema.
 ///
 /// # Errors
 ///
-/// Returns error if migration fails.
-pub async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
-    use sea_orm_migration::MigratorTrait;
-    crate::migration::Migrator::up(db, None).await?;
-    tracing::info!("migrations applied");
-    Ok(())
+/// Returns error if the ledger cannot be read or the schema is behind this
+/// build.
+pub async fn assert_schema_compatible(db: &DatabaseConnection) -> anyhow::Result<()> {
+    Ok(insight_migration::assert_compatible::<crate::migration::Migrator>(db).await?)
 }

@@ -1,0 +1,29 @@
+schemas:
+  bronze_github.deployments:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      unique_key: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      data_source: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      id: {type: [integer, "null"]}
+      repo_full_name: {type: [string, "null"]}
+      sha: {type: [string, "null"]}
+      ref: {type: [string, "null"]}
+      task: {type: [string, "null"]}
+      environment: {type: [string, "null"]}
+      original_environment: {type: [string, "null"]}
+      is_transient_environment: {type: [boolean, "null"]}
+      is_production_environment: {type: [boolean, "null"]}
+      description: {type: [string, "null"]}
+      creator_login: {type: [string, "null"]}
+      creator_id: {type: [integer, "null"]}
+      created_at: {type: [string, "null"]}
+      updated_at: {type: [string, "null"]}

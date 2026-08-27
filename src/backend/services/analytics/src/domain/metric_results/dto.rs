@@ -151,8 +151,16 @@ pub struct MetricDimensionFilterDto {
 #[serde(tag = "computation", rename_all = "snake_case")]
 pub enum ComputationDto {
     Sum,
-    Ratio { scale: f64 },
+    Ratio {
+        scale: f64,
+    },
     Median,
+    Percentile {
+        /// The quantile — a probability, matching the definition validation.
+        #[schema(minimum = 0, maximum = 1)]
+        q: f64,
+    },
+    Stddev,
     DistinctCount,
 }
 
@@ -220,6 +228,8 @@ pub struct MetricDimensionDto {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

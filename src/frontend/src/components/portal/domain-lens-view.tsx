@@ -57,7 +57,6 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import {
   personsEvidenceSelection,
   type MetricEvidenceSelection,
@@ -69,6 +68,12 @@ import {
 import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
+import {
+  toBarRows,
+  UNSPLIT_SEGMENT,
+  type BarEntry,
+  type BarRow,
+} from "@/lib/portal/bar-rows";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
@@ -258,13 +263,7 @@ export function DomainLensView({
         views: [
           {
             view: "breakdown" as const,
-            // `source` rides along so a row knows which provider it came
-            // from — the only thing that makes a link safe to build.
-            dimensions: [
-              s.dimension,
-              ...(s.splitBy ? [s.splitBy] : []),
-              ...(s.dimension === LINKABLE_DIMENSION ? [SOURCE_DIMENSION] : []),
-            ],
+            dimensions: [s.dimension, ...(s.splitBy ? [s.splitBy] : [])],
           },
         ],
       })),
@@ -1711,14 +1710,7 @@ function CompositionSection({
           });
         }
         const label = dim.label?.trim() || running?.label || dim.value;
-        const href =
-          running?.href ??
-          (spec.dimension === LINKABLE_DIMENSION
-            ? (githubRepoUrl(
-                row.dimensions.find((d) => d.key === SOURCE_DIMENSION)?.value,
-                label
-              ) ?? undefined)
-            : undefined);
+        const href = running?.href ?? dim.href;
         bucket.set(dim.value, {
           label,
           value: (running?.value ?? 0) + row.value,
@@ -1814,7 +1806,9 @@ function DirectionCardsSection({
   const cards = overviewCardDirections(showPlanned)
     .map((d) => {
       const entry = lensEntry(d.id, "Overview");
-      if (!entry || "comingSoon" in entry) return null;
+      // Overview lenses are person-grain by construction; a tenant entry here
+      // would have no roster to preview, so it contributes no card.
+      if (!entry || "comingSoon" in entry || "entity" in entry) return null;
       const gated = visibleSections(entry, showPlanned);
       const headline = gated.sections.find(
         (s): s is Extract<SectionSpec, { kind: "headline" }> =>
@@ -1967,55 +1961,7 @@ function ByUnitSection({
 /* ── shared bits ─────────────────────────────────────────────────────── */
 
 /** One slice of a bar: a value of the split dimension, and its share of the row. */
-interface BarSegment {
-  /** The split value's own key — the colour seed, stable across rows. */
-  seed: string;
-  label: string;
-  value: number;
-}
 
-interface BarRow {
-  label: string;
-  value: number;
-  pct: number;
-  /** Where the row's subject lives, when that is knowable. */
-  href?: string;
-  /** Absent when the section declares no `splitBy`. */
-  segments?: BarSegment[];
-}
-
-/**
- * One bar before it is measured against the others.
- *
- * The map key is the row's IDENTITY and this is what the reader sees. They were
- * the same string once, which is why a dimension whose ids share a prefix drew a
- * column of bars all reading alike.
- */
-interface BarEntry {
-  label: string;
-  value: number;
-  href?: string;
-  /** Totals per split value, keyed by that value. */
-  split?: Map<string, BarSegment>;
-}
-
-function toBarRows(bucket: Map<string, BarEntry>): BarRow[] {
-  const total =
-    [...bucket.values()].reduce((sum, entry) => sum + entry.value, 0) || 1;
-  return [...bucket.values()]
-    .map(({ label, value, split, href }) => ({
-      label,
-      value,
-      href,
-      segments: split
-        ? [...split.values()].sort((a, b) => b.value - a.value)
-        : undefined,
-      // Exact share; rounding happens where it is displayed, so a small one
-      // can say so instead of being flattened to zero.
-      pct: (value / total) * 100,
-    }))
-    .sort((a, b) => b.value - a.value);
-}
 
 /**
  * A share, as a reader should see it. "0%" beside a non-zero count reads as
@@ -2029,19 +1975,10 @@ function shareLabel(pct: number): string {
 /** Same dwell as every other hover explanation in the product. */
 const HOVER_DELAY_MS = 400;
 
-/** The dimension whose rows can address something outside the product. */
-const LINKABLE_DIMENSION = "repository";
-
-/** Names the provider a git row came from. */
-const SOURCE_DIMENSION = "source";
-
-/** Segment a split row falls in when the response named no split value. */
-const UNSPLIT_SEGMENT = "unsplit";
-
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
-function BarList({
+export function BarList({
   title,
   rows,
   format,
@@ -2210,7 +2147,7 @@ function SliceNote({ text }: { text: string }) {
   );
 }
 
-function Delta({
+export function Delta({
   now,
   prev,
   direction,

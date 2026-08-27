@@ -28,6 +28,8 @@ pub enum MetricComputation {
     Sum,
     Ratio,
     Median,
+    Percentile,
+    Stddev,
     DistinctCount,
 }
 
@@ -243,6 +245,18 @@ pub enum ComputationSpec {
     Median {
         value: MetricInput,
     },
+    /// Exact q-quantile of per-event observation values — the tail the median
+    /// hides (p90 duration). Same event-grain observation shape as Median;
+    /// `q` is stored in the definition's `scale` column.
+    Percentile {
+        value: MetricInput,
+        q: f64,
+    },
+    /// Sample standard deviation of per-event observation values — the spread
+    /// around the mean. Same event-grain observation shape as Median.
+    Stddev {
+        value: MetricInput,
+    },
     /// Count of distinct `subject_key` values over the entity's observations
     /// (e.g. distinct active dates, distinct tools). The measure emits one row
     /// per subject with the subject stamped on `subject_key`; the aggregate is
@@ -303,6 +317,8 @@ impl MetricDefinition {
         match &self.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
         }
@@ -444,6 +460,8 @@ impl MetricComputation {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
             Self::Median => "median",
+            Self::Percentile => "percentile",
+            Self::Stddev => "stddev",
             Self::DistinctCount => "distinct_count",
         }
     }
@@ -453,6 +471,8 @@ impl MetricComputation {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
+            "percentile" => Some(Self::Percentile),
+            "stddev" => Some(Self::Stddev),
             "distinct_count" => Some(Self::DistinctCount),
             _ => None,
         }
@@ -532,6 +552,8 @@ mod tests {
             MetricComputation::Sum,
             MetricComputation::Ratio,
             MetricComputation::Median,
+            MetricComputation::Percentile,
+            MetricComputation::Stddev,
             MetricComputation::DistinctCount,
         ] {
             assert_eq!(

@@ -23,11 +23,7 @@ import type {
 } from "@/components/metric-evidence-context";
 import { MetricEvidencePeople } from "@/components/metric-evidence-people";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
-import {
-  SOURCE_DIMENSION,
-  withSourceDimension,
-  withTypeDimension,
-} from "@/lib/metrics/provider-links";
+import { withTypeDimension } from "@/lib/metrics/provider-links";
 import { useDeclaredMetricDimensions } from "@/queries/metric-definitions";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,10 +108,7 @@ export function MetricEvidenceDialog({
     ? declaredDimensions.byMetricKey?.get(activeTarget.selection.metric_key)
     : null;
   const selection = activeTarget
-    ? withTypeDimension(
-        withSourceDimension(activeTarget.selection, declared),
-        declared
-      )
+    ? withTypeDimension(activeTarget.selection, declared)
     : null;
   const query = useInfiniteQuery({
     queryKey: ["metric-drilldown", sessionScope, selection],
@@ -142,11 +135,7 @@ export function MetricEvidenceDialog({
     [pages]
   );
   const columns = useMemo(() => {
-    // `source` rides along purely to back a link (see withSourceDimension) —
-    // it is not a column anyone asked to see.
-    const columns = (query.data?.pages[0]?.columns ?? []).filter(
-      (column) => column.key !== SOURCE_DIMENSION
-    );
+    const columns = query.data?.pages[0]?.columns ?? [];
     const order = new Map([
       ["ref", 0],
       ["title", 1],

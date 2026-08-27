@@ -376,7 +376,7 @@ stringData:
   APP__gears__identity_resolution__config__clickhouse_user: "${CH_USER}"
   APP__gears__identity_resolution__config__clickhouse_password: "${CH_PW}"
 EOF
-  # First-admin bootstrap inputs (migrate initContainer): mirror the
+  # First-admin bootstrap inputs (migrate hook Job): mirror the
   # chart-side block in charts/insight/templates/secrets.yaml.
   if [ -n "$TENANT_DEFAULT" ] && [ "$TENANT_DEFAULT" != "null" ]; then
     echo "  APP__gears__identity_resolution__config__tenant_default_id: \"${TENANT_DEFAULT}\""

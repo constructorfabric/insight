@@ -1,0 +1,79 @@
+spec_version: 1
+description: >
+  Metric: ai.seat_cost — two seat populations, one invoice, and no binding.
+
+  A tenant holds two organisations of the vendor, so two seat connector instances
+  report seats. Only one of them produced an invoice this month: the other's
+  connector has not run yet, or the vendor has not issued its invoice. The
+  binding table is still empty.
+
+  Counting invoice instances is not enough to make that month unambiguous. There
+  is exactly one price, but nothing says which of the two seat populations it was
+  charged for, so it reaches neither — not the organisation that did not invoice,
+  and not even the one that did. Lending it to the other population would put a
+  price the vendor never charged on somebody's seat.
+
+    person   seat instance   invoiced   seat cost
+    alice    claude-team-a   yes        absent — nothing says the price is for A's seats
+    carol    claude-team-b   no         absent — and it is certainly not B's price
+
+  An operator resolves this by binding the invoice instance to its seat instance;
+  ai_seat_cost_two_instances.test.yaml is that state. With one organisation the
+  same seed prices every seat — ai_seat_cost_unbound.test.yaml is that state.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/carol
+
+  # Two seat populations, one per organisation.
+  bronze_claude_team.claude_team_overage_spend:
+    - { $ref: templates/claude_team_overage.yaml#/templates/alice, source_id: claude-team-a, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-alice, used_credits: 50, monthly_credit_limit: 1000, seat_tier: team_standard }
+    - { $ref: templates/claude_team_overage.yaml#/templates/carol, source_id: claude-team-b, _airbyte_extracted_at: "2026-12-10T00:00:00Z", unique_key: seat-carol, used_credits: 70, monthly_credit_limit: 1000, seat_tier: team_standard }
+
+  # Only organisation A invoiced this month.
+  bronze_claude_team_invoices.claude_team_invoice_lines:
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_invoice, source_id: claude-team-invoices-a, unique_key: invoice-a, invoice_id: in_a, invoice_payment_intent: pi_a }
+    - { $ref: templates/claude_team_invoice.yaml#/templates/december_line, source_id: claude-team-invoices-a, invoice_id: in_a, unique_key: line-a, line_id: il_a, category: subscriptions, product_id: prod_A, product_name: "Example plan - Standard", description: "2 x Example plan - Standard", amount: 5000, quantity: 2, unit_amount: 2500, seat_unit_amount: 2500 }
+
+  # Nothing bound yet.
+  config.ai_seat_tier_map: []
+
+cases:
+  # ── The organisation with no invoice is not given the other's price ───────────
+  - name: AI seat cost does not lend one organisation's price to another's seats
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: null }
+
+  # ── Nor is the invoicing organisation's own seat priced on a guess ───────────
+  - name: AI seat cost withholds an unbound price while two seat populations exist
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [alice@example.com] }
+        period: { from: "2026-11-01", to: "2026-12-12" }
+        metrics:
+          - metric_key: ai.seat_cost
+            views:
+              - { view: period }
+    expect:
+      - assert: "status == 200"
+      - metric: ai.seat_cost
+        view: period
+        find: { entity_id: alice@example.com }
+        equal: { value: null }

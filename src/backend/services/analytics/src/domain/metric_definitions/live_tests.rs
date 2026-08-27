@@ -38,8 +38,8 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// Any seeded product `metric_key` — the listing seeds are migration-owned, so
-/// one is guaranteed to exist.
+/// Any seeded product `metric_key` — builtin definitions are converged by the
+/// `migrate` entrypoint, so one is guaranteed to exist.
 async fn a_product_metric_key(db: &DatabaseConnection) -> Result<String, sea_orm::DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(

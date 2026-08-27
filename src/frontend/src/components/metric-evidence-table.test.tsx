@@ -329,31 +329,33 @@ describe("MetricEvidenceTable", () => {
       { key: "repository", label: "Repository", type: "string" as const },
     ];
 
-    function linkRow(overrides: Record<string, unknown> = {}) {
+    function linkRow() {
       return {
         values: {
           ref: SHA,
           title: "the subject line\n\nand a trailer nobody clicks",
           repository: "owner/repo",
-          source: "GitHub",
-          ...overrides,
+        },
+        links: {
+          ref: `https://git.example/owner/repo/commit/${SHA}`,
+          title: `https://git.example/owner/repo/commit/${SHA}`,
+          repository: "https://git.example/owner/repo",
         },
       };
     }
 
-    it("addresses the record from its id and its summary, and the repository from its own cell", () => {
+    it("renders links supplied by the API", () => {
       renderTable({
-        metricKey: "git.commits",
         columns: linkColumns,
         rows: [linkRow()],
       });
 
       expect(
         screen.getByRole("link", { name: "the subject line" })
-      ).toHaveAttribute("href", `https://github.com/owner/repo/commit/${SHA}`);
+      ).toHaveAttribute("href", `https://git.example/owner/repo/commit/${SHA}`);
       expect(screen.getByRole("link", { name: "owner/repo" })).toHaveAttribute(
         "href",
-        "https://github.com/owner/repo"
+        "https://git.example/owner/repo"
       );
     });
 
@@ -361,7 +363,6 @@ describe("MetricEvidenceTable", () => {
     // the expanded record, and following a link is not asking for that.
     it("does not expand the row when a link is followed", async () => {
       renderTable({
-        metricKey: "git.commits",
         columns: linkColumns,
         rows: [linkRow()],
       });
@@ -378,7 +379,6 @@ describe("MetricEvidenceTable", () => {
     // title is a paragraph there rather than something to click.
     it("leaves the title unlinked in the expanded record", async () => {
       renderTable({
-        metricKey: "git.commits",
         columns: linkColumns,
         rows: [linkRow()],
       });
@@ -395,25 +395,10 @@ describe("MetricEvidenceTable", () => {
       ).toBeGreaterThan(1);
     });
 
-    it.each([
-      ["the provider's address is not derivable", { source: "gitlab" }],
-      ["the row does not say where it came from", { source: undefined }],
-      ["the repository is not a path", { repository: "Unknown" }],
-    ])("renders plain text when %s", (_case, overrides) => {
+    it("renders plain text without API links", () => {
       renderTable({
-        metricKey: "git.commits",
         columns: linkColumns,
-        rows: [linkRow(overrides)],
-      });
-
-      expect(screen.queryAllByRole("link")).toHaveLength(0);
-    });
-
-    it("renders plain text for a metric of another family", () => {
-      renderTable({
-        metricKey: "tasks.closed",
-        columns: linkColumns,
-        rows: [linkRow()],
+        rows: [{ values: linkRow().values }],
       });
 
       expect(screen.queryAllByRole("link")).toHaveLength(0);

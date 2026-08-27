@@ -110,19 +110,23 @@ describe("activityEvents", () => {
   it("keeps the subject of a title and leaves the body behind", () => {
     // A commit message carries its reasoning after the first line; in a list
     // being scanned that reasoning is noise, and in the export it is intact.
-    const events = activityEvents(
-      rows([
-        {
+    const events = activityEvents([
+      {
+        values: {
           date: "2026-03-01",
           ref: "abc123",
           title: "Fix the thing\n\nThe long why, several paragraphs of it.\n",
           repository: "example/app",
         },
-      ])
-    );
+        links: { title: "https://git.example/example/app/commit/abc123" },
+      },
+    ]);
     expect(events[0]?.title).toBe("Fix the thing");
     expect(events[0]?.context).toBe("example/app");
     expect(events[0]?.ref).toBe("abc123");
+    expect(events[0]?.links).toEqual({
+      title: "https://git.example/example/app/commit/abc123",
+    });
   });
 
   it("puts the newest first — a section is read from now backwards", () => {
@@ -147,8 +151,7 @@ describe("activityEvents", () => {
         title: null,
         context: null,
         value: 3,
-        // Carried so a caller that knows the metric can decide whether the
-        // thing is addressable; nothing here names one.
+        links: {},
         values: { date: "2026-03-01", value: 3 },
       },
     ]);

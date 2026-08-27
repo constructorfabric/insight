@@ -22,6 +22,8 @@ resources:
 metricCatalog:
   tenantMetricsEnabled: false
 
+externalSources: []
+
 # Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__analytics__config__database_url
@@ -33,6 +35,12 @@ metricCatalog:
 # standalone installs the operator pre-creates an equivalent Secret and
 # sets `existingSecret` to its name.
 existingSecret: ""
+
+# Optional Secret read ONLY by the migrate hook Job, listed after
+# `existingSecret` so its keys win. The umbrella renders it as a pre-install
+# hook so migrations can run before the release's own Secrets exist. Empty
+# disables the extra ref.
+migrateEnvSecret: ""
 
 visibilityPolicy: "org_chart"
 

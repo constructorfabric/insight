@@ -63,7 +63,7 @@ describe("resolveZoneItem", () => {
   });
 
   it("keeps a Manage item the URL names, and falls back for one it does not", () => {
-    expect(resolveZoneItem("manage", "data-health")).toBe("data-health");
+    expect(resolveZoneItem("manage", "connector-health")).toBe("connector-health");
     expect(resolveZoneItem("manage", "trend")).toBe("metric-catalog");
   });
 
@@ -85,8 +85,15 @@ describe("the ingestion lens", () => {
     expect(manageItemsFor(true).some((i) => i.id === "ingestion")).toBe(true);
   });
 
-  it("is its own lens, not folded into metric data health", () => {
-    expect(MANAGE_ITEMS.some((i) => i.id === "data-health")).toBe(true);
+  it("is its own lens, beside connector health rather than inside it", () => {
+    // The two read different things and must not be conflated: connector
+    // health reports what the mover says about its syncs, this reports the rows
+    // that actually landed in bronze. A sync the mover calls successful and one
+    // that wrote rows are not the same claim.
+    const ids = MANAGE_ITEMS.map((i) => i.id);
+    expect(ids).toContain("connector-health");
+    expect(ids).toContain("ingestion");
+    expect(ids.indexOf("ingestion")).not.toBe(ids.indexOf("connector-health"));
   });
 });
 

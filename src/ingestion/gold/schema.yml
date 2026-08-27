@@ -164,19 +164,123 @@ models:
       established daily summaries retained by the silver contracts.
     columns: *metric_evidence_columns
 
+  - name: ci_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for CI measures — the
+      first TENANT-grain family: entity_id is the tenant id, there is no
+      person and no identity join (issue #2803). One row per decided run per
+      measure it feeds; run_duration_min keeps event grain for query-time
+      percentiles. Deployment rows fold the latest status event in; no event
+      yet reads as the visible 'pending' outcome. Deliberately NOT the shared
+      person-grain column anchor: this family's source_key and entity_type
+      would fail its accepted-values pins.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source family — always ci here"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci']
+      - name: entity_type
+        description: "Measured entity type — always the tenant for CI"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['tenant']
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — the shape the results compiler expects
+          for tenant-entity reads (entity_id = tenant_id). No identity
+          resolution happens for this family.
+        tests:
+          - not_null
+      - name: source_entity_id
+        description: >
+          Same tenant id — kept so the evidence contract keeps one column
+          set across families; there is no source-native identity to record.
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Run start date; deployment creation date"
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Run start instant; NULL on deployment rows"
+      - name: measure_key
+        description: "Source measure key"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - runs
+                  - gate_runs
+                  - gate_passed
+                  - gate_first_try_passed
+                  - gate_retried
+                  - run_duration_min
+                  - run_hours
+                  - deployments
+                  - runs_matched_commit
+                  - commits_observed
+      - name: record_id
+        description: >
+          Deterministic total-order key within the measure scope; source_id
+          leads it, so two source instances covering the same repository
+          cannot collide.
+        tests:
+          - not_null
+      - name: record_kind
+        description: "ci_run for run measures, deployment for deployments, commit for commits_observed"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci_run', 'deployment', 'commit']
+      - name: granularity
+        description: "Always event: one row per run / deployment"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['event']
+      - name: record_label
+        description: "Pipeline name + run number, or environment + outcome"
+      - name: contribution
+        description: "Nullable numeric contribution to the source measure"
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL"
+      - name: dimensions
+        description: >
+          Run rows carry repository / pipeline / trigger / outcome /
+          hour_block; deployment rows carry repository / environment /
+          outcome / env_kind (production, or preview vs static by the
+          vendor's transient flag).
+      - name: details
+        description: "Drilldown display fields keyed by stable field name"
+
   - name: ai_cost_metric_evidence
     description: >
       Materialized MergeTree evidence serving table for AI cost measures, all
       at source_summary granularity. A month-grain row is one seat-month, dated
       at the first day of the month it bills for; a day-grain row is one reading
-      of a seat, dated at the day it was read. A separate family from
+      of a seat, dated at the day it was read. A day-grain row carries
+      covers_days, the span from the previous reading in the same billing month
+      or from the 1st for the first one: a reading attributed to the wrong month
+      at a boundary keeps its money and loses that span. A separate family from
       ai_metric_evidence because one evidence relation is bound per source.
     columns: *metric_evidence_columns
 
   - name: ai_cost_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, AI cost
-      family. One row per (tenant, entity, read day, measure, dimension tuple).
+      family. One row per (tenant, entity, metric date, measure, dimension tuple).
       seat_cost_usd is the invoiced price of the seat itself, from the per-seat
       amount on the invoice's subscription lines; extra_usage_usd is the money
       the vendor billed once that seat exhausted the usage included in its fee;
@@ -189,7 +293,8 @@ models:
       never lower it: the endpoint names no billing period, so a drop there
       cannot be told apart from its counter having already rolled over. A
       reading taken before that rollover overstates the month it lands in, and
-      the same rewriting rule erases it once the month's real readings arrive.
+      the same rewriting rule erases it once the month's real readings arrive —
+      a month whose only reading is that one keeps it.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -667,6 +772,82 @@ models:
         description: "Span start (status event time)"
         tests:
           - not_null
+
+  - name: ci_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, CI family —
+      the first TENANT-grain family (issue #2803): entity_id is the tenant id,
+      no identity resolution and no '' filter. Day-grain sums for counts and
+      hours; run_duration_min passes through at event grain for median and
+      percentile metrics. The column set is the same published contract the
+      analytics service schema validator probes (`OBSERVATION_COLUMNS`);
+      changing it requires a coordinated backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci']
+      - name: entity_type
+        description: "Measured entity type — always the tenant for CI"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['tenant']
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — the shape the results compiler expects
+          for tenant-entity reads (entity_id = tenant_id). No person ever
+          appears in this family (issue #2803, decision 5).
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          Run start date for run measures, deployment creation date for
+          deployments.
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Reserved for point-in-time semantics. NULL for all CI measures."
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - runs
+                  - gate_runs
+                  - gate_passed
+                  - gate_first_try_passed
+                  - gate_retried
+                  - run_duration_min
+                  - run_hours
+                  - deployments
+                  - runs_matched_commit
+                  - commits_observed
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the run feeds the measure,
+          so value is never NULL; the column stays Nullable(Float64) in the
+          published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL."
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). Run measures carry repository /
+          pipeline / trigger / outcome / hour_block (two-hour start block of
+          the run, UTC); deployments carry repository / environment /
+          outcome / env_kind.
 
   - name: wiki_metric_observations
     description: >

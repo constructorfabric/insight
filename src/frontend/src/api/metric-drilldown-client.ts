@@ -28,6 +28,7 @@ export interface MetricEvidenceColumn {
 
 export interface MetricEvidenceRow {
   values: Record<string, unknown>;
+  links?: Record<string, string>;
 }
 
 export interface MetricDrilldownResponse {

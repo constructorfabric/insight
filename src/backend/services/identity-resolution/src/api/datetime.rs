@@ -1,15 +1,23 @@
-//! Flexible date-time parsing for request DTOs.
+//! The date-time wire shape of this API: parsing request DTOs, formatting
+//! responses.
 //!
-//! The .NET API accepts OpenAPI `format: date-time` (RFC-3339 with `Z` or a
+//! The API accepts OpenAPI `format: date-time` (RFC-3339 with `Z` or a
 //! numeric offset). `sea_orm::prelude::DateTime` is `chrono::NaiveDateTime`,
 //! whose serde parser rejects `Z`/offset forms, so a normal client value like
-//! `2026-07-23T10:00:00Z` would 400 before the handler. These helpers accept the
-//! same forms the .NET binder does — RFC-3339 with `Z`/offset, a zone-less
-//! datetime (treated as UTC), or a date-only value (midnight UTC) — and
-//! normalise everything to naive-UTC (the DB column type).
+//! `2026-07-23T10:00:00Z` would 400 before the handler. These helpers accept
+//! RFC-3339 with `Z`/offset, a zone-less datetime (treated as UTC), or a
+//! date-only value (midnight UTC), and normalise everything to naive-UTC (the
+//! DB column type).
 
 use chrono::{DateTime as ChronoDateTime, NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Deserializer};
+
+/// Format a DB `DateTime` (naive) as ISO-8601 with a `T` separator
+/// (`NaiveDateTime::to_string` uses a space, which breaks ISO-8601 parsers).
+#[must_use]
+pub(crate) fn fmt_ts(dt: NaiveDateTime) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%S%.6f").to_string()
+}
 
 /// Parse the accepted date-time forms to naive-UTC. Returns `None` if the string
 /// matches none of them.

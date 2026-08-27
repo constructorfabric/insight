@@ -116,6 +116,26 @@ services:
       - ./authn-tls.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/certs:ro
 
+  # The analytics server validates that MariaDB carries its migration set and
+  # refuses to boot otherwise — it never migrates. One-shot migrator
+  # first; the server gates on its clean exit.
+  analytics-migrate:
+    build:
+      context: ../../../..
+      dockerfile: services/analytics/Dockerfile
+    restart: "no"
+    depends_on:
+      mariadb: {condition: service_healthy}
+    environment:
+      APP__gears__analytics__config__database_url: "mysql://insight:insight-local@mariadb:3306/analytics"
+      APP__gears__analytics__config__clickhouse_url: "http://clickhouse.invalid:8123"
+    volumes:
+      - ./analytics.e2e.yaml:/app/config/insight.yaml:ro
+      - ./certs:/certs:ro
+    # docker-entrypoint.sh requires `<watched-path> -- <command…>`; the watched
+    # path is unused for a one-shot run.
+    command: ["/app/analytics", "--", "/app/analytics", "-c", "/app/config/insight.yaml", "migrate"]
+
   analytics:
     build:
       context: ../../../..
@@ -124,6 +144,7 @@ services:
       mariadb: {condition: service_healthy}
       authenticator: {condition: service_started}
       authn-tls: {condition: service_started}
+      analytics-migrate: {condition: service_completed_successfully}
     environment:
       APP__gears__analytics__config__database_url: "mysql://insight:insight-local@mariadb:3306/analytics"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"

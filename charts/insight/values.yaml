@@ -191,14 +191,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.26.09.06-da72f4d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.27.10.44-f28c8fa" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.26.09.06-da72f4d" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.27.10.44-f28c8fa" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -526,7 +526,11 @@ analytics:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
   metricCatalog:
+    # Tenant-grain metrics (the ci.* family, #2803) are opt-in per
+    # installation; when off, the catalog omits them and the CI lens renders
+    # its honest not-enabled state.
     tenantMetricsEnabled: false
+  externalSources: []
   # Explaining a metric with an LLM. Off everywhere until an operator turns it
   # on, and turning it on without `tokenEncryptionKey` stops the service at
   # boot rather than accepting keys it cannot seal.
@@ -550,6 +554,12 @@ analytics:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-analytics-config"
+  # Hook-rendered twin the pre-install migrate Job reads (templates/
+  # secrets.yaml): `existingSecret` is a release resource a pre-install hook
+  # cannot see on a fresh install. Composed only when
+  # `credentials.autoGenerate: true`; on the gitops path the config Secret
+  # pre-exists and this ref stays an inert optional.
+  migrateEnvSecret: "insight-analytics-migrate-env"
   # Metric Catalog single-tenant fallback comes from
   # `global.tenantDefaultId` (DESIGN §2.2 cpt-metric-cat-constraint-tenant-
   # default). The session-bound tenant from the gateway ALWAYS wins; this
@@ -567,17 +577,17 @@ analytics:
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
 # ─── Identity Resolution (Rust identity service, epic #1602) ─────────────
-# The persons-store API. Reads from MariaDB `persons` written by the seed
-# pipeline (src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
-# fed off ClickHouse `identity.identity_inputs`. NOT an OIDC provider.
+# The persons-store API. Reads from MariaDB `persons`, written by the seed
+# CronJob (the service's own `seed` subcommand) fed off ClickHouse
+# `identity.identity_inputs`. NOT an OIDC provider.
 # Consumers reach it at `http://<release>-identity-resolution:8082`.
 # `deploy: true` is mandatory: the authenticator's login-bootstrap resolve
 # (GET /internal/persons/by-external-id / by-email-override) lives here
 # (constructorfabric/insight#1960), and the authenticator is always installed
 # (its "no deploy flag" app-service contract); `insight.validate` fails the
 # render otherwise.
-# SCHEMA OWNER: identity-resolution's migrate initContainer applies the
-# migrations + first-admin bootstrap against `databaseName` — see ADR-0006
+# SCHEMA OWNER: identity-resolution's pre-install/pre-upgrade migrate hook
+# Job applies the migrations + first-admin bootstrap against `databaseName`
 # (service-owned migrations).
 # Git CLI Proxy — clone-based commit extraction for the nocode git connectors.
 # Airbyte-only consumer: no gateway route, no platform-config entry (other
@@ -678,9 +688,11 @@ identityResolution:
   # auto-generated credentials (see templates/secrets.yaml). The subchart
   # consumes it via envFrom (overriding its mounted config ConfigMap).
   existingSecret: "insight-identity-resolution-config"
+  # Same hook-twin arrangement as analytics.migrateEnvSecret above.
+  migrateEnvSecret: "insight-identity-resolution-migrate-env"
   # Scheduled persons-seed (#1690): a CronJob runs `identity-resolution seed`
-  # daily to rebuild the identity org projection (persons / account_person_map
-  # / org_chart) from ClickHouse identity_inputs — without it the projection
+  # daily to rebuild the identity org projection (persons / org_chart) from
+  # ClickHouse identity_inputs — without it the projection
   # freezes at the last manual run and Team-view rosters go stale. Runs
   # serialize on a per-tenant MariaDB advisory lock; input guards abort on an
   # empty identity_inputs read or a tenant mismatch (`--force` overrides).
