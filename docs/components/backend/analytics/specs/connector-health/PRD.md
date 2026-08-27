@@ -56,9 +56,10 @@ surface reports recorded facts about syncs; it never infers a verdict it cannot 
 
 The product today has no surface that reports connector state. The pane named *Data health*
 counts schema-check statuses of metric definitions — a fact about the metric catalogue, not
-about whether data arrives — and each of its counters overstates (custom metrics carry no
-schema status by design, disabled definitions count as health, a schema-broken definition
-with no observation counts twice).
+about whether data arrives — and three of its four counters overstate. Custom metrics carry
+no schema status by design, so they inflate both *unchecked* and *no data yet*; disabled
+definitions count as health. A schema-broken definition that has never produced a row is
+counted twice, under two different counters.
 
 The consequence is operational: a connector that quietly stops delivering looks identical to
 one that was never configured, and the customer notices empty dashboards before the operator
@@ -91,7 +92,7 @@ Two failure classes are invisible today even to a diligent operator reading dash
 |---|---|
 | **Connector** | one ingestion source type configured on the install; its raw data lands in a per-connector bronze schema |
 | **Sync** | one execution of the data mover for one connector's connection |
-| **Run ledger** | the append-only record of sync outcomes this PRD introduces |
+| **Sync ledger** | the append-only record of sync outcomes this PRD introduces |
 | **Sweep** | the periodic reconciliation that copies sync outcomes from the mover's job history into the ledger |
 | **Configured connector** | a connector present in the reconcile controller's latest recorded snapshot of the set it manages; absence from the latest snapshot means no longer configured |
 | **Honest unknown** | a value the system does not know rendered as unknown, never as zero or as healthy |
@@ -118,7 +119,7 @@ operator is the only human actor permitted to read this surface.
 **ID**: `cpt-insightspec-connhealth-actor-reconcile`
 
 **Role**: the periodic controller that provisions connections from connector configuration.
-Sole writer of the run ledger: each tick it sweeps the mover's job history and records sync
+Sole writer of the sync ledger: each tick it sweeps the mover's job history and records sync
 outcomes, plus a snapshot of the connector set it manages.
 
 #### Data mover
@@ -132,7 +133,7 @@ a reported record count. Source the sweep reads; never read on the page's reques
 
 **ID**: `cpt-insightspec-connhealth-actor-warehouse`
 
-**Role**: stores the run ledger and serves it to the read surface.
+**Role**: stores the sync ledger and serves it to the read surface.
 
 #### Analytics service
 
@@ -150,7 +151,7 @@ connector's recent syncs.
 ## 3. Operational Concept & Environment
 
 Facts flow one way. On a fixed cadence the reconcile loop reads the mover's job history and
-records each sync's outcome into the run ledger, alongside a snapshot of the connectors it
+records each sync's outcome into the sync ledger, alongside a snapshot of the connectors it
 manages. At read time the analytics service answers from the ledger alone — no call leaves
 the warehouse on the request path, and nothing the page shows depends on the mover being
 reachable.
@@ -168,13 +169,13 @@ reachable.
   and have no runtime-readable form.** Until they do, the surface reports facts without
   fresh/stale verdicts.
 - **Development compose stands run no mover.** The surface is not supported there beyond not
-  breaking: it renders its degraded state (see FR-9).
+  breaking: it renders its degraded state (see FR-10).
 
 ## 4. Scope
 
 ### 4.1 In Scope
 
-- The run ledger: an append-only record of sync outcomes, written by the sweep.
+- The sync ledger: an append-only record of sync outcomes, written by the sweep.
 - Sweep coverage of every sync in the mover's job history, and one-time backfill of the
   ledger from that history.
 - Recording of the currently configured connector set, so *never configured* is
@@ -226,28 +227,28 @@ later tick once it ends: a provisional state never closes a job.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-bounded-history`
 
-Ledger rows are retained for a bounded period long enough to answer "when did this break"
-and "how often does it fail". Retained history outlives connection deletion in the mover,
-where a removed connection takes its job history with it.
+Ledger rows are retained for six months — long enough to answer "when did this break" and
+"how often does it fail". Retained history outlives connection deletion in the mover, where a
+removed connection takes its job history with it.
 
 #### FR-3 — First sweep backfills retained history
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-backfill`
 
 On an install whose ledger is empty, the first sweep ingests the mover's whole retained job
-history rather than only what happened since. The page therefore has depth on day one. The
-listing is paged and read oldest-first, so a truncated read resumes at its own edge rather
-than leaving a gap behind it.
+history rather than only what happened since, so the page has depth on day one. A backfill
+that cannot finish in one pass leaves no gap behind it: whatever it did not reach is still
+picked up by a later one.
 
 #### FR-4 — The configured set is recorded
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-configured-set`
 
-Each tick records which connectors the controller manages, as a complete snapshot sealed once
-it is written. A connector present in the newest sealed snapshot is configured; one absent
-from it, but holding sync history, is no longer configured. A tick that cannot read its
-inputs records nothing rather than sealing an empty snapshot, because an empty set is
-indistinguishable from "everything was removed".
+Each tick records which connectors the controller manages, as one complete snapshot. A
+connector present in the newest complete snapshot is configured; one absent from it but
+holding sync history is no longer configured. A snapshot still being written is never read as
+a complete one. A tick that cannot read its inputs records nothing rather than recording an
+empty set, because an empty set is indistinguishable from "everything was removed".
 
 ### 5.2 Presenting State
 
@@ -299,8 +300,8 @@ A caller without that role is refused, and the refusal names the surface it was 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-fr-empty-ledger`
 
 Before the first controller cadence, or on stands where nothing records, the page states
-plainly that nothing has been read from the mover yet, and says when the first read is due.
-It does not error and does not imply health.
+plainly that nothing has been read from the mover yet. It does not error and does not imply
+health.
 
 #### FR-11 — The read path depends on nothing external
 
@@ -311,6 +312,20 @@ call is made on the request path, and the reader holds no access to raw connecto
 form; unavailability upstream cannot degrade the page beyond the staleness of the last
 recorded facts.
 
+#### FR-12 — A stopped recorder is visible
+
+- [ ] `p1` - **ID**: `cpt-insightspec-connhealth-fr-stale-recording`
+
+Recording failures are swallowed so they cannot disturb reconciliation (NFR-2), which means a
+recorder that stops leaves the page showing its last picture indefinitely. So the page states
+when the mover was last read, dating everything below it; and when that read is far older
+than the interval between the reads before it, the page says recording appears to have
+stopped and the connector states shown may no longer be current.
+
+Both the age and the interval are recorded facts, so the page asserts nothing about a
+schedule it cannot see. Where too few reads are recorded to establish an interval, the page
+shows the age alone.
+
 ## 6. Non-Functional Requirements
 
 ### 6.1 NFR Inclusions
@@ -319,9 +334,9 @@ recorded facts.
 
 - [ ] `p2` - **ID**: `cpt-insightspec-connhealth-nfr-interactive-read`
 
-Opening the page completes within an interactive budget on large installs, because the read
-path touches only recorded facts — never raw connector data, and never a measurement taken
-while the operator waits.
+Opening the page returns within one second at p95, with the ledger holding a full retention
+window of history, because the read path touches only recorded facts — never raw connector
+data, and never a measurement taken while the operator waits.
 
 #### NFR-2 — Recording never breaks reconciliation
 
@@ -414,7 +429,7 @@ from the mover yet rather than implying anything.
 - [ ] A connector with a schema, no snapshot membership, and no syncs renders as never
       configured; present in the snapshot with no syncs, as configured and never ran; removed
       from configuration, it stops rendering configured within one controller cadence (FR-4).
-- [ ] A tick whose inputs are unreadable records nothing rather than sealing an empty
+- [ ] A tick whose inputs are unreadable records nothing rather than recording an empty
       configured set (FR-4).
 - [ ] Deleting a connection in the mover does not remove already-recorded history (FR-2).
 - [ ] On a ledger-less install the first sweep populates history from the mover's retained
@@ -426,6 +441,9 @@ from the mover yet rather than implying anything.
       (FR-9).
 - [ ] With the mover unreachable, the page still serves the last recorded facts and the
       reader holds no access to raw connector data (FR-11).
+- [ ] The page dates itself by when the mover was last read; with recording stopped long
+      enough to stand out against the preceding reads, it says so rather than presenting the
+      last picture as current (FR-12).
 - [ ] A sweep failure does not abort connector reconciliation (NFR-2); a repeated sweep does
       not change reported state (NFR-3).
 
@@ -443,8 +461,10 @@ from the mover yet rather than implying anything.
 - The mover retains job history long enough for a useful backfill window; retention shorter
   than ledger retention limits backfill, not steady-state operation. Its listing is paged, so
   the window is the mover's retention rather than one page of it.
-- A connector name carries no underscore, which keeps the bronze schema naming reversible.
-  Enforced by the connector wiring guard rather than assumed.
+- A connector name carries no underscore, which keeps the mapping between a connector name
+  and its bronze schema reversible. Nothing enforces this today, and a name that breaks it
+  would attribute syncs to the wrong connector; extending the connector wiring guard is the
+  cheapest way to turn the assumption into a fact.
 
 ## 12. Open Decisions
 
@@ -455,7 +475,8 @@ from the mover yet rather than implying anything.
 - ~~Naming of the replacement pane~~ — settled as Connector health.
 - Whether the sync history needs paging beyond its bounded window. UC-1 is served by the
   window; dating the first failure of a long series is not, and would need a cursor on the
-  read surface.
+  read surface. **Owner**: this spec's author, to settle after the page has been used for
+  triage — not before this iteration ships.
 
 ## 13. Risks
 
@@ -466,6 +487,6 @@ from the mover yet rather than implying anything.
   nothing to storage, and this surface cannot tell. Mitigation is honesty rather than
   detection: the page reports the count as reported, and no state on it says "delivering".
   Closing the gap needs measurement at sync time and is out of scope here.
-- **A tick can record a partial picture.** Mitigation: the configured-set snapshot is sealed
-  by a marker written last, and reads key on the newest sealed marker, so a half-written tick
-  is never read as a complete one.
+- **A tick can record a partial picture.** Mitigation: a tick's snapshot becomes readable
+  only once it is complete, so a half-written tick is never read as a whole one. How
+  completeness is established is DESIGN's.
