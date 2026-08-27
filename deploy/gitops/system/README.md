@@ -1,11 +1,12 @@
 # L2 — System Layer
 
 Shared infrastructure services that live in the `insight-infra`
-namespace, **one Helm release per service**. Run manually via
-`make system-<svc> ENV=<env>` — there is no top-level chain because
-each cluster picks which services it self-hosts vs. swaps for managed
-external endpoints (RDS, MSK, Confluent Cloud, S3, …) or another
-team's infra.
+namespace, **one Helm release per service**. `make system ENV=<env>`
+chains every service whose `inventory.system.<svc>` toggle is true;
+per-service `make system-<svc>` targets remain for one-offs and
+rotation. The toggles exist because each cluster picks which services
+it self-hosts vs. swaps for managed external endpoints (RDS, MSK,
+Confluent Cloud, S3, …) or another team's infra.
 
 See the top-level [`README.md`](../README.md) for the L0 / L2 / L3 layer
 model and full workflow.
