@@ -246,3 +246,81 @@ fn sql_fetches_one_row_past_the_cap() {
     let sql = intensity_sql(Grain::FifteenMinutes, Series::Connector, false);
     assert!(sql.ends_with(&format!("LIMIT {}", MAX_POINTS + 1)));
 }
+
+/// The refusal and failure envelopes.
+///
+/// Both are what a caller actually receives, so their shape is contract rather
+/// than detail: the refusal has to be actionable, and the read failure must not
+/// hand the caller anything about the warehouse behind it.
+mod envelopes {
+    use axum::http::StatusCode;
+    use toolkit_canonical_errors::Problem;
+
+    use super::super::{admin_only, read_error};
+
+    fn problem(error: toolkit_canonical_errors::CanonicalError) -> Option<serde_json::Value> {
+        serde_json::to_value(Problem::from(error)).ok()
+    }
+
+    #[test]
+    fn the_refusal_says_what_is_missing() {
+        let envelope = problem(admin_only()).unwrap_or_default();
+        assert_eq!(envelope["status"], u16::from(StatusCode::FORBIDDEN));
+        // `detail` is the category's generic sentence; what names the missing
+        // grant is `context.reason`, which is where a caller has to look.
+        assert!(
+            envelope["context"]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("admin")),
+            "a caller cannot act on this refusal: {envelope}"
+        );
+    }
+
+    #[test]
+    fn a_read_failure_leaks_nothing_about_the_warehouse() {
+        // The message names a database, a table and a host — exactly what must
+        // not travel to a caller. It belongs in the server log only.
+        let secret = "Code: 60. DB::Exception: Table bronze_x.y does not exist on ch-node-3";
+        let envelope = problem(read_error(clickhouse::error::Error::Custom(
+            secret.to_owned(),
+        )))
+        .unwrap_or_default();
+
+        assert_eq!(
+            envelope["status"],
+            u16::from(StatusCode::INTERNAL_SERVER_ERROR)
+        );
+        let wire = envelope.to_string();
+        for fragment in ["bronze_x", "ch-node-3", "DB::Exception", "Code: 60"] {
+            assert!(
+                !wire.contains(fragment),
+                "{fragment} reached the caller: {wire}"
+            );
+        }
+    }
+}
+
+/// Round-trips of the two closed sets. The response echoes these strings back,
+/// so a name that did not survive the round trip would be echoed wrong.
+#[test]
+fn every_grain_and_series_round_trips_through_its_own_name() {
+    for grain in [Grain::FifteenMinutes, Grain::Second] {
+        assert_eq!(Grain::parse(Some(grain.as_str())).ok(), Some(grain));
+    }
+    for series in [Series::Connector, Series::Stream, Series::Total] {
+        assert_eq!(
+            Series::parse(Some(series.as_str()), false).ok(),
+            Some(series)
+        );
+    }
+}
+
+#[test]
+fn the_echoed_window_is_the_shape_the_chart_parses_back() {
+    // Millisecond RFC 3339 with a `Z`: the SPA feeds these two strings straight
+    // to Date.parse for the axis domain.
+    assert_eq!(
+        Window::bound(at(2026, 8, 26, 14, 30)),
+        "2026-08-26T14:30:00.000Z",
+    );
+}
