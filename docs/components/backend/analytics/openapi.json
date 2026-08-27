@@ -846,6 +846,12 @@
       },
       "MetricDimensionDto": {
         "properties": {
+          "href": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "key": {
             "type": "string"
           },
@@ -1160,6 +1166,15 @@
       },
       "MetricDrilldownRow": {
         "properties": {
+          "links": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
           "values": {
             "additionalProperties": {},
             "propertyNames": {
@@ -1169,7 +1184,8 @@
           }
         },
         "required": [
-          "values"
+          "values",
+          "links"
         ],
         "type": "object"
       },

@@ -133,6 +133,10 @@ describe("MetricActivity", () => {
             repository: "example/app",
             ref: "abc",
           },
+          links: {
+            title: "https://git.example/example/app/commit/abc",
+            repository: "https://git.example/example/app",
+          },
         },
         {
           values: {
@@ -150,6 +154,10 @@ describe("MetricActivity", () => {
     expect(rows[0]).toContain("Fix the thing");
     expect(rows[0]).not.toContain("body");
     expect(rows[1]).toContain("Another change");
+    expect(screen.getByRole("link", { name: "Fix the thing" })).toHaveAttribute(
+      "href",
+      "https://git.example/example/app/commit/abc"
+    );
   });
 
   it("names the kind of issue beside each one", () => {

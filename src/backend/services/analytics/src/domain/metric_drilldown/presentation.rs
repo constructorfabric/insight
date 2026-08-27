@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 use toolkit_canonical_errors::CanonicalError;
 
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_definitions::ComputationSpec;
 use crate::domain::metric_definitions::definition::MetricInputRole;
 use crate::domain::metric_definitions::{EvidenceColumnType, EvidenceDetailColumn};
@@ -25,6 +26,7 @@ struct EvidenceDimension {
 pub fn build_response(
     req: &ValidatedMetricDrilldown,
     mut rows: Vec<EvidenceQueryRow>,
+    external_links: &ExternalSourceRegistry,
 ) -> Result<MetricDrilldownResponse, CanonicalError> {
     let next_cursor = if rows.len() > req.limit {
         rows.truncate(req.limit);
@@ -34,11 +36,12 @@ pub fn build_response(
     } else {
         None
     };
-    let (columns, rows) = presentation(
+    let (columns, rows) = present(
         &rows,
         &req.plan,
         &req.selection.filters,
         &req.selection.display_dimensions,
+        Some(external_links),
     )?;
     Ok(MetricDrilldownResponse {
         selection: req.selection.clone(),
@@ -54,6 +57,16 @@ pub fn presentation(
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
 ) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
+    present(rows, plan, filters, display_dimensions, None)
+}
+
+fn present(
+    rows: &[EvidenceQueryRow],
+    plan: &EvidencePlan,
+    filters: &[MetricDrilldownFilter],
+    display_dimensions: &[String],
+    external_links: Option<&ExternalSourceRegistry>,
+) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
     let details = rows
         .iter()
         .map(|row| row.details.as_object().ok_or_else(config_error))
@@ -65,7 +78,9 @@ pub fn presentation(
         .iter()
         .zip(details)
         .zip(dimensions)
-        .map(|((row, details), dimensions)| project_row(row, details, &dimensions, &columns))
+        .map(|((row, details), dimensions)| {
+            project_row(row, details, &dimensions, &columns, external_links)
+        })
         .collect::<Result<Vec<_>, CanonicalError>>()?;
 
     Ok((columns, projected_rows))
@@ -191,6 +206,7 @@ fn project_row(
     details: &serde_json::Map<String, serde_json::Value>,
     dimensions: &[EvidenceDimension],
     columns: &[MetricDrilldownColumn],
+    external_links: Option<&ExternalSourceRegistry>,
 ) -> Result<MetricDrilldownRow, CanonicalError> {
     let mut values = BTreeMap::new();
     for column in columns {
@@ -224,7 +240,54 @@ fn project_row(
             coerce_to_column_type(column.r#type, value),
         );
     }
-    Ok(MetricDrilldownRow { values })
+    let links = external_links
+        .map(|registry| row_links(registry, row, details, dimensions, &values))
+        .unwrap_or_default();
+    Ok(MetricDrilldownRow { values, links })
+}
+
+fn row_links(
+    registry: &ExternalSourceRegistry,
+    row: &EvidenceQueryRow,
+    details: &serde_json::Map<String, serde_json::Value>,
+    dimensions: &[EvidenceDimension],
+    values: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, String> {
+    let Some(provider) = dimensions
+        .iter()
+        .find(|dimension| dimension.key == "source")
+        .map(|dimension| dimension.value.as_str())
+    else {
+        return BTreeMap::new();
+    };
+    let Some(source_id) = details.get("source_id").and_then(serde_json::Value::as_str) else {
+        return BTreeMap::new();
+    };
+    let repository = details
+        .get("repository")
+        .and_then(serde_json::Value::as_str);
+    let record_ref = details.get("ref").and_then(serde_json::Value::as_str);
+    let resolved = registry.evidence_links(
+        provider,
+        source_id,
+        &row.record_kind,
+        repository,
+        record_ref,
+    );
+    let mut links = BTreeMap::new();
+    if values.get("repository").is_some_and(visible_value)
+        && let Some(href) = resolved.repository
+    {
+        links.insert("repository".to_owned(), href);
+    }
+    if let Some(href) = resolved.record {
+        for key in ["ref", "title"] {
+            if values.get(key).is_some_and(visible_value) {
+                links.insert(key.to_owned(), href.clone());
+            }
+        }
+    }
+    links
 }
 
 fn presentation_dimensions(
@@ -284,6 +347,7 @@ fn humanize_field_name(key: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::config::{ExternalSourceConfig, ExternalSourceProvider};
     use crate::domain::metric_definitions::EvidencePresentation;
     use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
     use crate::domain::metric_drilldown::cursor::decode_cursor;
@@ -518,8 +582,12 @@ mod tests {
     #[test]
     fn response_pages_with_snapshot_bound_cursor() {
         let request = validated(commit_plan());
-        let response = build_response(&request, vec![row(), row()])
-            .unwrap_or_else(|error| panic!("response must build: {error}"));
+        let response = build_response(
+            &request,
+            vec![row(), row()],
+            &ExternalSourceRegistry::default(),
+        )
+        .unwrap_or_else(|error| panic!("response must build: {error}"));
         let cursor = response
             .next_cursor
             .unwrap_or_else(|| panic!("response must include a next cursor"));
@@ -529,6 +597,64 @@ mod tests {
         assert_eq!(envelope.snapshot_id, "snapshot");
         assert_eq!(envelope.fingerprint, request.fingerprint);
         assert!(decode_cursor("invalid").is_err());
+    }
+
+    #[test]
+    fn response_links_only_visible_columns_from_configured_source() -> anyhow::Result<()> {
+        let request = validated(commit_plan());
+        let mut evidence = row();
+        evidence.dimensions_json = r#"[
+            {"key":"source","value":"github","label":"GitHub"},
+            {"key":"repository","value":"source-a:group/repository","label":"group/repository"}
+        ]"#
+        .to_owned();
+        evidence.details["source_id"] = serde_json::json!("source-a");
+        let registry = ExternalSourceRegistry::new(&[ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let response = build_response(&request, vec![evidence], &registry)?;
+
+        assert_eq!(
+            response.rows[0].links.get("repository").map(String::as_str),
+            Some("https://code.example.test/org/repo")
+        );
+        assert_eq!(
+            response.rows[0].links.get("ref").map(String::as_str),
+            Some("https://code.example.test/org/repo/commit/abc123")
+        );
+        assert_eq!(
+            response.rows[0].links.get("title").map(String::as_str),
+            Some("https://code.example.test/org/repo/commit/abc123")
+        );
+        assert!(!response.rows[0].values.contains_key("source_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn response_does_not_link_empty_record_cells() -> anyhow::Result<()> {
+        let request = validated(commit_plan());
+        let mut evidence = row();
+        evidence.dimensions_json = r#"[
+            {"key":"source","value":"github","label":"GitHub"},
+            {"key":"repository","value":"source-a:group/repository","label":"group/repository"}
+        ]"#
+        .to_owned();
+        evidence.details["source_id"] = serde_json::json!("source-a");
+        evidence.details["title"] = serde_json::json!("");
+        let registry = ExternalSourceRegistry::new(&[ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let response = build_response(&request, vec![evidence], &registry)?;
+
+        assert!(response.rows[0].links.contains_key("ref"));
+        assert!(!response.rows[0].links.contains_key("title"));
+        Ok(())
     }
 
     #[test]

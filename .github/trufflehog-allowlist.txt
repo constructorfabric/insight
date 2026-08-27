@@ -6,6 +6,8 @@
 96923d309cc0326b  Atlassian          docs/connectors/support/jsm.md  # example account id quoted from vendor documentation
 b92efd223e8930c0  CloudflareApiToken STORAGE_TECHNOLOGY_EVALUATION.md  # prose fragment in a document
 cf6ede857587d567  Gitlab             .github/workflows/ghcr-cleanup.yml  # GHCR image name, not a token
+c33b583e8c9da202  Gitlab             src/backend/services/analytics/src/domain/external_links.rs  # external source provider type, not a token
+ef9a241f59d1ac1e  Gitlab             src/backend/services/analytics/src/domain/external_links.rs  # external source provider identifier, not a token
 1c236cb81bf7da61  Gitlab             docs/CONNECTORS_REFERENCE.md  # code identifier / constant name
 bd0c5f545b463920  Gitlab             docs/components/deployment/gitops/SPEC.md  # code identifier / constant name
 bd093b6d7b23051a  Gitlab             docs/components/deployment/specs/PRD.md  # code identifier / constant name

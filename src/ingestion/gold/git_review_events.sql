@@ -23,6 +23,7 @@ WITH review_person_map AS (
 
 SELECT
     events.tenant_id AS tenant_id,
+    events.source_id AS source_id,
     events.event_kind AS event_kind,
     events.unique_key AS event_key,
     events.pr_id AS pr_id,
@@ -65,6 +66,7 @@ SELECT
             tuple('destination_branch', destination_branch_value, destination_branch_label),
             tuple('repository', repository_value, repository_label),
             tuple('project', project_value, project_label),
+            tuple('source_id', coalesce(toString(events.source_id), ''), coalesce(toString(events.source_id), '')),
             tuple('source', source_value, source_label)
         ]
     ) AS Array(Tuple(key String, value String, label Nullable(String)))) AS source_dimensions

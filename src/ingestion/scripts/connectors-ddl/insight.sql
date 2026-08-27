@@ -351,6 +351,7 @@ SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 CREATE TABLE IF NOT EXISTS insight.git_review_events
 (
     `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
     `event_kind` String,
     `event_key` Nullable(String),
     `pr_id` Int64,

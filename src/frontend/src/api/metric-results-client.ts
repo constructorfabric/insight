@@ -87,6 +87,7 @@ export interface MetricDimension {
   key: string;
   value: string;
   label?: string;
+  href?: string;
 }
 
 export type MetricResult =

@@ -36,6 +36,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::GearConfig;
 use crate::domain::ai::dto as ai_dto;
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
@@ -52,6 +53,7 @@ pub struct AppState {
     /// Caps explain calls in flight in this process.
     pub ai_calls: Arc<Semaphore>,
     pub config: GearConfig,
+    pub external_links: ExternalSourceRegistry,
 }
 
 pub(crate) fn forwarded_authorization(headers: &axum::http::HeaderMap) -> Option<&str> {

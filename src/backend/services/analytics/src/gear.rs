@@ -18,6 +18,7 @@ use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx, RestApiCapability};
 
 use crate::config::GearConfig;
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::{api, infra};
 
 /// Analytics API gear. Capabilities: `rest` only (the background validator and
@@ -45,6 +46,7 @@ impl Default for AnalyticsApiGear {
 impl Gear for AnalyticsApiGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: GearConfig = ctx.config()?;
+        let external_links = ExternalSourceRegistry::new(&cfg.external_sources)?;
         tracing::info!("starting analytics gear");
 
         // Connect to MariaDB (self-managed pool — LOCKED DECISION).
@@ -102,6 +104,7 @@ impl Gear for AnalyticsApiGear {
             anthropic,
             ai_calls,
             config: cfg,
+            external_links,
         };
 
         self.state
@@ -220,6 +223,7 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
              APP__gears__analytics__config__clickhouse_url)"
         );
     }
+    ExternalSourceRegistry::new(&cfg.external_sources)?;
     if cfg.ai_assist.enabled {
         if cfg.ai_assist.max_concurrent == 0 {
             anyhow::bail!(
@@ -274,6 +278,21 @@ mod tests {
             "clickhouse_url": "http://h:8123",
         }));
         assert!(check_config(&c).is_ok());
+    }
+
+    #[test]
+    fn check_config_errs_on_invalid_external_source_url() {
+        let c = cfg(json!({
+            "database_url": "mysql://h:3306/db",
+            "clickhouse_url": "http://h:8123",
+            "external_sources": [{
+                "id": "source-a",
+                "provider": "github",
+                "web_base_url": "https://code.example.test#fragment"
+            }]
+        }));
+
+        assert!(check_config(&c).is_err());
     }
 
     #[test]

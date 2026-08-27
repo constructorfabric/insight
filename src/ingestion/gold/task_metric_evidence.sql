@@ -309,7 +309,11 @@ SELECT
     toNullable(contribution) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     type_dimensions AS dimensions,
-    map('ref', id_readable, 'title', ifNull(title, '')) AS details
+    map(
+        'source_id', toString(insight_source_id),
+        'ref', id_readable,
+        'title', ifNull(title, '')
+    ) AS details
 FROM issue_item_evidence
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
@@ -333,7 +337,11 @@ SELECT
     toNullable(toFloat64(duration_measure.2)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
     type_dimensions AS dimensions,
-    map('ref', id_readable, 'title', ifNull(title, '')) AS details
+    map(
+        'source_id', toString(insight_source_id),
+        'ref', id_readable,
+        'title', ifNull(title, '')
+    ) AS details
 FROM issue_facts
 ARRAY JOIN arrayConcat(
     if(ifNull(dev_seconds, 0) > 0, [tuple('dev_time_hours', toFloat64(dev_seconds / 3600.0))], []),
