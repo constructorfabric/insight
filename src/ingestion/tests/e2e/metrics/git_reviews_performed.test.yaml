@@ -1,0 +1,111 @@
+spec_version: 1
+description: >
+  Metric: git.reviews_performed — Reviews performed (sum).
+  How it's computed (bronze → silver → gold):
+    • bronze: pull_request_reviews rows carry only the reviewer's numeric
+      account id; commit_authors rows supply the (account, e-mail) pairs
+      github__account_emails resolves that id through
+    • silver: class_git_pr_review_events keeps one 'review' event per verdict,
+      stamped with the resolved actor_email
+    • gold:   one review_submitted evidence row per event, attributed to the
+      ACTOR (the reviewer), dated by submission; an event whose account maps
+      to no e-mail emits nothing
+
+  alice authors both pull requests and reviews nothing → null, out of the
+  pool. carol submits two verdicts (one per request, on different days —
+  the timeseries proves dating by submission), bob/dave/erin/heidi one each.
+  A verdict from an account with no e-mail pair (author_id 999) must vanish
+  rather than surface under an empty identity.
+  Team (median/range = the person's department): per-person values
+  carol 2, bob 1, dave 1, erin 1, heidi 1 → median 1, range [1, 2], n 5.
+  Cases: carol across views, alice honest absence, empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+    - $ref: templates/people.yaml#/templates/heidi
+  bronze_github.pull_requests:
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-1, id: 1, number: 1, title: Add parser, author_login: alice, closed_at: "2026-10-01T12:00:00Z", merged_at: "2026-10-01T12:00:00Z", merge_commit_sha: merge-1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-2, id: 2, number: 2, title: Fix lexer, author_login: alice, closed_at: "2026-10-02T12:00:00Z", merged_at: "2026-10-02T12:00:00Z", merge_commit_sha: merge-2}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here — it makes the
+    # PR author (alice) resolvable for the drilldown details.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-1, pull_number: 1, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-2, pull_number: 2, additions: 10, author_email: alice@example.com}
+  # The (account, e-mail) pairs the reviewer ids resolve through. No pair for
+  # account 999 — its verdict must emit nothing.
+  bronze_github.commit_authors:
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-301, author_id: 301, author_login: carol, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-302, author_id: 302, author_login: bob, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-303, author_id: 303, author_login: dave, author_email: dave@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-304, author_id: 304, author_login: erin, author_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/commit_author, unique_key: acct-305, author_id: 305, author_login: heidi, author_email: heidi@example.com}
+  bronze_github.pull_request_reviews:
+    # carol's two verdicts land on different days: the metric dates by
+    # submission, not by anything on the request.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-c1, id: 501, pull_number: 1, author_login: carol, author_id: 301, submitted_at: "2026-10-01T10:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-c2, id: 502, pull_number: 2, author_login: carol, author_id: 301, submitted_at: "2026-10-02T09:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-b1, id: 503, pull_number: 1, author_login: bob, author_id: 302, submitted_at: "2026-10-01T11:00:00Z", state: CHANGES_REQUESTED}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-d1, id: 504, pull_number: 1, author_login: dave, author_id: 303, submitted_at: "2026-10-01T12:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-e1, id: 505, pull_number: 2, author_login: erin, author_id: 304, submitted_at: "2026-10-01T13:00:00Z"}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-h1, id: 506, pull_number: 2, author_login: heidi, author_id: 305, submitted_at: "2026-10-01T14:00:00Z"}
+    # An account no e-mail pair names: the verdict must not surface anywhere.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request_review, unique_key: rev-x1, id: 507, pull_number: 1, author_login: stranger, author_id: 999, submitted_at: "2026-10-01T15:00:00Z"}
+
+cases:
+  - name: Reviews performed count per reviewer, dated by submission
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [carol@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.reviews_performed
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.reviews_performed, view: period, find: {entity_id: carol@example.com}, equal: {value: 2}}
+      # The account-999 verdict maps to no e-mail and joins no pool: n stays 5.
+      - {metric: git.reviews_performed, view: peer, find: {entity_id: carol@example.com}, equal: {target_value: 2, p25: 1, median: 1, p75: 1, min: 1, max: 2, n: 5}}
+      - {metric: git.reviews_performed, view: timeseries, find: {entity_id: carol@example.com}, contains: {points: {bucket_start: "2026-10-01", value: 1}}}
+      - {metric: git.reviews_performed, view: timeseries, find: {entity_id: carol@example.com}, contains: {points: {bucket_start: "2026-10-02", value: 1}}}
+      - {metric: git.reviews_performed, view: breakdown, find: {entity_id: carol@example.com, dimensions: {key: source, value: github}}, equal: {value: 2}}
+
+  - name: Authoring pull requests is not reviewing them
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.reviews_performed
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.reviews_performed, view: period, find: {entity_id: alice@example.com}, equal: {value: null}}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [carol@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - metric_key: git.reviews_performed
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.reviews_performed, view: period, find: {entity_id: carol@example.com}, equal: {value: null}}

@@ -180,19 +180,26 @@ export function buildMetricResultsResponse(
         }
         case "breakdown": {
           // One row per combination the caller asked for, keyed by the
-          // requested dimension rather than by a fixed one.
+          // requested dimension rather than by a fixed one. Every key draws
+          // from its OWN vocabulary: a composition splitting repositories by
+          // branch scope would otherwise label its segments with repository
+          // names, which reads as a broken screen rather than as a mock.
           const axis = view.dimensions[0] ?? "tool";
           return {
             view: "breakdown",
             dimensions: view.dimensions,
             values: ids.flatMap((entityId) =>
-              mockDimensionValues(axis).map((dimension) => ({
+              mockDimensionValues(axis).map((dimension, index) => ({
                 entity_id: entityId,
-                dimensions: view.dimensions.map((dimensionKey) => ({
-                  key: dimensionKey,
-                  value: dimension.value,
-                  label: dimension.label,
-                })),
+                dimensions: view.dimensions.map((dimensionKey, keyIndex) => {
+                  const values = mockDimensionValues(dimensionKey);
+                  const pick = values[(index + keyIndex) % values.length] ?? dimension;
+                  return {
+                    key: dimensionKey,
+                    value: pick.value,
+                    label: pick.label,
+                  };
+                }),
                 value: valueFor(entityId, key, dimension.value),
               })),
             ),

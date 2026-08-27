@@ -452,6 +452,14 @@ this file and the registry disagree.
 - Shape: integer, lower_is_better, unit lines
 - Notes: Median diff size of authored pull requests (lines added plus removed). Smaller requests are easier to review. Sources that do not report line counts contribute no values.
 
+## git.pr_commits — Commits per PR
+
+- Source: git (git_metric_observations)
+- Reads: pr_commit_count
+- Formula: median(pr_commit_count)
+- Shape: decimal, neutral, unit commits
+- Notes: Median count of commits linked to authored pull requests, over requests merged in the period. A merged request whose commits the source does not link contributes no value.
+
 ## git.pr_cycle_time_h — PR cycle time
 
 - Source: git (git_metric_observations)
@@ -460,6 +468,14 @@ this file and the registry disagree.
 - Shape: decimal, lower_is_better, unit h
 - Notes: Median hours from opening a pull request to merging it, over requests merged in the period.
 
+## git.pr_cycle_time_p75_h — PR cycle time (p75)
+
+- Source: git (git_metric_observations)
+- Reads: pr_cycle_hours
+- Formula: p75(pr_cycle_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: 75th percentile of hours from opening a pull request to merging it, over requests merged in the period.
+
 ## git.first_review_time_h — Time to first review
 
 - Source: git (git_metric_observations)
@@ -467,6 +483,14 @@ this file and the registry disagree.
 - Formula: median(pr_first_review_hours)
 - Shape: decimal, lower_is_better, unit h
 - Notes: Median hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+
+## git.first_review_time_p75_h — Time to first review (p75)
+
+- Source: git (git_metric_observations)
+- Reads: pr_first_review_hours
+- Formula: p75(pr_first_review_hours)
+- Shape: decimal, lower_is_better, unit h
+- Notes: 75th percentile of hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
 
 ## git.review_wait_share — Review wait share
 
@@ -491,6 +515,22 @@ this file and the registry disagree.
 - Formula: median(pr_approval_to_merge_hours)
 - Shape: decimal, lower_is_better, unit h
 - Notes: Median hours from the latest reported approval with a timestamp to merge, over merged pull requests in the period. Sources that expose approvals without per-approval timestamps contribute no value. High values can identify delay after review gates clear.
+
+## git.reviews_performed — Reviews performed
+
+- Source: git (git_metric_observations)
+- Reads: review_submitted
+- Formula: sum(review_submitted)
+- Shape: integer, higher_is_better, unit reviews
+- Notes: Review verdicts the person submitted on any pull request, dated by submission. This is the reviewer's side of review coverage — it counts the reviews a person performed, not the reviews their own requests received.
+
+## git.pr_comments — PR comments
+
+- Source: git (git_metric_observations)
+- Reads: pr_comment
+- Formula: sum(pr_comment)
+- Shape: integer, neutral, unit comments
+- Notes: Comments the person wrote on pull requests — conversation and inline review comments alike — dated by posting. The comment target dimension splits comments on the person's own requests from comments on other people's; a comment whose request author cannot be determined counts under others, so the two halves always add up to the total.
 
 ## collab.messages_sent — Messages Sent
 

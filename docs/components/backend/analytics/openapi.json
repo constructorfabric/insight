@@ -697,20 +697,29 @@
         "type": "object"
       },
       "HistogramValueDto": {
+        "description": "One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,\nevery requested entity listed. Pooled shape (dimensioned request):\n`dimensions` set, `entity_id` absent, one row per observed dimension tuple\nover all selected entities' events — no entity grain, like rollup.",
         "properties": {
           "bins": {
-            "description": "Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.",
+            "description": "Empty when a listed entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.",
             "items": {
               "$ref": "#/components/schemas/HistogramBinDto"
             },
             "type": "array"
           },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDimensionDto"
+            },
+            "type": "array"
+          },
           "entity_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "entity_id",
           "bins"
         ],
         "type": "object"
@@ -1644,6 +1653,13 @@
           },
           {
             "properties": {
+              "dimensions": {
+                "description": "Present only for the pooled (dimensioned) shape; absent for the\nper-entity shape, keeping that wire form unchanged.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "values": {
                 "items": {
                   "$ref": "#/components/schemas/HistogramValueDto"
@@ -2061,6 +2077,12 @@
           },
           {
             "properties": {
+              "dimensions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "view": {
                 "enum": [
                   "histogram"

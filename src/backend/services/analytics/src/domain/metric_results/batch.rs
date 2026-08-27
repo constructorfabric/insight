@@ -10,7 +10,8 @@ use crate::domain::metric_definitions::MetricDefinition;
 use super::compiler::{
     CompiledQuery, PeerQueryRow, PeriodQueryRow, compile_breakdown_query,
     compile_group_ranking_query, compile_histogram_query, compile_peer_batch_query,
-    compile_period_batch_query, compile_rollup_query, compile_timeseries_query,
+    compile_period_batch_query, compile_pooled_histogram_query, compile_rollup_query,
+    compile_timeseries_query,
 };
 use super::failure::ViewFailure;
 use super::validation::{
@@ -47,6 +48,11 @@ pub enum UnbatchedView {
     // Histogram bins one entity's own per-event values; it never batches with
     // other metrics (per-entity bin membership is metric-specific).
     Histogram,
+    // The pooled shape bins the same values per dimension tuple instead, with
+    // no entity grain — same reason it cannot batch.
+    PooledHistogram {
+        dimensions: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +162,37 @@ pub fn plan_rankings(req: &ValidatedMetricResultsRequest) -> Vec<PlannedRanking>
         .collect()
 }
 
+/// Both histogram shapes are single (never batched) queries; which one is
+/// planned is decided by whether the request asked to bin per dimension tuple
+/// instead of per entity.
+fn plan_histogram(
+    req: &ValidatedMetricResultsRequest,
+    metric: &ValidatedMetricRequest,
+    (metric_index, view_index): (usize, usize),
+    dimensions: &[String],
+) -> PlannedQuery {
+    let (view, query) = if dimensions.is_empty() {
+        (
+            UnbatchedView::Histogram,
+            compile_histogram_query(&metric.def, req, &metric.filters),
+        )
+    } else {
+        (
+            UnbatchedView::PooledHistogram {
+                dimensions: dimensions.to_vec(),
+            },
+            compile_pooled_histogram_query(&metric.def, req, dimensions, &metric.filters),
+        )
+    };
+    PlannedQuery::Single {
+        metric_index,
+        view_index,
+        def: Box::new(metric.def.clone()),
+        view,
+        query,
+    }
+}
+
 pub fn plan_queries(
     req: &ValidatedMetricResultsRequest,
     rankings: &RankingResults,
@@ -228,14 +265,13 @@ pub fn plan_queries(
                         view,
                     )?);
                 }
-                ValidatedMetricView::Histogram => {
-                    singles.push(PlannedQuery::Single {
-                        metric_index,
-                        view_index,
-                        def: Box::new(metric.def.clone()),
-                        view: UnbatchedView::Histogram,
-                        query: compile_histogram_query(&metric.def, req, &metric.filters),
-                    });
+                ValidatedMetricView::Histogram { dimensions } => {
+                    singles.push(plan_histogram(
+                        req,
+                        metric,
+                        (metric_index, view_index),
+                        dimensions,
+                    ));
                 }
             }
         }

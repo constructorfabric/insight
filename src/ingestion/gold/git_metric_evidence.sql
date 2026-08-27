@@ -156,6 +156,7 @@ authored_commits AS (
         commits.repository_label AS repository_label,
         commits.source_value AS source_value,
         commits.branch_scope_value AS branch_scope_value,
+        commits.branch_scope_label AS branch_scope_label,
         commits.source_dimensions AS source_dimensions,
         -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
         -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
@@ -303,6 +304,19 @@ pr_commit_emails AS (
     WHERE email_count = max_count
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
+-- uniqExact, not count(): the link table is append-only per sync, so the same
+-- link row can arrive more than once and the count must not inflate.
+pr_commit_counts AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        pr_id,
+        uniqExact(commit_hash) AS linked_commit_count
+    FROM {{ ref('class_git_pull_requests_commits') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+),
 pull_request_review_summary AS (
     SELECT
         tenant_id,
@@ -347,6 +361,7 @@ pull_requests_source AS (
         prs.state AS state,
         prs.created_on AS created_on,
         prs.closed_on AS closed_on,
+        coalesce(pr_commit_counts.linked_commit_count, 0) AS linked_commit_count,
         coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
         coalesce(review_summary.has_approval, 0) AS has_approval,
         review_summary.first_reviewed_at AS first_reviewed_at,
@@ -414,6 +429,12 @@ pull_requests_source AS (
             AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS source_dimensions
     FROM {{ ref('class_git_pull_requests') }} AS prs FINAL
+    LEFT JOIN pr_commit_counts
+        ON pr_commit_counts.tenant_id = prs.tenant_id
+        AND pr_commit_counts.source_id = prs.source_id
+        AND pr_commit_counts.project_key = prs.project_key
+        AND pr_commit_counts.repo_slug = prs.repo_slug
+        AND pr_commit_counts.pr_id = prs.pr_id
     LEFT JOIN pr_commit_emails
         ON pr_commit_emails.tenant_id = prs.tenant_id
         AND pr_commit_emails.source_id = prs.source_id
@@ -432,6 +453,10 @@ pull_requests_source AS (
         AND defaults.project_key = prs.project_key
         AND defaults.repo_slug = prs.repo_slug
 ),
+-- The reviewer/commenter perspective: one row per review verdict or comment,
+-- attributed to the ACTOR, not the pull request author. The request is joined
+-- for display fields, its destination branch, and the comment_target split;
+-- an event whose request the source has not reported still counts.
 pull_request_measures AS (
     SELECT
         tenant_id,
@@ -453,6 +478,8 @@ pull_request_measures AS (
         pr_measure.2 AS contribution,
         repository_label,
         repository_value,
+        branch_scope_label,
+        destination_branch_label,
         source_dimensions
     FROM pull_requests_source AS pull_request
     ARRAY JOIN CAST(arrayConcat(
@@ -524,6 +551,14 @@ pull_request_measures AS (
                 toFloat64(1),
                 toDateTime64(assumeNotNull(closed_on), 3)
             )],
+            []
+        ),
+        -- No linked commit rows means the source did not report the request's
+        -- commits, not that it merged empty — such a request contributes no
+        -- value rather than a zero.
+        if(
+            state = 'MERGED' AND closed_on IS NOT NULL AND linked_commit_count > 0,
+            [tuple('pr_commit_count', toFloat64(linked_commit_count), toDateTime64(assumeNotNull(closed_on), 3))],
             []
         ),
         if(
@@ -729,6 +764,7 @@ SELECT
         'title', message,
         'repository', repository_label,
         'author', author_name,
+        'branch_scope', branch_scope_label,
         'lines_added', coalesce(toString(lines_added), ''),
         'lines_removed', coalesce(toString(lines_removed), '')
     ) AS details
@@ -774,11 +810,53 @@ SELECT
         'ref', toString(pr_number),
         'title', title,
         'repository', repository_label,
-        'author', author_name
+        'author', author_name,
+        'branch_scope', branch_scope_label,
+        'destination_branch', destination_branch_label
     ) AS details
 FROM pull_request_measures
 WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
+  AND metric_date IS NOT NULL
+
+UNION ALL
+
+SELECT
+    assumeNotNull(tenant_id) AS tenant_id,
+    'git' AS source_key,
+    'person' AS entity_type,
+    assumeNotNull(entity_id) AS entity_id,
+    -- Email-only resolution, like every branch except pull requests: the
+    -- account path is the PR rows' own rule, and `comment_target` compares
+    -- actor to author through the email map, so resolving the entity another
+    -- way could classify a comment against a person the row does not name.
+    -- The actor's account id is carried in silver for a later, deliberate
+    -- widening of that rule.
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
+    assumeNotNull(metric_date) AS metric_date,
+    toNullable(toDateTime64(observed_at, 3)) AS observed_at,
+    if(event_kind = 'review', 'review_submitted', 'pr_comment') AS measure_key,
+    -- The silver event key disambiguates several events by one person on one
+    -- request; per-PR keying would collapse them into one record.
+    concat(repository_value, ':pr:', toString(pr_id), ':', measure_key, ':', coalesce(event_key, '')) AS record_id,
+    'pull_request' AS record_kind,
+    'event' AS granularity,
+    if(title = '', concat('PR #', toString(pr_number)), title) AS record_label,
+    toNullable(toFloat64(1)) AS contribution,
+    CAST(NULL AS Nullable(String)) AS subject_key,
+    source_dimensions AS dimensions,
+    map(
+        'source_id', coalesce(toString(source_id), ''),
+        'ref', toString(pr_number),
+        'title', title,
+        'repository', repository_label,
+        'author', author_name,
+        'destination_branch', destination_branch_label
+    ) AS details
+FROM {{ ref('git_review_events') }}
+WHERE tenant_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
 {{ resolved_person_id_join('src') }}

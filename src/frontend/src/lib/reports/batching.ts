@@ -12,6 +12,19 @@ export const MAX_METRICS_PER_REQUEST = 50;
  */
 export const MAX_VALUES_PER_REQUEST = 4500;
 
+/**
+ * How many dimension groups one entity is budgeted for when the request asks
+ * for a grouped series.
+ *
+ * A guess, and only a guess: how many repositories a person touched is data,
+ * unknowable before asking. It decides how many round trips the ordinary case
+ * takes, nothing more. The bound that HOLDS is the server's row limit, which
+ * `runReport` enforces by halving a batch the service refused and asking
+ * again — so a person busier than this number costs an extra request rather
+ * than a failed report.
+ */
+export const ASSUMED_GROUPS_PER_ENTITY = 8;
+
 export interface RequestBatch {
   metricKeys: string[];
   entityIds: string[];
@@ -33,11 +46,15 @@ export function planRequests(
   metricKeys: readonly string[],
   entityIds: readonly string[],
   bucketCount: number,
+  groupsPerEntity = 1,
 ): RequestBatch[] {
   if (metricKeys.length === 0 || entityIds.length === 0) return [];
   const metricBatches = chunk([...metricKeys], MAX_METRICS_PER_REQUEST);
   return metricBatches.flatMap((keys) => {
-    const perEntity = Math.max(1, keys.length * (bucketCount + 1));
+    const perEntity = Math.max(
+      1,
+      keys.length * (bucketCount + 1) * Math.max(1, groupsPerEntity),
+    );
     const entitiesPerRequest = Math.max(
       1,
       Math.floor(MAX_VALUES_PER_REQUEST / perEntity),

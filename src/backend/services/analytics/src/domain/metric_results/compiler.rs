@@ -106,6 +106,21 @@ pub struct HistogramQueryRow {
     pub bin_count: Option<u64>,
 }
 
+/// One observed (dimension tuple, bin) pair plus the tuple's exact value
+/// bounds, pooled over all selected entities' events — the dimensioned
+/// counterpart of [`HistogramQueryRow`], with the dimension value/label
+/// aliases arriving through `extra` like every dimensioned row shape.
+#[derive(Debug, Deserialize)]
+pub struct PooledHistogramQueryRow {
+    pub bin_idx: u32,
+    pub group_lo: f64,
+    pub group_hi: f64,
+    #[serde(default, deserialize_with = "optional_u64")]
+    pub bin_count: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
 pub(crate) fn compile_period_batch_query(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
@@ -597,7 +612,8 @@ fn grouped_value_expr(def: &MetricDefinition) -> String {
 // dependent). `least(max_bin, …)` closes the last bin at the maximum; a
 // degenerate range (all values identical) maps everything to bin 0, which
 // the builder renders as one [v, v] bin. Validation guarantees the metric is
-// a median (single-measure predicate), so metric_where/metric_params fit.
+// a median or percentile (single-measure predicate), so
+// metric_where/metric_params fit.
 pub(crate) fn compile_histogram_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
@@ -645,6 +661,68 @@ pub(crate) fn compile_histogram_query(
         FROM events
         GROUP BY entity_id, bin_idx
         ORDER BY entity_id, bin_idx
+        LIMIT {limit}
+        ",
+        metric_where = metric_where(def, req.enforce_tenant_scope),
+        event_value = transformed(def, "value".to_owned()),
+    );
+    CompiledQuery { sql, params }
+}
+
+// The pooled counterpart of `compile_histogram_query`: same deterministic
+// fixed-width binning, but the partition (and the [min, max] bounds) is the
+// dimension tuple instead of the entity — all selected entities' events pool
+// into one distribution per tuple, mirroring how rollup drops the entity
+// grain. Grouping by (value, label) alias pairs matches the breakdown /
+// timeseries dimension shape. Group cardinality is unbounded like an
+// uncapped rollup's, so the query carries the same row limit.
+pub(crate) fn compile_pooled_histogram_query(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    dimensions: &[String],
+    filters: &[ValidatedDimensionFilter],
+) -> CompiledQuery {
+    let mut params = metric_params(def, req);
+    let filter_where = dimension_filter_where(filters, &mut params);
+    let entity_predicate = selected_entity_predicate(req, &mut params);
+    let observation_table = observation_table(def.observation_source());
+    let (dim_select, dim_group) = dimension_select_group(dimensions);
+    let bins = HISTOGRAM_BINS;
+    let max_bin = HISTOGRAM_BINS - 1;
+    let limit = query_row_limit();
+    let sql = format!(
+        r"
+        WITH raw_events AS (
+            SELECT
+                assumeNotNull({event_value}) AS event_value{dim_select}
+            FROM {observation_table}
+            WHERE {metric_where}
+              {filter_where}
+              AND {entity_predicate}
+              AND value IS NOT NULL
+        ),
+        events AS (
+            SELECT
+                *,
+                min(event_value) OVER (PARTITION BY {dim_group}) AS group_lo,
+                max(event_value) OVER (PARTITION BY {dim_group}) AS group_hi
+            FROM raw_events
+        )
+        SELECT
+            {dim_group},
+            if(
+                events.group_hi = events.group_lo,
+                0,
+                toUInt32(least({max_bin}, toInt64(floor(
+                    (events.event_value - events.group_lo) * {bins} / (events.group_hi - events.group_lo)
+                ))))
+            ) AS bin_idx,
+            any(events.group_lo) AS group_lo,
+            any(events.group_hi) AS group_hi,
+            toUInt64(count()) AS bin_count
+        FROM events
+        GROUP BY {dim_group}, bin_idx
+        ORDER BY {dim_group}, bin_idx
         LIMIT {limit}
         ",
         metric_where = metric_where(def, req.enforce_tenant_scope),
@@ -1464,6 +1542,17 @@ mod tests {
         }
     }
 
+    fn percentile_metric() -> MetricDefinition {
+        MetricDefinition {
+            transform: None,
+            base: base(vec!["source"]),
+            spec: ComputationSpec::Percentile {
+                value: input(MetricInputRole::Value, "pr_cycle_hours"),
+                q: 0.75,
+            },
+        }
+    }
+
     fn sum_metric() -> MetricDefinition {
         MetricDefinition {
             transform: None,
@@ -2137,16 +2226,21 @@ mod tests {
         // interleaves a median column (2 params) between sum (2) and ratio
         // (4) — the real git batch shape — so a per-computation param/`?`
         // desync surfaces here, not just in single-computation batches.
-        let (sum, median, ratio, distinct) = (
+        let (sum, median, ratio, distinct, percentile) = (
             sum_metric(),
             median_metric(),
             ratio_metric(),
             distinct_count_metric(),
+            percentile_metric(),
         );
         for query in [
-            compile_period_batch_query(&[&sum, &median, &ratio, &distinct], &request(), &[]),
+            compile_period_batch_query(
+                &[&sum, &median, &ratio, &distinct, &percentile],
+                &request(),
+                &[],
+            ),
             compile_peer_batch_query(
-                &[&sum, &median, &ratio, &distinct],
+                &[&sum, &median, &ratio, &distinct, &percentile],
                 &request(),
                 "org_unit",
                 PeerPopulation::DeclaredCohort,
@@ -2197,6 +2291,60 @@ mod tests {
             bd.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
         );
+    }
+
+    #[test]
+    fn percentile_batches_as_a_leveled_quantile_ornull_column() {
+        // A percentile metric is a median at level p/100: same OrNull
+        // honest-null batching, same placeholder/param lockstep.
+        for query in [
+            compile_period_batch_query(&[&percentile_metric()], &request(), &[]),
+            compile_peer_batch_query(
+                &[&percentile_metric()],
+                &request(),
+                "org_unit",
+                PeerPopulation::DeclaredCohort,
+                &[],
+            ),
+        ] {
+            assert!(
+                query.sql.contains(
+                    "quantileExactIfOrNull(0.75)(value, source_key = ? AND measure_key = ?"
+                ),
+                "percentile must batch as an OrNull quantile column at its level"
+            );
+            assert_eq!(query.sql.matches('?').count(), query.params.len());
+        }
+    }
+
+    #[test]
+    fn percentile_single_views_and_histogram_use_the_declared_level() {
+        let ts = compile_timeseries_query(
+            &percentile_metric(),
+            &request(),
+            Bucket::Week,
+            &[],
+            &[],
+            None,
+        );
+        assert!(
+            ts.sql
+                .contains("quantileExactIf(0.75)(value, value IS NOT NULL)")
+        );
+        let bd = compile_breakdown_query(
+            &percentile_metric(),
+            &request(),
+            &["source".to_owned()],
+            &[],
+        );
+        assert!(
+            bd.sql
+                .contains("quantileExactIf(0.75)(value, value IS NOT NULL)")
+        );
+        // Histograms bin raw events, so the level never appears there — the
+        // query must still compile with the single-measure predicate shape.
+        let hist = compile_histogram_query(&percentile_metric(), &request(), &[]);
+        assert_eq!(hist.sql.matches('?').count(), hist.params.len());
     }
 
     #[test]
@@ -2302,6 +2450,42 @@ mod tests {
     }
 
     #[test]
+    fn pooled_histogram_query_bins_per_dimension_tuple_without_entity_grain() {
+        let query = compile_pooled_histogram_query(
+            &percentile_metric(),
+            &request(),
+            &["source".to_owned()],
+            &[],
+        );
+        // Bounds and bins partition/group by the dimension aliases — the
+        // entity only scopes which rows enter the pool.
+        assert!(
+            query
+                .sql
+                .contains("min(event_value) OVER (PARTITION BY dim_0_value, dim_0_label)")
+        );
+        assert!(
+            query
+                .sql
+                .contains("max(event_value) OVER (PARTITION BY dim_0_value, dim_0_label)")
+        );
+        assert!(
+            query
+                .sql
+                .contains("GROUP BY dim_0_value, dim_0_label, bin_idx")
+        );
+        assert!(!query.sql.contains("PARTITION BY entity_id"));
+        assert!(query.sql.contains("entity_id IN (?, ?)"));
+        // Same deterministic fixed-width arithmetic as the per-entity shape.
+        assert!(query.sql.contains("least(9,"));
+        assert!(query.sql.contains("* 10 /"));
+        assert!(!query.sql.contains("histogram("));
+        // Unbounded group cardinality rides the shared row limit.
+        assert!(query.sql.contains(&format!("LIMIT {}", query_row_limit())));
+        assert_eq!(query.sql.matches('?').count(), query.params.len());
+    }
+
+    #[test]
     fn transform_wraps_every_query_shape() {
         let mut def = ratio_metric();
         def.transform = Some(ValueTransform {
@@ -2342,6 +2526,18 @@ mod tests {
             hist.sql
         );
         assert_eq!(hist.sql.matches('?').count(), hist.params.len());
+        // The pooled shape bins the same transformed alias.
+        let pooled =
+            compile_pooled_histogram_query(&median, &request(), &["source".to_owned()], &[]);
+        assert!(
+            pooled
+                .sql
+                .contains("if((value) IS NULL, NULL, least(100.0, value))")
+                && pooled.sql.contains("AS event_value"),
+            "pooled histogram must transform into the event_value alias: {}",
+            pooled.sql
+        );
+        assert_eq!(pooled.sql.matches('?').count(), pooled.params.len());
         let period = compile_period_batch_query(&[&def], &request(), &[]);
         assert!(
             period

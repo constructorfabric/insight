@@ -166,6 +166,25 @@ describe("ReportBuilderView", () => {
     expect(isDisabled("Commits")).toBe(false);
   });
 
+  it("refuses a non-additive metric in repository rows at any grain", async () => {
+    // Per repository every row is people added up, so the additivity question
+    // arrives immediately rather than only at a quarter.
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+    expect(isDisabled("Merge rate")).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "Repositories" }));
+    expect(isDisabled("Merge rate")).toBe(true);
+    expect(screen.getByText("Merge rate").closest("label")).toHaveAttribute(
+      "title",
+      expect.stringMatching(/cannot be totalled per repository/),
+    );
+    expect(isDisabled("Commits")).toBe(false);
+    expect(
+      screen.getByText(/one row per repository per period/),
+    ).toBeInTheDocument();
+  });
+
   it("refuses a grain longer than the period, and says which to pick", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);

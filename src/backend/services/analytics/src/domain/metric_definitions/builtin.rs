@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn registry_declares_the_expected_counts() {
         assert_eq!(builtin_sources().len(), 7, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 100, "builtin metric count");
+        assert_eq!(builtin_metrics().len(), 105, "builtin metric count");
     }
 
     #[test]
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
+    fn a_counted_pull_request_reads_the_request_and_where_it_was_headed() {
         for measure_key in [
             "pr_created",
             "pr_merged",
@@ -339,13 +339,24 @@ mod tests {
             "default_pr_merged",
         ] {
             let presentation = declared_presentation("git", measure_key);
+            // Where the work went is part of the record on every path that
+            // opens the dialog: a column that appeared only for a reader who
+            // arrived through a grouped table left the same request looking
+            // like a different one.
             assert_eq!(
                 presentation
                     .detail_columns
                     .iter()
                     .map(|column| column.key.as_str())
                     .collect::<Vec<_>>(),
-                ["ref", "title", "repository", "author"],
+                [
+                    "ref",
+                    "title",
+                    "repository",
+                    "author",
+                    "branch_scope",
+                    "destination_branch"
+                ],
                 "{measure_key} should read the request it counted"
             );
             // The row IS the request it counted, so a value column would be 1s.
@@ -696,6 +707,33 @@ mod tests {
                 metric.metric_key
             );
         }
+    }
+
+    #[test]
+    fn percentile_metrics_have_single_value_role_and_an_inside_quantile() {
+        let mut seen = 0;
+        for metric in builtin_metrics() {
+            let SeedComputation::Percentile { q } = metric.computation else {
+                continue;
+            };
+            seen += 1;
+            assert!(
+                (0.0..=1.0).contains(&q),
+                "{} declares q={q}, outside [0, 1]",
+                metric.metric_key
+            );
+            assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);
+            assert_eq!(
+                metric.inputs[0].input_role,
+                MetricInputRole::Value,
+                "{}",
+                metric.metric_key
+            );
+        }
+        assert!(
+            seen >= 1,
+            "registry declares at least one percentile metric"
+        );
     }
 
     #[test]

@@ -39,6 +39,10 @@ function columnLayout(column: MetricEvidenceColumn) {
   if (column.key === "type") return { basisRem: 8, grow: 0 };
   if (column.key === "repository") return { basisRem: 12, grow: 0.5 };
   if (column.key === "author") return { basisRem: 10, grow: 0.25 };
+  // A branch name is unbounded (`release/1.4`, `feature/long-description`), so
+  // it grows like a title rather than sitting at the generic basis.
+  if (column.key === "destination_branch") return { basisRem: 11, grow: 1 };
+  if (column.key === "branch_scope") return { basisRem: 9, grow: 0.25 };
   if (column.key === "date") return { basisRem: 8, grow: 0 };
   if (column.type === "number") return { basisRem: 7, grow: 0 };
   return { basisRem: 9, grow: 1 };

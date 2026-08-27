@@ -51,6 +51,7 @@ sources:
             - { key: title, label: Title }
             - { key: repository, label: Repository }
             - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
             - { key: lines_added, label: Lines added, type: number }
             - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
@@ -77,6 +78,8 @@ sources:
             - { key: title, label: Title }
             - { key: repository, label: Repository }
             - { key: author, label: Author }
+            - { key: branch_scope, label: Branch scope }
+            - { key: destination_branch, label: Target branch }
       - key: pr_created_merged
         evidence_granularity: event
         evidence_presentation: *pull_request_counted
@@ -100,6 +103,9 @@ sources:
       - key: pr_merged_without_approval
         evidence_granularity: event
         evidence_presentation: *pull_request_counted
+      - key: pr_commit_count
+        evidence_granularity: event
+        evidence_presentation: *pull_request_measured
       - key: pr_cycle_hours
         evidence_granularity: event
         evidence_presentation: *pull_request_measured
@@ -118,6 +124,21 @@ sources:
       - key: pr_approval_to_merge_hours
         evidence_granularity: event
         evidence_presentation: *pull_request_measured
+      - key: review_submitted
+        evidence_granularity: event
+        # A review is not classified by where the request landed, so these rows
+        # carry the branch they targeted but no branch scope of their own.
+        evidence_presentation: &review_row
+          show_value: false
+          detail_columns:
+            - { key: ref, label: Ref }
+            - { key: title, label: Title }
+            - { key: repository, label: Repository }
+            - { key: author, label: Author }
+            - { key: destination_branch, label: Target branch }
+      - key: pr_comment
+        evidence_granularity: event
+        evidence_presentation: *review_row
       - key: default_commit_count
         evidence_granularity: event
         evidence_presentation: *commit_row
@@ -152,6 +173,7 @@ sources:
       - branch_scope
       - category
       - change_type
+      - comment_target
       - destination_branch
       - file_extension
       - project
@@ -1660,6 +1682,30 @@ metrics:
       - project
       - repository
       - source
+  - metric_key: git.pr_commits
+    source_key: git
+    subject: pull_requests
+    tags:
+      - distribution
+    label: Commits per PR
+    short_label: Commits/PR
+    description: Typical number of commits per merged pull request
+    explanation: Median count of commits linked to authored pull requests, over requests merged in the period. A merged request whose commits the source does not link contributes no value.
+    unit: commits
+    format: decimal
+    direction: neutral
+    entity_type: person
+    computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_commit_count
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
   - metric_key: git.pr_cycle_time_h
     source_key: git
     subject: pull_requests
@@ -1675,6 +1721,32 @@ metrics:
     direction: lower_is_better
     entity_type: person
     computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_cycle_hours
+    dimensions:
+      - branch_scope
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_cycle_time_p75_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+    label: PR cycle time (p75)
+    short_label: Cycle p75
+    description: Slow-end hours from open to merge
+    explanation: 75th percentile of hours from opening a pull request to merging it, over requests merged in the period.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: !percentile
+      q: 0.75
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
@@ -1701,6 +1773,32 @@ metrics:
     direction: lower_is_better
     entity_type: person
     computation: median
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_first_review_hours
+    dimensions:
+      - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.first_review_time_p75_h
+    source_key: git
+    subject: pull_requests
+    tags:
+      - duration
+      - distribution
+      - review
+    label: Time to first review (p75)
+    short_label: First review p75
+    description: Slow-end hours from pull request creation to first review
+    explanation: 75th percentile of hours from opening a pull request to its first submitted review, over first reviews recorded in the period. Pull requests without a review and sources without review timestamps contribute no duration.
+    unit: h
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    computation: !percentile
+      q: 0.75
     peer_cohort_key: org_unit
     inputs:
       - input_role: value
@@ -1781,6 +1879,51 @@ metrics:
         measure_key: pr_approval_to_merge_hours
     dimensions:
       - destination_branch
+      - project
+      - repository
+      - source
+  - metric_key: git.reviews_performed
+    source_key: git
+    subject: pull_requests
+    tags:
+      - review
+    label: Reviews performed
+    short_label: Reviews
+    description: Review verdicts submitted on pull requests
+    explanation: Review verdicts the person submitted on any pull request, dated by submission. This is the reviewer's side of review coverage — it counts the reviews a person performed, not the reviews their own requests received.
+    unit: reviews
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: review_submitted
+    dimensions:
+      - project
+      - repository
+      - source
+  - metric_key: git.pr_comments
+    source_key: git
+    subject: pull_requests
+    tags:
+      - review
+    label: PR comments
+    short_label: PR comments
+    description: Comments written on pull requests
+    explanation: Comments the person wrote on pull requests — conversation and inline review comments alike — dated by posting. The comment target dimension splits comments on the person's own requests from comments on other people's; a comment whose request author cannot be determined counts under others, so the two halves always add up to the total.
+    unit: comments
+    format: integer
+    direction: neutral
+    entity_type: person
+    computation: sum
+    peer_cohort_key: org_unit
+    inputs:
+      - input_role: value
+        measure_key: pr_comment
+    dimensions:
+      - comment_target
       - project
       - repository
       - source

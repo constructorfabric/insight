@@ -128,6 +128,7 @@ export interface MedianMetricResult extends MetricResultBase {
 
 export interface PercentileMetricResult extends MetricResultBase {
   computation: "percentile";
+  /** The quantile as a probability, e.g. 0.75 — stored in the definition's scale. */
   q: number;
 }
 
@@ -212,8 +213,12 @@ interface HistogramBin {
 
 export interface HistogramView {
   view: "histogram";
+  /** Set only on the pooled shape — the dimensions the request asked to bin by. */
+  dimensions?: string[];
   values: Array<{
-    entity_id: string;
+    /** Per-entity shape only; a pooled row is keyed by `dimensions` instead. */
+    entity_id?: string;
+    dimensions?: MetricDimension[];
     bins: HistogramBin[];
   }>;
 }

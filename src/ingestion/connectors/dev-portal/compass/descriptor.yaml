@@ -1,0 +1,23 @@
+# Atlassian Compass — service catalog, ownership, scorecards, deployment events.
+#
+# Bronze-only for now: no silver models beyond the bronze→RMT promotion, so
+# `dbt_select` currently resolves to that promotion view alone. Silver class
+# families are sketched in SPEC.md §7 and deliberately deferred.
+name: compass
+type: nocode
+# Strict semver per ADR-0015 — three components, no leading zeros.
+version: "1.0.0"
+# Daily is a floor, not a preference: the Compass event feed is a rolling
+# window with no backfill, so a skipped run loses deployment events for good.
+schedule: "0 2 * * *"
+workflow: sync
+dbt_select: "tag:compass+"
+
+connection:
+  namespace: "bronze_compass"
+
+secret:
+  required_fields:
+    - atlassian_email
+    - atlassian_api_token
+    - atlassian_cloud_id

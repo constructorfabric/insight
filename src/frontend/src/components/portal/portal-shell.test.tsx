@@ -162,9 +162,16 @@ describe("DirectionView", () => {
     expect(screen.getByTestId("domain-lens")).toBeInTheDocument();
   });
 
-  it("renders the roadmap note for a ComingSoon lens", () => {
+  it("routes the Repositories lens to DomainLensView", () => {
     render(<DirectionView dir="dev" lens="Repositories" />);
-    expect(screen.getByTestId("pending").textContent).toMatch(/Repository-level rollups/);
+    expect(screen.getByTestId("domain-lens")).toBeInTheDocument();
+  });
+
+  it("renders the roadmap note for a ComingSoon lens", () => {
+    render(<DirectionView dir="dev" lens="Elements" />);
+    expect(screen.getByTestId("pending").textContent).toMatch(
+      /Element-level \(file\/module\) analytics/,
+    );
   });
 
   it("names the direction in the unknown-lens note", () => {

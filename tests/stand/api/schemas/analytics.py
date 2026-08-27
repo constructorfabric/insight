@@ -208,14 +208,6 @@ class HistogramBinDto(BaseModel):
     lo: float
 
 
-class HistogramValueDto(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    bins: list[HistogramBinDto] = Field(..., description="Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
-    entity_id: str
-
-
 class ImportCustomMetricsResponse(BaseModel):
     """
     `POST /v1/metrics/import` result — counts landed and the `metric_key`s
@@ -507,14 +499,6 @@ class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto6(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    values: list[HistogramValueDto]
-    view: View5
-
-
 class View6(StrEnum):
     error = 'error'
 
@@ -675,6 +659,7 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    dimensions: list[str] | None = None
     view: View12
 
 
@@ -1063,6 +1048,21 @@ class CustomMetricSummary(BaseModel):
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
 
 
+class HistogramValueDto(BaseModel):
+    """
+    One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
+    every requested entity listed. Pooled shape (dimensioned request):
+    `dimensions` set, `entity_id` absent, one row per observed dimension tuple
+    over all selected entities' events — no entity grain, like rollup.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: list[HistogramBinDto] = Field(..., description="Empty when a listed entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
+    dimensions: list[MetricDimensionDto] | None = None
+    entity_id: str | None = None
+
+
 class IngestionIntensityResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1186,6 +1186,15 @@ class MetricResultViewDto5(BaseModel):
     dimensions: list[str]
     values: list[RollupValueDto]
     view: View4
+
+
+class MetricResultViewDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str] | None = Field(None, description='Present only for the pooled (dimensioned) shape; absent for the\nper-entity shape, keeping that wire form unchanged.')
+    values: list[HistogramValueDto]
+    view: View5
 
 
 class MetricResultViewDto7(BaseModel):

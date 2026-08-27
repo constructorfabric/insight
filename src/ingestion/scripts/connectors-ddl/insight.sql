@@ -348,6 +348,42 @@ ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_dat
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_review_events
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `event_kind` String,
+    `event_key` Nullable(String),
+    `pr_id` Int64,
+    `pr_number` Int64,
+    `entity_id` String,
+    `metric_date` Nullable(Date),
+    `observed_at` Nullable(DateTime),
+    `title` String,
+    `author_name` String,
+    `author_email` String,
+    `actor_person_id` String,
+    `author_person_id` String,
+    `comment_target_value` String,
+    `comment_target_label` String,
+    `project_value` String,
+    `project_label` String,
+    `repository_value` String,
+    `repository_label` String,
+    `destination_branch_value` String,
+    `destination_branch_label` String,
+    `source_value` String,
+    `source_label` String,
+    `source_dimensions` Array(Tuple(
+        key String,
+        value String,
+        label Nullable(String)))
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, entity_id, metric_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.identity_resolution_coverage
 (
     `source_key` String,

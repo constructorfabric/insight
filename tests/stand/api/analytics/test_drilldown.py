@@ -521,6 +521,7 @@ def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None
         case (
             Tier.EXACT_SUM
             | Tier.EXACT_MEDIAN
+            | Tier.EXACT_PERCENTILE
             | Tier.EXACT_DISTINCT_DATES
             | Tier.COLLAPSE_BOUNDED_SUM
             | Tier.STRUCTURAL_ONLY
@@ -543,6 +544,25 @@ def _assert_median(period: float | None, values: Sequence[float], metric_key: st
     assert period in middle, (
         f"{metric_key}: period {period} is neither middle value of {len(ordered)} "
         f"evidence rows {sorted(middle)}"
+    )
+
+
+def _assert_percentile(
+    period: float | None, values: Sequence[float], quantile: float, metric_key: str
+) -> None:
+    """`quantileExact(p)` returns a stored element, so this is an identity too.
+
+    The element sits at index `floor(p x n)` of the sorted values. Its
+    neighbour below is accepted as well, for the same reason `_assert_median`
+    accepts both middle values: which side of a tie the server takes is its own
+    rule, and pinning it here would test ClickHouse rather than the evidence.
+    """
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(quantile * len(ordered)))
+    candidates = {ordered[max(0, index - 1)], ordered[index]}
+    assert period in candidates, (
+        f"{metric_key}: period {period} is not the p{quantile:.0%} element of "
+        f"{len(ordered)} evidence rows, nor its neighbour {sorted(candidates)}"
     )
 
 
@@ -606,6 +626,16 @@ def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> N
             )
         case Tier.EXACT_MEDIAN:
             _assert_median(period, _numbers(walk.rows, "value", metric_key), metric_key)
+        case Tier.EXACT_PERCENTILE:
+            assert expectation.quantile is not None, (
+                f"{metric_key}: an EXACT_PERCENTILE expectation carries no quantile"
+            )
+            _assert_percentile(
+                period,
+                _numbers(walk.rows, "value", metric_key),
+                expectation.quantile,
+                metric_key,
+            )
         case Tier.DERIVED_MEDIAN:
             parts = [_numbers(walk.rows, column, metric_key) for column in expectation.derived_from]
             _assert_median(period, [sum(row) for row in zip(*parts, strict=True)], metric_key)

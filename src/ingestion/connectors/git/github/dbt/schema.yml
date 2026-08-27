@@ -72,6 +72,9 @@ models:
   - name: github__pull_requests_commits
     description: "GitHub PR commits -> staging, feeds class_git_pull_requests_commits"
 
+  - name: github__pr_review_events
+    description: "GitHub review verdicts and PR comments as one event stream -> staging, feeds class_git_pr_review_events"
+
   - name: github__account_emails
     description: "Every (GitHub account, e-mail) pair the connector observed, one row per pair"
     columns:

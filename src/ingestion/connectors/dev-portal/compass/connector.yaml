@@ -1,0 +1,1258 @@
+# Atlassian Compass — service catalog, ownership, scorecards and deployment events.
+#
+# Compass is an internal developer portal: a catalog of software components,
+# each owned by a team from the Atlassian Teams directory, linked to its
+# repository, scored by scorecards and fed events by external tools. The Teams
+# streams live here rather than in their own connector because they share this
+# connector's host, credential and cadence; see SPEC.md §8.
+#
+# API facts that shape this manifest:
+#   - Everything is one GraphQL endpoint (api.atlassian.com/graphql) reached
+#     with an Atlassian account email + API token over Basic auth. No OAuth.
+#   - `cloudId` is a required argument on the Compass fields and is NOT
+#     discoverable from this endpoint; the operator supplies it (README says
+#     how to read it off the site). The Teams fields take a site-scoped ARI
+#     built from the same value.
+#   - GraphQL errors arrive as HTTP 200 with `errors[]`, so no status-code
+#     filter can see them. Worse, most fields return a UNION of a connection
+#     and `QueryError`, so a business error is a *successful* body with a
+#     `message` where the extractor expected `nodes`.
+#   - Several fields are experimental and need a FIELD-LEVEL
+#     `@optIn(to: "...")` directive. The `X-ExperimentalApi` header does not
+#     work and the directive is rejected at query level. Only
+#     `component_scorecard_scores` depends on this; every other stream is on
+#     stable fields.
+#   - Component `relationships` can be nested inside the catalog sweep, which
+#     avoids one request per component. The nested list cannot be paginated, so
+#     `relationships_truncated` carries `pageInfo.hasNextPage` — truncation
+#     stays visible in bronze instead of silently losing edges.
+#
+# Substream parents are inlined and request ids only: inline parents are
+# invisible to `discover` (no duplicate bronze table) and the CDK caches every
+# parent response, so a heavy parent would balloon the cache and stall the read.
+
+version: "7.0.4"
+type: DeclarativeSource
+
+definitions:
+  # ORDER MATTERS. The catch-all FAIL matches any body carrying `errors[]`,
+  # including a 5xx whose body happens to be a GraphQL error document, so the
+  # transient and throttle filters have to run first or a retryable failure
+  # becomes a hard one.
+  response_filters:
+    f_rate_limited_429: &f_rate_limited_429
+      type: HttpResponseFilter
+      action: RATE_LIMITED
+      http_codes: [429]
+    # The gateway limits by cost, and a body-level throttle answer is not
+    # guaranteed to carry a 429.
+    f_rate_limited_body: &f_rate_limited_body
+      type: HttpResponseFilter
+      action: RATE_LIMITED
+      predicate: "{{ 'rate limit' in ((response.get('errors') or []) | map(attribute='message') | join(' ') | lower) }}"
+    f_retry_5xx: &f_retry_5xx
+      type: HttpResponseFilter
+      action: RETRY
+      http_codes: [500, 502, 503, 504]
+    # A GraphQL-level error (bad credentials, missing product access,
+    # malformed query) is HTTP 200 with no `data`. Without this filter the
+    # extractor finds nothing, the stream reports zero records, and the
+    # sync looks green while collecting nothing.
+    f_graphql_error: &f_graphql_error
+      type: HttpResponseFilter
+      action: FAIL
+      predicate: "{{ (response.get('errors') or []) | length > 0 }}"
+      error_message: "Atlassian GraphQL error: {{ (response.get('errors') or []) | map(attribute='message') | join('; ') }}"
+
+  base_error_handler: &base_error_handler
+    type: DefaultErrorHandler
+    max_retries: 5
+    backoff_strategies: &backoff_strategies
+      - type: WaitTimeFromHeader
+        header: Retry-After
+        max_waiting_time_in_seconds: 600
+      - type: ExponentialBackoffStrategy
+        factor: 5
+    response_filters: &base_response_filters
+      - *f_rate_limited_429
+      - *f_rate_limited_body
+      - *f_retry_5xx
+      - *f_graphql_error
+
+  # Per-stream union handling. Most Compass fields return a union of a
+  # connection and `QueryError`, and a `QueryError` member is a SUCCESSFUL body
+  # with no top-level `errors[]`: the catch-all above cannot see it, the
+  # extractor finds no nodes, and the stream would report zero records. These
+  # filters run after the catch-all so a query-level error still fails with the
+  # message the API gave.
+  stream_error_handlers:
+    catalog: &h_catalog
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('message') is not none }}"
+          error_message: "Compass rejected the component catalog query: {{ (((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('message') }}"
+    scorecards: &h_scorecards
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('scorecards') or {}).get('message') is not none }}"
+          error_message: "Compass rejected the scorecards query: {{ (((response.get('data') or {}).get('compass') or {}).get('scorecards') or {}).get('message') }}"
+    scores: &h_scores
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # Also covers the beta opt-in being withdrawn, which surfaces on
+        # appliedToComponents rather than on the scorecard itself.
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ ((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('message') is not none) or (((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('message') is not none) }}"
+          error_message: "Compass rejected a scorecard score query: {{ (((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('message') or ((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('message') }}"
+    teams: &h_teams
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # teamSearchV3 is not a union, so an unusable scope comes back as a
+        # null connection rather than an error object.
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (response.get('data') or {}).get('team') is not none and ((response.get('data') or {}).get('team') or {}).get('teamSearchV3') is none }}"
+          error_message: The Teams directory returned no connection for this site scope; check atlassian_cloud_id.
+    team_members: &h_team_members
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        - type: HttpResponseFilter
+          action: FAIL
+          predicate: "{{ (response.get('data') or {}).get('team') is not none and ((response.get('data') or {}).get('team') or {}).get('teamV2') is none }}"
+          error_message: A team enumerated moments earlier is no longer readable; membership would be silently empty.
+    events: &h_events
+      <<: *base_error_handler
+      response_filters:
+        - *f_rate_limited_429
+        - *f_rate_limited_body
+        - *f_retry_5xx
+        - *f_graphql_error
+        # IGNORE, not FAIL: across a catalog of thousands, a component deleted
+        # between the parent sweep and this read is ordinary. The partition
+        # yields nothing and the sync continues.
+        - type: HttpResponseFilter
+          action: IGNORE
+          predicate: "{{ (((response.get('data') or {}).get('compass') or {}).get('component') or {}).get('message') is not none }}"
+          error_message: Component no longer readable; its events are skipped and other components continue.
+
+  graphql_requester: &graphql_requester
+    type: HttpRequester
+    url_base: "https://api.atlassian.com/"
+    path: "graphql"
+    http_method: POST
+    authenticator:
+      type: BasicHttpAuthenticator
+      username: "{{ config['atlassian_email'] }}"
+      password: "{{ config['atlassian_api_token'] }}"
+    request_headers:
+      Accept: "application/json"
+    error_handler: *base_error_handler
+
+  standard_fields: &standard_fields
+    - type: AddedFieldDefinition
+      path: [tenant_id]
+      value: "{{ config['insight_tenant_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [source_id]
+      value: "{{ config['insight_source_id'] }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [collected_at]
+      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      value_type: string
+    - type: AddedFieldDefinition
+      path: [data_source]
+      value: insight_compass
+      value_type: string
+
+check:
+  type: CheckStream
+  stream_names:
+    - scorecards
+
+streams:
+  # ── components ───────────────────────────────────────────────────────
+  # The catalog sweep. Links, labels, event sources and dependency edges all
+  # arrive inside this one query, so the whole catalog costs
+  # ceil(N_components / 100) requests and no per-component follow-up.
+  #
+  # Full refresh: `searchComponents` offers no change filter, and a deleted
+  # component simply stops appearing.
+  - type: DeclarativeStream
+    name: components
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          component_id: { type: string }
+          name: { type: ["string", "null"] }
+          slug: { type: ["string", "null"] }
+          component_type: { type: ["string", "null"] }
+          description: { type: ["string", "null"] }
+          component_url: { type: ["string", "null"] }
+          owner_team_id: { type: ["string", "null"] }
+          labels: { type: ["array", "null"], items: { type: string } }
+          links: { type: ["array", "null"], items: { type: object, additionalProperties: true } }
+          event_sources: { type: ["array", "null"], items: { type: object, additionalProperties: true } }
+          relationships: { type: ["array", "null"], items: { type: object, additionalProperties: true } }
+          relationships_truncated: { type: ["boolean", "null"] }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_catalog
+        request_body_json:
+          query: |
+            query insightComponents($cloudId: String!, $cursor: String) {
+              compass {
+                searchComponents(cloudId: $cloudId, query: {first: 100, after: $cursor}) {
+                  ... on CompassSearchComponentConnection {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      component {
+                        id
+                        name
+                        slug
+                        type
+                        description
+                        url
+                        ownerId
+                        labels { name }
+                        links { id type url name }
+                        eventSources { id eventType externalEventSourceId }
+                        relationships(query: {first: 100}) {
+                          ... on CompassRelationshipConnection {
+                            nodes {
+                              relationshipType
+                              startNode { id }
+                              endNode { id }
+                            }
+                            pageInfo { hasNextPage }
+                          }
+                        }
+                      }
+                    }
+                  }
+                  ... on QueryError { message }
+                }
+              }
+            }
+          variables:
+            cloudId: "{{ config['atlassian_cloud_id'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, compass, searchComponents, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [component_id]
+            value: "{{ (record.get('component') or {}).get('id') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [name]
+            value: "{{ (record.get('component') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [slug]
+            value: "{{ (record.get('component') or {}).get('slug') or '' }}"
+            value_type: string
+          # `type` is a Compass field name that collides with nothing in bronze,
+          # but `component_type` reads unambiguously next to `component_id`.
+          - type: AddedFieldDefinition
+            path: [component_type]
+            value: "{{ (record.get('component') or {}).get('type') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('component') or {}).get('description') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [component_url]
+            value: "{{ (record.get('component') or {}).get('url') or '' }}"
+            value_type: string
+          # The FK into `teams`. Empty string rather than a Jinja `none`: with
+          # value_type string a none renders as the literal text "None" and
+          # would become a shared fake owner for every unowned component.
+          - type: AddedFieldDefinition
+            path: [owner_team_id]
+            value: "{{ (record.get('component') or {}).get('ownerId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [labels]
+            value: "{{ ((record.get('component') or {}).get('labels') or []) | map(attribute='name') | list }}"
+          - type: AddedFieldDefinition
+            path: [links]
+            value: "{{ (record.get('component') or {}).get('links') or [] }}"
+          - type: AddedFieldDefinition
+            path: [event_sources]
+            value: "{{ (record.get('component') or {}).get('eventSources') or [] }}"
+          - type: AddedFieldDefinition
+            path: [relationships]
+            value: "{{ (((record.get('component') or {}).get('relationships') or {}).get('nodes')) or [] }}"
+          # Nested lists cannot be paginated, so record whether Compass had more
+          # edges than the query asked for. A truncated component is then a
+          # visible row in bronze rather than silent edge loss.
+          - type: AddedFieldDefinition
+            path: [relationships_truncated]
+            value: "{{ ((((record.get('component') or {}).get('relationships') or {}).get('pageInfo')) or {}).get('hasNextPage') or false }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('component') or {}).get('id') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [component]
+
+  # ── scorecards ───────────────────────────────────────────────────────
+  # Scorecard definitions with their criteria. Ten-ish rows; also the check
+  # stream, because it is a single request with no side effects.
+  #
+  # `criterias` stays JSON: the criterion subtypes are an open set
+  # (HasOwner / HasDescription / HasLink / HasMetricValue / HasCustom*Field …)
+  # and a typed column per subtype would churn on every Compass release.
+  #
+  # Dated snapshots of this stream are load-bearing, not bookkeeping: criterion
+  # weights renormalise to 100, so a component's score dropping is ambiguous
+  # between "the component got worse" and "a criterion was added" unless the
+  # definition for the same date is available. See SPEC.md §5.
+  - type: DeclarativeStream
+    name: scorecards
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          scorecard_id: { type: string }
+          name: { type: ["string", "null"] }
+          description: { type: ["string", "null"] }
+          state: { type: ["string", "null"] }
+          importance: { type: ["string", "null"] }
+          created_at: { type: ["string", "null"] }
+          last_user_modification_at: { type: ["string", "null"] }
+          criterias: { type: ["array", "null"], items: { type: object, additionalProperties: true } }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_scorecards
+        request_body_json:
+          query: |
+            query insightScorecards($cloudId: ID!) {
+              compass {
+                scorecards(cloudId: $cloudId) {
+                  ... on CompassScorecardConnection {
+                    nodes {
+                      id
+                      name
+                      description
+                      state
+                      importance
+                      changeMetadata {
+                        createdAt
+                        lastUserModificationAt
+                      }
+                      criterias {
+                        __typename
+                        id
+                        weight
+                        name
+                        ... on CompassHasLinkScorecardCriteria { linkType }
+                        ... on CompassHasMetricValueScorecardCriteria {
+                          comparator
+                          comparatorValue
+                          metricDefinition { name }
+                        }
+                      }
+                    }
+                  }
+                  ... on QueryError { message }
+                }
+              }
+            }
+          variables:
+            cloudId: "{{ config['atlassian_cloud_id'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, compass, scorecards, nodes]
+      paginator:
+        type: NoPagination
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [scorecard_id]
+            value: "{{ record.get('id') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [created_at]
+            value: "{{ (record.get('changeMetadata') or {}).get('createdAt') or none }}"
+          - type: AddedFieldDefinition
+            path: [last_user_modification_at]
+            value: "{{ (record.get('changeMetadata') or {}).get('lastUserModificationAt') or none }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ record.get('id') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [changeMetadata]
+          - [id]
+
+  # ── component_scorecard_scores ───────────────────────────────────────
+  # One row per component × scorecard: the total, the status band, and the
+  # per-criterion breakdown. Traversed scorecard-first — each scorecard knows
+  # which components it applies to — so the cost is O(scorecards) requests
+  # rather than O(components).
+  #
+  # The score hangs off the EDGE, not the node.
+  #
+  # This is the only stream that needs the experimental `compass-beta` opt-in.
+  # If beta churn ever breaks it, it can be dropped without touching the rest.
+  #
+  # `appliedToComponents` caps page size at 25 — asking for more fails with
+  # HTTP 200 + errors[] ("must be between [1] to [25]"), i.e. as a hard sync
+  # failure, not a clamped page. Every other connection here takes 50-100.
+  - type: DeclarativeStream
+    name: component_scorecard_scores
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          scorecard_id: { type: string }
+          component_id: { type: string }
+          total_score: { type: ["integer", "null"] }
+          max_total_score: { type: ["integer", "null"] }
+          status: { type: ["string", "null"] }
+          criteria_scores: { type: ["array", "null"], items: { type: object, additionalProperties: true } }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_scores
+        request_body_json:
+          query: |
+            query insightScorecardScores($scorecardId: ID!, $cursor: String) {
+              compass {
+                scorecard(id: $scorecardId) {
+                  ... on CompassScorecard {
+                    id
+                    appliedToComponents(query: {first: 25, after: $cursor}) @optIn(to: "compass-beta") {
+                      ... on CompassScorecardAppliedToComponentsConnection {
+                        pageInfo { hasNextPage endCursor }
+                        edges {
+                          node { id }
+                          score {
+                            ... on CompassScorecardScore {
+                              totalScore
+                              maxTotalScore
+                              status { name }
+                              criteriaScores {
+                                criterionId
+                                score
+                                maxScore
+                                status
+                                dataSourceLastUpdated
+                              }
+                            }
+                            ... on QueryError { message }
+                          }
+                        }
+                      }
+                      ... on QueryError { message }
+                    }
+                  }
+                  ... on QueryError { message }
+                }
+              }
+            }
+          variables:
+            scorecardId: "{{ stream_partition.scorecard_id }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, compass, scorecard, appliedToComponents, edges]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not (((((response.get('data') or {}).get('compass') or {}).get('scorecard') or {}).get('appliedToComponents') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: scorecard_id
+            # Inlined and ids-only on purpose: an inline parent is invisible to
+            # `discover` (so no second scorecards bronze table) and every parent
+            # response is cached by the CDK, so it must stay small.
+            stream:
+              type: DeclarativeStream
+              name: _scorecard_ids
+              primary_key: [id]
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    id: { type: string }
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *graphql_requester
+                  error_handler: *h_scorecards
+                  request_body_json:
+                    query: |
+                      query insightScorecardIds($cloudId: ID!) {
+                        compass {
+                          scorecards(cloudId: $cloudId) {
+                            ... on CompassScorecardConnection {
+                              nodes { id }
+                            }
+                            ... on QueryError { message }
+                          }
+                        }
+                      }
+                    variables:
+                      cloudId: "{{ config['atlassian_cloud_id'] }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [data, compass, scorecards, nodes]
+                paginator:
+                  type: NoPagination
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [scorecard_id]
+            value: "{{ stream_partition.scorecard_id }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [component_id]
+            value: "{{ (record.get('node') or {}).get('id') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [total_score]
+            value: "{{ (record.get('score') or {}).get('totalScore') }}"
+          - type: AddedFieldDefinition
+            path: [max_total_score]
+            value: "{{ (record.get('score') or {}).get('maxTotalScore') }}"
+          - type: AddedFieldDefinition
+            path: [status]
+            value: "{{ (((record.get('score') or {}).get('status')) or {}).get('name') or '' }}"
+            value_type: string
+          # Carries `dataSourceLastUpdated` per criterion — the only way to tell
+          # "this criterion genuinely fails" from "the metric feeding it is
+          # stale". Must survive into any downstream reading.
+          - type: AddedFieldDefinition
+            path: [criteria_scores]
+            value: "{{ ((record.get('score') or {}).get('criteriaScores')) or [] }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.scorecard_id }}:{{ (record.get('node') or {}).get('id') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [node]
+          - [score]
+
+  # ── teams ────────────────────────────────────────────────────────────
+  # The Atlassian Teams directory — the entity Compass component ownership and
+  # Jira's Team field both point at, by the same UUID.
+  #
+  # `teamSearchV3` takes a site-scoped ARI, which is derivable from the cloud
+  # id, so no separate organization id has to be configured. `teamsTql` needs
+  # its own opt-in and rejects the site ARI; do not switch to it.
+  - type: DeclarativeStream
+    name: teams
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          team_id: { type: string }
+          display_name: { type: ["string", "null"] }
+          description: { type: ["string", "null"] }
+          state: { type: ["string", "null"] }
+          organization_id: { type: ["string", "null"] }
+          member_count: { type: ["integer", "null"] }
+          is_verified: { type: ["boolean", "null"] }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_teams
+        request_body_json:
+          query: |
+            query insightTeams($scopeId: ID!, $cursor: String) {
+              team {
+                teamSearchV3(scopeId: $scopeId, first: 50, after: $cursor,
+                             enablePagination: true, showEmptyTeams: true) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    team {
+                      id
+                      displayName
+                      description
+                      state
+                      organizationId
+                      memberCount
+                      isVerified
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            scopeId: "ari:cloud:platform::site/{{ config['atlassian_cloud_id'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, team, teamSearchV3, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ ((((response.get('data') or {}).get('team') or {}).get('teamSearchV3') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not ((((response.get('data') or {}).get('team') or {}).get('teamSearchV3') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [team_id]
+            value: "{{ (record.get('team') or {}).get('id') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [display_name]
+            value: "{{ (record.get('team') or {}).get('displayName') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [description]
+            value: "{{ (record.get('team') or {}).get('description') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [state]
+            value: "{{ (record.get('team') or {}).get('state') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [organization_id]
+            value: "{{ (record.get('team') or {}).get('organizationId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [member_count]
+            value: "{{ (record.get('team') or {}).get('memberCount') }}"
+          - type: AddedFieldDefinition
+            path: [is_verified]
+            value: "{{ (record.get('team') or {}).get('isVerified') or false }}"
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ (record.get('team') or {}).get('id') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [team]
+
+  # ── team_members ─────────────────────────────────────────────────────
+  # Membership, per team. Fetched per team rather than through the bulk
+  # `teamsV2` form: in bulk the nested member list comes back truncated with
+  # `hasNextPage` true for every team, including teams whose members all fit.
+  # Per-team pagination is exact and reconciles with `memberCount`.
+  #
+  # There is no `email` field on the user type — the join key to people is the
+  # account id inside `member.id`.
+  - type: DeclarativeStream
+    name: team_members
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          team_id: { type: string }
+          member_id: { type: string }
+          member_name: { type: ["string", "null"] }
+          account_status: { type: ["string", "null"] }
+          role: { type: ["string", "null"] }
+          membership_state: { type: ["string", "null"] }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_team_members
+        request_body_json:
+          query: |
+            query insightTeamMembers($teamId: ID!, $siteId: String!, $cursor: String) {
+              team {
+                teamV2(id: $teamId, siteId: $siteId) {
+                  id
+                  members(first: 50, after: $cursor,
+                          state: [FULL_MEMBER, ALUMNI, REQUESTING_TO_JOIN]) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes {
+                      role
+                      state
+                      member {
+                        id
+                        name
+                        accountStatus
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          variables:
+            teamId: "{{ stream_partition.team_id }}"
+            siteId: "{{ config['atlassian_cloud_id'] }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, team, teamV2, members, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((((response.get('data') or {}).get('team') or {}).get('teamV2') or {}).get('members') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not (((((response.get('data') or {}).get('team') or {}).get('teamV2') or {}).get('members') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: team_id
+            stream:
+              type: DeclarativeStream
+              name: _team_ids
+              primary_key: [id]
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    id: { type: string }
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *graphql_requester
+                  error_handler: *h_teams
+                  request_body_json:
+                    query: |
+                      query insightTeamIds($scopeId: ID!, $cursor: String) {
+                        team {
+                          teamSearchV3(scopeId: $scopeId, first: 50, after: $cursor,
+                                       enablePagination: true, showEmptyTeams: true) {
+                            pageInfo { hasNextPage endCursor }
+                            nodes { team { id } }
+                          }
+                        }
+                      }
+                    variables:
+                      scopeId: "ari:cloud:platform::site/{{ config['atlassian_cloud_id'] }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [data, team, teamSearchV3, nodes, "*", team]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ ((((response.get('data') or {}).get('team') or {}).get('teamSearchV3') or {}).get('pageInfo') or {}).get('endCursor') }}"
+                    stop_condition: "{{ not ((((response.get('data') or {}).get('team') or {}).get('teamSearchV3') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: body_json
+                    field_path: [variables, cursor]
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [team_id]
+            value: "{{ stream_partition.team_id }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [member_id]
+            value: "{{ (record.get('member') or {}).get('id') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [member_name]
+            value: "{{ (record.get('member') or {}).get('name') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [account_status]
+            value: "{{ (record.get('member') or {}).get('accountStatus') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [role]
+            value: "{{ record.get('role') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [membership_state]
+            value: "{{ record.get('state') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.team_id }}:{{ (record.get('member') or {}).get('id') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [member]
+          - [state]
+
+  # ── deployment_events ────────────────────────────────────────────────
+  # Compass events of type DEPLOYMENT, per component. The only incremental
+  # stream, and the one that dominates the sync: there is one query per
+  # component and no usable server-side date filter.
+  #
+  # `timeParameters {startFrom, endAt}` rejects every window with a complaint
+  # that endAt must be within a year of startFrom — regardless of the width
+  # actually passed. `startFrom` alone returns nothing; `endAt` alone returns
+  # only the boundary date. Hence `is_client_side_incremental`: pages come back
+  # newest-first and the CDK filters them against state. Revisit if Atlassian
+  # fixes the filter — a server-side window would cut this cost sharply.
+  #
+  # The feed is a rolling window roughly two weeks wide with no deeper
+  # backfill, so a missed sync loses events permanently. That is what sets the
+  # daily floor on this connector's schedule.
+  #
+  # CAUTION for anyone building metrics on this: an event of type DEPLOYMENT
+  # does not imply a release. Any tool can publish these through an external
+  # event source, and an integration may map build or artifact events onto the
+  # type with a non-production `environment_category`. Key release metrics on
+  # `environment_category = 'PRODUCTION'`; everything else is build or
+  # pre-production activity. One event is also updated in place as it
+  # progresses, so `update_sequence_number` is the dedup discriminator and a
+  # terminal state may never arrive (`completed_at` stays null).
+  - type: DeclarativeStream
+    name: deployment_events
+    primary_key: [unique_key]
+    schema_loader:
+      type: InlineSchemaLoader
+      schema:
+        $schema: http://json-schema.org/schema#
+        type: object
+        additionalProperties: true
+        properties:
+          tenant_id: { type: string }
+          source_id: { type: string }
+          unique_key: { type: string }
+          collected_at: { type: string }
+          data_source: { type: string }
+          component_id: { type: string }
+          event_type: { type: ["string", "null"] }
+          display_name: { type: ["string", "null"] }
+          description: { type: ["string", "null"] }
+          event_url: { type: ["string", "null"] }
+          last_updated: { type: ["string", "null"] }
+          update_sequence_number: { type: ["integer", "null"] }
+          state: { type: ["string", "null"] }
+          environment_category: { type: ["string", "null"] }
+          environment_display_name: { type: ["string", "null"] }
+          environment_id: { type: ["string", "null"] }
+          started_at: { type: ["string", "null"] }
+          completed_at: { type: ["string", "null"] }
+          sequence_number: { type: ["integer", "null"] }
+          pipeline: { type: ["object", "null"], additionalProperties: true }
+        required:
+          - unique_key
+    retriever:
+      type: SimpleRetriever
+      requester:
+        <<: *graphql_requester
+        error_handler: *h_events
+        request_body_json:
+          query: |
+            query insightDeploymentEvents($componentId: ID!, $cursor: String) {
+              compass {
+                component(id: $componentId) {
+                  ... on CompassComponent {
+                    id
+                    events(query: {first: 50, after: $cursor, eventTypes: [DEPLOYMENT]}) {
+                      ... on CompassEventConnection {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          ... on CompassDeploymentEvent {
+                            eventType
+                            displayName
+                            description
+                            url
+                            lastUpdated
+                            updateSequenceNumber
+                            deploymentProperties {
+                              sequenceNumber
+                              state
+                              startedAt
+                              completedAt
+                              environment {
+                                category
+                                displayName
+                                environmentId
+                              }
+                              pipeline {
+                                pipelineId
+                                displayName
+                                url
+                              }
+                            }
+                          }
+                        }
+                      }
+                      ... on QueryError { message }
+                    }
+                  }
+                  ... on QueryError { message }
+                }
+              }
+            }
+          variables:
+            componentId: "{{ stream_partition.component_id }}"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path: [data, compass, component, events, nodes]
+      paginator:
+        type: DefaultPaginator
+        pagination_strategy:
+          type: CursorPagination
+          cursor_value: "{{ (((((response.get('data') or {}).get('compass') or {}).get('component') or {}).get('events') or {}).get('pageInfo') or {}).get('endCursor') }}"
+          stop_condition: "{{ not (((((response.get('data') or {}).get('compass') or {}).get('component') or {}).get('events') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+        page_token_option:
+          type: RequestOption
+          inject_into: body_json
+          field_path: [variables, cursor]
+      partition_router:
+        type: SubstreamPartitionRouter
+        parent_stream_configs:
+          - type: ParentStreamConfig
+            parent_key: id
+            partition_field: component_id
+            # ids only: the full catalog sweep carries links, labels, event
+            # sources and dependency edges, and every parent response is cached
+            # by the CDK. Pointing this at the heavy query would grow the cache
+            # until the read stalls with zero records emitted.
+            stream:
+              type: DeclarativeStream
+              name: _component_ids
+              primary_key: [id]
+              schema_loader:
+                type: InlineSchemaLoader
+                schema:
+                  $schema: http://json-schema.org/schema#
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    id: { type: string }
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  <<: *graphql_requester
+                  error_handler: *h_catalog
+                  request_body_json:
+                    query: |
+                      query insightComponentIds($cloudId: String!, $cursor: String) {
+                        compass {
+                          searchComponents(cloudId: $cloudId, query: {first: 100, after: $cursor}) {
+                            ... on CompassSearchComponentConnection {
+                              pageInfo { hasNextPage endCursor }
+                              nodes { component { id } }
+                            }
+                            ... on QueryError { message }
+                          }
+                        }
+                      }
+                    variables:
+                      cloudId: "{{ config['atlassian_cloud_id'] }}"
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: [data, compass, searchComponents, nodes, "*", component]
+                paginator:
+                  type: DefaultPaginator
+                  pagination_strategy:
+                    type: CursorPagination
+                    cursor_value: "{{ ((((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('pageInfo') or {}).get('endCursor') }}"
+                    stop_condition: "{{ not ((((response.get('data') or {}).get('compass') or {}).get('searchComponents') or {}).get('pageInfo') or {}).get('hasNextPage') }}"
+                  page_token_option:
+                    type: RequestOption
+                    inject_into: body_json
+                    field_path: [variables, cursor]
+    incremental_sync:
+      type: DatetimeBasedCursor
+      cursor_field: last_updated
+      cursor_datetime_formats:
+        - "%Y-%m-%dT%H:%M:%S.%fZ"
+        - "%Y-%m-%dT%H:%M:%SZ"
+      datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
+      start_datetime:
+        type: MinMaxDatetime
+        datetime: "{{ (now_utc() - duration('P30D')).strftime('%Y-%m-%dT%H:%M:%S.000Z') }}"
+        datetime_format: "%Y-%m-%dT%H:%M:%S.%fZ"
+      is_client_side_incremental: true
+    transformations:
+      - type: AddFields
+        fields: *standard_fields
+      - type: AddFields
+        fields:
+          - type: AddedFieldDefinition
+            path: [component_id]
+            value: "{{ stream_partition.component_id }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_type]
+            value: "{{ record.get('eventType') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [display_name]
+            value: "{{ record.get('displayName') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [event_url]
+            value: "{{ record.get('url') or '' }}"
+            value_type: string
+          # Hoisted to the top level because DatetimeBasedCursor reads its
+          # cursor field from there. Left nested, the cursor never observes a
+          # value and state never advances.
+          - type: AddedFieldDefinition
+            path: [last_updated]
+            value: "{{ record.get('lastUpdated') }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [update_sequence_number]
+            value: "{{ record.get('updateSequenceNumber') }}"
+          - type: AddedFieldDefinition
+            path: [state]
+            value: "{{ (record.get('deploymentProperties') or {}).get('state') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [environment_category]
+            value: "{{ (((record.get('deploymentProperties') or {}).get('environment')) or {}).get('category') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [environment_display_name]
+            value: "{{ (((record.get('deploymentProperties') or {}).get('environment')) or {}).get('displayName') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [environment_id]
+            value: "{{ (((record.get('deploymentProperties') or {}).get('environment')) or {}).get('environmentId') or '' }}"
+            value_type: string
+          - type: AddedFieldDefinition
+            path: [started_at]
+            value: "{{ (record.get('deploymentProperties') or {}).get('startedAt') or none }}"
+          - type: AddedFieldDefinition
+            # No value_type: with one, a Jinja `none` renders as the text "None"
+            # and a never-completed deployment would carry a fake timestamp
+            # string instead of a null. Without it the CDK literal-evals "None"
+            # back to null, while a real timestamp stays a string.
+            path: [completed_at]
+            value: "{{ (record.get('deploymentProperties') or {}).get('completedAt') or none }}"
+          - type: AddedFieldDefinition
+            path: [sequence_number]
+            value: "{{ (record.get('deploymentProperties') or {}).get('sequenceNumber') }}"
+          - type: AddedFieldDefinition
+            path: [pipeline]
+            value: "{{ ((record.get('deploymentProperties') or {}).get('pipeline')) or {} }}"
+          # An event is updated in place as the deployment progresses, so the
+          # key must NOT include lastUpdated — otherwise each progress update
+          # forks into a new bronze row instead of replacing the previous one.
+          - type: AddedFieldDefinition
+            path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}:{{ config['insight_source_id'] }}:{{ stream_partition.component_id }}:{{ record.get('updateSequenceNumber') }}"
+            value_type: string
+      - type: RemoveFields
+        field_pointers:
+          - [deploymentProperties]
+          - [displayName]
+          - [eventType]
+          - [lastUpdated]
+          - [updateSequenceNumber]
+          - [url]
+
+concurrency_level:
+  type: ConcurrencyLevel
+  default_concurrency: 4
+
+spec:
+  type: Spec
+  connection_specification:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    required:
+      - insight_tenant_id
+      - insight_source_id
+      - atlassian_email
+      - atlassian_api_token
+      - atlassian_cloud_id
+    properties:
+      insight_tenant_id:
+        type: string
+        minLength: 1
+        title: Insight Tenant ID
+        description: Tenant isolation identifier, injected as `tenant_id` on every record.
+        order: 0
+      insight_source_id:
+        type: string
+        title: Source Instance ID
+        description: Connector instance identifier (e.g. `compass-main`). Set by the reconcile loop from the K8s Secret annotation `insight.cyberfabric.com/source-id`.
+        default: ""
+        order: 1
+      atlassian_email:
+        type: string
+        minLength: 1
+        title: Atlassian Account Email
+        description: Email of the Atlassian account owning the API token. Used as the Basic-auth username.
+        order: 2
+      atlassian_api_token:
+        type: string
+        minLength: 1
+        title: Atlassian API Token
+        airbyte_secret: true
+        description: |
+          Atlassian account API token (id.atlassian.com → Security → API tokens).
+          The account needs Compass product access; the Teams streams need no
+          extra grant. No OAuth application is required.
+        order: 3
+      atlassian_cloud_id:
+        type: string
+        minLength: 1
+        title: Atlassian Cloud ID
+        description: |
+          Site identifier required by every Compass field, and the basis of the
+          site-scoped ARI the Teams streams use. Read it from the site itself:
+          `curl -s https://<your-site>.atlassian.net/_edge/tenant_info`.
+          Not discoverable through the GraphQL gateway, so it must be supplied.
+        order: 4
+    additionalProperties: true
+
+metadata:
+  autoImportSchema:
+    components: false
+    scorecards: false
+    component_scorecard_scores: false
+    teams: false
+    team_members: false
+    deployment_events: false

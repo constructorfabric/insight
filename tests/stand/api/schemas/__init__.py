@@ -63,6 +63,12 @@ from .analytics import (
 from .analytics import (
     MetricResultViewDto1 as PeriodView,
 )
+from .analytics import (
+    MetricResultViewDto4 as BreakdownView,
+)
+from .analytics import (
+    MetricResultViewDto5 as RollupView,
+)
 from .common import (
     EXTRACTOR_REJECTION_CONTENT_TYPE,
     PROBLEM_CONTENT_TYPE,
@@ -130,6 +136,7 @@ __all__: Sequence[str] = (
     "AccountBindingResponse",
     "AccountSearchResponse",
     "AttentionResponse",
+    "BreakdownView",
     "ConnectorHealthResponse",
     "CorrectionResponse",
     "CustomMetric",
@@ -156,6 +163,7 @@ __all__: Sequence[str] = (
     "Profile",
     "Role",
     "RoleList",
+    "RollupView",
     "RunResponse",
     "SavedQuery",
     "SavedQueryListResponse",

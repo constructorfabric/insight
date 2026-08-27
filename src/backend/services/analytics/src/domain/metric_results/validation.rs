@@ -141,7 +141,11 @@ pub enum ValidatedMetricView {
         dimensions: Vec<String>,
         group_limit: Option<ValidatedGroupLimit>,
     },
-    Histogram,
+    Histogram {
+        /// Empty: per-entity bins. Non-empty: bins pooled per dimension tuple
+        /// over all selected entities' events (no entity grain), like rollup.
+        dimensions: Vec<String>,
+    },
 }
 
 struct RequestShape {
@@ -434,7 +438,7 @@ fn validate_view_with_context(
                 group_limit,
             })
         }
-        MetricViewRequest::Histogram => {
+        MetricViewRequest::Histogram { dimensions } => {
             // Histograms bin per-event observation values; only the
             // event-grain computations (median family) have observations to bin.
             if !matches!(
@@ -451,7 +455,9 @@ fn validate_view_with_context(
                     ),
                 );
             }
-            Ok(ValidatedMetricView::Histogram)
+            Ok(ValidatedMetricView::Histogram {
+                dimensions: validate_dimensions(def, "metrics.views.dimensions", dimensions)?,
+            })
         }
     }
 }
@@ -698,8 +704,14 @@ fn validate_projected_view_limits(
                         .saturating_mul(groups)
                         .saturating_mul(enumerate_buckets(req.from, req.to, *bucket).len() + 1)
                 }
-                ValidatedMetricView::Histogram => req.entity.len().saturating_mul(HISTOGRAM_BINS),
-                ValidatedMetricView::Breakdown { .. } => 0,
+                ValidatedMetricView::Histogram { dimensions } if dimensions.is_empty() => {
+                    req.entity.len().saturating_mul(HISTOGRAM_BINS)
+                }
+                // A pooled histogram's groups are data-dependent, like an
+                // uncapped rollup's and a breakdown's: not projectable here,
+                // capped by the query's row limit and the post-hoc view row
+                // limit instead.
+                ValidatedMetricView::Histogram { .. } | ValidatedMetricView::Breakdown { .. } => 0,
                 ValidatedMetricView::Rollup { group_limit, .. } => {
                     group_limit.as_ref().map_or(0, |limit| {
                         limit.count + usize::from(limit.include_remainder)
@@ -839,6 +851,15 @@ mod tests {
         let mut def = sum_definition(vec![]);
         def.spec = ComputationSpec::Median {
             value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
+        };
+        def
+    }
+
+    fn percentile_definition() -> MetricDefinition {
+        let mut def = sum_definition(vec![]);
+        def.spec = ComputationSpec::Percentile {
+            value: fixture_input("pr_cycle_hours", MetricInputRole::Value),
+            q: 0.75,
         };
         def
     }
@@ -1304,15 +1325,62 @@ mod tests {
     }
 
     #[test]
-    fn validate_view_gates_histogram_on_median_computation() {
+    fn validate_view_gates_histogram_on_event_grain_computations() {
         // Histograms bin per-event values; sum/ratio observations are
         // day-aggregated, so binning them would present aggregates as events.
-        assert!(validate_view(&sum_definition(vec![]), MetricViewRequest::Histogram).is_err());
-        assert!(validate_view(&ratio_definition(), MetricViewRequest::Histogram).is_err());
+        // Median and percentile share the per-event observation shape.
+        let histogram = || MetricViewRequest::Histogram { dimensions: vec![] };
+        assert!(validate_view(&sum_definition(vec![]), histogram()).is_err());
+        assert!(validate_view(&ratio_definition(), histogram()).is_err());
         assert!(matches!(
-            validate_view(&median_definition(), MetricViewRequest::Histogram),
-            Ok(ValidatedMetricView::Histogram)
+            validate_view(&median_definition(), histogram()),
+            Ok(ValidatedMetricView::Histogram { dimensions }) if dimensions.is_empty()
         ));
+        assert!(matches!(
+            validate_view(&percentile_definition(), histogram()),
+            Ok(ValidatedMetricView::Histogram { dimensions }) if dimensions.is_empty()
+        ));
+    }
+
+    #[test]
+    fn validate_view_pools_histogram_only_over_declared_dimensions() {
+        // The pooled shape reuses the breakdown/rollup dimension rule: every
+        // requested dimension must be declared on the metric.
+        let mut def = median_definition();
+        def.base.allowed_dimensions = vec!["repository".to_owned()];
+
+        match validate_view(
+            &def,
+            MetricViewRequest::Histogram {
+                dimensions: vec![" Repository ".to_owned()],
+            },
+        ) {
+            Ok(ValidatedMetricView::Histogram { dimensions }) => {
+                assert_eq!(dimensions, vec!["repository"]);
+            }
+            other => panic!("expected pooled histogram, got {other:?}"),
+        }
+
+        assert!(
+            validate_view(
+                &def,
+                MetricViewRequest::Histogram {
+                    dimensions: vec!["surface".to_owned()],
+                },
+            )
+            .is_err()
+        );
+
+        // The computation gate still holds for the pooled shape.
+        assert!(
+            validate_view(
+                &sum_definition(vec!["repository"]),
+                MetricViewRequest::Histogram {
+                    dimensions: vec!["repository".to_owned()],
+                },
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1421,11 +1489,19 @@ mod tests {
             metrics: vec![ValidatedMetricRequest {
                 def: median_definition(),
                 filters: vec![],
-                views: vec![ValidatedMetricView::Histogram],
+                views: vec![ValidatedMetricView::Histogram { dimensions: vec![] }],
             }],
             enforce_tenant_scope: false,
         };
         assert!(validate_projected_view_limits(&validated).is_err());
+
+        // The pooled shape carries no entity grain, so entity count does not
+        // project rows for it — group cardinality is capped at query time.
+        let mut pooled = validated;
+        pooled.metrics[0].views = vec![ValidatedMetricView::Histogram {
+            dimensions: vec!["repository".to_owned()],
+        }];
+        assert!(validate_projected_view_limits(&pooled).is_ok());
     }
 
     #[test]

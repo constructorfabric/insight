@@ -111,6 +111,25 @@ models:
         tests:
           - not_null
 
+  - name: git_review_events
+    description: >
+      One row per pull-request review or comment, with the actor resolved, the
+      request it sits on joined, and its dimension tuple built. Materialized so
+      the identity map and the pull-request join run once per build in their own
+      query budget rather than competing for memory with every other git measure
+      inside the evidence query.
+    columns:
+      - name: event_key
+        description: "The silver event's unique key — several events by one person on one request stay distinct"
+        tests:
+          - not_null
+      - name: event_kind
+        description: "'review' for a submitted verdict, 'comment' for a conversation or review-thread comment"
+      - name: entity_id
+        description: "The actor's normalized e-mail; rows without one are dropped here, not downstream"
+        tests:
+          - not_null
+
   - name: git_derived_commits
     description: >
       Commits whose work is already counted on another commit, one row per
@@ -511,12 +530,15 @@ models:
                   - pr_multi_reviewed
                   - pr_merged
                   - pr_merged_without_approval
+                  - pr_commit_count
                   - pr_cycle_hours
                   - pr_change_size
                   - pr_first_review_hours
                   - pr_review_wait_share
                   - pr_review_to_merge_hours
                   - pr_approval_to_merge_hours
+                  - review_submitted
+                  - pr_comment
                   - default_commit_count
                   - non_default_commit_count
                   - default_code_lines_added
