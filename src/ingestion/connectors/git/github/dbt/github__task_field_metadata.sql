@@ -15,8 +15,11 @@
 -- for them. The organization's native issue fields come from the catalogue
 -- stream, which is also the list an operator reads when authoring a binding.
 --
--- `project_key` stays null: organization issue fields are not project-scoped.
--- The column is where a board field would record its board.
+-- A third group is board-scoped. Every Projects V2 board carries its own
+-- status column, and a status event names the board rather than a field object
+-- — so the bindable field is `project_status:<project node id>`, one per
+-- board, and `project_key` records which board it is. Organization issue
+-- fields stay null there: they are not project-scoped.
 
 WITH issue_properties AS (
     SELECT
@@ -59,17 +62,44 @@ catalogued AS (
     FROM {{ source('bronze_github', 'issue_fields') }} FINAL
 ),
 
+-- One synthetic field per board that actually defines a select column. A board
+-- with no select field can never emit a status event, so declaring one for it
+-- would invite a binding that resolves nothing.
+board_status AS (
+    SELECT
+        tenant_id,
+        source_id,
+        concat('project_status:', COALESCE(project_id, ''))  AS field_id,
+        'Status'                                             AS field_name,
+        'single_select'                                      AS field_type,
+        toUInt8(0)                                           AS is_multi,
+        toUInt8(0)                                           AS has_id,
+        toString(COALESCE(project_number, 0))                AS project_key,
+        max(_airbyte_extracted_at)                           AS observed_at
+    FROM {{ source('bronze_github', 'project_fields') }} FINAL
+    WHERE COALESCE(is_mirror, true) = false
+      AND COALESCE(data_type, '') = 'SINGLE_SELECT'
+      AND COALESCE(project_id, '') != ''
+    GROUP BY tenant_id, source_id, field_id, project_key
+),
+
 every_field AS (
-    SELECT * FROM declared
+    SELECT *, CAST(NULL AS Nullable(String)) AS project_key FROM declared
     UNION ALL
-    SELECT * FROM catalogued
+    SELECT *, CAST(NULL AS Nullable(String)) AS project_key FROM catalogued
+    UNION ALL
+    SELECT
+        tenant_id, source_id, field_id, field_name, field_type,
+        is_multi, has_id, observed_at,
+        CAST(project_key AS Nullable(String)) AS project_key
+    FROM board_status
 )
 
 SELECT
     CAST(concat(tenant_id, ':', source_id, ':github:field:', field_id) AS Nullable(String)) AS unique_key,
     CAST(COALESCE(source_id, '') AS String)                 AS insight_source_id,
     CAST('github' AS String)                                AS data_source,
-    CAST(NULL AS Nullable(String))                          AS project_key,
+    CAST(project_key AS Nullable(String))                   AS project_key,
     CAST(field_id AS String)                                AS field_id,
     CAST(field_name AS String)                              AS field_name,
     is_multi                                                AS is_multi,

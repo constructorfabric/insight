@@ -25,6 +25,8 @@ feeds the shared `class_git_*` silver models.
 | pull_request_review_comments | `/repos/{r}/pulls/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
+| project_fields | GraphQL `ProjectV2.fields`, per board | full refresh, one row per (field, collection day) |
+| project_items | GraphQL `ProjectV2.items`, per board | card `updatedAt`, server-side `updated:>=DATE` (day granularity) |
 | issue_fields | GraphQL `organization.issueFields` | full refresh |
 | issue_types | GraphQL `organization.issueTypes` | full refresh |
 | workflow_runs | `/repos/{r}/actions/runs` | created_at, weekly step windows |
@@ -45,12 +47,46 @@ identifier resolves to anything an operator can read, and a rename silently
 orphans whatever was bound to the old name. Both are organization-scoped, so
 they cost one paginated query per configured organization per sync.
 
+**Projects V2 boards cost one sweep per board, not per issue.** Both board
+streams partition over the organization's boards, closed ones included: a
+closed board holds history and never changes again. `project_items` must not
+ride the issue cursor — moving a card does not bump the issue's `updated_at`,
+so board movement on an otherwise untouched issue is invisible from the issue
+side.
+
+**Two things about the card filter.** `items(query:)` filters server-side on
+the card's update date, and its granularity is a DAY — a full ISO timestamp
+returns zero rows. Worse, an unparseable qualifier returns zero rows with **no**
+GraphQL error, so a typo reads as "nothing changed": a green sync, an empty
+stream, and no way to tell it from a quiet week. The cursor's `datetime_format`
+is therefore `%Y-%m-%d`, so a timestamp cannot reach the query string, and
+`assert_boards_yield_cards` catches the outcome if one ever does. One day is
+re-read on every sync by design: the row key carries the day the card changed,
+so a re-read rewrites the same row.
+
+**Why a collection day sits in the board keys.** GitHub keeps no history of a
+board field, an option rename, or a non-status card value. `updatedAt` says
+when a value was last touched and never what it was before, so a succession of
+snapshots is the only record — the day in the key makes each sync's view its
+own row while a re-collection inside one day replaces it. Status history is the
+exception: it comes from the issue timeline and is retroactively recoverable.
+
+**Board status is not the issue's state.** An issue is open or closed; a board
+column is a separate field, one per board, and the two are bound separately.
+Nothing in the connector or in silver merges them.
+
 **Re-syncing an existing deployment.** `issues` gained the hoisted
 `issue_field_values_json` column and `issue_timeline_events` gained the field
 and type identifiers. Both are cursored, so an item nobody touches again is
 never re-read and would keep the old, emptier shape forever — clear the state
 of those two streams once the new descriptor is live. The catalogue streams
 have no state and need nothing.
+
+`issue_timeline_events` now also gains `project_id`, `project_number` and
+`was_automated`, and collects the two board-membership event types. Historical
+events carry those columns only after a re-walk — issue timelines are retained
+indefinitely, so clearing that stream's cursor recovers the whole board status
+history. Card field values cannot be backfilled: the snapshot is all there is.
 
 ## What `github_start_date` bounds
 
@@ -168,6 +204,8 @@ no `updatedAfter` argument, so the stream is a newest-first data feed like
 ## Silver Targets
 
 The nine staging models under `dbt/` feed the `class_git_*` classes, plus
-`class_git_item_events` for the lifecycle streams. Issues, projects, CI and
+`class_git_item_events` for the lifecycle streams. Issues feed the
+`class_task_*` classes, and a board's status column reaches them as its own
+field, one per board. Card field values, board field definitions, CI and
 deployments stay bronze-only. Column types must match the other git connectors
 exactly: the classes union positionally.

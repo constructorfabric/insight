@@ -27,6 +27,11 @@ carrying_events AS (
         ON c.insight_source_id = fh.insight_source_id
         AND c.data_source = fh.data_source
     WHERE fh.field_id != 'created'
+      {% if not var('task_board_bindings_enforced', false) %}
+      -- Boards are not enforced yet: one authored binding per board, and no
+      -- surface to author them in. See `task_board_bindings_enforced`.
+      AND NOT startsWith(fh.field_id, 'project_status:')
+      {% endif %}
 )
 
 SELECT e.*

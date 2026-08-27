@@ -1,0 +1,128 @@
+spec_version: 1
+description: >
+  Task Delivery - dev time, pickup time and flow efficiency for GITHUB, driven
+  by a Projects V2 board column.
+
+  An issue's own lifecycle has no middle: GitHub says open or closed and
+  nothing else. A board column is the only place it says work is in progress,
+  so these three measures exist for GitHub only through a board. This fixture
+  pins that path end to end - a status event that names a board and two column
+  NAMES, resolved through an operator's binding into a lifecycle category.
+
+  The issue is created on the 1st, lands on the board as Todo on the 2nd,
+  enters In progress on the 6th and reaches Done on the 11th. Pickup is
+  therefore five days from creation, active development is five days, and
+  lifetime is ten - so flow efficiency is exactly half. Reading the pickup from
+  the first recorded event instead of from the synthesised creation marker
+  would report four days and look entirely plausible.
+
+  The second board is the control. The same issue also sits on PVT_board2 and
+  moves through it on completely different dates, and that board is bound to
+  nothing. Its events reach silver as their own field and must contribute
+  nothing: a board's status is not the issue's status, and two boards are not
+  one timeline. If the field identity were shared - or if both boards were
+  bound to the same role - the two histories would interleave and every number
+  below would move.
+
+  `state` and `type` are bound to `ignored`, which is the difference between
+  "somebody looked and decided" and silence. Binding `state` to `status` as
+  well would merge two independent timelines into one ordered event array;
+  `assert_one_field_per_role` refuses that, and `precedence` is not read by any
+  consumer yet.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/carol
+
+  bronze_github.commit_authors:
+    - { $ref: templates/github_task.yaml#/templates/commit_author, unique_key: gh-author-1003, _airbyte_raw_id: gh-author-1003, author_id: 1003, author_login: carol, author_email: carol@example.com }
+
+  config.task_field_roles:
+    # The board is the lifecycle source; the issue's own state is not.
+    - $ref: templates/github_task.yaml#/templates/role_board_status
+    - $ref: templates/github_task.yaml#/templates/role_assignees
+    - { $ref: templates/github_task.yaml#/templates/role_state, unique_key: gh-role-state-ignored, role: ignored }
+    - { $ref: templates/github_task.yaml#/templates/role_type, unique_key: gh-role-type-ignored, role: ignored }
+
+  config.task_value_map:
+    - $ref: templates/github_task.yaml#/templates/value_board_todo
+    - $ref: templates/github_task.yaml#/templates/value_board_in_progress
+    - $ref: templates/github_task.yaml#/templates/value_board_done
+
+  bronze_github.issue_types: []
+  bronze_github.issue_fields: []
+
+  bronze_github.project_fields:
+    - $ref: templates/github_task.yaml#/templates/project_field_status
+    - { $ref: templates/github_task.yaml#/templates/project_field_status, unique_key: gh-project-field-status-2, _airbyte_raw_id: gh-project-field-status-2,
+        project_id: PVT_board2, project_number: 41, field_id: PVTSSF_board2_status }
+    # A built-in mirror of an issue property. It must not become a bindable
+    # board field: read as a value it would compete with the issue's own.
+    - { $ref: templates/github_task.yaml#/templates/project_field_status, unique_key: gh-project-field-title, _airbyte_raw_id: gh-project-field-title,
+        field_id: PVTF_board1_title, field_name: Title, data_type: TITLE, is_mirror: true, options_json: "[]" }
+
+  bronze_github.project_items:
+    - $ref: templates/github_task.yaml#/templates/project_item
+    - { $ref: templates/github_task.yaml#/templates/project_item, unique_key: gh-project-item-2, _airbyte_raw_id: gh-project-item-2,
+        project_id: PVT_board2, project_number: 41, item_id: PVTI_card2 }
+
+  bronze_github.issues:
+    - { $ref: templates/github_task.yaml#/templates/issue, id: 1, number: 1, unique_key: gh-issue-1, assignee_logins: carol, assignee_ids: "1003", author_id: 1003,
+        created_at: "2026-03-01T09:00:00Z", closed_at: "2026-03-11T09:00:00Z", updated_at: "2026-03-11T09:00:00Z" }
+
+  bronze_github.issue_timeline_events:
+    # The bound board: Todo on the 2nd, In progress on the 6th, Done on the 11th.
+    - { $ref: templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-1, event_id: PSE_1, event_at: "2026-03-02T09:00:00Z", prev_value: "",            new_value: Todo }
+    - { $ref: templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-2, event_id: PSE_2, event_at: "2026-03-06T09:00:00Z", prev_value: Todo,          new_value: "In progress" }
+    - { $ref: templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-3, event_id: PSE_3, event_at: "2026-03-11T09:00:00Z", prev_value: "In progress", new_value: Done }
+    # The control board, bound to nothing, moving on different dates. Note the
+    # column names are the same strings — only the board differs.
+    - { $ref: templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-4, event_id: PSE_4, event_at: "2026-03-03T09:00:00Z", prev_value: "",            new_value: "In progress", project_id: PVT_board2, project_number: 41 }
+    - { $ref: templates/github_task.yaml#/templates/board_status_event, unique_key: gh-bev-5, event_id: PSE_5, event_at: "2026-03-20T09:00:00Z", prev_value: "In progress", new_value: Done,          project_id: PVT_board2, project_number: 41 }
+    # The issue's own closure. Bound to `ignored`, so it reaches silver and
+    # stops there — the board decides when this issue closed.
+    - { $ref: templates/github_task.yaml#/templates/closed_event, unique_key: gh-ev-1, event_id: CE_1, item_number: 1, actor_id: 1003, event_at: "2026-03-11T09:00:00Z" }
+
+cases:
+  - name: a board column supplies the in-progress lifecycle GitHub itself never states
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: { type: person, ids: [carol@example.com] }
+        period: { from: "2026-03-01", to: "2026-03-31" }
+        metrics:
+          - { metric_key: tasks.closed, views: [{ view: period }] }
+          - { metric_key: tasks.dev_time, views: [{ view: period }] }
+          - { metric_key: tasks.pickup_time, views: [{ view: period }] }
+          - { metric_key: tasks.resolution_time, views: [{ view: period }] }
+          - { metric_key: tasks.flow_efficiency, views: [{ view: period }] }
+    expect:
+      - assert: "status == 200"
+      # Closed by the board's Done column, not by the issue's closed state.
+      - metric: tasks.closed
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 1 }
+      # 6th to 11th: five days in progress. 120 hours, not 408 — which is what
+      # the control board's own In progress to Done span would have produced.
+      - metric: tasks.dev_time
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 120 }
+      # Creation on the 1st to first In progress on the 6th: five days. Four
+      # would mean the first recorded event was used as the start instead of
+      # the synthesised creation marker.
+      - metric: tasks.pickup_time
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 5 }
+      - metric: tasks.resolution_time
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 10 }
+      # Five days of ten.
+      - metric: tasks.flow_efficiency
+        view: period
+        find: { entity_id: carol@example.com }
+        equal: { value: 50 }

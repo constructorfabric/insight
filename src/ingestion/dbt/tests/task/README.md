@@ -28,6 +28,8 @@ tag, add `config(tags=['task_tracker'])` as a SQL comment at the top of each tes
 | `assert_initial_traceable_to_bronze` | Silver initial row with no matching `bronze_jira.jira_issue` |
 | `assert_initial_is_earliest_per_issue_field` | `event_at` of initial row later than first changelog |
 | `assert_value_id_type_consistent` | Same field_id classified with different `value_id_type`s across runs |
+| `assert_one_field_per_role` | Two vendor fields bound to one metric role — consumers merge them rather than choose, and `precedence` is not read yet |
+| `assert_boards_yield_cards` | Projects V2 boards and board events collected, cards not — the date filter on `items(query:)` is being rejected silently |
 
 ## Not covered (too expensive)
 

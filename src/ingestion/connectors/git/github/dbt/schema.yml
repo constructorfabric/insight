@@ -23,6 +23,8 @@ sources:
       - name: issues
       - name: projects_v2
       - name: issue_fields
+      - name: project_fields
+      - name: project_items
       - name: issue_types
       - name: workflow_runs
       - name: deployments
