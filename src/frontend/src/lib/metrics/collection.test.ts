@@ -18,6 +18,7 @@ import {
   normalizeMetricResult,
   normalizeMetricResults,
   projectViews,
+  projectWindow,
   resolveBucket,
   type MetricCollectionConfig,
 } from "@/lib/metrics/collection";
@@ -78,6 +79,93 @@ describe("buildMetricCollectionRequest", () => {
       },
       { view: "breakdown", dimensions: ["tool"] },
     ]);
+  });
+
+  it("omits windows entirely when none were asked for", () => {
+    // The field is absent, not `[]`: an unwindowed request keeps the exact
+    // wire form it had before windows existed.
+    const request = buildMetricCollectionRequest(
+      COLLECTION,
+      { type: "person", ids: ["alice@example.com"] },
+      RANGE
+    );
+    expect("windows" in request).toBe(false);
+  });
+
+  it("carries extra windows in request order", () => {
+    const request = buildMetricCollectionRequest(
+      COLLECTION,
+      { type: "person", ids: ["alice@example.com"] },
+      RANGE,
+      [
+        { from: "2026-05-01", to: "2026-05-31" },
+        { from: "2026-04-01", to: "2026-04-30" },
+      ]
+    );
+    expect(request.windows).toEqual([
+      { from: "2026-05-01", to: "2026-05-31" },
+      { from: "2026-04-01", to: "2026-04-30" },
+    ]);
+  });
+});
+
+describe("projectWindow", () => {
+  const windowed = (): Map<string, NormalizedMetricResult> =>
+    new Map([
+      [
+        "git.commits",
+        {
+          metric_key: "git.commits",
+          label: "Commits",
+          unit: null,
+          computation: "sum",
+          format: "integer",
+          direction: "higher_is_better",
+          period: {
+            view: "period",
+            values: [{ entity_id: "a", value: 9, windows: [4, 2] }],
+          },
+          peer: {
+            view: "peer",
+            values: [
+              {
+                entity_id: "a",
+                target_value: 9,
+                p25: 1,
+                median: 5,
+                p75: 8,
+                min: 0,
+                max: 10,
+                n: 7,
+              },
+            ],
+          },
+        } satisfies NormalizedMetricResult,
+      ],
+    ]);
+
+  it("reads the window at its own index as the value", () => {
+    expect(
+      projectWindow(windowed(), 1).get("git.commits")?.period?.values[0]?.value
+    ).toBe(2);
+  });
+
+  it("answers null for a window the row never carried", () => {
+    expect(
+      projectWindow(windowed(), 5).get("git.commits")?.period?.values[0]?.value
+    ).toBeNull();
+  });
+
+  it("drops the views a window does not carry", () => {
+    // Keeping `peer` would answer the primary period's standing under a
+    // previous-period label — a mispairing no consumer could detect.
+    expect(projectWindow(windowed(), 0).get("git.commits")?.peer).toBeUndefined();
+  });
+
+  it("leaves the source map untouched", () => {
+    const source = windowed();
+    projectWindow(source, 0);
+    expect(source.get("git.commits")?.period?.values[0]?.value).toBe(9);
   });
 });
 

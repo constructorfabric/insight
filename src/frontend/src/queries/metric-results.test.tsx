@@ -64,7 +64,15 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
             }
           : {
               view: "period",
-              values: ids.map((id) => ({ entity_id: id, value: 1 })),
+              values: ids.map((id) => ({
+                entity_id: id,
+                value: 1,
+                // Distinct per window so a projection reading the wrong index
+                // cannot pass by coincidence.
+                ...(req.windows?.length
+                  ? { windows: req.windows.map((_, index) => 10 + index) }
+                  : {}),
+              })),
             },
       ),
     })),
@@ -127,7 +135,7 @@ describe("useMetricCollection", () => {
     expect(result.current.isError).toBe(false);
   });
 
-  it("normalizes the current result and skips the previous twin by default", async () => {
+  it("normalizes the current result and asks for no extra window by default", async () => {
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE),
       { wrapper: wrapper() },
@@ -138,14 +146,41 @@ describe("useMetricCollection", () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
-  it("fires the previous-period twin and exposes previousByKey", async () => {
+  it("serves the previous period as a window on the one request", async () => {
     const { result } = renderHook(
       () => useMetricCollection(COLLECTION, ENTITY, RANGE, { previousPeriod: "month" }),
       { wrapper: wrapper() },
     );
-    await waitFor(() => expect(result.current.previousByKey).not.toBeNull());
-    expect(result.current.previousByKey?.get("m")).toBeDefined();
-    expect(mock).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(mock.mock.calls[0]![0].windows).toEqual([
+      { from: "2026-05-01", to: "2026-05-30" },
+    ]);
+    expect(
+      result.current.previousByKey?.get("m")?.period?.values[0]?.value,
+    ).toBe(10);
+  });
+
+  it("reads each extra window back at its own index", async () => {
+    const windows = [
+      { from: "2026-05-01", to: "2026-05-15" },
+      { from: "2026-05-16", to: "2026-05-31" },
+    ];
+    const { result } = renderHook(
+      () => useMetricCollection(COLLECTION, ENTITY, RANGE, { windows }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(result.current.windowsByKey).toHaveLength(2);
+    expect(result.current.windowsByKey[0]?.get("m")?.period?.values[0]?.value).toBe(10);
+    expect(result.current.windowsByKey[1]?.get("m")?.period?.values[0]?.value).toBe(11);
+    // A window carries no standing: reading `peer` here would answer over the
+    // primary period instead.
+    expect(result.current.windowsByKey[0]?.get("m")?.peer).toBeUndefined();
+    expect(result.current.previousByKey).toBeNull();
   });
 
   it("surfaces errors and leaves byKey empty", async () => {

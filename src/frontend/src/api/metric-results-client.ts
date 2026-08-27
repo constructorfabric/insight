@@ -32,6 +32,11 @@ export type MetricResultsEntity =
 export interface MetricResultsRequest {
   entity: MetricResultsEntity;
   period: { from: string; to: string };
+  /**
+   * Extra windows served in the same response, in request order. The `period`
+   * and `breakdown` views carry them; every other view answers over `period`.
+   */
+  windows?: Array<{ from: string; to: string }>;
   metrics: MetricRequest[];
 }
 
@@ -151,7 +156,12 @@ export type MetricResultView =
 
 export interface PeriodView {
   view: "period";
-  values: Array<{ entity_id: string; value: number | null }>;
+  values: Array<{
+    entity_id: string;
+    value: number | null;
+    /** One entry per requested extra window, in request order. */
+    windows?: Array<number | null>;
+  }>;
 }
 
 export interface TimeseriesView {
@@ -189,6 +199,8 @@ export interface BreakdownView {
     entity_id: string;
     dimensions: MetricDimension[];
     value: number | null;
+    /** One entry per requested extra window, in request order. */
+    windows?: Array<number | null>;
   }>;
 }
 

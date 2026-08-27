@@ -146,7 +146,8 @@ function exhaustive(value: never): never {
 export function buildMetricCollectionRequest(
   collection: MetricCollectionConfig,
   entity: MetricCollectionEntity,
-  period: DateRange
+  period: DateRange,
+  windows: readonly DateRange[] = []
 ): MetricResultsRequest {
   return {
     entity:
@@ -154,6 +155,7 @@ export function buildMetricCollectionRequest(
         ? { type: "person", ids: entity.ids }
         : { type: "tenant" },
     period,
+    ...(windows.length ? { windows: windows.map((w) => ({ ...w })) } : {}),
     metrics: collection.metrics.map((metric) => ({
       metric_key: metric.key,
       ...(metric.filters?.length ? { filters: metric.filters } : {}),
@@ -241,6 +243,51 @@ export function normalizeMetricResult(
   }
 
   return normalized;
+}
+
+/**
+ * One extra window read as if it had been its own request: the window's value
+ * takes the place of `value`, and the views that never carry a window
+ * (`peer`, `timeseries`, `histogram`, `rollup`) are dropped rather than
+ * repeated — reading them here would silently answer over the primary period.
+ * This is what lets a window feed the same selectors a separate request did.
+ */
+export function projectWindow(
+  results: Map<string, NormalizedMetricResult>,
+  windowIndex: number
+): Map<string, NormalizedMetricResult> {
+  const out = new Map<string, NormalizedMetricResult>();
+  for (const [key, result] of results) {
+    const projected: NormalizedMetricResult = {
+      ...result,
+      period: undefined,
+      timeseries: undefined,
+      peer: undefined,
+      breakdown: undefined,
+      rollup: undefined,
+      histogram: undefined,
+    };
+    if (result.period) {
+      projected.period = {
+        ...result.period,
+        values: result.period.values.map((value) => ({
+          entity_id: value.entity_id,
+          value: value.windows?.[windowIndex] ?? null,
+        })),
+      };
+    }
+    if (result.breakdown) {
+      projected.breakdown = {
+        ...result.breakdown,
+        values: result.breakdown.values.map((value) => ({
+          ...value,
+          value: value.windows?.[windowIndex] ?? null,
+        })),
+      };
+    }
+    out.set(key, projected);
+  }
+  return out;
 }
 
 export function normalizeMetricResults(

@@ -17,6 +17,7 @@ import {
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
+  projectWindow,
   type MetricCollectionConfig,
   type MetricCollectionEntity,
   type NormalizedMetricResult,
@@ -47,18 +48,25 @@ function useMetricGate(): (metricKey: string) => boolean {
 
 export interface MetricCollectionOptions {
   /**
-   * When set, a twin query fetches the same collection over the previous
-   * period of the same kind (the period value drives week/month/quarter/year
-   * shift semantics in `previousPeriodRange`). Consumers derive deltas from
-   * `previousByKey`.
+   * When set, the request carries the previous period of the same kind as an
+   * extra window (the period value drives week/month/quarter/year shift
+   * semantics in `previousPeriodRange`). Consumers derive deltas from
+   * `previousByKey`. Sugar for a single entry in `windows`.
    */
   previousPeriod?: PeriodValue;
+  /**
+   * Extra windows served in the same request, in order; read them back through
+   * `windowsByKey` at the same index. Ignored when `previousPeriod` is set.
+   */
+  windows?: readonly DateRange[];
   keepPreviousData?: boolean;
 }
 
 export interface MetricCollectionResult {
   byKey: Map<string, NormalizedMetricResult>;
   previousByKey: Map<string, NormalizedMetricResult> | null;
+  /** One entry per requested extra window, in request order. */
+  windowsByKey: Array<Map<string, NormalizedMetricResult>>;
   isPending: boolean;
   isFetching: boolean;
   isError: boolean;
@@ -85,7 +93,8 @@ function queryKeyFor(
   entity: MetricCollectionEntity,
   ids: string[],
   range: DateRange,
-  metrics: MetricRequest[]
+  metrics: MetricRequest[],
+  windows: readonly DateRange[] = []
 ) {
   // The derived `metrics` array rides in the key, so key and payload are
   // provably coherent — no hand-maintained collection identity to forget to
@@ -97,6 +106,7 @@ function queryKeyFor(
     range.from,
     range.to,
     metrics,
+    windows,
   ] as const;
 }
 
@@ -118,7 +128,19 @@ export function useMetricCollection(
   );
   const canonicalEntity: MetricCollectionEntity =
     entity.type === "person" ? { type: "person", ids } : { type: "tenant" };
-  const request = buildMetricCollectionRequest(asked, canonicalEntity, range);
+  // The previous period rides along as an extra window instead of a twin
+  // request: it reads the same rows the primary aggregate already scans, so a
+  // delta arrow no longer costs a second round trip, a second authorization and
+  // a second query slot (#2651).
+  const windows = options?.previousPeriod
+    ? [previousPeriodRange(range, options.previousPeriod)]
+    : (options?.windows ?? []);
+  const request = buildMetricCollectionRequest(
+    asked,
+    canonicalEntity,
+    range,
+    windows
+  );
   // Neither an empty entity list nor an empty metric list is a request the
   // backend can answer — it rejects both with 400 invalid_argument. So the
   // query stays disabled, and because `refetch()` bypasses `enabled`, the
@@ -130,59 +152,42 @@ export function useMetricCollection(
     Boolean(range.from && range.to);
 
   const current = useQuery({
-    queryKey: queryKeyFor(entity, ids, range, request.metrics),
+    queryKey: queryKeyFor(entity, ids, range, request.metrics, windows),
     queryFn: () => queryMetricResults(request),
     enabled,
     placeholderData: options?.keepPreviousData ? keepPreviousData : undefined,
   });
 
-  const previousRange = options?.previousPeriod
-    ? previousPeriodRange(range, options.previousPeriod)
-    : null;
-  const previousRequest = previousRange
-    ? buildMetricCollectionRequest(asked, canonicalEntity, previousRange)
-    : null;
-  const previous = useQuery({
-    // Sentinel key when no previous period is requested: the disabled twin
-    // must never alias the current query's cache entry.
-    queryKey: previousRequest
-      ? queryKeyFor(
-          entity,
-          ids,
-          previousRange ?? range,
-          previousRequest.metrics
-        )
-      : (["metric-results", "previous-disabled"] as const),
-    queryFn: () => queryMetricResults(previousRequest ?? request),
-    enabled: enabled && previousRequest !== null,
-  });
-
-  const hasPrevious = previousRequest !== null;
   const byKey = useMemo(
     () => normalizeMetricResults(current.data?.metrics),
     [current.data]
   );
-  // Deltas pair two periods; a failed twin yields "no delta" rather than a
-  // silently mispaired one. Both queries reset together on a period change, so
-  // the previous twin is absent (not stale) while it reloads — nothing to
-  // mispair against.
-  const previousUsable = hasPrevious && !previous.isError;
-  const previousData = previousUsable ? previous.data : undefined;
-  const previousByKey = useMemo(
-    () => (previousData ? normalizeMetricResults(previousData.metrics) : null),
-    [previousData]
+  // One window's values, read as if they had been their own request — a period
+  // and its comparison window now stand or fall together, so there is no
+  // mispairing to guard against.
+  const windowCount = windows.length;
+  const windowsByKey = useMemo(
+    () =>
+      Array.from({ length: windowCount }, (_, index) =>
+        projectWindow(byKey, index)
+      ),
+    [byKey, windowCount]
   );
+  const previousByKey = options?.previousPeriod
+    ? (windowsByKey[0] ?? null)
+    : null;
 
   return {
     byKey,
     previousByKey,
+    windowsByKey,
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
     // a moment later.
     isPending:
       (current.isPending && enabled) ||
       (entitySelected(entity, ids) && catalog.isPending),
-    isFetching: current.isFetching || (hasPrevious && previous.isFetching),
+    isFetching: current.isFetching,
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
     // that a future key change cannot resurrect "Unable to load" for a
@@ -194,7 +199,6 @@ export function useMetricCollection(
       // see the note on `enabled` above.
       if (!enabled) return;
       void current.refetch();
-      if (hasPrevious) void previous.refetch();
     },
   };
 }
@@ -215,13 +219,14 @@ export function collectionSetPending(
 /**
  * One query per collection for a dynamic list (e.g. every metrics-backed
  * group in the registry) — `useQueries`, so the list length can change
- * without violating hook rules. No previous-period twin here; only the KPI
- * row compares periods.
+ * without violating hook rules. `windows` rides every request in the set and
+ * reads back per collection through `windowsByKey`.
  */
 export function useMetricCollectionSet(
   collections: readonly KeyedCollection[],
   entity: MetricCollectionEntity,
-  range: DateRange
+  range: DateRange,
+  windows: readonly DateRange[] = []
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
@@ -252,7 +257,8 @@ export function useMetricCollectionSet(
         entity.type === "person"
           ? { type: "person", ids: chunkIds }
           : { type: "tenant" },
-        range
+        range,
+        windows
       );
       return {
         key,
@@ -269,7 +275,7 @@ export function useMetricCollectionSet(
 
   const results = useQueries({
     queries: requests.map(({ request, chunkIds, active }) => ({
-      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics),
+      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics, windows),
       queryFn: () => queryMetricResults(request),
       enabled: active,
     })),
@@ -295,6 +301,7 @@ export function useMetricCollectionSet(
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
+      windowsByKey: [],
       // Pending covers the catalog wait too — otherwise a screen reads "no
       // data" for the moment before its requests are even allowed to fire.
       isPending:
@@ -314,7 +321,11 @@ export function useMetricCollectionSet(
   });
   for (const [key, maps] of chunkMaps) {
     const entry = out.get(key);
-    if (entry) entry.byKey = mergeNormalizedResults(maps);
+    if (!entry) continue;
+    entry.byKey = mergeNormalizedResults(maps);
+    entry.windowsByKey = windows.map((_, index) =>
+      projectWindow(entry.byKey, index)
+    );
   }
   return out;
 }
