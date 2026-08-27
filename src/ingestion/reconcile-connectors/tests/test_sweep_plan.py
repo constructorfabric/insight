@@ -126,6 +126,22 @@ class AbsenceIsNotZero(unittest.TestCase):
     def test_a_negative_count_is_absent_rather_than_recorded(self) -> None:
         self.assertIsNone(row(rowsSynced=-1)["records_reported"])
 
+    def test_a_non_finite_number_is_absent_rather_than_an_exception(self) -> None:
+        """`int(inf)` raises, and one malformed field would cost the whole tick
+        its seal — which stops the page's own clock."""
+        for absent in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(absent=absent):
+                self.assertIsNone(row(duration=absent)["duration_ms"])
+                self.assertIsNone(row(rowsSynced=absent)["records_reported"])
+
+    def test_an_empty_job_identity_is_refused(self) -> None:
+        """Several such jobs would share one key and replace each other during
+        resolution, so the page would answer with whichever landed last."""
+        for empty in ("", "   "):
+            with self.subTest(empty=empty):
+                planned = plan.sync_row(entry(jobId=empty), CONNECTORS, TICK)
+                self.assertIsInstance(planned, plan.Skipped)
+
     def test_a_duration_that_will_not_parse_is_absent(self) -> None:
         """Reading only some components would report a span shorter than the
         truth, which is worse than reporting none."""

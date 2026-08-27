@@ -39,7 +39,7 @@ const COLUMNS = 5;
 
 export function ConnectorHealthPane() {
   const { data, isPending, isError, refetch } = useConnectorHealth();
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   if (isPending) return <CenteredSpinner className="min-h-[60vh]" />;
   if (isError || data === undefined) {
@@ -94,15 +94,17 @@ export function ConnectorHealthPane() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.connectors.map((row, index) => {
+              {data.connectors.map((row) => {
                 const state = describeConnector(row);
-                // Keyed on position, not on the name: the name is the server's
-                // to choose and two rows carrying one name would expand
-                // together and share a React key.
-                const open = expanded === index;
-                const panelId = `connector-syncs-${index}`;
+                // Keyed on the connector, not on the row's position. The page
+                // polls, so a position can come to mean a different connector
+                // between renders and the wrong row would open. The name is
+                // safe to key on: the read groups by connector, so the response
+                // cannot carry two rows sharing one.
+                const open = expanded === row.connector;
+                const panelId = `connector-syncs-${row.connector}`;
                 return [
-                  <TableRow key={`row-${index}`} data-state-name={state.state}>
+                  <TableRow key={row.connector} data-state-name={state.state}>
                     <TableCell>
                       {/* A real button rather than a role on the row: an
                           overridden role takes the row out of the table for a
@@ -112,7 +114,7 @@ export function ConnectorHealthPane() {
                         className="text-left font-medium underline-offset-2 hover:underline"
                         aria-expanded={open}
                         aria-controls={panelId}
-                        onClick={() => setExpanded(open ? null : index)}
+                        onClick={() => setExpanded(open ? null : row.connector)}
                       >
                         {row.connector}
                       </button>
@@ -133,7 +135,7 @@ export function ConnectorHealthPane() {
                     </TableCell>
                   </TableRow>,
                   open ? (
-                    <TableRow key={`syncs-${index}`}>
+                    <TableRow key={`syncs-${row.connector}`}>
                       <TableCell colSpan={COLUMNS} id={panelId} className="bg-muted/40">
                         <RecentSyncs connector={row.connector} />
                       </TableCell>

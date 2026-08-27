@@ -432,9 +432,10 @@ it; listing it would mean reading storage the reader deliberately holds no acces
       outcome, timestamps, duration and reported record count (FR-1).
 - [ ] A job still running is recorded provisionally and re-recorded with its outcome once it
       ends (FR-1).
-- [ ] A connector with a schema, no snapshot membership, and no syncs renders as never
-      configured; present in the snapshot with no syncs, as configured and never ran; removed
-      from configuration, it stops rendering configured within one controller cadence (FR-4).
+- [ ] A connector present in the snapshot with no syncs renders as configured and never ran;
+      removed from configuration, it stops rendering configured within one controller cadence;
+      one that has left no record at all is not listed, because the reader holds one relation
+      and nothing else (FR-4, FR-11).
 - [ ] A tick whose inputs are unreadable records nothing rather than recording an empty
       configured set (FR-4).
 - [ ] Deleting a connection in the mover does not remove already-recorded history (FR-2).

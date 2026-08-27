@@ -426,6 +426,10 @@ Shape rules that the generated contract enforces:
   instead of implying health.
 - `window` is the largest number of rows the per-connector list can hold, so the page can say
   the list is a window rather than the whole retained history (FR-6).
+- **The summary carries a row cap too.** The set is bounded by the build's descriptor list in
+  practice, so an install cannot reach the cap by configuring connectors — only by accumulating
+  names in the ledger that no build has. It is a backstop rather than a page, and the read logs
+  when it truncates, because reaching it should be visible rather than silent.
 
 ### 3.4 Internal Dependencies
 

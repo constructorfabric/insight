@@ -22,6 +22,16 @@ const SWEEP_COMPLETED: &str = "sweep.completed";
 /// Rows in a connector's expandable history. A window, not the retention.
 pub(crate) const HISTORY_WINDOW: u32 = 50;
 
+/// Connectors the summary will serve.
+///
+/// The set is bounded by the build's descriptor list in practice, so this is a
+/// backstop rather than a page: an install cannot reach it by configuring more
+/// connectors, only by accumulating names in the ledger that no build has. It
+/// exists because an unbounded response is a bug however unlikely the input —
+/// and because reaching it should be visible rather than silent, the read logs
+/// when it truncates.
+const CONNECTOR_LIMIT: u32 = 500;
+
 /// Sealed ticks sampled for the median gap between reads. Enough to survive one
 /// unusual interval; short enough that a cadence change shows up quickly.
 const INTERVAL_SAMPLE: u32 = 20;
@@ -127,7 +137,8 @@ static LAST_SYNC_SQL: LazyLock<String> = LazyLock::new(|| {
          FROM (SELECT connector, argMax(tuple({SYNC_COLUMNS}), ord) AS winner \
                FROM (SELECT connector, {SYNC_COLUMNS}, {order} AS ord \
                      FROM {TABLE} WHERE event = '{SYNC_COMPLETED}') \
-               GROUP BY connector)",
+               GROUP BY connector \
+               ORDER BY connector LIMIT ?)",
         order = &*ROW_ORDER
     )
 });
@@ -259,16 +270,31 @@ pub(crate) async fn read_health(
         ch.query(&READ_INTERVAL_SQL)
             .bind(INTERVAL_SAMPLE)
             .fetch_one::<IntervalRow>(),
-        ch.query(&LAST_SYNC_SQL).fetch_all::<SyncRow>(),
+        ch.query(&LAST_SYNC_SQL)
+            .bind(CONNECTOR_LIMIT)
+            .fetch_all::<SyncRow>(),
         configured_set(ch, sealed.as_ref().map(|tick| tick.tick_id.as_str())),
     )?;
 
+    // A sealed tick IS recorded history, even when it found no connector: the
+    // mover was read, and the page must say when rather than claim nothing has
+    // been read. Deriving this from the rows alone would make a sealed empty
+    // install indistinguishable from one that has never recorded anything.
+    if syncs.len() >= CONNECTOR_LIMIT as usize {
+        tracing::warn!(
+            limit = CONNECTOR_LIMIT,
+            "connector health truncated the summary; the ledger holds at least \
+             as many connector names as the response can carry"
+        );
+    }
+
+    let has_history = sealed.is_some() || !syncs.is_empty();
     let summaries = merge(syncs, &configured);
     Ok(LedgerFacts {
         sealed_at: sealed.map(|tick| tick.sealed_at),
         typical_read_interval_ms: (interval.gaps >= MIN_GAPS_FOR_INTERVAL)
             .then_some(interval.interval_ms),
-        has_history: !summaries.is_empty() || !configured.is_empty(),
+        has_history,
         summaries,
     })
 }
@@ -538,10 +564,30 @@ mod guards {
     }
 
     #[test]
-    fn history_is_a_bounded_window() {
-        assert!(
-            SYNC_HISTORY_SQL.contains("LIMIT ?"),
-            "the window must be bound"
-        );
+    fn every_row_returning_read_is_bounded() {
+        // An unbounded response is a bug however unlikely the input, and the
+        // repository's own rule is to bound it at the edge.
+        for (name, sql) in [
+            ("SYNC_HISTORY_SQL", SYNC_HISTORY_SQL.as_str()),
+            ("LAST_SYNC_SQL", LAST_SYNC_SQL.as_str()),
+            ("SEALED_TICK_SQL", SEALED_TICK_SQL.as_str()),
+            ("READ_INTERVAL_SQL", READ_INTERVAL_SQL.as_str()),
+        ] {
+            assert!(
+                normalised(sql).contains("limit "),
+                "{name} can return an unbounded number of rows",
+            );
+        }
+    }
+
+    /// The configured set is the one read with no row limit, deliberately: it is
+    /// filtered to a single tick, so its size is the number of connectors that
+    /// tick managed — and dropping members of a snapshot would make it read as a
+    /// smaller set than the one that was sealed.
+    #[test]
+    fn the_configured_set_is_bounded_by_its_tick_not_by_a_limit() {
+        let sql = normalised(&CONFIGURED_SET_SQL);
+        assert!(sql.contains("tick_id = ?"), "{sql}");
+        assert!(!sql.contains("limit "), "{sql}");
     }
 }

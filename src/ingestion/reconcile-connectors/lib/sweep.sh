@@ -100,9 +100,16 @@ sweep__build_work() {
     [[ -n "${name}" ]] || continue
     : "${rest}"  # read into it deliberately; nothing here needs the other columns
     conn_name="$(reconcile_compute_connection_name "${name}")"
-    conn_id="$(printf '%s' "${connections}" \
-      | python3 "${_SWEEP_PY_DIR}/filter_connection_by_name.py" --name "${conn_name}" \
-      | head -1)"
+    # Not piped into `head`: without `pipefail` that hides a nonzero exit from
+    # the filter, and a failed lookup would read as "no connection yet" — which
+    # would seal a snapshot claiming a connector the mover was never asked
+    # about. Take the first line after the status has been checked.
+    if ! conn_id="$(printf '%s' "${connections}" \
+      | python3 "${_SWEEP_PY_DIR}/filter_connection_by_name.py" --name "${conn_name}")"; then
+      log_line WARN "sweep: cannot resolve a connection for ${name}; recording nothing this tick"
+      return 1
+    fi
+    conn_id="${conn_id%%$'\n'*}"
     if [[ -n "${conn_id}" ]]; then
       entries+=("$(jq -cn --arg n "${name}" --arg c "${conn_id}" \
         '{name: $n, connection_id: $c}')")

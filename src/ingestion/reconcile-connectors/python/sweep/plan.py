@@ -12,6 +12,7 @@ duration, so both are parsed rather than cast.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
@@ -125,7 +126,7 @@ def duration_ms(duration: object) -> int | None:
         # A bare number is seconds, which is what the listing's own duration
         # spells out; anything else would be this reading a unit into a field
         # the mover documents as ISO-8601.
-        return _bounded(int(float(duration) * 1000)) if duration >= 0 else None
+        return _bounded(float(duration) * 1000) if duration >= 0 else None
     if not isinstance(duration, str) or not duration.strip():
         return None
 
@@ -140,16 +141,22 @@ def duration_ms(duration: object) -> int | None:
         for name, seconds in _SECONDS_PER.items()
         if parts[name] is not None
     )
-    return _bounded(round(total * 1000))
+    return _bounded(total * 1000)
 
 
-def _bounded(value: int) -> int | None:
+def _bounded(value: float) -> int | None:
     """A magnitude the column can hold, or None.
 
     `UInt64` wraps rather than rejects, so an out-of-range count would be stored
     as a different number and labelled as the mover's own.
+
+    Finiteness is checked HERE rather than at each call site: `int(inf)` raises,
+    and an exception on one malformed field costs the whole tick its seal — a
+    listing that sends one nonsense number would stop the page's clock.
     """
-    return value if 0 <= value <= _MAX_UINT64 else None
+    if not math.isfinite(value):
+        return None
+    return int(value) if 0 <= value <= _MAX_UINT64 else None
 
 
 def records_reported(entry: Mapping[str, Any]) -> int | None:
@@ -169,7 +176,7 @@ def records_reported(entry: Mapping[str, Any]) -> int | None:
             return None
     if not isinstance(value, (int, float)):
         return None
-    return _bounded(int(value)) if value >= 0 else None
+    return _bounded(value) if value >= 0 else None
 
 
 def sync_row(
@@ -179,7 +186,11 @@ def sync_row(
     raw_id = entry.get("jobId")
     if raw_id is None or isinstance(raw_id, bool):
         return Skipped("", "listing entry carries no job identity")
-    job_id = str(raw_id)
+    job_id = str(raw_id).strip()
+    if not job_id:
+        # Several such jobs would share one key and replace each other during
+        # resolution, so the page would answer with whichever landed last.
+        return Skipped("", "listing entry carries an empty job identity")
 
     connection = entry.get("connectionId")
     connector = connectors.get(str(connection)) if connection is not None else None

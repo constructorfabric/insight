@@ -93,21 +93,39 @@ describe("the pane prints what it was served", () => {
     expect(names).toEqual(["zulu", "alpha", "mike"]);
   });
 
-  it("expands only the row that was clicked, even when two share a name", async () => {
-    // The name is the server's to choose. Keying expansion on it opens both.
-    mocks.summary.data = summary({
-      connectors: [
-        { connector: "alpha", configured: true, last_sync: null },
-        { connector: "alpha", configured: false, last_sync: null },
-      ],
-    });
-    render(<ConnectorHealthPane />);
+  it("keeps the same row expanded when the served order changes", async () => {
+    // The page polls, so a row's position is not its identity. Keying expansion
+    // on the position opens a different connector the moment the order moves.
+    const alpha = {
+      connector: "alpha",
+      configured: true,
+      last_sync: { job_id: "1", status: "succeeded" as const, started_at: NOW },
+    };
+    const bravo = {
+      connector: "bravo",
+      configured: true,
+      last_sync: { job_id: "2", status: "failed" as const, started_at: NOW },
+    };
+    mocks.summary.data = summary({ connectors: [alpha, bravo] });
+    const { rerender } = render(<ConnectorHealthPane />);
 
-    const toggles = screen.getAllByRole("button", { name: "alpha" });
-    await userEvent.click(toggles[0]);
+    await userEvent.click(screen.getByRole("button", { name: "alpha" }));
+    expect(screen.getByRole("button", { name: "alpha" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
 
-    expect(toggles[0]).toHaveAttribute("aria-expanded", "true");
-    expect(toggles[1]).toHaveAttribute("aria-expanded", "false");
+    mocks.summary.data = summary({ connectors: [bravo, alpha] });
+    rerender(<ConnectorHealthPane />);
+
+    expect(screen.getByRole("button", { name: "alpha" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "bravo" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("prints an unmeasured number as absence, not as a zero", () => {

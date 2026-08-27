@@ -225,6 +225,7 @@ async fn the_ledger_reads_answer_from_real_rows() {
     let at = Stamps::fresh();
 
     an_empty_ledger_says_so(&ch).await;
+    a_sealed_empty_sweep_still_counts_as_history(&ch, &at).await;
     truncate(&ch).await;
     rows_cross_into_options(&ch, &at).await;
     two_rows_for_one_job_resolve_to_the_newer(&ch, &at).await;
@@ -305,6 +306,25 @@ async fn the_resolution_survives_every_way_it_used_to_be_wrong(
          creation stamp, so this must be absent rather than job 1's stamp"
     );
     assert_eq!(resolved.status, SyncStatus::Failed);
+}
+
+/// A sweep can seal having found no connector — a fresh install before any is
+/// configured. The mover WAS read then, so the page must date itself rather than
+/// say nothing has been read.
+async fn a_sealed_empty_sweep_still_counts_as_history(
+    ch: &insight_clickhouse::Client,
+    at: &Stamps,
+) {
+    truncate(ch).await;
+    insert(ch, &[seal("tick-empty", &at.tick_1)]).await;
+
+    let facts = read_health(ch).await.expect("read");
+    assert!(
+        facts.has_history,
+        "a sealed tick is recorded history even with no connector in it"
+    );
+    assert!(facts.sealed_at.is_some());
+    assert!(facts.summaries.is_empty());
 }
 
 async fn an_empty_ledger_says_so(ch: &insight_clickhouse::Client) {

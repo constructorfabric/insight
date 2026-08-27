@@ -1032,22 +1032,42 @@ function connectorHealthHandlers() {
   const minutesAgo = (minutes: number) =>
     new Date(now.getTime() - minutes * 60_000).toISOString();
 
-  const syncs = [
-    {
-      job_id: "8414",
-      status: "failed",
-      started_at: minutesAgo(18),
-      duration_ms: 142_000,
-      records_reported: 0,
-    },
-    {
-      job_id: "8409",
-      status: "succeeded",
-      started_at: minutesAgo(78),
-      duration_ms: 138_500,
-      records_reported: 12_400,
-    },
-  ];
+  const sync = (
+    job_id: string,
+    status: string,
+    startedMinutesAgo: number | null,
+    duration_ms: number | null,
+    records_reported: number | null,
+  ) => ({
+    job_id,
+    status,
+    started_at: startedMinutesAgo === null ? null : minutesAgo(startedMinutesAgo),
+    duration_ms,
+    records_reported,
+  });
+
+  // One history per connector, newest first, so each connector's expansion
+  // agrees with the row above it. A demo whose drill-down contradicts its own
+  // summary teaches the reader to distrust both.
+  const histories: Record<string, ReturnType<typeof sync>[]> = {
+    "example-tracker": [
+      sync("8414", "failed", 18, 142_000, 0),
+      sync("8409", "succeeded", 78, 138_500, 12_400),
+    ],
+    "example-directory": [sync("8415", "pending", null, null, null)],
+    "example-messaging": [
+      sync("8402", "succeeded", 24, 41_000, 903),
+      sync("8388", "succeeded", 84, 39_100, 874),
+    ],
+    "example-warehouse": [],
+    "example-retired": [sync("7801", "succeeded", 60 * 26, 90_000, 55)],
+  };
+
+  const summaryRow = (connector: string, configured: boolean) => ({
+    connector,
+    configured,
+    last_sync: histories[connector]?.[0] ?? null,
+  });
 
   return [
     http.get("/api/analytics/v1/connector-health", () =>
@@ -1057,45 +1077,22 @@ function connectorHealthHandlers() {
         typical_read_interval_ms: 15 * 60_000,
         history_available: true,
         connectors: [
-          { connector: "example-tracker", configured: true, last_sync: syncs[0] },
-          {
-            connector: "example-directory",
-            configured: true,
-            last_sync: { job_id: "8415", status: "pending" },
-          },
-          {
-            connector: "example-messaging",
-            configured: true,
-            last_sync: {
-              job_id: "8402",
-              status: "succeeded",
-              started_at: minutesAgo(24),
-              duration_ms: 41_000,
-              records_reported: 903,
-            },
-          },
-          { connector: "example-warehouse", configured: true, last_sync: null },
-          {
-            connector: "example-retired",
-            configured: false,
-            last_sync: {
-              job_id: "7801",
-              status: "succeeded",
-              started_at: minutesAgo(60 * 26),
-              duration_ms: 90_000,
-              records_reported: 55,
-            },
-          },
+          summaryRow("example-tracker", true),
+          summaryRow("example-directory", true),
+          summaryRow("example-messaging", true),
+          summaryRow("example-warehouse", true),
+          summaryRow("example-retired", false),
         ],
       }),
     ),
-    http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) =>
-      HttpResponse.json({
-        connector: String(params.connector),
+    http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) => {
+      const connector = String(params.connector);
+      return HttpResponse.json({
+        connector,
         window: 50,
-        syncs: String(params.connector) === "example-warehouse" ? [] : syncs,
-      }),
-    ),
+        syncs: histories[connector] ?? [],
+      });
+    }),
   ];
 }
 

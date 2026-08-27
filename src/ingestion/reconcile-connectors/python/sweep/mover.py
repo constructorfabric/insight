@@ -79,6 +79,12 @@ class Mover:
         deadline = time.monotonic() + BUDGET_SECS
         collected: list[dict[str, Any]] = []
         for page in range(MAX_PAGES):
+            # Before the request, not after it: a page started with a second of
+            # budget left still takes the full request timeout, so checking
+            # afterwards lets the read overshoot by one timeout and delay the
+            # seal that dates the page.
+            if page > 0 and time.monotonic() >= deadline:
+                return collected, True
             entries, served = self._page(page * PAGE_SIZE, created_at_start)
             collected.extend(entries)
             # INVARIANT: measured against what the server SERVED, not what
@@ -87,8 +93,6 @@ class Mover:
             # half way would report itself complete.
             if served < PAGE_SIZE:
                 return collected, False
-            if time.monotonic() >= deadline:
-                return collected, True
         return collected, True
 
     def _page(
