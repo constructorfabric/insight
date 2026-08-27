@@ -6,7 +6,7 @@
  * number renders as absence rather than a zero, and that a stopped recorder
  * reaches a screen reader as an alert rather than as ordinary prose.
  */
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,6 +14,16 @@ import type {
   ConnectorHealthSummary,
   ConnectorSyncHistory,
 } from "@/api/connector-health-client";
+
+/**
+ * A connector's row. The whole row is the disclosure control — the same rule
+ * every console listing follows — so there is no button inside it to aim at.
+ */
+function rowFor(connector: string): HTMLElement {
+  const row = screen.getByRole("cell", { name: connector }).closest("tr");
+  if (row === null) throw new Error(`no row for ${connector}`);
+  return row;
+}
 
 const mocks = vi.hoisted(() => ({
   summary: {
@@ -88,8 +98,8 @@ describe("the pane prints what it was served", () => {
     render(<ConnectorHealthPane />);
 
     const names = screen
-      .getAllByRole("button", { expanded: false })
-      .map((button) => button.textContent);
+      .getAllByRole("row", { expanded: false })
+      .map((row) => row.querySelector("td")?.textContent);
     expect(names).toEqual(["zulu", "alpha", "mike"]);
   });
 
@@ -109,23 +119,14 @@ describe("the pane prints what it was served", () => {
     mocks.summary.data = summary({ connectors: [alpha, bravo] });
     const { rerender } = render(<ConnectorHealthPane />);
 
-    await userEvent.click(screen.getByRole("button", { name: "alpha" }));
-    expect(screen.getByRole("button", { name: "alpha" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    await userEvent.click(rowFor("alpha"));
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "true");
 
     mocks.summary.data = summary({ connectors: [bravo, alpha] });
     rerender(<ConnectorHealthPane />);
 
-    expect(screen.getByRole("button", { name: "alpha" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    expect(screen.getByRole("button", { name: "bravo" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "true");
+    expect(rowFor("bravo")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("prints an unmeasured number as absence, not as a zero", () => {
@@ -146,10 +147,9 @@ describe("the pane prints what it was served", () => {
     });
     render(<ConnectorHealthPane />);
 
-    const row = screen.getByRole("button", { name: "alpha" }).closest("tr");
-    expect(row).not.toBeNull();
-    expect(within(row as HTMLElement).getAllByText("—")).toHaveLength(3);
-    expect(within(row as HTMLElement).queryByText("0")).not.toBeInTheDocument();
+    const row = rowFor("alpha");
+    expect(within(row).getAllByText("—")).toHaveLength(3);
+    expect(within(row).queryByText("0")).not.toBeInTheDocument();
   });
 
   it("says a reported zero is a zero", () => {
@@ -170,8 +170,7 @@ describe("the pane prints what it was served", () => {
     });
     render(<ConnectorHealthPane />);
 
-    const row = screen.getByRole("button", { name: "alpha" }).closest("tr");
-    expect(within(row as HTMLElement).getByText("0")).toBeInTheDocument();
+    expect(within(rowFor("alpha")).getByText("0")).toBeInTheDocument();
   });
 
   it("says nothing has been recorded instead of implying health", () => {
@@ -259,7 +258,7 @@ describe("a read that failed says so", () => {
     mocks.syncs.data = undefined;
     render(<ConnectorHealthPane />);
 
-    await userEvent.click(screen.getByRole("button", { name: "alpha" }));
+    await userEvent.click(rowFor("alpha"));
 
     // The summary above it is still readable — one connector's unreadable
     // history must not take the page down with it.
@@ -275,7 +274,7 @@ describe("a read that failed says so", () => {
     mocks.syncs.data = { connector: "alpha", syncs: [], window: 50 };
     render(<ConnectorHealthPane />);
 
-    await userEvent.click(screen.getByRole("button", { name: "alpha" }));
+    await userEvent.click(rowFor("alpha"));
 
     expect(
       screen.getByText(/no sync has been recorded for this connector/i),
@@ -315,12 +314,11 @@ describe("a row expands to its recent syncs", () => {
     };
     render(<ConnectorHealthPane />);
 
-    const toggle = screen.getByRole("button", { name: "alpha" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "false");
 
-    await userEvent.click(toggle);
+    await userEvent.click(rowFor("alpha"));
 
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/recent syncs/i)).toBeInTheDocument();
   });
 
@@ -345,7 +343,7 @@ describe("a row expands to its recent syncs", () => {
     };
     render(<ConnectorHealthPane />);
 
-    await userEvent.click(screen.getByRole("button", { name: "alpha" }));
+    await userEvent.click(rowFor("alpha"));
 
     expect(
       screen.getByText(/the most recent 50, not the full history/i),
@@ -360,9 +358,68 @@ describe("a row expands to its recent syncs", () => {
     });
     render(<ConnectorHealthPane />);
 
-    // One header row plus one body row. A `role="button"` on a `<tr>` would
-    // remove it from the table for a screen reader, which is why the toggle is
-    // a real button inside the row instead.
+    // One header row plus one body row: the gesture is on the `<tr>` and the
+    // role is not overridden, so the row stays in its table for a screen
+    // reader and still announces itself as a disclosure.
     expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded");
+  });
+
+  it("opens the connector from anywhere in the row, not just its name", async () => {
+    // The complaint this answers: only the name was clickable, so the rest of
+    // a wide row looked interactive and did nothing.
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "alpha",
+          configured: true,
+          last_sync: { job_id: "1", status: "succeeded", started_at: NOW },
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    await userEvent.click(screen.getByText("sync ok"));
+
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens the connector from the keyboard", async () => {
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "alpha", configured: true, last_sync: null },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    rowFor("alpha").focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "true");
+
+    await userEvent.keyboard(" ");
+
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("does not open the connector when a selection was dragged across it", async () => {
+    // Copying a connector name out of the table must not open it. The rule is
+    // shared with every other console listing, which is the point.
+    mocks.summary.data = summary({
+      connectors: [
+        { connector: "alpha", configured: true, last_sync: null },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const selection = window.getSelection();
+    selection?.selectAllChildren(screen.getByRole("cell", { name: "alpha" }));
+
+    // Dispatched rather than driven through userEvent: a real pointer press
+    // collapses the selection before the handler sees it, so the one state
+    // this guard exists for cannot be reached that way.
+    fireEvent.click(rowFor("alpha"));
+
+    expect(rowFor("alpha")).toHaveAttribute("aria-expanded", "false");
   });
 });

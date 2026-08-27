@@ -23,6 +23,7 @@ import {
   type ConnectorTone,
 } from "@/lib/portal/connector-health";
 import { useConnectorHealth, useConnectorSyncs } from "@/queries/connector-health";
+import { activatesRow, activatesRowByKey } from "@/lib/identities/row-activation";
 import { TEXT_LABEL } from "@/lib/type-scale";
 import { cn } from "@/lib/utils";
 
@@ -53,7 +54,7 @@ export function ConnectorHealthPane() {
   const recording = describeRecording(data);
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
+    <div className="flex flex-col gap-3 p-4 md:p-6">
       <div>
         <h1 className="text-lg font-semibold tracking-tight">
           Connector health
@@ -103,34 +104,51 @@ export function ConnectorHealthPane() {
                 // cannot carry two rows sharing one.
                 const open = expanded === row.connector;
                 const panelId = `connector-syncs-${row.connector}`;
+                const toggle = () => setExpanded(open ? null : row.connector);
                 return [
-                  <TableRow key={row.connector} data-state-name={state.state}>
+                  // The whole row opens the connector, by the same rule every
+                  // console listing follows — `activatesRow` is shared with
+                  // them, so a press on a control and the end of a text
+                  // selection are told apart here exactly as they are there.
+                  //
+                  // The gesture goes on the row and the role does not: a `<tr>`
+                  // keeps `role="row"`, which supports `aria-expanded`, so the
+                  // disclosure is announced without taking the row out of its
+                  // table. An inner button would be a second focus stop for the
+                  // one thing the row already does.
+                  <TableRow
+                    key={row.connector}
+                    data-state-name={state.state}
+                    data-state={open ? "selected" : undefined}
+                    tabIndex={0}
+                    aria-expanded={open}
+                    aria-controls={panelId}
+                    onClick={(event) => {
+                      if (activatesRow(event)) toggle();
+                    }}
+                    onKeyDown={(event) => {
+                      if (!activatesRowByKey(event)) return;
+                      event.preventDefault();
+                      toggle();
+                    }}
+                    className="cursor-pointer select-text"
+                  >
+                    <TableCell className="font-medium">{row.connector}</TableCell>
                     <TableCell>
-                      {/* A real button rather than a role on the row: an
-                          overridden role takes the row out of the table for a
-                          screen reader, which costs more than it buys. */}
-                      <button
-                        type="button"
-                        className="text-left font-medium underline-offset-2 hover:underline"
-                        aria-expanded={open}
-                        aria-controls={panelId}
-                        onClick={() => setExpanded(open ? null : row.connector)}
+                      <Badge
+                        variant="secondary"
+                        className={cn("font-medium", TONE_STYLE[state.tone])}
                       >
-                        {row.connector}
-                      </button>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={cn("font-medium", TONE_STYLE[state.tone])}>
                         {state.label}
                       </Badge>
                     </TableCell>
-                    <TableCell className="tabular-nums">
+                    <TableCell className="tabular-nums text-muted-foreground">
                       {formatStarted(row.last_sync?.started_at ?? null)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatDuration(row.last_sync?.duration_ms ?? null)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatRecords(row.last_sync?.records_reported ?? null)}
                     </TableCell>
                   </TableRow>,
