@@ -33,10 +33,14 @@ persistence:
 initChownData:
   enabled: false
 
-# Loki wired as the default datasource so Explore works out of the box.
-# Fixed uid so provisioned dashboards can reference it. Tempo/Mimir get
-# added here in the tracing/metrics phases; `derivedFields` will then map
+# Loki wired as the default datasource so Explore works out of the box,
+# VictoriaMetrics as the PromQL datasource for metrics. Fixed uids so
+# provisioned dashboards can reference them on any environment. Tempo gets
+# added here in the tracing phase; `derivedFields` will then map
 # `trace_id` → a Tempo link for log↔trace correlation.
+# INVARIANT: helm REPLACES lists — a per-env overlay that touches
+# `datasources` must restate every entry below, and the uids (`loki`, `vm`)
+# must stay what they are or every provisioned dashboard panel goes dark.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -49,6 +53,16 @@ datasources:
         isDefault: true
         jsonData:
           maxLines: 1000
+
+      - name: VictoriaMetrics
+        uid: vm
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics-server.insight-infra.svc.cluster.local:8428
+        isDefault: false
+        jsonData:
+          timeInterval: "30s"
+          httpMethod: POST
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
 # Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over

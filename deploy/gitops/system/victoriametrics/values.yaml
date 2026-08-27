@@ -1,0 +1,34 @@
+##
+## VictoriaMetrics single-node — metrics store for the L2 system layer.
+##
+## Chart: vm/victoria-metrics-single
+## Pin in Makefile: VICTORIAMETRICS_VERSION
+## Release: `victoriametrics` in namespace `insight-infra`.
+##
+## Write/query endpoint other components use (PromQL queries, and the
+## remote-write receiver at /api/v1/write — always on, no flag needed):
+##   http://victoriametrics-server.insight-infra.svc.cluster.local:8428
+##
+## Per-env overrides go in environments/<env>/victoriametrics-values.yaml.
+##
+
+fullnameOverride: victoriametrics
+
+server:
+  retentionPeriod: 90d
+
+  persistentVolume:
+    enabled: true
+    size: 30Gi
+
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 4Gi }
+
+  service:
+    type: ClusterIP
+
+  # No ingress: reached by port-forward, and by in-cluster collectors and
+  # Grafana over the Service.
+  ingress:
+    enabled: false
