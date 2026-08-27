@@ -432,20 +432,21 @@ export function MetricTimeseriesView({
 
   function openTimeseriesEvidence(
     metricKey: string,
-    columnKey: string,
+    columnKey: string | null,
     bucketStart: string | null
   ): void {
     const metric = model.metrics.find(
       (candidate) => candidate.metric_key === metricKey
     );
+    if (!metric?.drilldown) return;
     const column = model.columns.find(
       (candidate) => candidate.key === columnKey
     );
-    if (!metric?.drilldown || !column || column.remainder) return;
+    if (columnKey !== null && (!column || column.remainder)) return;
     const exactFilters = new Map(
       filters.map((filter) => [filter.dimension, filter])
     );
-    for (const dimension of column.dimensions ?? []) {
+    for (const dimension of column?.dimensions ?? []) {
       exactFilters.set(dimension.key, {
         dimension: dimension.key,
         values: [dimension.value],

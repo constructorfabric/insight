@@ -15,11 +15,19 @@
  * See docs/testing/storybook-component-tests.md.
  */
 
+import type { ReactNode } from "react";
+
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, screen, userEvent, waitFor } from "storybook/test";
 
+import type { MetricEvidenceSelection } from "@/api/metric-drilldown-client";
+import {
+  EvidenceDialogContext,
+  type EvidenceDialogTarget,
+} from "@/components/metric-evidence-context";
 import { MetricTimeseriesView } from "@/components/widgets/metric-views/metric-timeseries-view";
 import {
+  BUCKETS,
   COMMITS,
   ENTITY_ID,
   LINES_ADDED,
@@ -84,6 +92,89 @@ function captureDownloads(): () => void {
 async function openExportMenu(): Promise<void> {
   await userEvent.click(screen.getByRole("button", { name: "Export" }));
 }
+
+/** Selections the chart asked to drill into, newest last. */
+const drilled: MetricEvidenceSelection[] = [];
+
+/**
+ * Stands in for the dialog provider: the assertion is which selection a click
+ * produced, and mounting the real dialog would answer that through a second
+ * request instead.
+ */
+function captureDrilldowns(Story: () => ReactNode) {
+  drilled.length = 0;
+  return (
+    <EvidenceDialogContext.Provider
+      value={{
+        openEvidence: (selection) => drilled.push(selection),
+        openEvidenceTargets: (targets: readonly EvidenceDialogTarget[]) => {
+          const own = targets[0];
+          if (own) drilled.push(own.selection);
+        },
+        openEvidencePeople: () => {},
+      }}
+    >
+      <Story />
+    </EvidenceDialogContext.Provider>
+  );
+}
+
+const barSegments = (canvasElement: HTMLElement): HTMLElement[] => [
+  ...canvasElement.querySelectorAll<HTMLElement>(".recharts-bar-rectangle"),
+];
+
+interface ChartPoint {
+  clientX: number;
+  clientY: number;
+}
+
+const centreOf = (element: Element): ChartPoint => {
+  const box = element.getBoundingClientRect();
+  return {
+    clientX: box.left + box.width / 2,
+    clientY: box.top + box.height / 2,
+  };
+};
+
+/**
+ * A point inside one bucket's band that nothing is drawn over: the band's own
+ * centre line at the top edge of the plot, which every bucket but the tallest
+ * leaves empty.
+ */
+function emptySpotInBucket(
+  canvasElement: HTMLElement,
+  bucketIndex: number
+): ChartPoint {
+  const plot = canvasElement
+    .querySelector(".recharts-cartesian-grid")!
+    .getBoundingClientRect();
+  return {
+    clientX: plot.left + (plot.width / BUCKETS.length) * (bucketIndex + 0.5),
+    clientY: plot.top + 4,
+  };
+}
+
+/**
+ * Recharts reads the pointer's position off the chart wrapper, so every gesture
+ * carries coordinates. The target is what a real pointer would be over — the
+ * segment where there is one, the wrapper where the column is empty — because a
+ * dispatched event reaches the wrapper by bubbling but never travels back down.
+ * A move between the two is one gesture, so that leaving the segment is part of
+ * it rather than an event nothing ever fires.
+ */
+const pointAt = (target: Element, coords: ChartPoint) =>
+  userEvent.pointer({ target, coords });
+
+const moveBetween = (
+  from: { target: Element; coords: ChartPoint },
+  to: { target: Element; coords: ChartPoint }
+) => userEvent.pointer([from, to]);
+
+const clickAt = (target: Element, coords: ChartPoint) =>
+  userEvent.pointer([
+    { target, coords },
+    { keys: "[MouseLeft]", target, coords },
+  ]);
 
 const meta: Meta<typeof MetricTimeseriesView> = {
   title: "Widgets/MetricViews/MetricTimeseriesView",
@@ -152,6 +243,107 @@ export const TestChartPresentation: Story = {
     await waitFor(() =>
       expect(canvasElement.querySelector("svg.recharts-surface")).toBeTruthy()
     );
+  },
+};
+
+/**
+ * The click target is the whole column, not the drawn stack: a point above the
+ * segments drills the bucket unnarrowed, a segment drills its own series, and
+ * the tooltip marks which of the two a click would take.
+ */
+export const TestColumnClickDrilldown: Story = {
+  tags: ["test"],
+  args: { id: "column-click", groupBy: TOP_REPOSITORIES },
+  decorators: [captureDrilldowns],
+  play: async ({ canvas, canvasElement }) => {
+    await canvas.findByText("org/repo-a");
+    await waitFor(() =>
+      expect(barSegments(canvasElement).length).toBeGreaterThan(2)
+    );
+
+    const wrapper = canvasElement.querySelector<HTMLElement>(
+      ".recharts-wrapper"
+    )!;
+    // Every hover re-renders the chart and recharts rebuilds its rectangles, so
+    // a segment held across one gesture is a detached node by the next.
+    // The series render in rank order, making the first segment org/repo-a's.
+    const segment = () => barSegments(canvasElement)[0]!;
+
+    // Over a segment the panel marks the one row a click would open, and the
+    // click opens exactly that row's series.
+    await pointAt(segment(), centreOf(segment()));
+    await waitFor(() =>
+      expect(canvasElement.querySelector("[data-active]")).toHaveTextContent(
+        "org/repo-a"
+      )
+    );
+
+    await clickAt(segment(), centreOf(segment()));
+    await waitFor(() => expect(drilled).toHaveLength(1));
+    await expect(drilled[0]).toMatchObject({
+      metric_key: COMMITS,
+      period: { from: "2026-04-20", to: "2026-04-26" },
+      filters: [{ dimension: "repository", values: ["org/repo-a"] }],
+    });
+
+    // 2026-04-27 carries one commit against a six-commit peak, so the top of
+    // its band is the empty space this issue is about. Nothing is marked there,
+    // because the click opens every row instead of one.
+    const spot = emptySpotInBucket(canvasElement, 1);
+    await moveBetween(
+      { target: segment(), coords: centreOf(segment()) },
+      { target: wrapper, coords: spot }
+    );
+    await waitFor(() =>
+      expect(canvasElement.querySelector("[data-active]")).toBeNull()
+    );
+    // The panel still reads that week there, so the empty space is inside the
+    // band rather than outside the chart's reach.
+    await expect(canvas.getByText("April 27, 2026")).toBeInTheDocument();
+
+    await clickAt(wrapper, spot);
+    await waitFor(() => expect(drilled).toHaveLength(2));
+    await expect(drilled[1]).toMatchObject({
+      metric_key: COMMITS,
+      period: { from: "2026-04-27", to: "2026-05-03" },
+      filters: [],
+    });
+  },
+};
+
+/**
+ * The ungrouped line view drills the bucket its band covers. The click never
+ * has to land on the curve, which is two pixels wide.
+ */
+export const TestLineClickDrilldown: Story = {
+  tags: ["test"],
+  args: { id: "line-click", chart: { multiMetric: "combined" } },
+  decorators: [captureDrilldowns],
+  play: async ({ canvas, canvasElement }) => {
+    await canvas.findByText("Commits & Lines added");
+    await waitFor(() =>
+      expect(canvasElement.querySelector(".recharts-line-curve")).toBeTruthy()
+    );
+
+    const wrapper = canvasElement.querySelector<HTMLElement>(
+      ".recharts-wrapper"
+    )!;
+    // The panel has to read the bucket before the click can open it, which is
+    // the order a pointer arrives in anyway.
+    const spot = emptySpotInBucket(canvasElement, 1);
+    await pointAt(wrapper, spot);
+    await waitFor(() =>
+      expect(canvas.getByText("April 27, 2026")).toBeInTheDocument()
+    );
+
+    await clickAt(wrapper, spot);
+
+    await waitFor(() => expect(drilled).toHaveLength(1));
+    await expect(drilled[0]).toMatchObject({
+      metric_key: COMMITS,
+      period: { from: "2026-04-27", to: "2026-05-03" },
+      filters: [],
+    });
   },
 };
 
