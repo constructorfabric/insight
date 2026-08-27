@@ -118,19 +118,9 @@ deduplicated_file_changes AS (
 -- content dedup. The stats stay the base — a source can report a commit's
 -- totals without reporting its file changes at all — and only what the dedup
 -- removed is taken back out, so a commit that introduces nothing new reports a
--- size of zero and its drilldown detail agrees with what it contributed.
-reported_commit_file_lines AS (
-    SELECT
-        tenant_id,
-        source_id,
-        project_key,
-        repo_slug,
-        commit_hash,
-        sum(lines_added) AS lines_added,
-        sum(lines_removed) AS lines_removed
-    FROM {{ ref('git_commit_file_changes') }}
-    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
-),
+-- size of zero and its drilldown detail agrees with what it contributed. The
+-- collected side is git_commit_file_line_totals, a model rather than a CTE so
+-- its aggregate runs once per build instead of once per read.
 authored_commit_file_lines AS (
     SELECT
         tenant_id,
@@ -152,21 +142,24 @@ authored_commits AS (
         commits.commit_hash AS commit_hash,
         commits.message AS message,
         commits.author_name AS author_name,
+        commits.repository_value AS repository_value,
         commits.repository_label AS repository_label,
+        commits.project_value AS project_value,
+        commits.project_label AS project_label,
         commits.source_value AS source_value,
+        commits.source_label AS source_label,
         commits.branch_scope_value AS branch_scope_value,
+        commits.branch_scope_label AS branch_scope_label,
         commits.source_dimensions AS source_dimensions,
         -- No file change was ever COLLECTED for this commit, so its size
         -- reaches no size measure while the commit itself still counts. The
-        -- test is the reported set, not the deduplicated one: a commit whose
+        -- test is the collected set, not the deduplicated one: a commit whose
         -- changes were collected and then all lost the content dedup already
         -- reports the zero it earned, and must not have its size restored.
-        -- Semi-join by tuple for the same reason as the membership tests in
-        -- git_authored_commits.
-        (commits.tenant_id, commits.source_id, commits.project_key, commits.repo_slug, commits.commit_hash) NOT IN (
-            SELECT tenant_id, source_id, project_key, repo_slug, commit_hash
-            FROM reported_commit_file_lines
-        ) AS has_no_file_changes,
+        -- Read off the row count, not a line sum — the line columns are
+        -- Nullable, so an all-NULL group sums to NULL and would be
+        -- indistinguishable from a commit the stream never reached.
+        reported.file_change_rows IS NULL AS has_no_file_changes,
         -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
         -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
         -- commit whose source reported no line stats. `greatest` floors the
@@ -191,7 +184,7 @@ authored_commits AS (
             ))
         ) AS lines_removed
     FROM {{ ref('git_authored_commits') }} AS commits
-    LEFT JOIN reported_commit_file_lines AS reported
+    LEFT JOIN {{ ref('git_commit_file_line_totals') }} AS reported
         ON reported.tenant_id = commits.tenant_id
         AND reported.source_id = commits.source_id
         AND reported.project_key = commits.project_key
@@ -294,16 +287,21 @@ unattributed_line_measures AS (
         metric_date,
         line_measure.1 AS measure_key,
         line_measure.2 AS value,
-        arrayConcat(
-            [source_dimensions[1]],
-            CAST(
-                [
-                    tuple('category', '__unknown__', 'Unknown'),
-                    tuple('file_extension', '__unknown__', 'Unknown'),
-                    tuple('change_type', '__unknown__', 'Unknown')
-                ] AS Array(Tuple(key String, value String, label Nullable(String)))
-            ),
-            arraySlice(source_dimensions, 2)
+        -- Written out rather than spliced into source_dimensions: this must
+        -- equal category_source_dimensions key for key, and a literal says so
+        -- at the one place a reader compares them. A different order would not
+        -- fail — it would split one logical dimension set into two breakdown
+        -- rows under `GROUP BY … dimensions`.
+        CAST(
+            [
+                tuple('branch_scope', branch_scope_value, branch_scope_label),
+                tuple('category', '__unknown__', 'Unknown'),
+                tuple('file_extension', '__unknown__', 'Unknown'),
+                tuple('change_type', '__unknown__', 'Unknown'),
+                tuple('repository', repository_value, repository_label),
+                tuple('project', project_value, project_label),
+                tuple('source', source_value, source_label)
+            ] AS Array(Tuple(key String, value String, label Nullable(String)))
         ) AS dimensions
     FROM authored_commits
     ARRAY JOIN CAST(arrayConcat(
