@@ -27,6 +27,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # curl + bash: scripts/create-bronze-placeholders.sh and
 # scripts/apply-ch-migrations.sh use both, and slim ships dash and no curl.
 RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends curl bash \
     && rm -rf /var/lib/apt/lists/*
 

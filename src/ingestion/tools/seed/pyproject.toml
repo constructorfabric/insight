@@ -34,7 +34,9 @@ dependencies = [
 # The silver step's environment for a host run outside the toolbox image:
 # `apply-ch-migrations.sh` writes a profiles.yml with PyYAML (which dbt-core
 # pulls in) and then runs dbt itself.
-silver = ["dbt-clickhouse"]
+# INVARIANT: floored. Resolving this extra together with `dev` walks
+# dbt-clickhouse back to 1.2.2 (2022) without it, and >=1.10 does not resolve.
+silver = ["dbt-clickhouse>=1.9"]
 dev = [
     # dbt-core 1.12 raised its own cap to pathspec<1.1 (dbt-labs/dbt-core#12385),
     # so a current mypy resolves again. Below 2.0 it would pull pathspec<1.0 and
