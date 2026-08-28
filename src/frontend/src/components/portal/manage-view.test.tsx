@@ -158,7 +158,7 @@ describe("Manage · What's new", () => {
 
     expect(screen.getByText("Insight · What's new")).toBeInTheDocument();
     expect(
-      screen.getByText("We've moved to the new interface for good"),
+      screen.getByText("The pages the portal has now")
     ).toBeInTheDocument();
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
@@ -170,7 +170,7 @@ describe("Manage · Connector health", () => {
     render(<ManageView item="connector-health" />);
 
     expect(
-      screen.queryByTestId("connector-health-pane"),
+      screen.queryByTestId("connector-health-pane")
     ).not.toBeInTheDocument();
     // A gate rendering nothing at all would satisfy the line above, and would
     // leave a non-admin on a blank screen with nothing to act on.
@@ -217,9 +217,7 @@ describe("identities gate", () => {
     render(<ManageView item="identities" />);
 
     expect(screen.getByRole("alert")).toHaveTextContent(/admin surface/i);
-    expect(
-      screen.queryByText(/under construction/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/under construction/i)).not.toBeInTheDocument();
   });
 
   it("never flashes the console while the role check is in flight", () => {
@@ -227,9 +225,7 @@ describe("identities gate", () => {
     render(<ManageView item="identities" />);
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/under construction/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/under construction/i)).not.toBeInTheDocument();
   });
 
   it("opens for an admin", () => {
