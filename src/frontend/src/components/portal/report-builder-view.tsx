@@ -61,7 +61,7 @@ export function ReportBuilderView() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const people = useMemo(() => scope.reportPeople ?? [], [scope.reportPeople]);
+  const people = useMemo(() => scope.roster ?? [], [scope.roster]);
   const catalogue = useMemo(
     () =>
       (definitions.data?.metrics ?? []).filter(
@@ -92,7 +92,7 @@ export function ReportBuilderView() {
     () => ({
       subject:
         subject === "people"
-          ? { type: "people", ids: people.map((person) => person.entityId) }
+          ? { type: "people", ids: people.map((person) => person.person_id) }
           : { type: "tenant" },
       period: dateRange,
       granularity,

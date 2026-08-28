@@ -51,7 +51,7 @@ describe("resolveScopeRoster", () => {
   it("narrows to direct reports", () => {
     const s = resolveScopeRoster(TREE, "p-ao", { root: "p-lead1", directOnly: true });
     expect(s.roster?.map((r) => r.person_id).sort()).toEqual(["p-ic1", "p-lead2"]);
-    expect(s.reportPeople?.map((person) => person.entityId).sort()).toEqual([
+    expect(s.roster?.map((person) => person.person_id).sort()).toEqual([
       "p-ic1",
       "p-lead2",
     ]);
@@ -151,7 +151,7 @@ describe("flatOrgScope", () => {
     ]);
   });
 
-  it("carries report people from the visible roster", () => {
+  it("carries visible people without creating a report-specific profile", () => {
     const scope = flatOrgScope([
       {
         person_id: "p-h",
@@ -162,19 +162,7 @@ describe("flatOrgScope", () => {
       },
     ]);
 
-    expect(scope.reportPeople).toEqual([
-      {
-        entityId: "p-h",
-        name: "Handle",
-        email: "handle@example.com",
-        division: "",
-        department: "",
-        jobTitle: "Engineer",
-        managerName: "",
-        managerEmail: "",
-        status: "active",
-      },
-    ]);
+    expect(scope.roster?.map((person) => person.person_id)).toEqual(["p-h"]);
   });
 
 
