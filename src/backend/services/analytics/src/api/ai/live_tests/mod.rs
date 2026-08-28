@@ -110,6 +110,8 @@ fn app_as(db: DatabaseConnection, tenant: Uuid, person: Uuid, config: GearConfig
         identity,
         anthropic,
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     });

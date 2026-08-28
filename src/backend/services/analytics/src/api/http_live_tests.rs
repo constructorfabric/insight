@@ -95,6 +95,8 @@ fn build_state_with_ch(
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config: GearConfig::default(),
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     }
@@ -1061,6 +1063,8 @@ fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     });

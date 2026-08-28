@@ -24,6 +24,7 @@ pub struct ReportPreviewResponse {
 }
 
 impl toolkit::api::api_dto::RequestApiDto for ReportRecipe {}
+impl toolkit::api::api_dto::RequestApiDto for ReportExportRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for ReportPreviewResponse {}
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]

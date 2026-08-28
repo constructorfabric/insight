@@ -96,6 +96,12 @@ impl Gear for AnalyticsApiGear {
             std::time::Duration::from_secs(cfg.ai_assist.request_timeout_secs),
         )?;
         let ai_calls = Arc::new(tokio::sync::Semaphore::new(cfg.ai_assist.max_concurrent));
+        let report_generations = Arc::new(tokio::sync::Semaphore::new(
+            cfg.reports.max_concurrent_generations,
+        ));
+        let report_artifacts = Arc::new(tokio::sync::Semaphore::new(
+            cfg.reports.max_concurrent_artifacts,
+        ));
 
         let state = api::AppState {
             db,
@@ -103,6 +109,8 @@ impl Gear for AnalyticsApiGear {
             identity,
             anthropic,
             ai_calls,
+            report_generations,
+            report_artifacts,
             config: cfg,
             external_links,
         };
@@ -247,6 +255,29 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
                  to base64 of 32 random bytes)"
             )
         })?;
+    }
+    if !cfg.reports.temp_dir.is_absolute() {
+        anyhow::bail!("gears.analytics.config.reports.temp_dir must be an absolute path");
+    }
+    for (name, value) in [
+        ("max_batch_cells", cfg.reports.max_batch_cells),
+        ("max_generated_bytes", cfg.reports.max_generated_bytes),
+        (
+            "max_concurrent_generations",
+            cfg.reports.max_concurrent_generations,
+        ),
+        (
+            "max_concurrent_artifacts",
+            cfg.reports.max_concurrent_artifacts,
+        ),
+        ("writer_channel_batches", cfg.reports.writer_channel_batches),
+    ] {
+        if value == 0 {
+            anyhow::bail!("gears.analytics.config.reports.{name} must be at least 1");
+        }
+    }
+    if cfg.reports.request_timeout_secs == 0 || cfg.reports.capacity_wait_secs == 0 {
+        anyhow::bail!("gears.analytics.config.reports request timeouts must be at least 1");
     }
     Ok(())
 }

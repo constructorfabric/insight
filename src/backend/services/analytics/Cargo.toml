@@ -64,6 +64,7 @@ utoipa = { version = "5.5", features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }

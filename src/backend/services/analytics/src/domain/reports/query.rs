@@ -22,6 +22,13 @@ pub(crate) enum ReportQuerySubject {
 pub(crate) struct ReportMetricQuery {
     pub(crate) metric_index: usize,
     pub(crate) metric_key: String,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "fake runners inspect the compiled subject in executor tests"
+        )
+    )]
     pub(crate) subject: ReportQuerySubject,
     pub(crate) compiled: CompiledQuery,
 }
