@@ -22,6 +22,9 @@ use crate::domain::reports::validation::{
 };
 use crate::infra::identity::IdentityProfile;
 
+mod export;
+pub(super) use export::export_report;
+
 const MAX_PREVIEW_ROWS: usize = 20;
 
 pub async fn preview_report(
@@ -78,9 +81,9 @@ async fn build_preview(
     })
 }
 
-fn authorize_tenant_subject(
+pub(super) fn authorize_tenant_subject(
     state: &AppState,
-    request: &ReportPreviewRequest,
+    request: &crate::domain::reports::dto::ReportRecipe,
 ) -> Result<(), CanonicalError> {
     if matches!(
         &request.subject,
@@ -92,7 +95,7 @@ fn authorize_tenant_subject(
     Ok(())
 }
 
-async fn hydrate_profiles(
+pub(super) async fn hydrate_profiles(
     state: &AppState,
     ctx: &SecurityContext,
     headers: &HeaderMap,
@@ -151,9 +154,9 @@ fn preview_inputs(
     ))
 }
 
-fn report_internal(error: impl std::fmt::Debug) -> CanonicalError {
-    tracing::error!(?error, "report preview failed");
-    CanonicalError::internal("report preview failed").create()
+pub(super) fn report_internal(error: impl std::fmt::Debug) -> CanonicalError {
+    tracing::error!(?error, "report processing failed");
+    CanonicalError::internal("report processing failed").create()
 }
 
 #[derive(Debug, Default)]

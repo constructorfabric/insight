@@ -55,6 +55,8 @@ pub struct AppState {
     pub anthropic: AnthropicClient,
     /// Caps explain calls in flight in this process.
     pub ai_calls: Arc<Semaphore>,
+    pub report_generations: Arc<Semaphore>,
+    pub report_artifacts: Arc<Semaphore>,
     pub config: GearConfig,
     pub external_links: ExternalSourceRegistry,
 }
@@ -486,6 +488,30 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .handler(reports::preview_report)
         .register(router, openapi);
 
+    router = OperationBuilder::post("/v1/reports/export")
+        .operation_id("analytics_api.reports.export")
+        .summary("Export a metric report")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::reports::dto::ReportExportRequest>(
+            openapi,
+            "Report export recipe",
+        )
+        .response(ResponseSpec {
+            status: StatusCode::OK.as_u16(),
+            content_type: "text/csv",
+            description: "Complete metric report export".to_owned(),
+            schema_name: None,
+        })
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_415(openapi)
+        .error_429(openapi)
+        .error_500(openapi)
+        .handler(reports::export_report)
+        .register(router, openapi);
+
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
     // surface. CRUD is service-DB metadata; only `/run` reaches ClickHouse.
     router = OperationBuilder::get("/v1/queries")
@@ -759,17 +785,24 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
     let mut document = openapi
         .build_openapi(&openapi_info())
         .map_err(|e| anyhow::anyhow!("failed to build analytics OpenAPI document: {e}"))?;
+    add_file_export_response(&mut document, "/v1/metric-drilldown/export")?;
+    add_file_export_response(&mut document, "/v1/reports/export")?;
+    Ok(document)
+}
+
+fn add_file_export_response(
+    document: &mut utoipa::openapi::OpenApi,
+    path: &str,
+) -> anyhow::Result<()> {
     let response = document
         .paths
         .paths
-        .get_mut("/v1/metric-drilldown/export")
+        .get_mut(path)
         .and_then(|path| path.post.as_mut())
         .and_then(|operation| operation.responses.responses.get_mut("200"))
-        .ok_or_else(|| anyhow::anyhow!("metric drilldown export response is missing"))?;
+        .ok_or_else(|| anyhow::anyhow!("file export response is missing for {path}"))?;
     let RefOr::T(response) = response else {
-        return Err(anyhow::anyhow!(
-            "metric drilldown export response must be inline"
-        ));
+        return Err(anyhow::anyhow!("file export response must be inline"));
     };
     let schema = Schema::Object(
         ObjectBuilder::new()
@@ -793,7 +826,7 @@ pub fn openapi_document() -> anyhow::Result<utoipa::openapi::OpenApi> {
             .description(Some("Attachment filename"))
             .build(),
     );
-    Ok(document)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -838,6 +871,36 @@ mod tests {
         assert!(
             response.headers.contains_key("Content-Disposition"),
             "export must advertise the attachment filename header"
+        );
+    }
+
+    #[test]
+    fn report_export_response_advertises_both_file_media_types_and_the_filename_header() {
+        let document =
+            openapi_document().unwrap_or_else(|error| panic!("document must build: {error}"));
+        let response = document
+            .paths
+            .paths
+            .get("/v1/reports/export")
+            .and_then(|path| path.post.as_ref())
+            .and_then(|operation| operation.responses.responses.get("200"))
+            .unwrap_or_else(|| panic!("report export 200 response must be registered"));
+        let RefOr::T(response) = response else {
+            panic!("report export response must be inline, not a $ref");
+        };
+
+        for media_type in [
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ] {
+            assert!(
+                response.content.contains_key(media_type),
+                "report export must advertise {media_type}"
+            );
+        }
+        assert!(
+            response.headers.contains_key("Content-Disposition"),
+            "report export must advertise the attachment filename header"
         );
     }
 }

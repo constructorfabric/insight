@@ -27,6 +27,12 @@ pub(crate) struct ReportExecutionContext {
 #[error("report sink failed: {0}")]
 pub(crate) struct ReportSinkError(pub(crate) String);
 
+impl ReportSinkError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
 #[async_trait]
 pub(crate) trait ReportRowSink {
     type Output;

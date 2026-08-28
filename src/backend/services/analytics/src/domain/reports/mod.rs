@@ -6,6 +6,7 @@ pub(crate) mod executor;
 mod executor_test_fixtures;
 #[cfg(test)]
 mod executor_tests;
+pub(crate) mod export;
 pub(crate) mod period;
 pub(crate) mod planner;
 #[cfg(test)]
