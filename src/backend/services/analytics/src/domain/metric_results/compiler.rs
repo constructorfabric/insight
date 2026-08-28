@@ -164,8 +164,9 @@ pub(crate) fn compile_period_batch_query(
             Some(compare_to),
         ));
     }
-    let read = batch_resolved_observation_from(defs, req, &mut params);
-    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
+    let read = batch_resolved_observation_from(defs, req, ScanScope::WithComparison, &mut params);
+    let metric_scope =
+        shared_observation_where_within(defs, req, filters, ScanScope::WithComparison, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
     let observation_table = &read.from;
     let limit = query_row_limit();
@@ -192,8 +193,34 @@ fn primary_window(req: &ValidatedMetricResultsRequest) -> Option<DateWindow> {
     })
 }
 
-/// The date predicate a windowed read scans: the primary period, then every
-/// extra window, as a disjunction of closed ranges.
+/// Which ranges a read scans.
+///
+/// INVARIANT: this is a property of the VIEW, not of the request. Only `period`
+/// and `breakdown` answer the comparison window, and they scope each aggregate
+/// to its own range. Every other view answers over the primary period alone and
+/// its aggregates carry NO window term — widening its scan would silently fold
+/// both ranges into one number.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanScope {
+    PrimaryOnly,
+    WithComparison,
+}
+
+impl ScanScope {
+    fn windows(self, req: &ValidatedMetricResultsRequest) -> Vec<DateWindow> {
+        let primary = DateWindow {
+            from: req.from,
+            to: req.to,
+        };
+        match (self, req.compare_to) {
+            (Self::WithComparison, Some(compare_to)) => vec![primary, compare_to],
+            _ => vec![primary],
+        }
+    }
+}
+
+/// The date predicate a read scans: the primary period, and the comparison
+/// window when the view is one that answers it.
 ///
 /// INVARIANT: a disjunction, never `min(from)..max(to)`. The envelope form
 /// reads every day BETWEEN two far-apart windows and lets the conditional
@@ -204,10 +231,11 @@ fn scan_window_predicate(
     req: &ValidatedMetricResultsRequest,
     column: &str,
     separator: &str,
+    scope: ScanScope,
     params: &mut Vec<String>,
 ) -> String {
     let mut terms = Vec::with_capacity(2);
-    for window in scanned_windows(req) {
+    for window in scope.windows(req) {
         params.push(window.from.to_string());
         params.push(window.to.to_string());
         terms.push(format!(
@@ -224,19 +252,6 @@ fn scan_window_predicate(
                 .collect::<Vec<_>>()
                 .join(" OR ")
         ),
-    }
-}
-
-/// Every range a request's rows can come from: the primary period, and the
-/// comparison window when one was asked for.
-fn scanned_windows(req: &ValidatedMetricResultsRequest) -> Vec<DateWindow> {
-    let primary = DateWindow {
-        from: req.from,
-        to: req.to,
-    };
-    match req.compare_to {
-        None => vec![primary],
-        Some(compare_to) => vec![primary, compare_to],
     }
 }
 
@@ -265,7 +280,7 @@ pub(crate) fn compile_timeseries_query(
         return compile_capped_timeseries_query(def, req, bucket, dimensions, filters, group_limit);
     }
     let mut params = grouped_value_params(def);
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -315,7 +330,7 @@ pub(crate) fn compile_group_ranking_query(
     count: usize,
 ) -> CompiledQuery {
     let mut params = grouped_value_params(def);
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -356,7 +371,7 @@ fn compile_capped_timeseries_query(
     group_limit: &ResolvedGroupLimit,
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -541,7 +556,7 @@ pub(crate) fn compile_breakdown_query(
             {presence} AS {presence_alias}"
         );
     }
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::WithComparison, &mut params);
     let metric_where = metric_where_scanned(def, req, &mut params);
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -644,7 +659,7 @@ fn metric_where_scanned(
     params.push(req.tenant_id.to_string());
     params.push(source_key);
     params.push(req.entity.entity_type().to_owned());
-    let scan = scan_window_predicate(req, "metric_date", " ", params);
+    let scan = scan_window_predicate(req, "metric_date", " ", ScanScope::WithComparison, params);
     let measure_predicate = if measures.len() == 1 {
         "measure_key = ?"
     } else {
@@ -701,7 +716,7 @@ fn compile_uncapped_rollup_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = grouped_value_params(def);
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -739,7 +754,7 @@ fn compile_capped_rollup_query(
     group_limit: &ResolvedGroupLimit,
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -911,7 +926,7 @@ pub(crate) fn compile_histogram_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = grouped_value_params(def);
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -975,7 +990,7 @@ pub(crate) fn compile_pooled_histogram_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = grouped_value_params(def);
-    let read = single_resolved_observation_from(def, req, &mut params);
+    let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
@@ -1067,10 +1082,12 @@ fn compile_declared_cohort_peer_batch_query(
         batch_observation_source(defs),
         &PersonScope::CohortMembers(req),
         &collapses,
+        ScanScope::PrimaryOnly,
         &mut params,
     )
     .from;
-    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
+    let metric_scope =
+        shared_observation_where_within(defs, req, filters, ScanScope::PrimaryOnly, &mut params);
 
     let entity_id_params = placeholders(req.entity.len());
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
@@ -1141,10 +1158,12 @@ fn compile_tenant_peer_batch_query(
         batch_observation_source(defs),
         &PersonScope::TenantWide(req),
         &collapses,
+        ScanScope::PrimaryOnly,
         &mut params,
     )
     .from;
-    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
+    let metric_scope =
+        shared_observation_where_within(defs, req, filters, ScanScope::PrimaryOnly, &mut params);
 
     let entity_id_params = placeholders(req.entity.len());
     let limit = query_row_limit();
@@ -1512,11 +1531,12 @@ fn shared_observation_where_within(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
     filters: &[ValidatedDimensionFilter],
+    scope: ScanScope,
     params: &mut Vec<String>,
 ) -> String {
     params.push(req.tenant_id.to_string());
     params.push(req.entity.entity_type().to_owned());
-    let scan = scan_window_predicate(req, "metric_date", " ", params);
+    let scan = scan_window_predicate(req, "metric_date", " ", scope, params);
     let pairs = measure_pairs(defs);
     for (source_key, measure_key) in &pairs {
         params.push(source_key.clone());
@@ -1584,6 +1604,7 @@ fn batch_observation_source<'a>(defs: &'a [&MetricDefinition]) -> &'a Observatio
 fn batch_resolved_observation_from(
     defs: &[&MetricDefinition],
     req: &ValidatedMetricResultsRequest,
+    scope: ScanScope,
     params: &mut Vec<String>,
 ) -> ObservationRead {
     let def = defs
@@ -1594,6 +1615,7 @@ fn batch_resolved_observation_from(
         def.observation_source(),
         &PersonScope::Requested(req),
         &collapses,
+        scope,
         params,
     )
 }
@@ -1601,6 +1623,7 @@ fn batch_resolved_observation_from(
 fn single_resolved_observation_from(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
+    scope: ScanScope,
     params: &mut Vec<String>,
 ) -> ObservationRead {
     let defs = [def];
@@ -1609,6 +1632,7 @@ fn single_resolved_observation_from(
         def.observation_source(),
         &PersonScope::Requested(req),
         &collapses,
+        scope,
         params,
     )
 }
@@ -1846,12 +1870,13 @@ pub(crate) fn account_id_expr(alias: &str) -> String {
 /// prune let through.
 fn resolved_observation_from(
     source: &ObservationSource,
-    scope: &PersonScope<'_>,
+    person_scope: &PersonScope<'_>,
     collapses: &[(&MetricInput, AliasCollapse)],
+    scan: ScanScope,
     params: &mut Vec<String>,
 ) -> ObservationRead {
     let table = observation_table(source);
-    let resolution = EntityResolution::of(source, &scope.request().entity);
+    let resolution = EntityResolution::of(source, &person_scope.request().entity);
     if resolution == EntityResolution::Canonical {
         return ObservationRead {
             from: table,
@@ -1860,15 +1885,17 @@ fn resolved_observation_from(
     }
 
     // INVARIANT: this read pre-filters observations before the outer aggregates
-    // run, so its dates must cover EVERY window the request asks for — scoping
-    // it to the primary period alone would answer NULL for each extra one.
+    // run, so its dates must cover every range the VIEW answers: the primary
+    // period alone would answer NULL for a comparison window, and both ranges
+    // would make a view that answers only the primary period read rows it must
+    // not see.
     let scan_of = |req: &ValidatedMetricResultsRequest, params: &mut Vec<String>| {
         format!(
             "\n          AND {}",
-            scan_window_predicate(req, "obs.metric_date", "\n          ", params)
+            scan_window_predicate(req, "obs.metric_date", "\n          ", scan, params)
         )
     };
-    let (inner_where, resolved_filter) = match scope {
+    let (inner_where, resolved_filter) = match person_scope {
         PersonScope::Requested(req) => {
             params.extend(req.entity.entity_ids());
             let date_scope = scan_of(req, params);
@@ -1894,7 +1921,8 @@ fn resolved_observation_from(
             )
         }
         PersonScope::TenantWide(req) => {
-            let date_scope = scan_window_predicate(req, "obs.metric_date", "\n          ", params);
+            let date_scope =
+                scan_window_predicate(req, "obs.metric_date", "\n          ", scan, params);
             (date_scope, "resolved_person_id != ''".to_owned())
         }
     };
@@ -2403,6 +2431,95 @@ mod tests {
                 "ai_usage",
                 "accepted_lines",
             ]
+        );
+    }
+
+    /// One view's compiler, named for the assertion message.
+    type UnwidenedCase = (
+        &'static str,
+        fn(&ValidatedMetricResultsRequest) -> CompiledQuery,
+    );
+
+    /// The contract says only `period` and `breakdown` answer the comparison
+    /// window. Every other view's aggregates carry no window term of their own,
+    /// so a widened scan would fold both ranges into one number instead — a
+    /// peer target summing two months, and percentiles built on those.
+    ///
+    /// The check is the strongest available: for those views the compiled SQL
+    /// and its bound parameters must be IDENTICAL with and without
+    /// `compare_to`, down to the identity-resolving subquery.
+    #[test]
+    fn only_period_and_breakdown_widen_their_scan_for_a_comparison_window() {
+        let sum = sum_metric();
+        let mut dimensioned = sum_metric();
+        dimensioned.base.allowed_dimensions = vec!["tool".to_owned()];
+        let dims = vec!["tool".to_owned()];
+
+        let unchanged: Vec<UnwidenedCase> = vec![
+            ("peer (declared cohort)", |req| {
+                compile_peer_batch_query(
+                    &[&sum_metric()],
+                    req,
+                    "org_unit",
+                    PeerPopulation::DeclaredCohort,
+                    &[],
+                )
+            }),
+            ("peer (tenant)", |req| {
+                compile_peer_batch_query(
+                    &[&sum_metric()],
+                    req,
+                    "org_unit",
+                    PeerPopulation::Tenant,
+                    &[],
+                )
+            }),
+            ("timeseries", |req| {
+                compile_timeseries_query(&sum_metric(), req, Bucket::Week, &[], &[], None)
+            }),
+            ("rollup", |req| {
+                compile_rollup_query(
+                    &sum_metric(),
+                    req,
+                    std::slice::from_ref(&"tool".to_owned()),
+                    &[],
+                    None,
+                )
+            }),
+            ("histogram", |req| {
+                compile_histogram_query(&median_metric(), req, &[])
+            }),
+            ("ranking", |req| {
+                compile_group_ranking_query(
+                    &sum_metric(),
+                    req,
+                    std::slice::from_ref(&"tool".to_owned()),
+                    &[],
+                    5,
+                )
+            }),
+        ];
+        for (name, compile) in unchanged {
+            let plain = compile(&request());
+            let compared = compile(&windowed_request());
+            assert_eq!(plain.sql, compared.sql, "{name}: SQL must not widen");
+            assert_eq!(
+                plain.params, compared.params,
+                "{name}: bound dates must not widen"
+            );
+        }
+
+        // ...and the two that do answer it must change.
+        let period_plain = compile_period_batch_query(&[&sum], &request(), &[]);
+        let period_compared = compile_period_batch_query(&[&sum], &windowed_request(), &[]);
+        assert_ne!(period_plain.sql, period_compared.sql, "period must widen");
+
+        let breakdown_plain = compile_breakdown_query(&dimensioned, &request(), &dims, &[]);
+        let breakdown_compared =
+            compile_breakdown_query(&dimensioned, &windowed_request(), &dims, &[]);
+        assert_ne!(
+            breakdown_plain.sql, breakdown_compared.sql,
+            "breakdown must widen"
         );
     }
 

@@ -693,7 +693,7 @@ class PeriodValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    compare_to: float | None = Field(None, description='The same reading over `compare_to`; absent when the request asked for no\ncomparison window, and null when it asked but the entity has no value\nthere.')
+    compare_to: float | None = Field(None, description='The same reading over `compare_to`. Omitted both when no comparison\nwindow was asked for and when the entity has no value in it — the two\nare not distinguished on the wire, and a reader that asked knows which\ncase it is in.')
     entity_id: str
     value: float | None = None
 

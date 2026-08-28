@@ -255,9 +255,10 @@ pub struct MetricDimensionDto {
 pub struct PeriodValueDto {
     pub entity_id: String,
     pub value: Option<f64>,
-    /// The same reading over `compare_to`; absent when the request asked for no
-    /// comparison window, and null when it asked but the entity has no value
-    /// there.
+    /// The same reading over `compare_to`. Omitted both when no comparison
+    /// window was asked for and when the entity has no value in it — the two
+    /// are not distinguished on the wire, and a reader that asked knows which
+    /// case it is in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compare_to: Option<f64>,
 }
