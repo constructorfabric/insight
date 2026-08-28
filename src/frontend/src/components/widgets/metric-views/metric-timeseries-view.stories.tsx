@@ -157,16 +157,9 @@ function emptySpotInBucket(
  * carries coordinates. The target is what a real pointer would be over — the
  * segment where there is one, the wrapper where the column is empty — because a
  * dispatched event reaches the wrapper by bubbling but never travels back down.
- * A move between the two is one gesture, so that leaving the segment is part of
- * it rather than an event nothing ever fires.
  */
 const pointAt = (target: Element, coords: ChartPoint) =>
   userEvent.pointer({ target, coords });
-
-const moveBetween = (
-  from: { target: Element; coords: ChartPoint },
-  to: { target: Element; coords: ChartPoint }
-) => userEvent.pointer([from, to]);
 
 const clickAt = (target: Element, coords: ChartPoint) =>
   userEvent.pointer([
@@ -245,9 +238,9 @@ export const TestChartPresentation: Story = {
 };
 
 /**
- * The click target is the whole column, not the drawn stack: a point above the
- * segments drills the bucket unnarrowed, a segment drills its own series, and
- * the tooltip marks which of the two a click would take.
+ * The click target is the whole column, not the drawn stack: a segment drills
+ * its own series, a point above them drills the bucket unnarrowed, and each
+ * click opens exactly one thing — the two handlers never both answer it.
  */
 export const TestColumnClickDrilldown: Story = {
   tags: ["test"],
@@ -262,19 +255,10 @@ export const TestColumnClickDrilldown: Story = {
     const wrapper = canvasElement.querySelector<HTMLElement>(
       ".recharts-wrapper"
     )!;
-    // Every hover re-renders the chart and recharts rebuilds its rectangles, so
-    // a segment held across one gesture is a detached node by the next.
+    // Recharts rebuilds its rectangles as the pointer moves, so a segment held
+    // across one gesture is a detached node by the next.
     // The series render in rank order, making the first segment org/repo-a's.
     const segment = () => barSegments(canvasElement)[0]!;
-
-    // Over a segment the panel marks the one row a click would open, and the
-    // click opens exactly that row's series.
-    await pointAt(segment(), centreOf(segment()));
-    await waitFor(() =>
-      expect(canvasElement.querySelector("[data-active]")).toHaveTextContent(
-        "org/repo-a"
-      )
-    );
 
     await clickAt(segment(), centreOf(segment()));
     await waitFor(() => expect(drilled).toHaveLength(1));
@@ -285,19 +269,14 @@ export const TestColumnClickDrilldown: Story = {
     });
 
     // 2026-04-27 carries one commit against a six-commit peak, so the top of
-    // its band is the empty space this issue is about. Nothing is marked there,
-    // because the click opens every row instead of one.
+    // its band is the empty space this issue is about.
     const spot = emptySpotInBucket(canvasElement, 1);
-    await moveBetween(
-      { target: segment(), coords: centreOf(segment()) },
-      { target: wrapper, coords: spot }
-    );
+    await pointAt(wrapper, spot);
+    // The panel reads that week there, so the empty space is inside the band
+    // rather than outside the chart's reach.
     await waitFor(() =>
-      expect(canvasElement.querySelector("[data-active]")).toBeNull()
+      expect(canvas.getByText("April 27, 2026")).toBeInTheDocument()
     );
-    // The panel still reads that week there, so the empty space is inside the
-    // band rather than outside the chart's reach.
-    await expect(canvas.getByText("April 27, 2026")).toBeInTheDocument();
 
     await clickAt(wrapper, spot);
     await waitFor(() => expect(drilled).toHaveLength(2));
@@ -306,6 +285,10 @@ export const TestColumnClickDrilldown: Story = {
       period: { from: "2026-04-27", to: "2026-05-03" },
       filters: [],
     });
+
+    // Two clicks, two drilldowns: neither one was answered by both the
+    // segment's handler and the chart's.
+    await expect(drilled).toHaveLength(2);
   },
 };
 

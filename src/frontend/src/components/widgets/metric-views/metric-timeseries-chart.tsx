@@ -1,4 +1,3 @@
-import { useRef, useState } from "react";
 import { format } from "date-fns";
 import type { MouseHandlerDataParam } from "recharts";
 
@@ -78,10 +77,6 @@ export function MetricTimeseriesChart({
   multiMetric = "selectable",
   onEvidence,
 }: MetricTimeseriesChartProps) {
-  // The segment under the pointer, tracked here rather than read off the click:
-  // recharts routes a click to the chart, not to the rectangle it landed on.
-  const [hoveredSeriesKey, setHoveredSeriesKey] = useState<string | null>(null);
-  const overSegment = useRef(false);
   const chartModel = buildMetricTimeseriesChartModel(
     model,
     selectedMetricKey,
@@ -137,7 +132,6 @@ export function MetricTimeseriesChart({
         content={
           <ChartTooltipContent
             className="min-w-48"
-            activeKey={hoveredSeriesKey ?? undefined}
             labelFormatter={(_, payload) =>
               String(payload?.[0]?.payload?.tooltipLabel ?? "")
             }
@@ -146,40 +140,43 @@ export function MetricTimeseriesChart({
       />
     </>
   );
-  const drillableColumn = (columnKey: string) => {
-    const column = model.columns.find(
-      (candidate) => candidate.key === columnKey
-    );
-    return column && !column.remainder ? column : undefined;
-  };
-  const openBucket = (state: MouseHandlerDataParam) => {
-    const bucketStart = data[Number(state.activeTooltipIndex)]?.bucketStart;
+  const bucketAt = (index: MouseHandlerDataParam["activeTooltipIndex"]) =>
+    data[Number(index)]?.bucketStart;
+  const openBucketFrom = (bucketStart: string) =>
+    onEvidence?.(chartModel.valueMetric.metric_key, null, bucketStart);
+  const openSegment = (
+    series: MetricTimeseriesChartModel["series"][number],
+    entry: unknown
+  ) => {
+    const point = entry as { payload?: { bucketStart?: string } };
+    const bucketStart = point.payload?.bucketStart;
     if (!bucketStart) return;
 
-    const hovered = chartModel.series.find(
-      (series) => series.key === hoveredSeriesKey
+    const column = model.columns.find(
+      (candidate) => candidate.key === series.columnKey
     );
-    if (hovered) onEvidence?.(hovered.metricKey, hovered.columnKey, bucketStart);
-    else onEvidence?.(chartModel.valueMetric.metric_key, null, bucketStart);
-  };
-  // A segment's own move reaches the chart handler too, so the flag is what
-  // tells "moved over a segment" from "moved past every one of them".
-  const trackSegment = (
-    series: MetricTimeseriesChartModel["series"][number]
-  ) => {
-    overSegment.current = true;
-    setHoveredSeriesKey(drillableColumn(series.columnKey) ? series.key : null);
-  };
-  const trackPlot = () => {
-    if (overSegment.current) {
-      overSegment.current = false;
-      return;
+    // The remainder gathers the dimension values that missed the top N, so no
+    // filter selects it: clicking it reads as clicking past every segment.
+    if (column && !column.remainder) {
+      onEvidence?.(series.metricKey, series.columnKey, bucketStart);
+    } else {
+      openBucketFrom(bucketStart);
     }
-    setHoveredSeriesKey(null);
   };
-  const leavePlot = () => {
-    overSegment.current = false;
-    setHoveredSeriesKey(null);
+  /**
+   * The column outside its drawn segments. A click on a segment reaches here
+   * too, and asking the event where it landed is what keeps both from
+   * answering it — no assumption about which handler runs first.
+   */
+  const openBucket = (
+    state: MouseHandlerDataParam,
+    event: { target: EventTarget | null }
+  ) => {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".recharts-bar-rectangle")) return;
+
+    const bucketStart = bucketAt(state.activeTooltipIndex);
+    if (bucketStart) openBucketFrom(bucketStart);
   };
 
   return (
@@ -193,8 +190,6 @@ export function MetricTimeseriesChart({
             data={data}
             margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             onClick={openBucket}
-            onMouseMove={trackPlot}
-            onMouseLeave={leavePlot}
           >
             {chartContent}
             <TimeseriesXAxis data={data} />
@@ -206,7 +201,7 @@ export function MetricTimeseriesChart({
                 fill={`var(--color-${series.key})`}
                 name={series.label}
                 radius={[2, 2, 0, 0]}
-                onMouseMove={() => trackSegment(series)}
+                onClick={(point) => openSegment(series, point)}
               />
             ))}
           </BarChart>

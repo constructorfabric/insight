@@ -254,7 +254,6 @@ function ChartTooltipContent({
   color,
   nameKey,
   labelKey,
-  activeKey,
 }: React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
   React.ComponentProps<"div"> & {
     hideLabel?: boolean;
@@ -262,8 +261,6 @@ function ChartTooltipContent({
     indicator?: "line" | "dot" | "dashed";
     nameKey?: string;
     labelKey?: string;
-    /** `dataKey` of the series a click would drill into, marked in the list. */
-    activeKey?: string;
   } & Omit<
     RechartsPrimitive.DefaultTooltipContentProps<
       TooltipValueType,
@@ -330,18 +327,14 @@ function ChartTooltipContent({
             const key = `${nameKey ?? item.name ?? item.dataKey ?? "value"}`;
             const itemConfig = getPayloadConfigFromPayload(config, item, key);
             const indicatorColor = color ?? item.payload?.fill ?? item.color;
-            const isActive =
-              activeKey != null && String(item.dataKey) === activeKey;
 
             return (
               <div
                 key={index}
                 className={cn(
                   "flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5 [&>svg]:text-muted-foreground",
-                  indicator === "dot" && "items-center",
-                  isActive && "-mx-1 rounded-sm bg-accent px-1"
+                  indicator === "dot" && "items-center"
                 )}
-                data-active={isActive || undefined}
               >
                 {formatter && item?.value !== undefined && item.name ? (
                   formatter(item.value, item.name, item, index, item.payload)
