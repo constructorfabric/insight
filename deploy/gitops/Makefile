@@ -146,8 +146,10 @@ ARGO_WORKFLOW_SA ?= argo-workflow
 # Chart versions verified latest via `helm search repo <repo>/<chart>
 # --versions` (bump deliberately, same discipline as the pins above).
 LOKI_RELEASE     ?= loki
-LOKI_CHART       ?= grafana/loki
-LOKI_VERSION     ?= 7.3.0      # app 3.6.12
+# grafana/loki now tracks Grafana Enterprise Logs; the OSS chart continues
+# as grafana-community/loki (same manifests, renumbered versions).
+LOKI_CHART       ?= grafana-community/loki
+LOKI_VERSION     ?= 18.11.4    # app 3.7.7
 
 ALLOY_RELEASE    ?= alloy
 ALLOY_CHART      ?= grafana/alloy
@@ -155,7 +157,7 @@ ALLOY_VERSION    ?= 1.12.1     # app v1.19.2
 
 GRAFANA_RELEASE  ?= grafana
 # grafana/grafana is deprecated (frozen 2026-01-30); development moved to
-# grafana-community/helm-charts. Loki and Alloy still live in the old repo.
+# grafana-community/helm-charts. Alloy still lives in the old repo.
 GRAFANA_CHART    ?= grafana-community/grafana
 GRAFANA_VERSION  ?= 13.0.0     # app 13.2.0
 
@@ -745,7 +747,7 @@ system-victoriametrics: vpn-up kube-ctx
 
 .PHONY: system-loki
 system-loki: vpn-up kube-ctx
-	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
 	$(call _apply_optional_system_secrets,loki)
 	helm upgrade --install $(LOKI_RELEASE) $(LOKI_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \

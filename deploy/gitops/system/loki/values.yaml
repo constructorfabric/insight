@@ -1,7 +1,7 @@
 ##
 ## Loki — log store for the L2 system layer (observability `bundled` mode).
 ##
-## Chart: grafana/loki   (https://grafana.github.io/helm-charts)
+## Chart: grafana-community/loki   (https://grafana-community.github.io/helm-charts)
 ## Pin in Makefile: LOKI_VERSION
 ## Release: `loki` in namespace `insight-infra`.
 ##
