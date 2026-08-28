@@ -12,9 +12,8 @@ drilldown sweep reconciles:
 * the row therefore has to name the month it bills for, and the ceiling the
   amount is judged against, or a reader cannot place either.
 
-It also asserts the shape of the cost family as a whole: which quantities are
-served, and that the one called overage is the amount the vendor billed rather
-than the excess over the ceiling that caps it.
+It also asserts which of the two overage quantities is served: the amount the
+vendor billed, and not the excess over the ceiling that caps it.
 
 Every expectation is derived from what the stand serves — the date and the
 billing month come out of the evidence itself — so the suite keeps working when
@@ -25,38 +24,19 @@ from __future__ import annotations
 
 import datetime as _dt
 from collections.abc import Callable, Mapping
-from typing import Final
 
 import pytest
 from insight_stand import ApiClient, Manifest, PersonaSession, analytics_path
 
-from ..schemas import MetricDefinitionListResponse, MetricResultsResponse, PeriodView
+from ..schemas import MetricResultsResponse, PeriodView
 from . import query_window
 
 METRIC_RESULTS = analytics_path("/v1/metric-results")
-METRIC_DEFINITIONS = analytics_path("/v1/metric-definitions")
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
 
 MONEY = "ai.extra_usage_cost"
-DAILY_MONEY = "ai.daily_approximate_extra_usage_cost"
-SEAT_COST = "ai.seat_cost"
 UTILISATION = "ai.extra_usage_utilisation"
 USAGE_PRICED = "ai.cost"
-
-#: The subject the registry files a cost figure under.
-COST_SUBJECT = "cost"
-
-#: Every figure served under that subject, and the quantity each one reports.
-#: Pinned as a set rather than counted: a sixth arrival either names a quantity
-#: none of these reports — add it here, with that quantity — or it is a second
-#: reading of one of them, which is what the test below exists to catch.
-COST_FIGURES: Final[Mapping[str, str]] = {
-    USAGE_PRICED: "consumption priced at vendor rates, which nobody was billed for",
-    SEAT_COST: "the seat's own fee, taken from the vendor invoice",
-    MONEY: "the usage the vendor billed on top of that fee",
-    DAILY_MONEY: "the same billed usage, spread over the days it was spent",
-    UTILISATION: "how close that spend is to the ceiling that blocks the seat",
-}
 
 
 def _period_values(
@@ -190,35 +170,6 @@ def test_the_usage_priced_and_the_billed_key_are_served_side_by_side(
     )
 
 
-@pytest.mark.reliability
-def test_the_cost_family_serves_one_figure_per_quantity(api: ApiClient) -> None:
-    """A second reading of the same money is the failure this catches.
-
-    Two quantities sit one word apart here: what the vendor bills once a seat
-    exhausts the usage its fee included, and the excess over the ceiling that
-    caps that spend. They differ by orders of magnitude, both answer to
-    "overage", and serving both at once leaves a reader no way to tell which of
-    them is the money.
-    """
-    response = api.get(METRIC_DEFINITIONS)
-    assert response.status_code == 200, (
-        f"definitions: status={response.status_code} {response.text[:200]}"
-    )
-
-    served = {
-        metric.metric_key
-        for metric in response.parse(MetricDefinitionListResponse).metrics
-        if metric.subject == COST_SUBJECT and metric.origin == "builtin" and metric.is_enabled
-    }
-
-    assert served == set(COST_FIGURES), (
-        f"the enabled cost family is {sorted(served)} and this suite knows "
-        f"{sorted(COST_FIGURES)}. A key added here has to report a quantity none of the "
-        "others does; a second reading of the spend past a seat's fee is the one this "
-        "forbids."
-    )
-
-
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.reliability
 def test_the_billed_amount_is_not_the_excess_over_the_ceiling(
@@ -226,10 +177,19 @@ def test_the_billed_amount_is_not_the_excess_over_the_ceiling(
 ) -> None:
     """Which of the two overage quantities is served, told from a single row.
 
+    Two quantities sit one word apart in this family: what the vendor bills once
+    a seat exhausts the usage its fee included, and the excess over the ceiling
+    that caps that spend. They differ by orders of magnitude and both answer to
+    "overage", so which one is served has to be observable.
+
     A seat-month row carries both the amount and the ceiling that amount is
     judged against, so a seat that spent something and stayed under its ceiling
     separates them with no second request: the vendor's billed amount is
     positive there, while the excess over the ceiling is exactly zero.
+
+    A SECOND key arriving that computes the other quantity is not this test's
+    job — `test_drilldown.py` already compares the whole served catalogue against
+    the drilldown matrix, so a metric added without an entry there fails.
     """
     session = session_for("dev_lead")
     start, end = query_window(stand_manifest)
