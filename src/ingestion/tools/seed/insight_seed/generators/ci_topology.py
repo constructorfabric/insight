@@ -1,14 +1,29 @@
-"""Which repositories exist, which run CI, and what pipelines they run."""
+"""Which repositories exist, which run CI, and what pipelines they run.
+
+`CI_WINDOW_DAYS`/`in_window` clamp runs and deployments to the vendor's
+~90-day workflow retention, independent of the seed's own `days` window: a
+freshly seeded stand is a first sync, so its CI history cannot honestly reach
+further back than the source could deliver.
+"""
 
 from __future__ import annotations
 
+import datetime as _dt
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..profiles import Person
+from .base import anchor_date
 
 # INVARIANT: Event names must match GitHub exactly; merge_group maps to merge_queue trigger_category in connectors/git/github/dbt/github__ci_runs.sql.
 COMMIT_TRIGGERS = ("push", "pull_request", "merge_group")
+
+CI_WINDOW_DAYS = 90
+
+
+def in_window(day: _dt.date) -> bool:
+    """Whether `day` falls inside the vendor's CI retention window."""
+    return day > anchor_date() - _dt.timedelta(days=CI_WINDOW_DAYS)
 
 
 @dataclass(frozen=True)

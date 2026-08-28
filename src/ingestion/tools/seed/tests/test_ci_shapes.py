@@ -7,11 +7,15 @@ from typing import Any
 import pytest
 
 from insight_seed import profiles
-from insight_seed.generators import base, ci, git_history
+from insight_seed.generators import base, ci, ci_deployments, git_history
 
 _TENANT = "00000000-df51-5b42-9538-d2b56b7ee953"
 _ANCHOR = _dt.date(2026, 8, 11)
-_DAYS = 90
+# INVARIANT: must stay wider than ci.CI_WINDOW_DAYS (90), or the history built
+# from it never reaches past the clamp and test_the_ci_window_is_clamped_to_
+# the_vendor_retention below passes vacuously — see
+# test_the_fixture_history_extends_past_the_ci_window.
+_DAYS = 180
 
 _NO_CLIENT: Any = None
 
@@ -36,6 +40,8 @@ def rows(monkeypatch: pytest.MonkeyPatch) -> Rows:
 
     monkeypatch.setattr(ci, "truncate", lambda client, schema, table: None)
     monkeypatch.setattr(ci, "bulk_insert", capture)
+    monkeypatch.setattr(ci_deployments, "truncate", lambda client, schema, table: None)
+    monkeypatch.setattr(ci_deployments, "bulk_insert", capture)
 
     roster = profiles.build_roster("dev@company.nonpresent")
     history = git_history.build_history(roster, _DAYS)
@@ -115,6 +121,16 @@ def test_runs_are_anchored_to_the_seeded_commits(runs: Runs) -> None:
     assert matched, "no run joins a seeded commit — the coverage panel would read zero"
     assert len(matched) < len(runs), "every run joins — the coverage gap is invisible"
     assert all(r["head_sha"] not in hashes for r in runs if r["event"] == "pull_request")
+
+
+def test_the_fixture_history_extends_past_the_ci_window() -> None:
+    """Guards the clamp test below: unless the seeded history reaches past
+    `CI_WINDOW_DAYS`, `in_window` has nothing to reject and that test would
+    pass even if the clamp were removed entirely."""
+    roster = profiles.build_roster("dev@company.nonpresent")
+    history = git_history.build_history(roster, _DAYS)
+    earliest = min(d.date for d in history)
+    assert earliest < _ANCHOR - _dt.timedelta(days=ci.CI_WINDOW_DAYS)
 
 
 def test_the_ci_window_is_clamped_to_the_vendor_retention(runs: Runs) -> None:
