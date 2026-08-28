@@ -10,12 +10,13 @@ name: TruffleHog Secrets
 #   - `--results=verified,unknown,unverified,filtered_unverified` — the default hides findings
 #     whose verification failed, which on a public repository is still a leak.
 #   - no `--filter-entropy` — it suppresses AWS access key IDs.
-#   - no `--exclude-detectors` — a detector switched off here is off for every path and every
-#     future commit, and that decision gets no review. A match that is code rather than a
-#     credential belongs in the allowlist, one reviewed line at a time. Lob is the shape that
-#     costs the most: its key is `test_` plus 35 characters, which is also a long `test_*`
-#     function name, and its sandbox verifies any `test_`-prefixed string, so such a finding
-#     arrives marked verified. It is still a finding this repository must be able to see.
+#   - `--exclude-detectors=lob` is the ONE detector exception, and the bar for adding another
+#     stays deliberately high: a detector switched off here is off for every path and every
+#     future commit. Lob earned it — this organisation does not use the Lob service at all,
+#     the key shape is `test_` plus 35 characters (also a long `test_*` function name), and
+#     Lob's sandbox verifies any `test_`-prefixed string, so every such function name arrives
+#     as a "verified" finding and blocked a PR per test rename. Any other match that is code
+#     rather than a credential belongs in the allowlist, one reviewed line at a time.
 #   - raw values never reach a log, summary or artifact — this repository is public.
 
 on:
@@ -71,6 +72,7 @@ jobs:
             git file:///src \
               --json \
               --no-update \
+              --exclude-detectors=lob \
               --since-commit "$SINCE" \
               --branch "$HEAD_SHA" \
               --results=verified,unknown,unverified,filtered_unverified \
@@ -125,6 +127,7 @@ jobs:
             git file:///src \
               --json \
               --no-update \
+              --exclude-detectors=lob \
               --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-findings.jsonl
 
@@ -192,6 +195,7 @@ jobs:
               --include-wikis \
               --json \
               --no-update \
+              --exclude-detectors=lob \
               --results=verified,unknown,unverified,filtered_unverified \
             > trufflehog-api-findings.jsonl
 
