@@ -84,6 +84,7 @@ d3a5da2ebda00b3f  Lob                deploy/preview/tests/test_render.py  # test
 c74cd50dc146bc0e  Lob                src/backend/services/gateway/tests/downstream-verify/test_downstream.py  # test function name; `test_` + 35 chars is also the Lob key shape
 37aea45b8c947947  Lob                src/backend/services/identity-resolution/helm/tests/test_seed_cronjob_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
 58392041bbf26f2d  Lob                src/backend/services/keycloak/helm/tests/test_httproute_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
+ca984a9e2c6584a3  Lob                src/backend/services/previews/helm/tests/test_experiments_rbac_contract.py  # test function name; `test_` + 35 chars is also the Lob key shape
 840a5e59e79d9d33  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_build_records.py  # test function name; `test_` + 35 chars is also the Lob key shape
 2eba2f79df37b4cf  Lob                src/ingestion/connectors/ai/claude-team-invoices/tests/test_stripe_chain.py  # test function name; `test_` + 35 chars is also the Lob key shape
 69768a957e81bddc  Lob                src/ingestion/connectors/ai/github-copilot/tests/test_base.py  # test function name; `test_` + 35 chars is also the Lob key shape
