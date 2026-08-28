@@ -13,7 +13,7 @@ use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
 use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::request::{MetricQuery, QuantilesView};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -56,12 +56,20 @@ pub(super) fn compile(
 
     let mut sql = head;
     sql.push_str("SELECT\n");
-    let _ = writeln!(sql, "    {} AS entity_id,", joined_entity(pool, fold.grain));
+    let _ = writeln!(
+        sql,
+        "    {} AS entity_id,",
+        joined_entity(pool, &fold.grain.entity)
+    );
     let _ = writeln!(
         sql,
         "    quantilesExact({positions})(assumeNotNull({ranked})) AS quantile_values"
     );
-    let _ = writeln!(sql, "FROM {}", scan_clause(dataset, pool, fold.grain, ""));
+    let _ = writeln!(
+        sql,
+        "FROM {}",
+        scan_clause(from_clause(dataset), pool, &fold.grain.entity, "")
+    );
     let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id");
     let _ = writeln!(sql, "ORDER BY entity_id");

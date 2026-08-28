@@ -3271,10 +3271,14 @@
           },
           "executor": {
             "$ref": "#/components/schemas/Executor"
+          },
+          "served_from": {
+            "$ref": "#/components/schemas/ServedFrom"
           }
         },
         "required": [
-          "executor"
+          "executor",
+          "served_from"
         ],
         "type": "object"
       },
@@ -3701,6 +3705,13 @@
         "enum": [
           "tenant",
           "person"
+        ],
+        "type": "string"
+      },
+      "ServedFrom": {
+        "description": "Where the rows behind this answer came from.",
+        "enum": [
+          "computed"
         ],
         "type": "string"
       },

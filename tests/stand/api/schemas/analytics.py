@@ -1097,17 +1097,6 @@ class Problem(BaseModel):
     type: str
 
 
-class Provenance(BaseModel):
-    """
-    What produced this answer.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    definition_version: int | None = Field(None, description='The definition version the store holds; absent when it carries no row.')
-    executor: Executor
-
-
 class PutCredentialRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1164,18 +1153,6 @@ class RowsQuestions(BaseModel):
         extra='forbid',
     )
     inputs: list[str] = Field(..., description='The parts of the computation a page of rows may be asked for.')
-
-
-class RowsResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    columns: list[RowColumn]
-    input: str = Field(..., description="The part of the metric's computation these rows were folded into.")
-    metric: str
-    next_cursor: str | None = Field(None, description='Absent when this page is the last one.')
-    provenance: Provenance
-    rows: list[list[Any]] = Field(..., description="One entry per row, holding one value per column, in the columns' order.")
 
 
 class RunResponse(BaseModel):
@@ -1250,6 +1227,13 @@ class Scope(StrEnum):
     """
     tenant = 'tenant'
     person = 'person'
+
+
+class ServedFrom(StrEnum):
+    """
+    Where the rows behind this answer came from.
+    """
+    computed = 'computed'
 
 
 class SnapshotScope(StrEnum):
@@ -1556,27 +1540,11 @@ class ComparisonQuestions(BaseModel):
     populations: list[Population] = Field(..., description="Written as a comparison question's `population` field takes them.")
 
 
-class ComparisonResult(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    metric: str
-    provenance: Provenance
-    targets: list[TargetComparison] = Field(..., description='One entry per requested target, in the order they were asked.')
-
-
 class ComparisonsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     queries: list[ComparisonQuery]
-
-
-class ComparisonsResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    results: list[ComparisonResult] = Field(..., description='One entry per requested query, in the order they were asked.')
 
 
 class ContextEntryResponse(BaseModel):
@@ -1885,6 +1853,18 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class Provenance(BaseModel):
+    """
+    What produced this answer.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    definition_version: int | None = Field(None, description='The definition version the store holds; absent when it carries no row.')
+    executor: Executor
+    served_from: ServedFrom
+
+
 class ResultBody1(BaseModel):
     """
     The answer's shape, decided by the question's grain: `total` answers with
@@ -1925,6 +1905,18 @@ class RowsRequest(BaseModel):
     page_size: int | None = Field(None, description='Rows per page. Absent means 100.', ge=0)
     subjects: Subjects
     time: TimeRange
+
+
+class RowsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[RowColumn]
+    input: str = Field(..., description="The part of the metric's computation these rows were folded into.")
+    metric: str
+    next_cursor: str | None = Field(None, description='Absent when this page is the last one.')
+    provenance: Provenance
+    rows: list[list[Any]] = Field(..., description="One entry per row, holding one value per column, in the columns' order.")
 
 
 class SavedQueryListResponse(BaseModel):
@@ -2026,6 +2018,22 @@ class CatalogMetric(BaseModel):
     key: str = Field(..., description='The key a question names, such as `git.commits`.')
     label: str | None = None
     questions: MetricQuestions
+
+
+class ComparisonResult(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metric: str
+    provenance: Provenance
+    targets: list[TargetComparison] = Field(..., description='One entry per requested target, in the order they were asked.')
+
+
+class ComparisonsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    results: list[ComparisonResult] = Field(..., description='One entry per requested query, in the order they were asked.')
 
 
 class CustomMetric(BaseModel):

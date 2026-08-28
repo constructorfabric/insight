@@ -195,7 +195,7 @@ impl toolkit::api::api_dto::ResponseApiDto for ValuesResponse {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::super::dto::Executor;
+    use super::super::super::dto::{Executor, ServedFrom};
     use super::*;
 
     #[test]
@@ -285,6 +285,28 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_states_on_the_wire_where_the_rows_behind_it_came_from() {
+        let cases = [(ServedFrom::Computed, "computed")];
+
+        for (served_from, spelling) in cases {
+            let provenance = Provenance {
+                executor: Executor::Semantic,
+                definition_version: Some(4),
+                served_from,
+            };
+
+            assert_eq!(
+                serde_json::to_value(&provenance).expect("provenance serializes"),
+                serde_json::json!({
+                    "executor": "semantic",
+                    "definition_version": 4,
+                    "served_from": spelling,
+                })
+            );
+        }
+    }
+
+    #[test]
     fn a_compared_answer_is_serialized_as_the_documented_shape() {
         let response = ValuesResponse {
             results: vec![QueryResult {
@@ -292,6 +314,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: Some(4),
+                    served_from: ServedFrom::Computed,
                 },
                 result: ResultBody::Values {
                     values: vec![GroupedValue {
@@ -313,7 +336,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic", "definition_version": 4 },
+                    "provenance": { "served_from": "computed", "executor": "semantic", "definition_version": 4 },
                     "result": {
                         "shape": "values",
                         "values": [{
@@ -335,6 +358,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: None,
+                    served_from: ServedFrom::Computed,
                 },
                 result: ResultBody::Series {
                     series: vec![GroupedSeries {
@@ -360,7 +384,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic" },
+                    "provenance": { "served_from": "computed", "executor": "semantic" },
                     "result": {
                         "shape": "series",
                         "series": [{
@@ -421,6 +445,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: Some(1),
+                    served_from: ServedFrom::Computed,
                 },
                 result: ResultBody::Series {
                     series: vec![
@@ -460,7 +485,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic", "definition_version": 1 },
+                    "provenance": { "served_from": "computed", "executor": "semantic", "definition_version": 1 },
                     "result": {
                         "shape": "series",
                         "series": [
@@ -496,6 +521,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: None,
+                    served_from: ServedFrom::Computed,
                 },
                 result: ResultBody::Values {
                     values: vec![GroupedValue {
@@ -513,7 +539,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic" },
+                    "provenance": { "served_from": "computed", "executor": "semantic" },
                     "result": { "shape": "values", "values": [{ "value": null }] },
                 }],
             })

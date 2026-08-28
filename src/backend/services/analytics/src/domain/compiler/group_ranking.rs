@@ -9,7 +9,7 @@ use std::fmt::Write;
 use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
 use crate::domain::field_catalog::model::FieldCatalog;
 
-use super::dimensions::combined_split_dimension_select_group;
+use super::dimensions::{DimensionSource, combined_split_dimension_select_group};
 use super::error::CompileError;
 use super::fold::{Fold, transformed};
 use super::pool::Pool;
@@ -30,7 +30,10 @@ pub fn compile_group_ranking_query(
 
     let fold = Fold::resolve(metric, measures)?;
     let dataset = fold.dataset(catalog)?;
-    let (select, group) = combined_split_dimension_select_group(fold.grain, &query.dimensions)?;
+    let (select, group) = combined_split_dimension_select_group(
+        &DimensionSource::Row(fold.grain),
+        &query.dimensions,
+    )?;
     let pool = Pool::of_scope(&query.entity_scope);
     let read = fold.scoped_read(
         dataset,

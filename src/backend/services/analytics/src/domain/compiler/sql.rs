@@ -154,7 +154,7 @@ pub(super) fn conditional_aggregate_expr(
     }
 }
 
-fn aggregate_function(aggregation: Aggregation) -> &'static str {
+pub(super) fn aggregate_function(aggregation: Aggregation) -> &'static str {
     match aggregation {
         Aggregation::Count => "count",
         Aggregation::Sum => "sum",

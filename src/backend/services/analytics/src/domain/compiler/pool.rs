@@ -3,12 +3,9 @@
 //! measure's entity field, so a person's identities fold into one row group and
 //! a person no row matches reports nothing rather than a zero.
 
-use crate::domain::definitions::definition::MeasureDefinition;
-use crate::domain::field_catalog::model::CatalogDataset;
-
 use super::error::CompileError;
 use super::request::{EntityScope, ResolvedPerson};
-use super::sql::{QueryParam, from_clause};
+use super::sql::QueryParam;
 
 /// The person column beside the rows the join produced.
 const JOINED_PERSON: &str = "pool.person_ref";
@@ -106,39 +103,31 @@ pub(super) fn continued_cte(
 /// The relation a read scans, with the join that narrows it to the pool.
 /// `indent` is the leading whitespace the statement's own clause lines carry.
 pub(super) fn scan_clause(
-    dataset: &CatalogDataset,
+    relation: String,
     pool: Option<&Pool<'_>>,
-    measure: &MeasureDefinition,
+    entity: &str,
     indent: &str,
 ) -> String {
-    let relation = from_clause(dataset);
     match pool {
         None => relation,
-        Some(_) => format!(
-            "{relation}\n{indent}INNER JOIN pool ON pool.identity = {}",
-            measure.entity
-        ),
+        Some(_) => {
+            format!("{relation}\n{indent}INNER JOIN pool ON pool.identity = {entity}")
+        }
     }
 }
 
 /// What a read keys its rows by in the stage that carries the join.
-pub(super) fn joined_entity<'a>(
-    pool: Option<&Pool<'_>>,
-    measure: &'a MeasureDefinition,
-) -> &'a str {
+pub(super) fn joined_entity<'a>(pool: Option<&Pool<'_>>, entity: &'a str) -> &'a str {
     match pool {
-        None => &measure.entity,
+        None => entity,
         Some(_) => JOINED_PERSON,
     }
 }
 
 /// The same, read from a stage the join has already passed through.
-pub(super) fn carried_entity<'a>(
-    pool: Option<&Pool<'_>>,
-    measure: &'a MeasureDefinition,
-) -> &'a str {
+pub(super) fn carried_entity<'a>(pool: Option<&Pool<'_>>, entity: &'a str) -> &'a str {
     match pool {
-        None => &measure.entity,
+        None => entity,
         Some(_) => CARRIED_PERSON,
     }
 }

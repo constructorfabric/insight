@@ -30,10 +30,18 @@ pub struct Provenance {
     /// The definition version the store holds; absent when it carries no row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub definition_version: Option<i32>,
+    pub served_from: ServedFrom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Executor {
     Semantic,
+}
+
+/// Where the rows behind this answer came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServedFrom {
+    Computed,
 }

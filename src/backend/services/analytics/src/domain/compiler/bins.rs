@@ -13,7 +13,7 @@ use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
 use super::pool::{Pool, first_cte, joined_entity, scan_clause};
 use super::request::{BinsView, MetricQuery};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -46,13 +46,13 @@ pub(super) fn compile(
     let _ = writeln!(
         sql,
         "        {} AS entity_id,",
-        joined_entity(pool, fold.grain)
+        joined_entity(pool, &fold.grain.entity)
     );
     let _ = writeln!(sql, "        assumeNotNull({binned}) AS event_value");
     let _ = writeln!(
         sql,
         "    FROM {}",
-        scan_clause(dataset, pool, fold.grain, "    ")
+        scan_clause(from_clause(dataset), pool, &fold.grain.entity, "    ")
     );
     let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
     let _ = writeln!(sql, "),");

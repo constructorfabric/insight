@@ -11,7 +11,8 @@ use super::error::CompileError;
 use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::request::MeasureQuery;
 use super::sql::{
-    ReadScope, aggregate_expr, bucket_expr, dimension_binding, label_field, read_predicates,
+    ReadScope, aggregate_expr, bucket_expr, dimension_binding, from_clause, label_field,
+    read_predicates,
 };
 
 pub use super::sql::{CompiledMeasureQuery, QueryParam};
@@ -45,7 +46,7 @@ pub fn compile_measure_query(
     let _ = writeln!(
         sql,
         "    {} AS entity_id,",
-        joined_entity(pool.as_ref(), measure)
+        joined_entity(pool.as_ref(), &measure.entity)
     );
     let _ = writeln!(
         sql,
@@ -60,7 +61,7 @@ pub fn compile_measure_query(
     let _ = writeln!(
         sql,
         "FROM {}",
-        scan_clause(dataset, pool.as_ref(), measure, "")
+        scan_clause(from_clause(dataset), pool.as_ref(), &measure.entity, "")
     );
     let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY {}", group_columns(group_by).join(", "));

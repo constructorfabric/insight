@@ -9,7 +9,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QuerySe
 
 use crate::infra::db::entities::semantic_metrics;
 
-use super::dto::{Executor, Provenance};
+use super::dto::{Executor, Provenance, ServedFrom};
 
 /// A key the store carries no row for is absent from the result.
 pub(super) async fn metric_versions(
@@ -39,10 +39,15 @@ pub(super) async fn metric_versions(
     }
 }
 
-pub(super) fn provenance(versions: &BTreeMap<String, i32>, metric_key: &str) -> Provenance {
+pub(super) fn provenance(
+    versions: &BTreeMap<String, i32>,
+    metric_key: &str,
+    served_from: ServedFrom,
+) -> Provenance {
     Provenance {
         executor: Executor::Semantic,
         definition_version: versions.get(metric_key).copied(),
+        served_from,
     }
 }
 
@@ -56,17 +61,18 @@ mod tests {
         let versions = BTreeMap::from([("git.commits".to_owned(), 3)]);
 
         assert_eq!(
-            provenance(&versions, "git.commits"),
+            provenance(&versions, "git.commits", ServedFrom::Computed),
             Provenance {
                 executor: Executor::Semantic,
                 definition_version: Some(3),
+                served_from: ServedFrom::Computed,
             }
         );
     }
 
     #[test]
     fn a_version_the_store_did_not_answer_with_is_absent_rather_than_invented() {
-        let provenance = provenance(&BTreeMap::new(), "git.commits");
+        let provenance = provenance(&BTreeMap::new(), "git.commits", ServedFrom::Computed);
 
         assert_eq!(provenance.definition_version, None);
         assert_eq!(provenance.executor, Executor::Semantic);
