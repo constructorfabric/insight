@@ -745,6 +745,11 @@ class ReportColumnMetadata(BaseModel):
     unit: str | None = None
 
 
+class ReportExportFormat(StrEnum):
+    csv = 'csv'
+    xlsx = 'xlsx'
+
+
 class ReportGranularity(StrEnum):
     day = 'day'
     week = 'week'
@@ -1452,6 +1457,13 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+
+
+class ReportExportRequest(ReportRecipe):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    format: ReportExportFormat
 
 
 class MetricResultDto7(BaseModel):
