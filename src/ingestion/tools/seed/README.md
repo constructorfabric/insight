@@ -169,11 +169,11 @@ Preflight runs before anything is written and reports every problem at once:
   **TRUNCATEs every table it writes**, across all tenants, so those rows would be
   destroyed. This is the one genuinely destructive thing the seeder does, and it
   is why an occupied stand is refused rather than merged into. The surface it
-  checks is `generators.base.RESET_TARGETS`, the same list `truncate` itself
-  enforces — including two inputs outside the silver database (an
-  identity-projection table and a bronze HR table). This check is differential,
-  so it finds nothing on a single-tenant stand; that is what the `persons` signal
-  above is for. Targets carrying no tenant column at all cannot be attributed to
+  checks is `generators.insert.RESET_TARGETS`, the same list `truncate` itself
+  enforces — spanning several `bronze_*` schemas and `staging`, not just the
+  silver database. This check is differential, so it finds nothing on a
+  single-tenant stand; that is what the `persons` signal above is for. Targets
+  carrying no tenant column at all cannot be attributed to
   anyone; the run logs them by name, and logs how many rows the step is about to
   clear in total, instead of pretending to have judged them.
 
