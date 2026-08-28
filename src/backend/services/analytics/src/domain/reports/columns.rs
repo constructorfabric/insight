@@ -6,21 +6,21 @@ use crate::infra::identity::IdentityProfile;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ReportColumnDataType {
+pub enum ReportColumnDataType {
     Text,
     Date,
     Number,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub(crate) struct ReportColumnMetadata {
-    pub(crate) key: String,
-    pub(crate) label: String,
-    pub(crate) data_type: ReportColumnDataType,
+pub struct ReportColumnMetadata {
+    pub key: String,
+    pub label: String,
+    pub data_type: ReportColumnDataType,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) format: Option<MetricFormat>,
+    pub format: Option<MetricFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) unit: Option<String>,
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

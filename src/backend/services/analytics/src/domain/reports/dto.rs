@@ -1,5 +1,9 @@
 use serde::Deserialize;
+use serde::Serialize;
 use uuid::Uuid;
+
+use super::columns::ReportColumnMetadata;
+use super::row::ReportRow;
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -11,6 +15,16 @@ pub struct ReportRecipe {
 }
 
 pub type ReportPreviewRequest = ReportRecipe;
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ReportPreviewResponse {
+    pub columns: Vec<ReportColumnMetadata>,
+    pub rows: Vec<ReportRow>,
+    pub total_rows: u64,
+}
+
+impl toolkit::api::api_dto::RequestApiDto for ReportRecipe {}
+impl toolkit::api::api_dto::ResponseApiDto for ReportPreviewResponse {}
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]

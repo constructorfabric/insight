@@ -139,7 +139,8 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
                 plan.bucket,
                 context.enforce_tenant_scope,
             )
-        });
+        })
+        .collect::<Vec<ReportMetricQuery>>();
     let mut results = stream::iter(queries)
         .map(|query: ReportMetricQuery| runner.run(query))
         .buffer_unordered(REPORT_QUERY_CONCURRENCY);

@@ -9,6 +9,7 @@ mod metric_drilldown;
 mod metric_results;
 mod metrics;
 mod person_names;
+mod reports;
 mod saved_queries;
 pub(crate) mod usage;
 
@@ -464,6 +465,25 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_415(openapi)
         .error_500(openapi)
         .handler(metric_results::query_metric_results)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/v1/reports/preview")
+        .operation_id("analytics_api.reports.preview")
+        .summary("Preview a metric report")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::reports::dto::ReportPreviewRequest>(openapi, "Report recipe")
+        .json_response_with_schema::<crate::domain::reports::dto::ReportPreviewResponse>(
+            openapi,
+            StatusCode::OK,
+            "Report preview",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(reports::preview_report)
         .register(router, openapi);
 
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
