@@ -1,0 +1,37 @@
+##
+## Tempo — trace store for the L2 system layer (observability `bundled`
+## mode). Single-binary (monolithic) chart.
+##
+## Chart: grafana-community/tempo   (https://grafana-community.github.io/helm-charts)
+## Pin in Makefile: TEMPO_VERSION
+## Release: `tempo` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/tempo-values.yaml.
+##
+## Endpoints other components use:
+##   OTLP push:  tempo.insight-infra.svc.cluster.local:4317 (gRPC) / 4318 (HTTP)
+##   Query API:  http://tempo.insight-infra.svc.cluster.local:3200 (Grafana datasource)
+##
+## Receivers stay at the chart default (OTLP + Jaeger): the chart's port
+## templates hard-require the jaeger block, and an emptied protocol map
+## renders a config Tempo refuses to start on. Nothing here emits Jaeger;
+## the extra listeners are ClusterIP-internal.
+##
+## SCOPE: dev / single-tenant baseline — one replica, node-local
+## filesystem storage, NO HA. For production move to object storage
+## (S3/GCS) and the distributed chart.
+##
+
+tempo:
+  # Same window as the Loki baseline (7d): a log line's trace link should
+  # resolve for as long as the log line itself is queryable.
+  retention: 168h
+
+  # No anonymous usage phone-home from a shared infra namespace.
+  reportingEnabled: false
+
+# Blocks + WAL live under /var/tempo — persist it or every restart drops
+# the whole trace store.
+persistence:
+  enabled: true
+  size: 10Gi

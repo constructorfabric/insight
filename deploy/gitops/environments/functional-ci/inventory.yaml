@@ -43,6 +43,7 @@ system:
   argoWorkflows: false
   victoriametrics: false
   loki: false
+  tempo: false
   alloy: false
   grafana: false
 

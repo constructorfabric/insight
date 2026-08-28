@@ -47,11 +47,12 @@ system:
   airbyte:         true
   argoWorkflows:   true
   # Observability (LGTM). Off for local dev — flip on to self-host
-  # VictoriaMetrics/Loki/Alloy/Grafana, and point the umbrella's
+  # VictoriaMetrics/Loki/Tempo/Alloy/Grafana, and point the umbrella's
   # observability.otlp.endpoint (environments/<env>/values.yaml) at this
   # stack's Alloy. See system/README.md "Observability".
   victoriametrics: false
   loki:            false
+  tempo:           false
   alloy:           false
   grafana:         false
 

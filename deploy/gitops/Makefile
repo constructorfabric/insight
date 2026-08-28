@@ -140,7 +140,7 @@ ARGO_RBAC_TMPL   ?= bootstrap/argo-rbac.yaml.template
 ARGO_WORKFLOW_SA ?= argo-workflow
 
 # Observability stack (LGTM). Installed only when the bundled stack is
-# enabled via inventory.system.{victoriametrics,loki,alloy,grafana};
+# enabled via inventory.system.{victoriametrics,loki,tempo,alloy,grafana};
 # otherwise the host cluster collects from stdout and these targets are
 # skipped.
 # Chart versions verified latest via `helm search repo <repo>/<chart>
@@ -150,6 +150,12 @@ LOKI_RELEASE     ?= loki
 # as grafana-community/loki (same manifests, renumbered versions).
 LOKI_CHART       ?= grafana-community/loki
 LOKI_VERSION     ?= 18.11.4    # app 3.7.7
+
+TEMPO_RELEASE    ?= tempo
+# grafana/tempo is frozen like grafana/grafana and grafana/loki; the OSS
+# chart continues as grafana-community/tempo.
+TEMPO_CHART      ?= grafana-community/tempo
+TEMPO_VERSION    ?= 2.3.0      # app 2.10.8
 
 ALLOY_RELEASE    ?= alloy
 ALLOY_CHART      ?= grafana/alloy
@@ -223,6 +229,7 @@ help:
 	@echo "  make system-argo ENV=$(ENV)               }   (Argo Workflows = chart + supplemental RBAC apply)"
 	@echo "  make system-victoriametrics ENV=$(ENV)    }"
 	@echo "  make system-loki ENV=$(ENV)               }"
+	@echo "  make system-tempo ENV=$(ENV)              }"
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
 	@echo "  make system-grafana ENV=$(ENV)            }"
 	@echo "  make system-status ENV=$(ENV)             Show what's installed in insight-infra"
@@ -628,6 +635,7 @@ system: inventory-present vpn-up kube-ctx
 	$(call _run_if_enabled,system.argoWorkflows,system-argo)
 	$(call _run_if_enabled,system.victoriametrics,system-victoriametrics)
 	$(call _run_if_enabled,system.loki,system-loki)
+	$(call _run_if_enabled,system.tempo,system-tempo)
 	$(call _run_if_enabled,system.alloy,system-alloy)
 	$(call _run_if_enabled,system.grafana,system-grafana)
 	@echo "$(C_GRN)system complete$(C_RST) → $(NS_INFRA)"
@@ -729,10 +737,10 @@ system-redpanda-console: vpn-up kube-ctx
 		--wait --timeout 5m
 
 # ── Observability (LGTM) ────────────────────────────────────────────────
-# VictoriaMetrics (metrics store) + Loki (log store) + Alloy (DaemonSet
-# collector) + Grafana (UI). Install order matters: stores first (Alloy/
-# Grafana point at them), then Alloy, then Grafana. `make system` honours
-# that ordering via the chain above.
+# VictoriaMetrics (metrics store) + Loki (log store) + Tempo (trace store)
+# + Alloy (DaemonSet collector) + Grafana (UI). Install order matters:
+# stores first (Alloy/Grafana point at them), then Alloy, then Grafana.
+# `make system` honours that ordering via the chain above.
 # No required creds in the baseline (single-tenant, no auth); the optional-
 # secrets helper picks up a sealed `grafana-creds` if an env adds one.
 .PHONY: system-victoriametrics
@@ -753,6 +761,16 @@ system-loki: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(LOKI_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,loki) \
+		--wait --timeout 10m
+
+.PHONY: system-tempo
+system-tempo: vpn-up kube-ctx
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,tempo)
+	helm upgrade --install $(TEMPO_RELEASE) $(TEMPO_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(TEMPO_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,tempo) \
 		--wait --timeout 10m
 
 .PHONY: system-alloy

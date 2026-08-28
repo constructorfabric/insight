@@ -23,23 +23,26 @@ model and full workflow.
 | `airbyte/` | `airbyte/airbyte` | `airbyte` | not in baseline (uses embedded Postgres+MinIO); prod overlay needs S3 creds |
 | `argo-workflows/` | `argo/argo-workflows` | `argo-workflows` | not in baseline |
 | `victoriametrics/` | `vm/victoria-metrics-single` | `victoriametrics` | not in baseline |
-| `loki/` | `grafana/loki` | `loki` | not in baseline (single-tenant, no auth) |
+| `loki/` | `grafana-community/loki` | `loki` | not in baseline (single-tenant, no auth) |
+| `tempo/` | `grafana-community/tempo` | `tempo` | not in baseline |
 | `alloy/` | `grafana/alloy` | `alloy` | not in baseline |
-| `grafana/` | `grafana/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
+| `grafana/` | `grafana-community/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
 
-### Observability (victoriametrics / loki / alloy / grafana)
+### Observability (victoriametrics / loki / tempo / alloy / grafana)
 
 These are the bundled observability stack: VictoriaMetrics stores metrics
 (PromQL-compatible, remote-write receiver at `/api/v1/write`), Loki stores
-logs, Alloy collects, Grafana serves both — provisioned as the fixed-uid
-datasources `vm` and `loki` so dashboards reference them portably. Two
-independent decisions, mirroring the managed-vs-bundled choice for the data
-stores above:
+logs, Tempo stores traces (OTLP ingest on `tempo:4317`/`4318`), Alloy
+collects, Grafana serves all three — provisioned as the fixed-uid
+datasources `vm`, `loki` and `tempo` so dashboards reference them portably;
+a `trace_id` in a JSON log line links to the trace via Loki's
+`derivedFields`. Two independent decisions, mirroring the
+managed-vs-bundled choice for the data stores above:
 
 1. **Install the bundled stack?** — the
-   `inventory.system.{victoriametrics,loki,alloy,grafana}` toggles. On =
-   self-host the stack in `insight-infra`. Off = don't (the cluster already
-   runs observability, or stdout is enough).
+   `inventory.system.{victoriametrics,loki,tempo,alloy,grafana}` toggles.
+   On = self-host the stack in `insight-infra`. Off = don't (the cluster
+   already runs observability, or stdout is enough).
 2. **Where do services export?** — the umbrella's `observability.otlp.endpoint`
    (`environments/<env>/values.yaml`). Point it at this stack's Alloy when the
    toggles are on; at your own collector for an external one; leave it empty

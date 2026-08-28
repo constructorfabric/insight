@@ -42,13 +42,14 @@ initChownData:
   enabled: false
 
 # Loki wired as the default datasource so Explore works out of the box,
-# VictoriaMetrics as the PromQL datasource for metrics. Fixed uids so
-# provisioned dashboards can reference them on any environment. Tempo gets
-# added here in the tracing phase; `derivedFields` will then map
-# `trace_id` → a Tempo link for log↔trace correlation.
+# VictoriaMetrics as the PromQL datasource for metrics, Tempo as the trace
+# store. Fixed uids so provisioned dashboards can reference them on any
+# environment. Loki's `derivedFields` turn a `trace_id` in a JSON log line
+# into a Tempo link (log → trace correlation).
 # INVARIANT: helm REPLACES lists — a per-env overlay that touches
-# `datasources` must restate every entry below, and the uids (`loki`, `vm`)
-# must stay what they are or every provisioned dashboard panel goes dark.
+# `datasources` must restate every entry below, and the uids (`loki`, `vm`,
+# `tempo`) must stay what they are or every provisioned dashboard panel
+# goes dark.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -61,6 +62,21 @@ datasources:
         isDefault: true
         jsonData:
           maxLines: 1000
+          # `$$` because datasource provisioning expands $VAR env refs —
+          # Grafana needs to receive the literal `${__value.raw}`.
+          derivedFields:
+            - name: TraceID
+              datasourceUid: tempo
+              matcherRegex: '"trace_id"\s*:\s*"([0-9a-fA-F]+)"'
+              url: '$${__value.raw}'
+              urlDisplayLabel: Trace
+
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.insight-infra.svc.cluster.local:3200
+        isDefault: false
 
       - name: VictoriaMetrics
         uid: vm
