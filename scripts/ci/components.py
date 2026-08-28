@@ -71,12 +71,10 @@ COMPONENTS = [
         "paths": ["src/backend/services/analytics"],
         "triggered_by": ["insight-migration"],
     },
-    # cover=False (mirrors authenticator): the crate's business logic
-    # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
-    # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
-    # tests would count — gating the crate far below the 80% line. fmt + clippy
-    # + tests still run and gate the pipeline. Re-enable coverage when the
-    # HTTP+MariaDB integration suite lands (#1753).
+    # cover=False: the api/ and repository layers are still thin on tests, so the
+    # 80% gate would block every change to this crate rather than the ones that
+    # deserve blocking. fmt + clippy + tests run and gate the pipeline meanwhile.
+    # Revisit once those layers carry suites of their own (#1753).
     {
         "name": "identity-resolution",
         "lang": "rust",
@@ -90,6 +88,11 @@ COMPONENTS = [
         # migrator to prove idempotency and skip cleanly when unset).
         "live_db": True,
         "live_db_name": "identity",
+        # ClickHouse for the identity_inputs reader, whose live tests read the
+        # persons-seed's input stream through the real column types
+        # (INTEGRATION_TESTS_CLICKHOUSE_URL). The suite creates the table it
+        # reads, tags every row it writes, and skips when the var is unset.
+        "live_ch": True,
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/identity-resolution"],
         # insight-clickhouse is compiled in as a path dependency: a lib change
