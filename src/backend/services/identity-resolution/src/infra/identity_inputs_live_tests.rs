@@ -61,6 +61,15 @@ const REQUIRED_TYPES: [(&str, &str); 7] = [
     ("_synced_at", "DateTime64(3)"),
 ];
 
+/// The prefix every source type this suite mints carries, so its own rows can
+/// be told from anybody else's.
+const TAG_PREFIX: &str = "ci-identity-inputs-";
+
+#[derive(Row, Deserialize)]
+struct RowCount {
+    n: u64,
+}
+
 #[derive(Row, Deserialize)]
 struct ColumnShape {
     name: String,
@@ -68,7 +77,30 @@ struct ColumnShape {
     ch_type: String,
 }
 
-/// `Ok(None)` when the table is not the shape this suite writes and reads.
+/// SAFETY: `stream()` reads the whole table and this suite writes into the
+/// table the persons-seed actually consumes, so rows it leaves behind become
+/// somebody's real seed input. Refuse to write at all unless every row present
+/// is one this suite wrote.
+async fn table_holds_only_our_rows(ch: &Client) -> anyhow::Result<bool> {
+    let counted: Vec<RowCount> = ch
+        .query(
+            "SELECT count() AS n FROM identity.identity_inputs \
+             WHERE insight_source_type NOT LIKE ?",
+        )
+        .bind(format!("{TAG_PREFIX}%"))
+        .fetch_all()
+        .await?;
+    let foreign = counted.first().map_or(0, |c| c.n);
+    if foreign > 0 {
+        eprintln!(
+            "skip: identity.identity_inputs here holds rows this suite did not write ({foreign})"
+        );
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// `Ok(false)` when the table is not the shape this suite writes and reads.
 async fn shape_matches(ch: &Client) -> anyhow::Result<bool> {
     let columns: Vec<ColumnShape> = ch
         .query(
@@ -131,7 +163,7 @@ async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
         .await?;
     let ch = connect("identity");
     ch.query(DDL).execute().await?;
-    if !shape_matches(&ch).await? {
+    if !shape_matches(&ch).await? || !table_holds_only_our_rows(&ch).await? {
         return Ok(None);
     }
 
@@ -140,7 +172,7 @@ async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
         reader: ClickHouseIdentityInputsReader::connect(&url, "identity", &user, &password),
         tenant: Uuid::now_v7(),
         source_id: Uuid::now_v7(),
-        source_type: format!("ci-{}", Uuid::now_v7().simple()),
+        source_type: format!("{TAG_PREFIX}{}", Uuid::now_v7().simple()),
     }))
 }
 
@@ -170,6 +202,20 @@ impl Fixture {
                 source_id = self.source_id,
                 source_type = self.source_type,
             ))
+            .execute()
+            .await?;
+        Ok(())
+    }
+
+    /// Drop everything this case wrote. Synchronous so a following read cannot
+    /// observe the rows on their way out.
+    async fn forget(&self) -> anyhow::Result<()> {
+        self.ch
+            .query(
+                "ALTER TABLE identity.identity_inputs DELETE \
+                 WHERE insight_source_type = ? SETTINGS mutations_sync = 2",
+            )
+            .bind(&self.source_type)
             .execute()
             .await?;
         Ok(())
@@ -214,7 +260,7 @@ async fn an_observation_survives_the_round_trip_through_the_real_column_types() 
         "the timestamp must survive toString and the reparse"
     );
     assert!(!row.is_delete, "an UPSERT is not a closure signal");
-    Ok(())
+    f.forget().await
 }
 
 #[tokio::test]
@@ -238,12 +284,30 @@ async fn an_upsert_stating_no_value_is_not_an_observation() -> TestResult {
         "2026-01-02 03:04:05.000",
     )
     .await?;
+    // The control: an emptiness this case reads must be the filter's doing, not
+    // a read that returns nothing whatever it is asked.
+    f.write(
+        "acct-stated",
+        "email",
+        Some("stated@inputs.test"),
+        "UPSERT",
+        "2026-01-02 03:04:05.000",
+    )
+    .await?;
 
-    assert!(
-        f.read_own().await?.is_empty(),
+    let accounts: Vec<String> = f
+        .read_own()
+        .await?
+        .into_iter()
+        .map(|r| r.source_account_id)
+        .collect();
+
+    assert_eq!(
+        accounts,
+        vec!["acct-stated"],
         "an UPSERT carrying nothing states nothing, whether it is blank or NULL"
     );
-    Ok(())
+    f.forget().await
 }
 
 #[tokio::test]
@@ -270,7 +334,7 @@ async fn a_closure_signal_is_read_even_though_it_carries_no_value() -> TestResul
         rows[0].is_delete,
         "a DELETE row must be flagged as a closure"
     );
-    Ok(())
+    f.forget().await
 }
 
 #[tokio::test]
@@ -280,10 +344,14 @@ async fn an_accounts_observations_come_back_latest_first() -> TestResult {
     };
     // `build_profiles` takes the FIRST row per account as the one in force, so
     // the order the stream returns is a contract, not a presentation detail.
+    // INVARIANT: the newer value sorts AFTER the older one alphabetically. The
+    // query falls back to `value_type, value` ASC, so equal-looking addresses
+    // would let that tiebreaker reproduce the expected order on its own and the
+    // case could not tell it from ordering by time.
     f.write(
         "acct-moved",
         "email",
-        Some("former@inputs.test"),
+        Some("aaa.former@inputs.test"),
         "UPSERT",
         "2026-01-01 00:00:00.000",
     )
@@ -291,7 +359,7 @@ async fn an_accounts_observations_come_back_latest_first() -> TestResult {
     f.write(
         "acct-moved",
         "email",
-        Some("current@inputs.test"),
+        Some("zzz.current@inputs.test"),
         "UPSERT",
         "2026-06-01 00:00:00.000",
     )
@@ -301,8 +369,8 @@ async fn an_accounts_observations_come_back_latest_first() -> TestResult {
 
     assert_eq!(
         values,
-        vec!["current@inputs.test", "former@inputs.test"],
+        vec!["zzz.current@inputs.test", "aaa.former@inputs.test"],
         "the latest observation must lead the account's rows"
     );
-    Ok(())
+    f.forget().await
 }

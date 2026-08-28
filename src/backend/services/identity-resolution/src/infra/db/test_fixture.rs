@@ -52,6 +52,17 @@ impl Fixture {
         }
     }
 
+    /// A second instance of the same source type, in the SAME tenant — for the
+    /// cases where WHICH connector instance stated a value is the point: two
+    /// installs of one system can hand out the same account id.
+    pub(crate) fn in_another_source_instance(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            tenant: self.tenant,
+            source_id: Uuid::now_v7(),
+        }
+    }
+
     pub(crate) async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
         self.person_as(person_id, email).await?;

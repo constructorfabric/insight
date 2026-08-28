@@ -48,10 +48,18 @@ async fn an_address_nobody_stated_resolves_nobody() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let addr = format!("absent.{}@profiles.test", f.tenant.simple());
+    // The tenant holds an address, so an empty answer here can only come from
+    // the predicate declining the one it was asked for.
+    let stated = format!("stated.{}@profiles.test", f.tenant.simple());
+    let absent = format!("absent.{}@profiles.test", f.tenant.simple());
+    let person = f.person(&stated).await?;
 
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &stated).await?,
+        vec![person],
+    );
     assert!(
-        persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &addr)
+        persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &absent)
             .await?
             .is_empty(),
         "an address the journal never carried must resolve nobody"
@@ -82,11 +90,13 @@ async fn a_replaced_address_no_longer_resolves_its_owner() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
+    // INVARIANT: the row that must WIN is written FIRST. Written last, it would
+    // also be the highest id, and the case could not tell the latest-observed
+    // rule from "the row inserted last".
     let former = format!("former.{}@profiles.test", f.tenant.simple());
     let current = format!("current.{}@profiles.test", f.tenant.simple());
     let person = f.person(&current).await?;
     f.observed_at(person, "email", &former, 86_400).await?;
-    f.observed_at(person, "email", &current, 60).await?;
 
     assert!(
         persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &former)
@@ -200,6 +210,50 @@ async fn an_id_only_another_source_stated_resolves_nobody_under_this_one() -> Te
 }
 
 #[tokio::test]
+async fn an_id_another_instance_of_the_same_source_stated_resolves_its_own_person() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // Two installs of one system under one tenant: vendor account ids collide
+    // across hosts, so the id alone cannot say which person is meant.
+    let other = f.in_another_source_instance();
+    let account = format!("acct-shared-{}", f.tenant.simple());
+    let mine = f
+        .person(&format!("mine.{}@profiles.test", f.tenant.simple()))
+        .await?;
+    let theirs = other
+        .person(&format!("theirs.{}@profiles.test", f.tenant.simple()))
+        .await?;
+    f.observed(mine, "id", &account).await?;
+    other.observed(theirs, "id", &account).await?;
+
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_source_id(
+            &f.db,
+            f.tenant,
+            SOURCE_TYPE,
+            f.source_id,
+            &account
+        )
+        .await?,
+        vec![mine],
+        "each instance must answer with the person IT stated the id for"
+    );
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_source_id(
+            &f.db,
+            f.tenant,
+            SOURCE_TYPE,
+            other.source_id,
+            &account
+        )
+        .await?,
+        vec![theirs],
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_superseded_id_no_longer_resolves_its_owner() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
@@ -209,8 +263,9 @@ async fn a_superseded_id_no_longer_resolves_its_owner() -> TestResult {
     let person = f
         .person(&format!("moved.{}@profiles.test", f.tenant.simple()))
         .await?;
+    // INVARIANT: the row that must WIN is written FIRST — see the address case.
+    f.observed(person, "id", &current).await?;
     f.observed_at(person, "id", &former, 86_400).await?;
-    f.observed_at(person, "id", &current, 60).await?;
 
     assert!(
         persons_repo::resolve_person_ids_by_source_id(

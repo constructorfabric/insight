@@ -37,8 +37,11 @@ async fn an_address_is_owned_by_the_latest_person_to_state_it() -> TestResult {
     let joiner = f
         .person(&format!("joiner.{}@emailmap.test", f.tenant.simple()))
         .await?;
-    f.observed_at(leaver, "email", &shared, 86_400).await?;
+    // INVARIANT: the row that must WIN is written FIRST. Written last, it would
+    // also be the highest id, and the case could not tell the latest-observed
+    // rule from "the row inserted last".
     f.observed_at(joiner, "email", &shared, 60).await?;
+    f.observed_at(leaver, "email", &shared, 86_400).await?;
 
     let map = seed_repo::latest_email_to_person(&f.db, f.tenant).await?;
 
