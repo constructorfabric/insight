@@ -153,4 +153,32 @@ describe("WhatsNewScreen", () => {
       ).toBeInTheDocument();
     }
   });
+
+  it("carries the July 31 release's own sections and entries", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    const entry = screen.getByRole("button", {
+      name: /What's new — 31 July 2026/,
+    });
+    await user.click(entry);
+
+    const archived = within(entry.parentElement as HTMLElement);
+    for (const title of ["New UI", "Dashboards", "Platform"]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+    for (const title of [
+      "We've moved to the new interface for good",
+      "Activity over time, by repository",
+      "Metric catalog",
+      "“No data” instead of a misleading zero",
+      "Steadier data across your connectors",
+    ]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+  });
 });
