@@ -40,7 +40,7 @@ from pathlib import Path
 import clickhouse_connect
 
 from . import config
-from .generators import ai, ai_cost, collab, crm, git, hr, people, support, task, wiki
+from .generators import ai, ai_cost, collab, crm, git, git_history, hr, people, support, task, wiki
 from .generators.base import seed_days
 from .profiles import build_seeded_roster, get_dev_user_email
 
@@ -185,7 +185,8 @@ def generate_rows(
 
     totals: dict[str, int] = {}
     totals.update(people.generate(client, roster, tenant_uuid))
-    totals.update(git.generate(client, roster, tenant_uuid, days))
+    history = git_history.build_history(roster, days)
+    totals.update(git.generate(client, roster, tenant_uuid, days, history))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
     totals.update(hr.generate(client, roster, tenant_uuid, days))
