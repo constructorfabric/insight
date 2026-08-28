@@ -53,6 +53,27 @@ class AccountRequest(BaseModel):
     comment: str | None = None
 
 
+class BatchProfilesRequest(BaseModel):
+    """
+    Ordered canonical people to hydrate for an authorized consumer.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    person_ids: list[UUID] = Field(..., max_length=1000, min_length=1)
+
+
+class BatchSupervisorResponse(BaseModel):
+    """
+    Supervisor associated with one batch profile.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attributes: dict[str, str]
+    person_id: UUID
+
+
 class BindItem(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -539,6 +560,28 @@ class AttentionResponse(BaseModel):
     items_truncated: bool = Field(..., description='`limit` cut the item list — more accounts await a decision than are\nlisted here. Distinct from `truncated`: the rates stay whole-tenant,\nonly this page is short.')
     rates: ResolutionRatesResponse
     truncated: bool = Field(..., description='The evidence read hit its safety cap: the queue and the rates describe\nonly the first accounts of the tenant, not all of them. Consumers must\nnot present these numbers as tenant-wide. (The binding read cannot be a\nprefix — a partial one would misclassify, so it fails the request.)')
+
+
+class BatchProfileResponse(BaseModel):
+    """
+    Generic safe profile data for one canonical person.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attributes: dict[str, str]
+    person_id: UUID
+    supervisor: BatchSupervisorResponse | None = None
+
+
+class BatchProfilesResponse(BaseModel):
+    """
+    Ordered visible profiles from [`BatchProfilesRequest`].
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    profiles: list[BatchProfileResponse]
 
 
 class CorrectionResponse(BaseModel):
