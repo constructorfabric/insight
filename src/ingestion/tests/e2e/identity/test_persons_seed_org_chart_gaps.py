@@ -96,6 +96,9 @@ def _bamboohr_employee(
     no identity_inputs at all.
     """
     fields = {
+        # The payload carries `id` too — the connector builds it from the whole
+        # report row, which is keyed by it.
+        "id": entity_id,
         "workEmail": email,
         "displayName": display_name,
         "firstName": display_name.split(" ")[0],
@@ -116,7 +119,6 @@ def _bamboohr_employee(
         "_airbyte_extracted_at": "2026-01-05T00:00:00",
         "_airbyte_meta": "{}",
         "_airbyte_generation_id": 0,
-        "id": entity_id,
         "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
         "tenant_id": f"pipeline-tenant-{run_tag}",
         "source_id": f"pipeline-source-{run_tag}",
