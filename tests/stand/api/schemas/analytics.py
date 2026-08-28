@@ -710,6 +710,71 @@ class PutSettingsRequest(BaseModel):
     system_prompt: str
 
 
+class ReportColumnDataType(StrEnum):
+    text = 'text'
+    date = 'date'
+    number = 'number'
+
+
+class ReportColumnMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    data_type: ReportColumnDataType
+    format: MetricFormat | None = None
+    key: str
+    label: str
+    unit: str | None = None
+
+
+class ReportExportFormat(StrEnum):
+    csv = 'csv'
+    xlsx = 'xlsx'
+
+
+class ReportGranularity(StrEnum):
+    day = 'day'
+    week = 'week'
+    month = 'month'
+    quarter = 'quarter'
+    year = 'year'
+
+
+class ReportPeriod(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    to: str
+
+
+class Type7(StrEnum):
+    people = 'people'
+
+
+class ReportSubject1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[UUID]
+    type: Type7
+
+
+class Type8(StrEnum):
+    tenant = 'tenant'
+
+
+class ReportSubject2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type8
+
+
+class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
+    root: ReportSubject1 | ReportSubject2
+
+
 class RollupValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -956,6 +1021,10 @@ class ValueTransform(BaseModel):
     clamp_min: float | None = None
     multiplier: float | None = None
     offset: float | None = None
+
+
+class Vec(RootModel[list[str | float | None]]):
+    root: list[str | float | None]
 
 
 class BreakdownValueDto(BaseModel):
@@ -1220,6 +1289,25 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class ReportPreviewResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[ReportColumnMetadata]
+    rows: list[Vec]
+    total_rows: int = Field(..., ge=0)
+
+
+class ReportRecipe(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    granularity: ReportGranularity
+    metric_keys: list[str]
+    period: ReportPeriod
+    subject: ReportSubject
+
+
 class SavedQueryListResponse(BaseModel):
     """
     Response envelope for `GET /v1/queries` (`{ "items": [SavedQuerySummary] }`).
@@ -1348,6 +1436,13 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+
+
+class ReportExportRequest(ReportRecipe):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    format: ReportExportFormat
 
 
 class MetricResultDto7(BaseModel):

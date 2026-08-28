@@ -2165,6 +2165,194 @@
         ],
         "type": "object"
       },
+      "ReportColumnDataType": {
+        "enum": [
+          "text",
+          "date",
+          "number"
+        ],
+        "type": "string"
+      },
+      "ReportColumnMetadata": {
+        "properties": {
+          "data_type": {
+            "$ref": "#/components/schemas/ReportColumnDataType"
+          },
+          "format": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricFormat"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "data_type"
+        ],
+        "type": "object"
+      },
+      "ReportExportFormat": {
+        "enum": [
+          "csv",
+          "xlsx"
+        ],
+        "type": "string"
+      },
+      "ReportExportRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReportRecipe"
+          },
+          {
+            "properties": {
+              "format": {
+                "$ref": "#/components/schemas/ReportExportFormat"
+              }
+            },
+            "required": [
+              "format"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ReportGranularity": {
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "quarter",
+          "year"
+        ],
+        "type": "string"
+      },
+      "ReportPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "ReportPreviewResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnMetadata"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/Vec"
+            },
+            "type": "array"
+          },
+          "total_rows": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "total_rows"
+        ],
+        "type": "object"
+      },
+      "ReportRecipe": {
+        "additionalProperties": false,
+        "properties": {
+          "granularity": {
+            "$ref": "#/components/schemas/ReportGranularity"
+          },
+          "metric_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReportSubject"
+          }
+        },
+        "required": [
+          "subject",
+          "period",
+          "granularity",
+          "metric_keys"
+        ],
+        "type": "object"
+      },
+      "ReportSubject": {
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "people"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "RollupValueDto": {
         "properties": {
           "contributing_entity_count": {
@@ -2838,6 +3026,27 @@
           }
         },
         "type": "object"
+      },
+      "Vec": {
+        "items": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "format": "double",
+                  "type": "number"
+                }
+              ]
+            }
+          ]
+        },
+        "type": "array"
       }
     },
     "securitySchemes": {
@@ -5934,6 +6143,209 @@
           }
         ],
         "summary": "Run a saved query"
+      }
+    },
+    "/v1/reports/export": {
+      "post": {
+        "operationId": "analytics_api.reports.export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportExportRequest"
+              }
+            }
+          },
+          "description": "Report export recipe",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete metric report export",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export a metric report"
+      }
+    },
+    "/v1/reports/preview": {
+      "post": {
+        "operationId": "analytics_api.reports.preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRecipe"
+              }
+            }
+          },
+          "description": "Report recipe",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportPreviewResponse"
+                }
+              }
+            },
+            "description": "Report preview"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Preview a metric report"
       }
     },
     "/v1/usage/config": {
