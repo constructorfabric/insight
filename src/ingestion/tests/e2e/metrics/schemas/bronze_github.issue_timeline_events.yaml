@@ -57,3 +57,16 @@ schemas:
         type:
         - boolean
         - 'null'
+      link_target_type: &id004
+        type:
+        - string
+        - 'null'
+      link_target_number:
+        type:
+        - integer
+        - 'null'
+      link_target_repo_full_name: *id004
+      is_cross_repository:
+        type:
+        - boolean
+        - 'null'

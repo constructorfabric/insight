@@ -1,6 +1,6 @@
-# Mirrors the bronze_github.project_fields DDL in scripts/connectors-ddl/github.sql.
+# Mirrors the bronze_github.issue_links DDL in scripts/connectors-ddl/github.sql.
 schemas:
-  bronze_github.project_fields:
+  bronze_github.issue_links:
     $schema: http://json-schema.org/draft-07/schema#
     type: object
     additionalProperties: false
@@ -20,17 +20,12 @@ schemas:
       source_id: *id001
       data_source: *id001
       collected_at: *id001
-      project_id: *id001
-      project_number: &id002
+      repo_full_name: *id001
+      item_number:
         type: integer
-      field_id: *id001
-      field_database_id: *id001
-      field_name: *id001
-      data_type: *id001
-      is_multi: &id003
-        type: boolean
-      is_mirror: *id003
-      is_issue_field: *id003
-      options_json: *id001
-      configuration_json: *id001
-      field_updated_at: *id001
+      updated_at: *id001
+      parent_json: *id001
+      sub_issues_json: *id001
+      blocked_by_json: *id001
+      blocking_json: *id001
+      closed_by_pull_requests_json: *id001
