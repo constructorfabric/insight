@@ -12,12 +12,12 @@ use super::period::PlannedPeriod;
 
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(untagged)]
-pub(crate) enum ReportCell {
+pub enum ReportCell {
     Text(String),
     Number(f64),
 }
 
-pub(crate) type ReportRow = Vec<Option<ReportCell>>;
+pub type ReportRow = Vec<Option<ReportCell>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReportMetricValue {
