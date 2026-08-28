@@ -47,6 +47,14 @@ const mocks = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  // Wide enough to hold two billing months' first days, which is what the
+  // month-grain metrics are anchored to. A test needing the other case — a
+  // window inside one month — narrows it and empties the monthly result, since
+  // the collection hook is mocked and does no filtering of its own.
+  period: {
+    period: "quarter",
+    dateRange: { from: "2026-06-01", to: "2026-07-31" },
+  },
 }));
 
 vi.mock("@/auth", () => ({
@@ -90,7 +98,7 @@ vi.mock("@/queries/metric-results", () => ({
       : mocks.tools,
 }));
 vi.mock("@/hooks/use-portal-period", () => ({
-  usePortalPeriod: () => ({ period: "week", dateRange: { from: "2026-07-20", to: "2026-07-26" } }),
+  usePortalPeriod: () => mocks.period,
 }));
 
 
@@ -211,9 +219,15 @@ beforeEach(() => {
     ])],
   ]);
   mocks.monthly.isError = false;
-  // Two billing months. July carries both facts — a $40 seat and a $160 one, and
-  // the usage billed on top of them. June carries only billed usage: no invoice
-  // priced its tier, which is absence rather than a $0 seat.
+  mocks.period = {
+    period: "quarter",
+    dateRange: { from: "2026-06-01", to: "2026-07-31" },
+  };
+  // Two billing months, both of whose first days the window above holds — the
+  // only shape in which a month-anchored metric answers at all. July carries
+  // both facts: a $40 seat and a $160 one, and the usage billed on top of them.
+  // June carries only billed usage, because no invoice priced its tier — which
+  // is absence rather than a $0 seat.
   mocks.monthly.byKey = new Map([
     ["ai.seat_cost", monthlySeries("ai.seat_cost", [
       [pid("a"), "2026-07-01", 40],
@@ -368,6 +382,29 @@ describe("AiCostView", () => {
     expect(within(june).getByText("$2")).toBeInTheDocument();
     expect(within(june).getByText("—")).toBeInTheDocument();
     expect(within(june).queryByText("$0")).not.toBeInTheDocument();
+  });
+
+  it("says a window inside one month holds no billing month, rather than showing none", () => {
+    // The portal opens on a week. Both month-grain metrics are anchored to the
+    // first day of the month they bill for, so a week inside a month answers
+    // with nothing at all — the state a reader meets by default, and the one
+    // the section's own caveat is written for.
+    mocks.period = {
+      period: "week",
+      dateRange: { from: "2026-07-20", to: "2026-07-26" },
+    };
+    mocks.monthly.byKey = new Map([
+      ["ai.seat_cost", monthlySeries("ai.seat_cost", [])],
+      ["ai.extra_usage_cost", monthlySeries("ai.extra_usage_cost", [])],
+    ]);
+
+    render(<AiCostView item={null} />);
+
+    expect(screen.getByText("Billed by month")).toBeInTheDocument();
+    expect(
+      screen.getByText(/No invoiced months in this period/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Jul 2026")).not.toBeInTheDocument();
   });
 
   it("surfaces a failed monthly request instead of calling the period uninvoiced", () => {
