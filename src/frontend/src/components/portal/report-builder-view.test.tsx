@@ -89,7 +89,7 @@ beforeEach(() => {
     metric({ metric_key: "ci.runs", label: "CI runs", entity_type: "tenant" }),
   ];
   mocks.scope = {
-    reportPeople: [{ entityId: personId }],
+    roster: [{ person_id: personId }],
     label: "Whole organisation",
   };
   mocks.preview.mockReset().mockResolvedValue(preview);
@@ -285,7 +285,7 @@ describe("ReportBuilderView", () => {
     await waitFor(() => expect(input).toBeDefined());
     mocks.scope = {
       ...mocks.scope,
-      reportPeople: [{ entityId: "00000000-0000-0000-0000-000000000002" }],
+      roster: [{ person_id: "00000000-0000-0000-0000-000000000002" }],
     };
     rerender(<ReportBuilderView />);
 
