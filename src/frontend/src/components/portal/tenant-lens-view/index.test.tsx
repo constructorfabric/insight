@@ -81,6 +81,8 @@ vi.mock("@/queries/metric-results", () => ({
     // with one `windowsByKey` entry per window from the same fixtures.
     if (windows.length > 0) {
       const result = emptyResult();
+      result.byKey =
+        mocks.rangeResults.get(`${range.from}..${range.to}`)?.byKey ?? new Map();
       result.windowsByKey = windows.map(
         (window) =>
           mocks.rangeResults.get(`${window.from}..${window.to}`)?.byKey ??
@@ -919,12 +921,12 @@ describe("TenantLensView", () => {
     mocks.rangeResults.set(SECOND_HALF, secondHalf);
 
     render(<TenantLensView config={config} />);
-    // Both halves are windows on ONE request, the month split at its midpoint
-    // with the odd day going to the second half.
+    // Both halves come from ONE request: the first half is its period and the
+    // second its only extra window, so nothing computes a third aggregate over
+    // the whole range that no section reads.
     expect(mocks.calls).toHaveLength(2);
-    expect(mocks.calls[1].range).toEqual(PORTAL_RANGE);
+    expect(mocks.calls[1].range).toEqual({ from: "2026-03-01", to: "2026-03-15" });
     expect(mocks.calls[1].windows).toEqual([
-      { from: "2026-03-01", to: "2026-03-15" },
       { from: "2026-03-16", to: "2026-03-31" },
     ]);
     expect(mocks.calls[1].collection.metrics).toEqual([

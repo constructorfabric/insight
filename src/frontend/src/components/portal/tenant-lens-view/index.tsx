@@ -86,25 +86,26 @@ export function TenantLensView({ config }: { config: TenantLensConfig }) {
   // are windows on ONE request: their breakdowns read the same rows, so the
   // slope sections no longer cost a request each (#2651).
   const halvesCollection = halfRanges ? plan.halves : EMPTY_COLLECTION;
+  // The FIRST half is the request's own period and the second its only extra
+  // window: asking over the whole range instead would compute a third aggregate
+  // per metric that no section reads.
   const halfWindows = useMemo(
-    () => (halfRanges ? [halfRanges.first, halfRanges.second] : []),
+    () => (halfRanges ? [halfRanges.second] : []),
     [halfRanges]
   );
   const halves = useMetricCollection(
     halvesCollection,
     { type: "tenant" },
-    dateRange,
+    halfRanges?.first ?? dateRange,
     { windows: halfWindows }
   );
 
   const resolve: ResolveView = (need) => {
     const location = plan.locate(need);
     if (!location) return undefined;
-    if (location.at === "first-half") {
-      return halves.windowsByKey[0]?.get(need.metric);
-    }
+    if (location.at === "first-half") return halves.byKey.get(need.metric);
     if (location.at === "second-half") {
-      return halves.windowsByKey[1]?.get(need.metric);
+      return halves.windowsByKey[0]?.get(need.metric);
     }
     const byKey =
       location.index === 0
