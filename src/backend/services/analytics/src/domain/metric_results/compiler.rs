@@ -17,6 +17,25 @@ use crate::domain::metric_definitions::{
 pub(crate) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
 pub(crate) const UNKNOWN_DIMENSION_LABEL: &str = "Unknown";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QueryBucket {
+    Day,
+    Week,
+    Month,
+    Quarter,
+    Year,
+}
+
+impl From<Bucket> for QueryBucket {
+    fn from(bucket: Bucket) -> Self {
+        match bucket {
+            Bucket::Day => Self::Day,
+            Bucket::Week => Self::Week,
+            Bucket::Month => Self::Month,
+        }
+    }
+}
+
 /// The live email → person map every person-entity read resolves through.
 pub(crate) const PERSON_MAP_RELATION: &str = "identity.person_map";
 
@@ -169,7 +188,7 @@ pub(crate) fn compile_period_batch_query(
 pub(crate) fn compile_timeseries_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
-    bucket: Bucket,
+    bucket: QueryBucket,
     dimensions: &[String],
     filters: &[ValidatedDimensionFilter],
     group_limit: Option<&ResolvedGroupLimit>,
@@ -263,7 +282,7 @@ pub(crate) fn compile_group_ranking_query(
 fn compile_capped_timeseries_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
-    bucket: Bucket,
+    bucket: QueryBucket,
     dimensions: &[String],
     filters: &[ValidatedDimensionFilter],
     group_limit: &ResolvedGroupLimit,
@@ -1417,11 +1436,13 @@ fn placeholders(count: usize) -> String {
 // totals row's absent key with NULL instead of the default date, which the
 // row parser rejects. The date-range predicate has already dropped NULL
 // dates, so `assumeNotNull` never sees one.
-fn bucket_expr(bucket: Bucket) -> &'static str {
+fn bucket_expr(bucket: QueryBucket) -> &'static str {
     match bucket {
-        Bucket::Day => "assumeNotNull(metric_date)",
-        Bucket::Week => "toStartOfWeek(assumeNotNull(metric_date), 1)",
-        Bucket::Month => "toStartOfMonth(assumeNotNull(metric_date))",
+        QueryBucket::Day => "assumeNotNull(metric_date)",
+        QueryBucket::Week => "toStartOfWeek(assumeNotNull(metric_date), 1)",
+        QueryBucket::Month => "toStartOfMonth(assumeNotNull(metric_date))",
+        QueryBucket::Quarter => "toStartOfQuarter(assumeNotNull(metric_date))",
+        QueryBucket::Year => "toStartOfYear(assumeNotNull(metric_date))",
     }
 }
 
@@ -1957,7 +1978,8 @@ mod tests {
         };
         *denominator_aggregation = RatioDenominatorAggregation::DistinctCount;
 
-        let query = compile_timeseries_query(&metric, &request(), Bucket::Week, &[], &[], None);
+        let query =
+            compile_timeseries_query(&metric, &request(), QueryBucket::Week, &[], &[], None);
 
         assert!(
             query
@@ -2093,7 +2115,7 @@ mod tests {
         // term) is applied by the wrap OUTSIDE it, exactly as for a managed
         // relation, so a custom metric inherits identical tenant scoping.
         let def = custom_sum_metric();
-        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[], &[], None);
+        let ts = compile_timeseries_query(&def, &request(), QueryBucket::Day, &[], &[], None);
         assert!(ts.sql.contains(&format!("FROM ({CUSTOM_SQL})")));
         assert!(!ts.sql.contains("insight.ai_metric_observations"));
         assert!(ts.sql.contains("WHERE tenant_id = ?"));
@@ -2150,7 +2172,7 @@ mod tests {
     fn tenant_is_bound_from_context_once_per_contract_read() {
         let sum = sum_metric();
 
-        let ts = compile_timeseries_query(&sum, &request(), Bucket::Day, &[], &[], None);
+        let ts = compile_timeseries_query(&sum, &request(), QueryBucket::Day, &[], &[], None);
         assert!(ts.sql.contains("WHERE tenant_id = ?"), "timeseries read");
         assert_eq!(tenant_binds(&ts), 1);
         assert_eq!(ts.sql.matches('?').count(), ts.params.len());
@@ -2182,7 +2204,7 @@ mod tests {
         // With enforcement off, every contract read swaps the exact-match term
         // for the tautology, so nothing filters by tenant — yet the placeholder
         // (and its bound value) stays in place, so param arity is unchanged.
-        let ts = compile_timeseries_query(&sum, &req, Bucket::Day, &[], &[], None);
+        let ts = compile_timeseries_query(&sum, &req, QueryBucket::Day, &[], &[], None);
         assert!(
             ts.sql.contains("(tenant_id = ? OR 1 = 1)"),
             "timeseries uses the bypass term"
@@ -2209,9 +2231,23 @@ mod tests {
     #[test]
     fn timeseries_query_buckets_on_a_non_nullable_date() {
         for (bucket, expr) in [
-            (Bucket::Day, "assumeNotNull(metric_date)"),
-            (Bucket::Week, "toStartOfWeek(assumeNotNull(metric_date), 1)"),
-            (Bucket::Month, "toStartOfMonth(assumeNotNull(metric_date))"),
+            (QueryBucket::Day, "assumeNotNull(metric_date)"),
+            (
+                QueryBucket::Week,
+                "toStartOfWeek(assumeNotNull(metric_date), 1)",
+            ),
+            (
+                QueryBucket::Month,
+                "toStartOfMonth(assumeNotNull(metric_date))",
+            ),
+            (
+                QueryBucket::Quarter,
+                "toStartOfQuarter(assumeNotNull(metric_date))",
+            ),
+            (
+                QueryBucket::Year,
+                "toStartOfYear(assumeNotNull(metric_date))",
+            ),
         ] {
             let query = compile_timeseries_query(&sum_metric(), &request(), bucket, &[], &[], None);
             assert!(
@@ -2273,7 +2309,7 @@ mod tests {
             let query = compile_timeseries_query(
                 &def,
                 &request(),
-                Bucket::Week,
+                QueryBucket::Week,
                 &dimensions,
                 &[],
                 Some(&resolved_limit(true)),
@@ -2302,7 +2338,7 @@ mod tests {
         let query = compile_timeseries_query(
             &ratio_metric(),
             &request(),
-            Bucket::Day,
+            QueryBucket::Day,
             &["tool".to_owned()],
             &[],
             Some(&resolved_limit(false)),
@@ -2358,7 +2394,7 @@ mod tests {
         let query = compile_timeseries_query(
             &sum_metric(),
             &request(),
-            Bucket::Day,
+            QueryBucket::Day,
             &["tool".to_owned()],
             &[],
             Some(&ResolvedGroupLimit {
@@ -2668,8 +2704,14 @@ mod tests {
 
     #[test]
     fn median_single_views_use_exact_median() {
-        let ts =
-            compile_timeseries_query(&median_metric(), &request(), Bucket::Week, &[], &[], None);
+        let ts = compile_timeseries_query(
+            &median_metric(),
+            &request(),
+            QueryBucket::Week,
+            &[],
+            &[],
+            None,
+        );
         assert!(
             ts.sql
                 .contains("quantileExactIf(0.5)(value, value IS NOT NULL)")
@@ -2711,7 +2753,7 @@ mod tests {
         let ts = compile_timeseries_query(
             &percentile_metric(),
             &request(),
-            Bucket::Week,
+            QueryBucket::Week,
             &[],
             &[],
             None,
@@ -2769,8 +2811,14 @@ mod tests {
         // not 0%: the numerator aggregates OrNull in every query shape, while
         // the denominator relies on nullIf alone.
         let batched = compile_period_batch_query(&[&ratio_metric()], &request(), &[]);
-        let ts =
-            compile_timeseries_query(&ratio_metric(), &request(), Bucket::Week, &[], &[], None);
+        let ts = compile_timeseries_query(
+            &ratio_metric(),
+            &request(),
+            QueryBucket::Week,
+            &[],
+            &[],
+            None,
+        );
         let bd = compile_breakdown_query(&ratio_metric(), &request(), &["tool".to_owned()], &[]);
         assert!(
             batched
@@ -2792,7 +2840,7 @@ mod tests {
         let ts = compile_timeseries_query(
             &distinct_count_metric(),
             &request(),
-            Bucket::Week,
+            QueryBucket::Week,
             &[],
             &[],
             None,
@@ -2883,7 +2931,7 @@ mod tests {
             clamp_max: Some(100.0),
             ..ValueTransform::default()
         });
-        let ts = compile_timeseries_query(&def, &request(), Bucket::Day, &[], &[], None);
+        let ts = compile_timeseries_query(&def, &request(), QueryBucket::Day, &[], &[], None);
         let bd = compile_breakdown_query(&def, &request(), &[], &[]);
         for query in [&ts, &bd] {
             assert!(
