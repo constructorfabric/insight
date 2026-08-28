@@ -52,7 +52,7 @@ export interface MetricCollectionOptions {
    * When set, the request carries the previous period of the same kind as an
    * extra window (the period value drives week/month/quarter/year shift
    * semantics in `previousPeriodRange`). Consumers derive deltas from
-   * `previousByKey`. Sugar for a single entry in `windows`.
+   * `previousByKey`. Shorthand for a `compareTo` range.
    */
   previousPeriod?: PeriodValue;
   /**
