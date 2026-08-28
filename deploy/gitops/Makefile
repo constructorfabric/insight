@@ -147,15 +147,17 @@ ARGO_WORKFLOW_SA ?= argo-workflow
 # --versions` (bump deliberately, same discipline as the pins above).
 LOKI_RELEASE     ?= loki
 LOKI_CHART       ?= grafana/loki
-LOKI_VERSION     ?= 7.0.0      # app 3.6.7
+LOKI_VERSION     ?= 7.3.0      # app 3.6.12
 
 ALLOY_RELEASE    ?= alloy
 ALLOY_CHART      ?= grafana/alloy
-ALLOY_VERSION    ?= 1.9.0      # app v1.16.3
+ALLOY_VERSION    ?= 1.12.1     # app v1.19.2
 
 GRAFANA_RELEASE  ?= grafana
-GRAFANA_CHART    ?= grafana/grafana
-GRAFANA_VERSION  ?= 10.5.15    # app 12.3.1
+# grafana/grafana is deprecated (frozen 2026-01-30); development moved to
+# grafana-community/helm-charts. Loki and Alloy still live in the old repo.
+GRAFANA_CHART    ?= grafana-community/grafana
+GRAFANA_VERSION  ?= 13.0.0     # app 13.2.0
 
 # Metrics store — PromQL-compatible, remote-write receiver built in at
 # /api/v1/write (always on, no flag needed).
@@ -763,7 +765,7 @@ system-alloy: vpn-up kube-ctx
 
 .PHONY: system-grafana
 system-grafana: vpn-up kube-ctx
-	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
 	$(call _apply_optional_system_secrets,grafana)
 	helm upgrade --install $(GRAFANA_RELEASE) $(GRAFANA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
