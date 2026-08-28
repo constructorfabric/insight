@@ -73,6 +73,10 @@ SELECT
     chain_status,
     category,
     tier_label,
+    -- The vendor's own stable identifier for the tier this line prices. A
+    -- contract column, not an extra: gold resolves a seat's price through it,
+    -- and unlike the display name it survives a rename or a localisation.
+    product_id                                          AS tier_ref,
     toUInt8(coalesce(is_proration, false))              AS is_proration,
     coalesce(currency, invoice_currency, 'usd')         AS currency,
     toStartOfMonth(toDateTime(toInt64(coalesce(period_start_ts, invoice_created_ts, 0)))) AS period_month,
@@ -82,14 +86,17 @@ SELECT
     toInt64OrNull(toString(round(seat_unit_amount)))    AS seat_unit_cents,
     toInt64OrNull(toString(round(quantity)))            AS seat_quantity,
     toInt64OrNull(toString(round(invoice_total_excluding_tax))) AS invoice_net_cents,
-    -- Vendor extras kept out of the positional contract.
+    -- Vendor extras kept out of the positional contract. product_name is what
+    -- an operator reads to decide which seat tier an unmapped tier_ref is;
+    -- price_id moves when the price does, so it identifies a price, not a tier.
     toJSONString(map(
         'product_name',  ifNull(toString(product_name), ''),
         'description',   ifNull(toString(description), ''),
         'invoice_ref',   ifNull(toString(invoice_ref), ''),
         'num_seats',     ifNull(toString(invoice_num_seats), ''),
         'invoice_total', ifNull(toString(invoice_total), ''),
-        'period_end_ts', ifNull(toString(period_end_ts), '')
+        'period_end_ts', ifNull(toString(period_end_ts), ''),
+        'price_id',      ifNull(toString(price_id), '')
     ))                                                  AS invoice_metrics_json,
     'claude_team'                                       AS source,
     data_source,

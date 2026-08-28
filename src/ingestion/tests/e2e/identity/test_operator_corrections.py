@@ -485,9 +485,6 @@ def test_an_operator_decision_survives_the_next_seed_run(identity_svc, compose_s
     operator's decision already there and reuses it. Everything else in this
     feature is inert if a re-run can quietly undo a human's answer.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     source_type = f"e2e-durability-{run_tag}"
     corrected = f"acc-corrected-{run_tag}"

@@ -3,9 +3,10 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
-    EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
-    RatioDenominatorAggregation, SourceKind, ValueTransform,
+    AliasCollapse, EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat,
+    MetricInputRole, RatioDenominatorAggregation, SourceKind, ValueTransform,
 };
+use crate::domain::metric_definitions::evidence_presentation::EvidencePresentation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +56,10 @@ pub enum SeedComputation {
         denominator_aggregation: RatioDenominatorAggregation,
     },
     Median,
+    Percentile {
+        q: f64,
+    },
+    Stddev,
     DistinctCount,
 }
 
@@ -64,14 +69,20 @@ impl SeedComputation {
             Self::Sum => MetricComputation::Sum,
             Self::Ratio { .. } => MetricComputation::Ratio,
             Self::Median => MetricComputation::Median,
+            Self::Percentile { .. } => MetricComputation::Percentile,
+            Self::Stddev => MetricComputation::Stddev,
             Self::DistinctCount => MetricComputation::DistinctCount,
         }
     }
 
+    /// The definition's `scale` storage column: the ratio's scale factor, or
+    /// the percentile's quantile `q` — one numeric slot, meaning keyed by
+    /// `computation_type` (the table's CHECK constraint enforces the pairing).
     pub fn scale(self) -> Option<f64> {
         match self {
-            Self::Sum | Self::Median | Self::DistinctCount => None,
+            Self::Sum | Self::Median | Self::Stddev | Self::DistinctCount => None,
             Self::Ratio { scale, .. } => Some(scale),
+            Self::Percentile { q } => Some(q),
         }
     }
 
@@ -81,7 +92,11 @@ impl SeedComputation {
                 denominator_aggregation,
                 ..
             } => denominator_aggregation,
-            Self::Sum | Self::Median | Self::DistinctCount => RatioDenominatorAggregation::Sum,
+            Self::Sum
+            | Self::Median
+            | Self::Percentile { .. }
+            | Self::Stddev
+            | Self::DistinctCount => RatioDenominatorAggregation::Sum,
         }
     }
 }
@@ -119,6 +134,14 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
+    /// Declared per (source, measure): `active_day` is a per-day flag in
+    /// `ai_usage` and a distinct-count subject in `collab`.
+    #[serde(default)]
+    pub alias_collapse: AliasCollapse,
+    /// How this measure's evidence rows read in the drilldown. Absent where
+    /// the rows carry no human-facing details of their own.
+    #[serde(default)]
+    pub evidence_presentation: Option<EvidencePresentation>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,8 +258,8 @@ mod tests {
 
     #[test]
     fn registry_declares_the_expected_counts() {
-        assert_eq!(builtin_sources().len(), 6, "builtin source count");
-        assert_eq!(builtin_metrics().len(), 89, "builtin metric count");
+        assert_eq!(builtin_sources().len(), 7, "builtin source count");
+        assert_eq!(builtin_metrics().len(), 105, "builtin metric count");
     }
 
     #[test]
@@ -281,6 +304,234 @@ mod tests {
         }
     }
 
+    /// Column keys the drilldown fills from the evidence row rather than from
+    /// its details map; a declaration claiming one would be overwritten.
+    const STRUCTURAL_COLUMN_KEYS: &[&str] = &["date", "value", "numerator", "denominator"];
+
+    #[test]
+    fn every_event_measure_declares_the_columns_its_rows_carry() {
+        // An event row stands for one thing that happened, and the drilldown
+        // projects it through this declaration alone. A measure that declares
+        // nothing hands the reader a page of identical dates.
+        let mut undeclared = Vec::new();
+        for builtin_source in builtin_sources() {
+            for measure in &builtin_source.measures {
+                if measure.evidence_granularity != EvidenceGranularity::Event {
+                    continue;
+                }
+                let declares_columns = measure
+                    .evidence_presentation
+                    .as_ref()
+                    .is_some_and(|presentation| !presentation.detail_columns.is_empty());
+                if !declares_columns {
+                    undeclared.push(format!("{}/{}", builtin_source.source.key, measure.key));
+                }
+            }
+        }
+        assert!(
+            undeclared.is_empty(),
+            "event measures declaring no detail columns: {undeclared:?}"
+        );
+    }
+
+    #[test]
+    fn a_counted_pull_request_reads_the_request_and_where_it_was_headed() {
+        for measure_key in [
+            "pr_created",
+            "pr_merged",
+            "default_pr_created",
+            "default_pr_merged",
+        ] {
+            let presentation = declared_presentation("git", measure_key);
+            // Where the work went is part of the record on every path that
+            // opens the dialog: a column that appeared only for a reader who
+            // arrived through a grouped table left the same request looking
+            // like a different one.
+            assert_eq!(
+                presentation
+                    .detail_columns
+                    .iter()
+                    .map(|column| column.key.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "ref",
+                    "title",
+                    "repository",
+                    "author",
+                    "branch_scope",
+                    "destination_branch"
+                ],
+                "{measure_key} should read the request it counted"
+            );
+            // The row IS the request it counted, so a value column would be 1s.
+            assert!(
+                !presentation.show_value,
+                "{measure_key} should show no value"
+            );
+        }
+    }
+
+    #[test]
+    fn a_branch_scope_split_reads_the_same_columns_as_its_total() {
+        // The split measures count the same commits and requests the totals do,
+        // so a reader who drills into "landed" sees what they saw before, minus
+        // the rows that did not land.
+        for (total, split) in [
+            ("commit_count", "default_commit_count"),
+            ("commit_count", "non_default_commit_count"),
+            ("pr_created", "default_pr_created"),
+            ("pr_created", "non_default_pr_created"),
+            ("pr_merged", "default_pr_merged"),
+            ("pr_merged", "non_default_pr_merged"),
+        ] {
+            assert_eq!(
+                declared_presentation("git", split),
+                declared_presentation("git", total),
+                "{split} should read the same rows as {total}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pull_request_duration_keeps_its_numeric_column() {
+        for measure_key in [
+            "pr_cycle_hours",
+            "pr_change_size",
+            "pr_first_review_hours",
+            "pr_review_wait_share",
+            "pr_review_to_merge_hours",
+            "pr_approval_to_merge_hours",
+        ] {
+            // A duration or a page count is only readable with its number.
+            assert!(
+                declared_presentation("git", measure_key).show_value,
+                "{measure_key} should show its value"
+            );
+        }
+    }
+
+    #[test]
+    fn a_seat_row_names_the_month_it_bills_for() {
+        // A seat row is dated at the day its snapshot was last read, not at the
+        // month it bills for, so the month has to be a column of its own or the
+        // reader cannot tell which month the row is.
+        for measure_key in [
+            "extra_usage_usd",
+            "extra_usage_limit_usd",
+            "seat_cost_usd",
+            "daily_extra_usage_usd",
+        ] {
+            let presentation = declared_presentation("ai_cost", measure_key);
+            assert_eq!(
+                presentation.detail_columns[0].key, "billing_month",
+                "{measure_key} should lead with the month it bills for"
+            );
+            assert!(presentation.show_value, "{measure_key} is an amount");
+        }
+    }
+
+    #[test]
+    fn a_seat_day_step_names_the_span_it_covers() {
+        // The step is measured from the previous reading, so above one day the
+        // figure is a span rather than one day's spend, and the month-to-date
+        // total it was taken from is what makes it legible.
+        let keys = declared_presentation("ai_cost", "daily_extra_usage_usd")
+            .detail_columns
+            .iter()
+            .map(|column| column.key.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["billing_month", "month_to_date_usd", "covers_days"]);
+    }
+
+    #[test]
+    fn ci_run_measures_read_the_run_and_a_deployment_reads_its_environment() {
+        let runs = declared_presentation("ci", "runs");
+        assert_eq!(
+            runs.detail_columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["repository", "pipeline", "branch", "outcome"]
+        );
+        assert!(!runs.show_value, "a counted run needs no value column");
+
+        for measure_key in ["run_duration_min", "run_hours"] {
+            assert!(
+                declared_presentation("ci", measure_key).show_value,
+                "{measure_key} is unreadable without its number"
+            );
+        }
+
+        let deployments = declared_presentation("ci", "deployments");
+        assert_eq!(
+            deployments
+                .detail_columns
+                .iter()
+                .map(|column| (column.key.as_str(), column.label.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("repository", "Repository"),
+                ("environment", "Environment"),
+                ("outcome", "Outcome"),
+                // Prose, because `env_kind` humanizes to "Env kind".
+                ("env_kind", "Environment type"),
+            ]
+        );
+    }
+
+    fn declared_presentation(source_key: &str, measure_key: &str) -> EvidencePresentation {
+        builtin_sources()
+            .iter()
+            .filter(|builtin_source| builtin_source.source.key == source_key)
+            .flat_map(|builtin_source| &builtin_source.measures)
+            .find(|measure| measure.key == measure_key)
+            .and_then(|measure| measure.evidence_presentation.clone())
+            .unwrap_or_else(|| panic!("{source_key}/{measure_key} declares no presentation"))
+    }
+
+    #[test]
+    fn declared_detail_columns_are_uniquely_keyed_and_labelled() {
+        for builtin_source in builtin_sources() {
+            for measure in &builtin_source.measures {
+                let Some(presentation) = measure.evidence_presentation.as_ref() else {
+                    continue;
+                };
+                let mut seen = BTreeSet::new();
+                for column in &presentation.detail_columns {
+                    assert!(
+                        is_snake_case(&column.key),
+                        "{}/{} declares detail key {:?}",
+                        builtin_source.source.key,
+                        measure.key,
+                        column.key
+                    );
+                    assert!(
+                        !column.label.trim().is_empty(),
+                        "{}/{} leaves detail key {:?} unlabelled",
+                        builtin_source.source.key,
+                        measure.key,
+                        column.key
+                    );
+                    assert!(
+                        seen.insert(column.key.as_str()),
+                        "{}/{} declares detail key {:?} twice",
+                        builtin_source.source.key,
+                        measure.key,
+                        column.key
+                    );
+                    assert!(
+                        !STRUCTURAL_COLUMN_KEYS.contains(&column.key.as_str()),
+                        "{}/{} declares detail key {:?}, which the drilldown \
+                         already fills from the row itself",
+                        builtin_source.source.key,
+                        measure.key,
+                        column.key
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_source_declares_at_least_one_measure() {
         for builtin_source in builtin_sources() {
@@ -304,6 +555,56 @@ mod tests {
             for dimension_key in &builtin_source.dimensions {
                 assert!(is_snake_case(dimension_key));
                 assert!(dimensions.insert(dimension_key.as_str()));
+            }
+        }
+    }
+
+    // INVARIANT: a distribution statistic may not declare a collapse — median,
+    // percentile and standard deviation are event-grain, and merging same-day
+    // rows moves the statistic. Additive computations collapse by design, and
+    // distinct counts are unaffected: they read `uniqExact(subject_key)` and the
+    // collapse groups by `subject_key`, so the collapse is a no-op there.
+    #[test]
+    fn alias_collapse_is_never_declared_on_distribution_inputs() {
+        let collapse_by_source: HashMap<&str, HashMap<&str, AliasCollapse>> = builtin_sources()
+            .iter()
+            .map(|builtin_source| {
+                (
+                    builtin_source.source.key.as_str(),
+                    builtin_source
+                        .measures
+                        .iter()
+                        .map(|measure| (measure.key.as_str(), measure.alias_collapse))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let collapses = collapse_by_source
+                .get(metric.source_key.as_str())
+                .unwrap_or_else(|| panic!("unknown source for {}", metric.metric_key));
+            if !matches!(
+                metric.computation,
+                SeedComputation::Median
+                    | SeedComputation::Percentile { .. }
+                    | SeedComputation::Stddev
+            ) {
+                continue;
+            }
+            for input in &metric.inputs {
+                let collapse = collapses
+                    .get(input.measure_key.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                assert!(
+                    !collapse.needs_pre_collapse(),
+                    "{} is {:?} but binds {}, which declares alias_collapse: {}",
+                    metric.metric_key,
+                    metric.computation,
+                    input.measure_key,
+                    collapse.as_db(),
+                );
             }
         }
     }
@@ -460,6 +761,33 @@ mod tests {
                 metric.metric_key
             );
         }
+    }
+
+    #[test]
+    fn percentile_metrics_have_single_value_role_and_an_inside_quantile() {
+        let mut seen = 0;
+        for metric in builtin_metrics() {
+            let SeedComputation::Percentile { q } = metric.computation else {
+                continue;
+            };
+            seen += 1;
+            assert!(
+                (0.0..=1.0).contains(&q),
+                "{} declares q={q}, outside [0, 1]",
+                metric.metric_key
+            );
+            assert_eq!(metric.inputs.len(), 1, "{}", metric.metric_key);
+            assert_eq!(
+                metric.inputs[0].input_role,
+                MetricInputRole::Value,
+                "{}",
+                metric.metric_key
+            );
+        }
+        assert!(
+            seen >= 1,
+            "registry declares at least one percentile metric"
+        );
     }
 
     #[test]

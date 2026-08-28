@@ -3,10 +3,12 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::metric_definitions::definition::MetricInputRole;
+use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 
 use super::cursor::CursorKey;
-use crate::domain::metric_definitions::{EvidenceGranularity, EvidenceRelation, MetricDefinition};
+use crate::domain::metric_definitions::{
+    EvidenceGranularity, EvidencePresentation, EvidenceRelation, MetricDefinition,
+};
 
 pub(super) const DEFAULT_PAGE_LIMIT: usize = 100;
 pub(super) const MAX_PAGE_LIMIT: usize = 250;
@@ -124,7 +126,7 @@ pub struct MetricDrilldownSelection {
     pub display_dimensions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDrilldownColumnType {
     String,
@@ -142,6 +144,7 @@ pub struct MetricDrilldownColumn {
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct MetricDrilldownRow {
     pub values: BTreeMap<String, serde_json::Value>,
+    pub links: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -232,18 +235,18 @@ pub struct EvidencePlan {
 pub struct EvidenceInput {
     pub role: MetricInputRole,
     pub measure_key: String,
+    /// Must match the rule the metric being explained applied, or the drilldown
+    /// shows a different ratio than the tile it was opened from.
+    pub alias_collapse: AliasCollapse,
     pub presentation: EvidencePresentation,
-}
-
-#[derive(Debug, Clone)]
-pub struct EvidencePresentation {
-    pub detail_keys: &'static [&'static str],
-    pub show_value: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EvidenceQueryRow {
     pub role: String,
+    /// Source identity the row was recorded under; closes the ordering key when
+    /// two of a person's identities tie on every other column.
+    pub entity_id: String,
     pub metric_date: String,
     pub observed_at: String,
     pub source_key: String,

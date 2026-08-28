@@ -37,6 +37,9 @@ observed AS (
         AND b.data_source = fh.data_source
         AND b.field_id = fh.field_id
     WHERE fh.delta_action = 'set' AND fh.value_ids[1] != ''
+      {% if not var('task_board_bindings_enforced', false) %}
+      AND NOT startsWith(fh.field_id, 'project_status:')
+      {% endif %}
 )
 
 SELECT o.*

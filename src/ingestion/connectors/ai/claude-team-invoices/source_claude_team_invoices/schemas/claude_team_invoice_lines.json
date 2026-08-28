@@ -24,6 +24,8 @@
     "description": { "type": ["string", "null"] },
     "product_name": { "type": ["string", "null"] },
     "tier_label": { "type": ["string", "null"] },
+    "price_id": { "type": ["string", "null"] },
+    "product_id": { "type": ["string", "null"] },
     "category": { "type": ["string", "null"] },
     "is_proration": { "type": ["boolean", "null"] },
     "amount": { "type": ["number", "null"] },

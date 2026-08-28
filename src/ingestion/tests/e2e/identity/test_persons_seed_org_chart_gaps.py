@@ -18,6 +18,7 @@ from lib import identity_seed as seed
 from lib.ch_seeder import CHSeeder
 from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
+from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 pytestmark = [pytest.mark.identity, pytest.mark.mutating]
@@ -125,7 +126,7 @@ def _open_parent(cfg: SessionConfig, child: str) -> str | None:
     """The single OPEN (valid_to IS NULL) org_chart parent for `child`, under
     SEED_TENANT. Raw SQL on purpose — this asserts the seed's WRITE, mirroring
     `test_persons_seed.py::_org_chart_edges`."""
-    with seed._connection(cfg) as conn, conn.cursor() as cur:  # noqa: SLF001 — harness-internal helper
+    with seed._connection(cfg) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT LOWER(HEX(parent_person_id))"
             " FROM org_chart"
@@ -197,7 +198,7 @@ def _insert_raw_inputs(
         )
     clickhouse.execute(
         cfg,
-        "INSERT INTO identity.identity_inputs "  # noqa: S608 — every value is a fixed test literal above, no untrusted input
+        "INSERT INTO identity.identity_inputs "
         "(unique_key, insight_tenant_id, insight_source_type, insight_source_id,"
         " source_account_id, value_type, value, operation_type, _synced_at, _version) VALUES "
         + ", ".join(values),
@@ -208,6 +209,7 @@ def test_seed_org_chart_from_real_bamboohr_connector_pipeline(
     identity_svc,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     compose_stack: SessionConfig,
 ) -> None:
@@ -217,9 +219,6 @@ def test_seed_org_chart_from_real_bamboohr_connector_pipeline(
     org-chart test in this suite bypasses that path entirely; this is the one
     proof that the bamboohr connector's own dbt models actually feed the seed.
     """
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     manager_email = f"pipeline.manager.{run_tag}@e2e.test"
     report_email = f"pipeline.report.{run_tag}@e2e.test"
@@ -248,12 +247,12 @@ def test_seed_org_chart_from_real_bamboohr_connector_pipeline(
     )
 
     staging, silver = dbt_runner.derive_selectors({("bronze_bamboohr", "employees")})
-    dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     assert "identity_inputs" in silver, (
         f"bamboohr__identity_inputs did not surface a silver:identity_inputs tag (silver={silver}) "
         "— derive_selectors no longer sees the connector's identity path"
     )
-    dbt_runner.run("identity_inputs", worker_ctx=worker_ctx)
+    tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
     landed = clickhouse.query(
         compose_stack,
@@ -285,9 +284,6 @@ def test_seed_and_subchart_survive_a_circular_manager_chain(identity_svc, compos
     `max_depth` specifically so a cyclic org_chart terminates instead of
     recursing forever (`WITH RECURSIVE ... UNION ALL`, unlike the `UNION`/
     distinct visibility CTE, does not self-terminate on a cycle)."""
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     a_email = f"cycle.a.{run_tag}@e2e.test"
     b_email = f"cycle.b.{run_tag}@e2e.test"
@@ -345,6 +341,7 @@ def test_seed_and_subchart_survive_a_circular_manager_chain(identity_svc, compos
 def test_ms_entra_connector_emits_no_org_chart_signal_yet(
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     compose_stack: SessionConfig,
 ) -> None:
@@ -374,9 +371,9 @@ def test_ms_entra_connector_emits_no_org_chart_signal_yet(
     )
 
     staging, silver = dbt_runner.derive_selectors({("bronze_ms_entra", "users")})
-    dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     assert "identity_inputs" in silver, f"ms_entra__identity_inputs no longer tags silver:identity_inputs (silver={silver})"
-    dbt_runner.run("identity_inputs", worker_ctx=worker_ctx)
+    tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
     emitted = clickhouse.query(
         compose_stack,
@@ -396,6 +393,7 @@ def test_seed_and_subchart_project_arbitrary_depth_from_a_synced_chain(
     identity_svc,
     ch_seeder: CHSeeder,
     dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
     worker_ctx: WorkerContext,
     compose_stack: SessionConfig,
 ) -> None:
@@ -409,9 +407,6 @@ def test_seed_and_subchart_project_arbitrary_depth_from_a_synced_chain(
     both write (org_chart parent-per-level) and read (GET /v1/subchart
     depth-per-level) reflect the full chain, not a depth the seed or the API
     silently caps at 2."""
-    if not identity_svc.supports_seed_cli:
-        pytest.skip("the seed CLI exists only on the Rust implementation (#1690)")
-
     run_tag = uuid.uuid4().hex[:10]
     chain_len = 5  # deeper than the fixed fixture's 2 levels; well under max_depth=16
     emails = [f"chain.{i}.{run_tag}@e2e.test" for i in range(chain_len)]
@@ -434,9 +429,9 @@ def test_seed_and_subchart_project_arbitrary_depth_from_a_synced_chain(
     )
 
     staging, silver = dbt_runner.derive_selectors({("bronze_bamboohr", "employees")})
-    dbt_runner.build(" ".join(f"+{m}" for m in staging), worker_ctx=worker_ctx)
+    tracked_models.build(staging, worker_ctx=worker_ctx, with_ancestors=True)
     assert "identity_inputs" in silver, f"bamboohr__identity_inputs did not surface a silver:identity_inputs tag (silver={silver})"
-    dbt_runner.run("identity_inputs", worker_ctx=worker_ctx)
+    tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)
     assert res.returncode == 0, f"rc={res.returncode}\n{res.stdout}\n{res.stderr}"

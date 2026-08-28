@@ -87,6 +87,9 @@ impl From<anyhow::Error> for SyncRunError {
 /// [`SyncRunError`] — lock busy, guard refusal, or a failed run.
 pub async fn run(config: &GearConfig, force: bool) -> Result<SyncOutcome, SyncRunError> {
     let db = db::connect(&config.database_url).await?;
+    // Same boot gate as the server: a sync against a schema behind this build
+    // would fail per-query mid-run instead of upfront.
+    db::assert_schema_compatible(&db).await?;
 
     // The sync itself is tenant-agnostic (whole-log copy), but its journal
     // row needs a real tenant: the GET journal routes are tenant-scoped, so

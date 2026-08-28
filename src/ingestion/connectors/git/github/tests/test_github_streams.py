@@ -19,6 +19,7 @@ import json
 
 import freezegun
 import pytest
+from airbyte_cdk.models import SyncMode
 from config import GH_URL, PROXY_URL, GithubConfigBuilder
 from connector_tests import ANY_QUERY_PARAMS, HttpMocker, HttpRequest, HttpResponse, assert_records_conform, read_stream
 from connector_tests.source import load_manifest
@@ -1360,3 +1361,461 @@ def test_issue_types_catalogue_gives_the_type_a_stable_key(http_mocker: HttpMock
     assert by_id["IT_bug"]["unique_key"].endswith(":acme:issue_type:IT_bug")
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "issue_types", strict=True)
+
+
+def _projects_parent_body(cursor: str | None = None) -> dict:
+    """The board enumerator lives in `definitions`, not `streams` — the two
+    board substreams share it, so its body is built from there."""
+    manifest = load_manifest(_CONNECTOR)
+    parent = manifest["definitions"]["projects_all_parent"]
+    body = dict(parent["retriever"]["requester"]["request_body_json"])
+    body["query"] = body["query"].rstrip("\n")
+    body["variables"] = {"org": "acme"}
+    if cursor is not None:
+        body["variables"]["cursor"] = cursor
+    return body
+
+
+def _mock_projects_parent(http_mocker: HttpMocker, nodes: list[dict]) -> None:
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_projects_parent_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "organization": {
+                            "projectsV2": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+
+def _project_fields_body(project_id: str, cursor: str | None = None) -> dict:
+    return _graphql_body("project_fields", {"project": project_id}, cursor)
+
+
+def _project_items_body(project_id: str, q: str, cursor: str | None = None) -> dict:
+    return _graphql_body("project_items", {"project": project_id, "q": q}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_fields_are_scoped_to_their_own_board(http_mocker: HttpMocker) -> None:
+    """A same-named Status in two boards is two different fields. Collecting
+    the catalogue per board is what keeps a status resolvable at all — and what
+    stops one board's option name being read as another's."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}, {"id": "PVT_2", "number": 41}])
+    for project_id, option_name in (("PVT_1", "In progress"), ("PVT_2", "10%")):
+        http_mocker.post(
+            HttpRequest(f"{GH_URL}/graphql", body=_project_fields_body(project_id)),
+            HttpResponse(
+                body=json.dumps(
+                    {
+                        "data": {
+                            "node": {
+                                "fields": {
+                                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                    "nodes": [
+                                        {
+                                            "__typename": "ProjectV2SingleSelectField",
+                                            "id": f"PVTSSF_{project_id}",
+                                            "databaseId": 1,
+                                            "name": "Status",
+                                            "dataType": "SINGLE_SELECT",
+                                            "updatedAt": "2026-06-02T00:00:00Z",
+                                            "isIssueField": False,
+                                            # Boards created from one template
+                                            # inherit its option ids, then
+                                            # rename the options independently.
+                                            "options": [{"id": "shared-option", "name": option_name}],
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                ),
+                status_code=200,
+            ),
+        )
+
+    output = read_stream(_CONNECTOR, "project_fields", config)
+
+    assert not output.errors
+    by_field = {r.record.data["field_id"]: r.record.data for r in output.records}
+    assert set(by_field) == {"PVTSSF_PVT_1", "PVTSSF_PVT_2"}
+    assert by_field["PVTSSF_PVT_1"]["project_number"] == 40
+    assert by_field["PVTSSF_PVT_2"]["project_number"] == 41
+    one = json.loads(by_field["PVTSSF_PVT_1"]["options_json"])
+    two = json.loads(by_field["PVTSSF_PVT_2"]["options_json"])
+    assert one[0]["id"] == two[0]["id"], "the fixture shares an option id across boards on purpose"
+    assert one[0]["name"] != two[0]["name"], "and the names diverge, so the id alone identifies nothing"
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "project_fields", strict=True)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_fields_mark_the_issue_mirrors(http_mocker: HttpMocker) -> None:
+    """A built-in board field is a projection of the issue. Read as a value it
+    would compete with the issue's own field for the same fact, so the
+    catalogue has to say which is which."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    nodes = [
+        {"__typename": "ProjectV2Field", "id": "F_title", "name": "Title", "dataType": "TITLE"},
+        {"__typename": "ProjectV2Field", "id": "F_assignees", "name": "Assignees", "dataType": "ASSIGNEES"},
+        {"__typename": "ProjectV2Field", "id": "F_est", "name": "Estimate", "dataType": "NUMBER"},
+        {
+            "__typename": "ProjectV2IterationField",
+            "id": "F_sprint",
+            "name": "Sprint",
+            "dataType": "ITERATION",
+            "configuration": {
+                "duration": 14,
+                "startDay": 1,
+                "iterations": [{"id": "it1", "title": "S1"}],
+                "completedIterations": [],
+            },
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_fields_body("PVT_1")),
+        HttpResponse(
+            body=json.dumps(
+                {"data": {"node": {"fields": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}}}}
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_fields", config)
+
+    assert not output.errors
+    mirror = {r.record.data["field_id"]: r.record.data["is_mirror"] for r in output.records}
+    assert mirror == {"F_title": True, "F_assignees": True, "F_est": False, "F_sprint": False}
+    sprint = next(r.record.data for r in output.records if r.record.data["field_id"] == "F_sprint")
+    assert json.loads(sprint["configuration_json"])["duration"] == 14
+    _no_literal_none(output.records)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_fields_key_carries_the_snapshot_day(http_mocker: HttpMocker) -> None:
+    """GitHub keeps no history of an option rename, so a succession of daily
+    snapshots is the only record of one. Without the day in the key a rename
+    erases the name every earlier status event carries."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_fields_body("PVT_1")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "fields": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "__typename": "ProjectV2Field",
+                                        "id": "F_est",
+                                        "name": "Estimate",
+                                        "dataType": "NUMBER",
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_fields", config)
+
+    assert not output.errors
+    key = output.records[0].record.data["unique_key"]
+    assert key.endswith(":project:PVT_1:field:F_est:2026-07-01"), key
+    assert output.records[0].record.data["snapshot_date"] == "2026-07-01"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_items_filter_is_a_bare_date(http_mocker: HttpMocker) -> None:
+    """`items(query:)` filters on a DAY. A full timestamp returns zero rows and
+    an unparseable qualifier returns zero rows with no GraphQL error — a green
+    sync with no data, indistinguishable from a quiet one. The mock matches the
+    exact body, so a rendered timestamp fails this test instead of production.
+    """
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    body = _project_items_body("PVT_1", "updated:>=2026-06-01")
+    assert body["variables"]["q"] == "updated:>=2026-06-01", "the start date must render date-only"
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=body),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "totalCount": 1,
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [_card("PVTI_1", "2026-06-20T10:00:00Z")],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_items", config)
+
+    assert not output.errors
+    assert len(output.records) == 1
+    assert output.records[0].record.data["item_id"] == "PVTI_1"
+    assert_records_conform(output.records, _CONNECTOR, "project_items", strict=True)
+
+
+def _card(item_id: str, updated_at: str, content: dict | None = None) -> dict:
+    return {
+        "id": item_id,
+        "fullDatabaseId": 5551,
+        "type": "ISSUE",
+        "createdAt": "2026-06-02T00:00:00Z",
+        "updatedAt": updated_at,
+        "isArchived": False,
+        "creator": {"login": "alice", "databaseId": 1001},
+        "content": content
+        if content is not None
+        else {"__typename": "Issue", "number": 7, "repository": {"nameWithOwner": "acme/app"}},
+        "fieldValues": {
+            "nodes": [
+                {
+                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                    "optionId": "shared-option",
+                    "name": "In progress",
+                    "updatedAt": updated_at,
+                    "field": {"id": "PVTSSF_PVT_1", "name": "Status", "dataType": "SINGLE_SELECT"},
+                }
+            ]
+        },
+    }
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_items_drop_a_draft_card_but_keep_an_unreadable_one(http_mocker: HttpMocker) -> None:
+    """A draft card has no issue behind it and no identity outside the board, so
+    it can join nothing downstream. A card with null content is a different
+    thing entirely — its issue lives where the token cannot look — and dropping
+    both together would hide a coverage gap behind a board note."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    nodes = [
+        _card("PVTI_issue", "2026-06-20T10:00:00Z"),
+        _card("PVTI_draft", "2026-06-20T10:00:00Z", content={"__typename": "DraftIssue"}),
+        _card("PVTI_none", "2026-06-20T10:00:00Z", content=None),
+    ]
+    # `None` content is a card whose issue the token cannot see, not a draft.
+    nodes[2]["content"] = None
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "totalCount": 3,
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": nodes,
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_items", config)
+
+    assert not output.errors
+    kept = {r.record.data["item_id"]: r.record.data for r in output.records}
+    assert set(kept) == {"PVTI_issue", "PVTI_none"}, "the draft goes, the unreadable card stays"
+    assert kept["PVTI_issue"]["content_type"] == "Issue"
+    assert kept["PVTI_none"]["content_type"] == "", "unknown content is empty, never a literal None"
+    assert kept["PVTI_none"]["content_number"] == 0
+    assert kept["PVTI_none"]["content_repo_full_name"] == ""
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_item_key_carries_the_day_the_card_changed(http_mocker: HttpMocker) -> None:
+    """No API exposes the history of a non-status board field, so the record is
+    a succession of snapshots. The day comes from the card's own updatedAt, so
+    re-reading an unchanged card inside the overlap window rewrites its row
+    instead of adding one."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "totalCount": 2,
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    _card("PVTI_1", "2026-06-20T10:00:00Z"),
+                                    _card("PVTI_1", "2026-06-21T09:00:00Z"),
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_items", config)
+
+    assert not output.errors
+    keys = [r.record.data["unique_key"] for r in output.records]
+    assert keys[0].endswith(":project:PVT_1:item:PVTI_1:2026-06-20")
+    assert keys[1].endswith(":project:PVT_1:item:PVTI_1:2026-06-21")
+    assert keys[0] != keys[1], "one row per day the card changed, not one row ever"
+    first = output.records[0].record.data
+    assert first["content_number"] == 7
+    assert first["content_repo_full_name"] == "acme/app"
+    assert json.loads(first["field_values_json"])[0]["optionId"] == "shared-option"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_project_items_state_stays_day_granular(http_mocker: HttpMocker) -> None:
+    """The cursor is stored in the format the filter needs. A stored timestamp
+    would render into the query and silently return nothing."""
+    config = GithubConfigBuilder().build()
+    _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_project_items_body("PVT_1", "updated:>=2026-06-01")),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "node": {
+                            "items": {
+                                "totalCount": 1,
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [_card("PVTI_1", "2026-06-20T10:00:00Z")],
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "project_items", config, sync_mode=SyncMode.incremental)
+
+    assert not output.errors
+    assert output.state_messages, "an incremental read must emit state"
+    blob = json.dumps([sm.state.stream.stream_state.__dict__ for sm in output.state_messages])
+    assert "2026-06-01T" not in blob and "T00:00:00" not in blob, f"state must not carry a time: {blob}"
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_status_change_names_the_board_it_happened_on(http_mocker: HttpMocker) -> None:
+    """Every board defines its own Status field, so a status event without its
+    board cannot be resolved. An issue on several boards interleaves all their
+    events in this one timeline."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo()]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([{"id": 901, "number": 7, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200
+        ),
+    )
+    nodes = [
+        {
+            "__typename": "ProjectV2ItemStatusChangedEvent",
+            "id": "E_status_a",
+            "createdAt": "2026-06-10T00:00:00Z",
+            "actor": {"login": "alice", "databaseId": 1001},
+            "previousStatus": "Todo",
+            "status": "In progress",
+            "project": {"id": "PVT_1", "number": 40},
+            "wasAutomated": False,
+        },
+        {
+            "__typename": "ProjectV2ItemStatusChangedEvent",
+            "id": "E_status_b",
+            "createdAt": "2026-06-11T00:00:00Z",
+            "actor": {"login": "bot", "databaseId": None},
+            "previousStatus": "Todo",
+            "status": "In progress",
+            "project": {"id": "PVT_2", "number": 41},
+            "wasAutomated": True,
+        },
+        {
+            "__typename": "AddedToProjectV2Event",
+            "id": "E_added",
+            "createdAt": "2026-06-09T00:00:00Z",
+            "actor": {"login": "alice", "databaseId": 1001},
+            "project": {"id": "PVT_1", "number": 40},
+        },
+        {
+            "__typename": "RemovedFromProjectV2Event",
+            "id": "E_removed",
+            "createdAt": "2026-06-12T00:00:00Z",
+            "actor": {"login": "alice", "databaseId": 1001},
+            "project": {"id": "PVT_2", "number": 41},
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    by_event = {r.record.data["event_id"]: r.record.data for r in output.records}
+    assert set(by_event) == {"E_status_a", "E_status_b", "E_added", "E_removed"}
+    # Two boards, one issue: same status name, different boards.
+    assert by_event["E_status_a"]["new_value"] == by_event["E_status_b"]["new_value"] == "In progress"
+    assert by_event["E_status_a"]["project_id"] == "PVT_1"
+    assert by_event["E_status_b"]["project_id"] == "PVT_2"
+    assert by_event["E_status_a"]["project_number"] == 40
+    assert by_event["E_status_a"]["was_automated"] is False
+    assert by_event["E_status_b"]["was_automated"] is True, "a workflow's move is not a person's"
+    # Membership states the board and nothing else — the event type is the fact.
+    assert by_event["E_added"]["project_id"] == "PVT_1"
+    assert by_event["E_removed"]["project_id"] == "PVT_2"
+    assert by_event["E_added"]["new_value"] == ""
+    _no_literal_none(output.records)

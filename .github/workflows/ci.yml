@@ -154,6 +154,8 @@ jobs:
         run: python3 -m pip install --quiet pyyaml
       - name: Connector wiring invariants
         run: python3 scripts/ci/connector_wiring.py
+      - name: Reconcile renderer contract
+        run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests -p 'test_*.py'
 
   # One unified job per Rust crate: fmt + clippy (when entry.lint) and coverage
   # (when entry.cover). Replaces the old standalone workspace rust-lint — fmt and
@@ -189,7 +191,7 @@ jobs:
           # rustfmt + clippy for the lint steps; llvm-tools-preview for cargo-llvm-cov.
           components: rustfmt, clippy, llvm-tools-preview
 
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           # Both possible workspaces declared; only the relevant one is used per
           # crate. Per-component cache key so jobs don't thrash a shared target.
@@ -216,15 +218,15 @@ jobs:
           if [ "${{ matrix.entry.all_features }}" = "true" ]; then feats="--all-features"; fi
           cargo clippy -p ${{ matrix.entry.package }} --all-targets $feats
 
-      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2
+      - uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2
         if: ${{ matrix.entry.cover }}
         with:
           tool: cargo-llvm-cov
 
       # DB-backed components (analytics) run their #[ignore]d live_tests
       # against a real MariaDB. Gated on live_db so only those entries pay the
-      # ~15s startup. ClickHouse is intentionally not provisioned — CH-gated
-      # tests skip themselves (see cf/insight#1564).
+      # ~15s startup. live_ch entries additionally get a ClickHouse for the
+      # CH-gated live tests (see cf/insight#1564).
       - name: Start MariaDB (${{ matrix.entry.name }})
         # live_db is a static per-component flag — only pay the container
         # startup when this run actually executes tests (with or without
@@ -246,6 +248,20 @@ jobs:
             sleep 2
           done
 
+      - name: Start ClickHouse (${{ matrix.entry.name }})
+        if: ${{ matrix.entry.live_ch && (matrix.entry.cover || matrix.entry.test) }}
+        env:
+          CLICKHOUSE_USER: insight
+          CLICKHOUSE_PASSWORD: insight
+          CLICKHOUSE_DATABASE: insight
+        run: |
+          set -euo pipefail
+          # pins.env is plain KEY=VALUE (same load as connectors-ddl), so the
+          # server image stays pinned in exactly one committed place.
+          . src/ingestion/scripts/bootstrap-db/pins.env
+          export CLICKHOUSE_SERVER_IMAGE
+          .github/workflows/scripts/start-clickhouse.sh insight-clickhouse
+
       - name: Coverage (${{ matrix.entry.name }} -> Cobertura)
         if: ${{ matrix.entry.cover }}
         working-directory: ${{ matrix.entry.root }}
@@ -255,6 +271,9 @@ jobs:
         # isolated and never reset the DB, so parallel runs don't collide.
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/coverage"
@@ -290,6 +309,9 @@ jobs:
         working-directory: ${{ matrix.entry.root }}
         env:
           INTEGRATION_TESTS_MARIADB_URL: ${{ matrix.entry.live_db && format('mysql://insight:insight@127.0.0.1:3306/{0}', matrix.entry.live_db_name) || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_URL: ${{ matrix.entry.live_ch && 'http://127.0.0.1:8123' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_USER: ${{ matrix.entry.live_ch && 'insight' || '' }}
+          INTEGRATION_TESTS_CLICKHOUSE_PASSWORD: ${{ matrix.entry.live_ch && 'insight' || '' }}
         run: |
           set -euo pipefail
           feats=""
@@ -337,7 +359,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           # Per-connector cache key so parallel setup-uv jobs don't race to
           # reserve one shared key ("Unable to reserve cache …").

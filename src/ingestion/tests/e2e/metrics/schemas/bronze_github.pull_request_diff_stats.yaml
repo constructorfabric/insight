@@ -17,4 +17,13 @@ schemas:
       deletions: {type: integer}
       changed_files: {type: integer}
       updated_at: {type: string}
-      author_email: {type: string}
+      author_email: {type: [string, "null"]}
+      data_source: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      author_login: {type: [string, "null"]}
+      author_id: {type: [integer, "null"]}
+      merged_by_login: {type: [string, "null"]}
+      merged_by_id: {type: [integer, "null"]}
+      review_decision: {type: [string, "null"]}
+      total_comments_count: {type: [integer, "null"]}
+      is_cross_repository: {type: [boolean, "null"]}

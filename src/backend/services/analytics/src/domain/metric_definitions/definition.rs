@@ -28,6 +28,8 @@ pub enum MetricComputation {
     Sum,
     Ratio,
     Median,
+    Percentile,
+    Stddev,
     DistinctCount,
 }
 
@@ -62,6 +64,51 @@ impl EvidenceGranularity {
             "source_summary" => Some(Self::SourceSummary),
             "derived_population" => Some(Self::DerivedPopulation),
             _ => None,
+        }
+    }
+}
+
+/// How one person's several source identities combine for a measure.
+///
+/// * `Sum` — additive work: two accounts' commits are that person's commits.
+/// * `Max` — a per-day flag: two accounts active on one day is still one day.
+/// * `Min` — an inverse flag: a day is meeting-free only if every account was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AliasCollapse {
+    #[default]
+    Sum,
+    Max,
+    Min,
+}
+
+impl AliasCollapse {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Max => "max",
+            Self::Min => "min",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sum" => Some(Self::Sum),
+            "max" => Some(Self::Max),
+            "min" => Some(Self::Min),
+            _ => None,
+        }
+    }
+
+    pub fn needs_pre_collapse(self) -> bool {
+        !matches!(self, Self::Sum)
+    }
+
+    pub fn aggregate_fn(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Max => "max",
+            Self::Min => "min",
         }
     }
 }
@@ -243,6 +290,18 @@ pub enum ComputationSpec {
     Median {
         value: MetricInput,
     },
+    /// Exact q-quantile of per-event observation values — the tail the median
+    /// hides (p90 duration). Same event-grain observation shape as Median;
+    /// `q` is stored in the definition's `scale` column.
+    Percentile {
+        value: MetricInput,
+        q: f64,
+    },
+    /// Sample standard deviation of per-event observation values — the spread
+    /// around the mean. Same event-grain observation shape as Median.
+    Stddev {
+        value: MetricInput,
+    },
     /// Count of distinct `subject_key` values over the entity's observations
     /// (e.g. distinct active dates, distinct tools). The measure emits one row
     /// per subject with the subject stamped on `subject_key`; the aggregate is
@@ -284,6 +343,7 @@ pub struct MetricInput {
     pub observation: ObservationSource,
     pub source_key: String,
     pub measure_key: String,
+    pub alias_collapse: AliasCollapse,
 }
 
 impl MetricDefinition {
@@ -303,8 +363,29 @@ impl MetricDefinition {
         match &self.spec {
             ComputationSpec::Sum { value }
             | ComputationSpec::Median { value }
+            | ComputationSpec::Percentile { value, .. }
+            | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
+        }
+    }
+}
+
+impl ComputationSpec {
+    pub fn inputs(&self) -> Vec<&MetricInput> {
+        match self {
+            Self::Sum { value }
+            | Self::Median { value }
+            | Self::Percentile { value, .. }
+            | Self::Stddev { value }
+            | Self::DistinctCount { value } => {
+                vec![value]
+            }
+            Self::Ratio {
+                numerator,
+                denominator,
+                ..
+            } => vec![numerator, denominator],
         }
     }
 }
@@ -444,6 +525,8 @@ impl MetricComputation {
             Self::Sum => "sum",
             Self::Ratio => "ratio",
             Self::Median => "median",
+            Self::Percentile => "percentile",
+            Self::Stddev => "stddev",
             Self::DistinctCount => "distinct_count",
         }
     }
@@ -453,6 +536,8 @@ impl MetricComputation {
             "sum" => Some(Self::Sum),
             "ratio" => Some(Self::Ratio),
             "median" => Some(Self::Median),
+            "percentile" => Some(Self::Percentile),
+            "stddev" => Some(Self::Stddev),
             "distinct_count" => Some(Self::DistinctCount),
             _ => None,
         }
@@ -532,6 +617,8 @@ mod tests {
             MetricComputation::Sum,
             MetricComputation::Ratio,
             MetricComputation::Median,
+            MetricComputation::Percentile,
+            MetricComputation::Stddev,
             MetricComputation::DistinctCount,
         ] {
             assert_eq!(

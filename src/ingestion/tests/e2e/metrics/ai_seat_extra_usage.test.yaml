@@ -5,9 +5,9 @@ description: >
     • bronze: per-seat spend snapshot, used_credits and monthly_credit_limit ALREADY in cents
     • silver: latest snapshot per seat per calendar month, stamped period_month from
               the extraction time
-    • gold:   one evidence row per seat-month per measure, dated at the day the snapshot
-              was last read — NOT the first of the billing month, which would fall
-              outside short rolling windows.
+    • gold:   one evidence row per seat-month per measure, dated at the first day of the
+              billing month — not at the day the snapshot was read, which moves with the
+              sync schedule and drops the row out of a window ending before it.
 
   used_credits IS the money: the vendor bills it only once a seat has exhausted the
   usage included in its fee. It is NOT the excess over monthly_credit_limit, which is
@@ -93,7 +93,7 @@ cases:
         equal: { target_value: 2.5, p25: 1, median: 1.5, p75: 2, min: 0.5, max: 2.5, n: 5 }
       - metric: ai.extra_usage_cost
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 2.5))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-01' && double(p.value) == 2.5))"
       - metric: ai.extra_usage_cost
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'team_tier_1') && double(v.value) == 2.5)"
@@ -107,7 +107,7 @@ cases:
         equal: { target_value: 25.0, p25: 10.0, median: 15.0, p75: 20.0, min: 5.0, max: 25.0, n: 5 }
       - metric: ai.extra_usage_utilisation
         view: timeseries
-        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-10' && double(p.value) == 25.0))"
+        assert: "items.exists(s, s.entity_id == 'erin@example.com' && s.points.exists(p, p.bucket_start == '2026-12-01' && double(p.value) == 25.0))"
       - metric: ai.extra_usage_utilisation
         view: breakdown
         assert: "items.exists(v, v.entity_id == 'erin@example.com' && v.dimensions.exists(d, d.key == 'seat_tier' && d.value == 'team_tier_1') && double(v.value) == 25.0)"

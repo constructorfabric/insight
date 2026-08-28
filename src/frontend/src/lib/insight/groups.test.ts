@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseNavPaths } from "@/lib/portal/nav-policy";
 import {
+  KPI_ROW_COLLECTION,
   GROUPS,
   groupIdForMetricKey,
   visibleGroups,
@@ -57,9 +58,26 @@ describe("groups registry", () => {
       rankBy: "git.commits",
       includeRemainder: true,
     });
+    // The request is built from the block's `metrics`, not from its columns, so
+    // a column whose metric is missing here renders empty. Pinned as a pair per
+    // total: the comparison is per metric, not "all totals, then all splits".
+    expect(timeseries[0]?.metrics).toEqual([
+      "git.commits",
+      "git.default_branch_commits",
+      "git.prs_merged",
+      "git.default_branch_prs_merged",
+      "git.lines_added",
+      "git.lines_removed",
+      "git.default_branch_lines_added",
+      "git.default_branch_lines_removed",
+    ]);
+    // Every total is immediately followed by its default-branch reading, so a
+    // column pair reads "how much, and how much of it landed".
     expect(timeseries[0]?.table?.columns).toEqual([
       { metric: "git.commits" },
+      { metric: "git.default_branch_commits", labelSource: "short" },
       { metric: "git.prs_merged", labelSource: "short" },
+      { metric: "git.default_branch_prs_merged", labelSource: "short" },
       {
         label: "Lines",
         template: [
@@ -67,6 +85,22 @@ describe("groups registry", () => {
           { text: " / " },
           {
             metric: "git.lines_removed",
+            prefix: "−",
+            tone: "destructive",
+          },
+        ],
+      },
+      {
+        label: "Lines (default)",
+        template: [
+          {
+            metric: "git.default_branch_lines_added",
+            prefix: "+",
+            tone: "success",
+          },
+          { text: " / " },
+          {
+            metric: "git.default_branch_lines_removed",
             prefix: "−",
             tone: "destructive",
           },
@@ -146,6 +180,26 @@ describe("groups registry", () => {
       const views = byKey.get(key)?.views.map((view) => view.view);
       expect(views, key).toEqual(expect.arrayContaining(["period", "peer"]));
     }
+  });
+});
+
+describe("every collection asks for a metric key at most once", () => {
+  it("holds for every group", () => {
+    // `/v1/metric-results` refuses a request naming one key twice, and the
+    // refusal is all-or-nothing: a duplicate blanks the whole section rather
+    // than dropping one tile. A merge that appends a key another branch had
+    // already added is exactly how this slips in.
+    for (const group of GROUPS) {
+      const keys = group.collection.metrics.map((metric) => metric.key);
+      expect(new Set(keys).size, `${group.id} names a key twice: ${keys.join(", ")}`).toBe(
+        keys.length,
+      );
+    }
+  });
+
+  it("holds for the KPI row", () => {
+    const keys = KPI_ROW_COLLECTION.metrics.map((metric) => metric.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 

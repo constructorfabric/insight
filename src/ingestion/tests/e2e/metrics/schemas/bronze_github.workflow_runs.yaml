@@ -1,0 +1,41 @@
+schemas:
+  bronze_github.workflow_runs:
+    $schema: http://json-schema.org/draft-07/schema#
+    type: object
+    additionalProperties: false
+    properties:
+      _airbyte_raw_id: {type: string}
+      _airbyte_extracted_at: {type: string, format: date-time}
+      _airbyte_meta: {type: string}
+      _airbyte_generation_id: {type: integer}
+      unique_key: {type: [string, "null"]}
+      tenant_id: {type: [string, "null"]}
+      source_id: {type: [string, "null"]}
+      data_source: {type: [string, "null"]}
+      collected_at: {type: [string, "null"]}
+      id: {type: [integer, "null"]}
+      run_attempt: {type: [integer, "null"]}
+      repo_full_name: {type: [string, "null"]}
+      name: {type: [string, "null"]}
+      workflow_id: {type: [integer, "null"]}
+      event: {type: [string, "null"]}
+      status: {type: [string, "null"]}
+      conclusion: {type: [string, "null"]}
+      head_branch: {type: [string, "null"]}
+      head_sha: {type: [string, "null"]}
+      actor_login: {type: [string, "null"]}
+      actor_id: {type: [integer, "null"]}
+      triggering_actor_login: {type: [string, "null"]}
+      triggering_actor_id: {type: [integer, "null"]}
+      run_number: {type: [integer, "null"]}
+      workflow_path: {type: [string, "null"]}
+      display_title: {type: [string, "null"]}
+      check_suite_id: {type: [integer, "null"]}
+      pull_request_numbers: {type: [string, "null"]}
+      head_commit_message: {type: [string, "null"]}
+      head_commit_timestamp: {type: [string, "null"]}
+      head_commit_author_name: {type: [string, "null"]}
+      head_commit_author_email: {type: [string, "null"]}
+      run_started_at: {type: [string, "null"]}
+      created_at: {type: [string, "null"]}
+      updated_at: {type: [string, "null"]}

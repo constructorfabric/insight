@@ -1,0 +1,101 @@
+spec_version: 1
+description: >
+  Metric: git.pr_cycle_time_p75_h — PR cycle time (p75).
+  How it's computed (bronze → silver → gold):
+    • bronze: pull requests with created_at/merged_at; per-request diff stats
+      carry the author e-mail
+    • silver: one class_git_pull_requests row per request
+    • gold:   pr_cycle_hours = hours from open to merge, one event per MERGED
+      request, dated at the merge day
+    • serve:  quantileExactIf(0.75) over the period's events
+
+  alice merges five requests with cycle hours [10, 20, 30, 40, 100].
+  Expected p75 = 40: ClickHouse quantileExact picks the element at index
+  floor(level × size) of the sorted array (nth_element with n = level * size,
+  truncated to an integer; index (size - 1) only at level = 1), so
+  floor(0.75 × 5) = 3 → [10, 20, 30, 40, 100][3] = 40. A median aggregation
+  (30) fails the period equal; a mean coincides with 40 there but fails the
+  2026-10-01 timeseries bucket ([10, 20]: p75 = 20, mean = 15).
+  Team (median/range = the person's department): per-person p75 values
+  alice 40, carol 10, dave 20, erin 30, heidi 50 → median 30, range [10, 50],
+  n 5.
+  Cases: alice across views (period, peer, per-day buckets, breakdown,
+  histogram), empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+    - $ref: templates/people.yaml#/templates/heidi
+  bronze_github.pull_requests:
+    # alice's five requests all open at 2026-10-01T00:00 and merge 10, 20, 30,
+    # 40, and 100 hours later — the value lands in the merge-day bucket.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a1, id: 101, number: 101, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T10:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-a1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a2, id: 102, number: 102, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T20:00:00Z", merged_at: "2026-10-01T20:00:00Z", merge_commit_sha: merge-a2}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a3, id: 103, number: 103, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-02T06:00:00Z", merged_at: "2026-10-02T06:00:00Z", merge_commit_sha: merge-a3}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a4, id: 104, number: 104, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-02T16:00:00Z", merged_at: "2026-10-02T16:00:00Z", merge_commit_sha: merge-a4}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-a5, id: 105, number: 105, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-05T04:00:00Z", merged_at: "2026-10-05T04:00:00Z", merge_commit_sha: merge-a5}
+    # One merged request each for the rest of the department, to keep the peer
+    # pool at its five-person disclosure minimum.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-c1, id: 106, number: 106, author_login: carol, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T10:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-c1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-d1, id: 107, number: 107, author_login: dave, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T20:00:00Z", merged_at: "2026-10-01T20:00:00Z", merge_commit_sha: merge-d1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-e1, id: 108, number: 108, author_login: erin, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-02T06:00:00Z", merged_at: "2026-10-02T06:00:00Z", merge_commit_sha: merge-e1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-h1, id: 109, number: 109, author_login: heidi, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-03T02:00:00Z", merged_at: "2026-10-03T02:00:00Z", merge_commit_sha: merge-h1}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a1, pull_number: 101, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a2, pull_number: 102, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a3, pull_number: 103, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a4, pull_number: 104, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-a5, pull_number: 105, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-c1, pull_number: 106, additions: 10, author_email: carol@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-d1, pull_number: 107, additions: 10, author_email: dave@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-e1, pull_number: 108, additions: 10, author_email: erin@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-h1, pull_number: 109, additions: 10, author_email: heidi@example.com}
+
+cases:
+  - name: Slow-end cycle time across views
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-06"}
+        metrics:
+          - metric_key: git.pr_cycle_time_p75_h
+            views:
+              - {view: period}
+              - {view: peer}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [source]}
+              - {view: histogram}
+    expect:
+      - assert: "status == 200"
+      # quantileExact(0.75) of [10, 20, 30, 40, 100]: index floor(0.75 × 5) = 3
+      # → 40 (see the description). The median (30) would fail here.
+      - {metric: git.pr_cycle_time_p75_h, view: period, find: {entity_id: alice@example.com}, equal: {value: 40}}
+      - {metric: git.pr_cycle_time_p75_h, view: peer, find: {entity_id: alice@example.com}, equal: {target_value: 40, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}}
+      # Per-day p75 over that day's merges: 2026-10-01 holds [10, 20] →
+      # index floor(0.75 × 2) = 1 → 20; 2026-10-05 holds [100] alone.
+      - {metric: git.pr_cycle_time_p75_h, view: timeseries, find: {entity_id: alice@example.com}, contains: {points: {bucket_start: "2026-10-01", value: 20}}}
+      - {metric: git.pr_cycle_time_p75_h, view: timeseries, find: {entity_id: alice@example.com}, contains: {points: {bucket_start: "2026-10-05", value: 100}}}
+      - {metric: git.pr_cycle_time_p75_h, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: source, value: github}}, equal: {value: 40}}
+      - {metric: git.pr_cycle_time_p75_h, view: histogram, find: {entity_id: alice@example.com}, nonempty: [bins]}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - metric_key: git.pr_cycle_time_p75_h
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.pr_cycle_time_p75_h, view: period, find: {entity_id: alice@example.com}, equal: {value: null}}

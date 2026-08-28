@@ -17,10 +17,9 @@ stand) reads that ledger back and answers two questions:
      precisely the mistake this gate exists to prevent.
   2. Did every status code the analytics CONTRACT declares get observed?
 
-Only analytics is gated on its spec. That was once because the committed
-identity document was the retired .NET contract; it no longer is — identity
-emits its own document and CI drift-gates it beside analytics. What still blocks
-(2) for identity is the other side of the comparison: every status code the
+Only analytics is gated on its spec, though identity emits its own document
+and CI drift-gates it beside analytics. What blocks (2) for identity is the
+other side of the comparison: every status code the
 document declares has to be OBSERVED, and `.standard_errors` stamps the full
 error set onto every operation. Identity stays held to (1) until the suite
 either observes those codes or the gate learns to discount the stamped ones
@@ -147,6 +146,14 @@ BLOCKED: dict[str, frozenset[int]] = {
     # `test_usage.py` covers them rather than blocking them.
     "GET /v1/usage/config": frozenset({400, 403, 404, 409}),
     "GET /v1/usage/summary": frozenset({404, 409}),
+    # Connector health. Neither read addresses a row — an unknown connector is
+    # an empty window, not a not-found — so neither has a 404 or a conflict
+    # path. The summary subtracts 400 as well: it takes no input at all, so
+    # there is nothing about the request to reject. The per-connector window
+    # does have a 400 (a name its parser refuses) and both have a 403, and
+    # `test_connector_health.py` covers those rather than blocking them.
+    "GET /v1/connector-health": frozenset({400, 404, 409}),
+    "GET /v1/connector-health/{connector}/syncs": frozenset({404, 409}),
 }
 
 

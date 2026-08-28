@@ -89,6 +89,18 @@ path = "docs/components/backend/analytics/specs/ai-cost/DECOMPOSITION.md"
 name = "AI Development Cost Decomposition"
 traceability = "DOCS-ONLY"
 
+[[systems.artifacts]]
+kind = "PRD"
+path = "docs/components/backend/analytics/specs/connector-health/PRD.md"
+name = "Connector Health PRD"
+traceability = "DOCS-ONLY"
+
+[[systems.artifacts]]
+kind = "DESIGN"
+path = "docs/components/backend/analytics/specs/connector-health/DESIGN.md"
+name = "Connector Health Design"
+traceability = "DOCS-ONLY"
+
 [[systems]]
 name = "Identity Service"
 slug = "identity-svc"

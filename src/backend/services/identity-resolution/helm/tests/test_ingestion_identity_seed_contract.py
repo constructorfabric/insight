@@ -65,7 +65,7 @@ def _seed_step_image(docs: list[dict]) -> str:
 
 def _identity_deployment_image(docs: list[dict]) -> str:
     deployment = _named(docs, "Deployment", "-identity-resolution")
-    # `migrate` is an initContainer, so the app container is the only one here.
+    # `migrate` runs as a hook Job, so the app container is the only one here.
     (container,) = deployment["spec"]["template"]["spec"]["containers"]
     return container["image"]
 

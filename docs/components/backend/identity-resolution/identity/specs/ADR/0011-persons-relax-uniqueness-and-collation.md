@@ -86,7 +86,7 @@ fix.
 - Existing indexes on `value_id` are covered (`idx_value_id`); any
   case-insensitive solution must not break the covered-index property.
 - The fix must be applicable to existing dev and prod clusters via a
-  DbUp migration — no manual operator step.
+  migration — no manual operator step.
 
 ## Considered Options
 
@@ -138,7 +138,7 @@ comparison semantics change.
 ### Consequences
 
 - **Phase 1.5 person_parent_map**: the two `[Fact(Skip = ...)]` tests
-  in `Insight.Identity.Tests.Integration/ActiveIntervalsTests.cs`
+  in the active-intervals integration tests
   (added in PR #477) can drop the `Skip` attribute. The SCD2
   active-intervals CTE already handles re-activation correctly; the
   only blocker was Defect A. A follow-up commit on the
@@ -173,7 +173,7 @@ comparison semantics change.
 ### Confirmation
 
 Confirmed by integration tests in
-`Insight.Identity.Tests.Integration/PersonsSchemaTests.cs`:
+the persons-schema integration tests:
 
 - `Persons_allows_state_transition_with_same_value_at_different_created_at`
   — INSERT Active(T0), Inactive(T2), Active(T3) all succeed; persons

@@ -26,6 +26,7 @@ import {
   type ReportPerson,
 } from "@/lib/identities/report-person";
 import type { MetricResult } from "@/api/metric-results-client";
+import { buildMetricErrorView } from "@/mocks/metric-results-factory";
 
 const months = (...pairs: Array<[string, number | null]>) =>
   pairs.map(([bucket_start, value]) => ({ bucket_start, value }));
@@ -237,6 +238,28 @@ describe("buildReportTable", () => {
     ]);
   });
 
+  it("keeps the report when a metric answers only an error view", () => {
+    // A failed computation arrives as an error view in the timeseries slot;
+    // the metric keeps its column with empty cells instead of dropping the
+    // report.
+    const errored = {
+      metric_key: "git.commits",
+      label: "Commits",
+      computation: "sum",
+      views: [buildMetricErrorView()],
+    } as unknown as MetricResult;
+    const table = buildReportTable({
+      people: [person()],
+      metrics: [{ metric_key: "git.commits", label: "Commits" }],
+      results: new Map([["git.commits", errored]]),
+      range: { from: "2026-01-01", to: "2026-03-31" },
+      granularity: "quarter",
+    });
+    expect(table.columns).toContain("Commits");
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0]?.at(-1)).toBeNull();
+  });
+
   it("reads a weekly value into the week the server bucketed it by", () => {
     const table = buildReportTable({
       people: [person()],
@@ -371,6 +394,143 @@ describe("buildReportTable", () => {
   });
 });
 
+
+function dimensionedResult(
+  metricKey: string,
+  entries: Array<{
+    entityId: string;
+    value: string;
+    label?: string;
+    points: Array<[string, number | null]>;
+  }>,
+): MetricResult {
+  return {
+    metric_key: metricKey,
+    label: metricKey,
+    computation: "sum",
+    views: [
+      {
+        view: "timeseries",
+        bucket: "month",
+        series: entries.map((entry) => ({
+          entity_id: entry.entityId,
+          dimensions: [
+            { key: "repository", value: entry.value, label: entry.label },
+          ],
+          points: months(...entry.points),
+        })),
+      },
+    ],
+  } as unknown as MetricResult;
+}
+
+describe("buildReportTable — repository rows", () => {
+  const input = {
+    people: [person()],
+    metrics: [{ metric_key: "git.commits", label: "Commits" }],
+    range: { from: "2026-01-01", to: "2026-02-28" },
+    granularity: "month" as const,
+    rows: "repositories" as const,
+  };
+
+  it("adds every person's work into the repository's own row", () => {
+    const table = buildReportTable({
+      ...input,
+      results: new Map([
+        [
+          "git.commits",
+          dimensionedResult("git.commits", [
+            {
+              entityId: "p1",
+              value: "src:acme/api",
+              label: "acme/api",
+              points: [["2026-01-01", 4]],
+            },
+            {
+              entityId: "p2",
+              value: "src:acme/api",
+              label: "acme/api",
+              points: [["2026-01-01", 6]],
+            },
+          ]),
+        ],
+      ]),
+    });
+
+    expect(table.columns).toEqual([
+      "Repository",
+      "Period",
+      "From",
+      "To",
+      "Commits",
+    ]);
+    // 4 + 6: the row is the repository's, not either person's.
+    expect(table.rows[0]?.[0]).toBe("acme/api");
+    expect(table.rows[0]?.[4]).toBe(10);
+    // A bucket nobody worked in stays empty rather than reading as zero work.
+    expect(table.rows[1]?.[4]).toBeNull();
+  });
+
+  it("names a repository by its label and orders rows by it", () => {
+    const table = buildReportTable({
+      ...input,
+      results: new Map([
+        [
+          "git.commits",
+          dimensionedResult("git.commits", [
+            {
+              entityId: "p1",
+              value: "src:acme/web",
+              label: "acme/web",
+              points: [["2026-01-01", 1]],
+            },
+            {
+              entityId: "p1",
+              value: "src:acme/api",
+              label: "acme/api",
+              points: [["2026-01-01", 1]],
+            },
+          ]),
+        ],
+      ]),
+    });
+
+    expect(table.rows.map((row) => row[0])).toEqual([
+      "acme/api",
+      "acme/api",
+      "acme/web",
+      "acme/web",
+    ]);
+  });
+
+  it("falls back to the dimension value when the response labelled nothing", () => {
+    const table = buildReportTable({
+      ...input,
+      results: new Map([
+        [
+          "git.commits",
+          dimensionedResult("git.commits", [
+            { entityId: "p1", value: "src:acme/api", points: [["2026-01-01", 2]] },
+          ]),
+        ],
+      ]),
+    });
+
+    expect(table.rows[0]?.[0]).toBe("src:acme/api");
+  });
+
+  it("ignores an ungrouped series — it belongs to the people shape", () => {
+    const table = buildReportTable({
+      ...input,
+      results: new Map([
+        ["git.commits", seriesResult("git.commits", "p1", [["2026-01-01", 9]])],
+      ]),
+    });
+
+    expect(table.rows).toEqual([]);
+  });
+});
+
 describe("byFamily", () => {
   it("groups by the key's family, in the order a reader meets them", () => {
     const grouped = byFamily([
@@ -464,6 +624,21 @@ describe("unavailableReason", () => {
     for (const g of ["day", "week", "month", "quarter", "year"] as const) {
       expect(unavailableReason(enabled, g, sums)).toBeNull();
     }
+  });
+
+  it("refuses a non-additive metric in repository rows at any granularity", () => {
+    const medians = new Map([["git.commits", "median" as const]]);
+    for (const g of ["day", "week", "month"] as const) {
+      expect(unavailableReason(enabled, g, medians, "repositories")).toMatch(
+        /cannot be totalled per repository/,
+      );
+      // The same metric is fine per person at a bucket the server computed.
+      expect(unavailableReason(enabled, g, medians, "people")).toBeNull();
+    }
+  });
+
+  it("lets a sum through in repository rows", () => {
+    expect(unavailableReason(enabled, "day", sums, "repositories")).toBeNull();
   });
 
   it("names a broken metric before anything else", () => {
@@ -590,6 +765,31 @@ describe("bucketsInRange", () => {
     expect(bucketsInRange("2026-08-16", "2026-08-17", "week")).toEqual([
       "2026-08-10",
       "2026-08-17",
+    ]);
+  });
+
+  it("keys a week the same way whatever weekday the period starts on", () => {
+    for (const from of [
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-08",
+      "2026-08-09",
+    ]) {
+      expect(bucketsInRange(from, "2026-08-23", "week"), from).toEqual([
+        "2026-08-03",
+        "2026-08-10",
+        "2026-08-17",
+      ]);
+    }
+  });
+
+  it("keys a week that crosses a year boundary to its own Monday", () => {
+    expect(bucketsInRange("2026-12-30", "2027-01-10", "week")).toEqual([
+      "2026-12-28",
+      "2027-01-04",
     ]);
   });
 

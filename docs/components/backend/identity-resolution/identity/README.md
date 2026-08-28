@@ -2,13 +2,12 @@
 
 Person-lookup API over MariaDB `persons`, served by the Rust
 `identity-resolution` service (`src/backend/services/identity-resolution/`).
-Read-only consumer of the observation log written by
-[seed-persons-from-identity-input.py](../../../../../src/backend/services/identity-resolution/seed/seed-persons-from-identity-input.py)
-and the (forthcoming) reconciliation service.
+Read-only consumer of the observation log written by the persons-seed
+(the service's own `seed` subcommand) and the (forthcoming)
+reconciliation service.
 
-The specs below were authored for the original .NET implementation and
-carried over by the Rust port (epic #1602); the API contract they define
-is the one the Rust service serves (minus the deprecated legacy lookup,
+The specs below define the API contract the service serves (minus the
+deprecated legacy lookup,
 see below).
 
 | Spec | Path |
@@ -39,7 +38,7 @@ ClickHouse coordinates for the persons-seed reader, and — when set —
 
 | Endpoint | Description |
 |---|---|
-| `POST /v1/profiles` | Profile lookup by `value_type`: `email` (tenant-wide), `id` (source-native account id, needs both source fields), or `person_id` (the canonical UUID — the key the metrics runtime and the SPA routes use since the identity cutover). Body-form replacement for the retired path-form `GET /v1/persons/{email}` (dropped with the .NET decommission — zero callers). |
+| `POST /v1/profiles` | Profile lookup by `value_type`: `email` (tenant-wide), `id` (source-native account id, needs both source fields), or `person_id` (the canonical UUID — the key the metrics runtime and the SPA routes use since the identity cutover). Body-form replacement for the retired path-form `GET /v1/persons/{email}` (removed — zero callers). |
 | `POST /v1/visible-persons` | Filters a list of canonical person ids (UUIDs) to the ones the caller may see. Authenticated, not admin-gated — the caller comes from the gateway JWT, so the answer is always their own visible set (ADR-0015). |
 | `GET /health` | DB ping. 200 / 503. |
 | `GET /healthz` | Process liveness. 200 `text/plain "ok"`. |

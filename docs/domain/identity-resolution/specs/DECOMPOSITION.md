@@ -46,16 +46,15 @@ The Identity Resolution DESIGN is decomposed into four features. Features 1–2 
 
 - [ ] `p1` - **ID**: `cpt-ir-feature-initial-seed`
 
-- **Purpose**: Establish the `persons` observation journal as the source of truth for the account-to-person binding (stable random `person_id`, ADR-0002), its derived `account_person_map` cache, and the two read paths every consumer uses: the identity-resolution service read API (request-time person lookups) and the analytics mirror + `resolve_person_id` macro (build-time resolution for gold).
+- **Purpose**: Establish the `persons` observation journal as the source of truth for the account-to-person binding (stable random `person_id`, ADR-0002) and the two read paths every consumer uses: the identity-resolution service read API (request-time person lookups) and the analytics mirror + `resolve_person_id` macro (build-time resolution for gold).
 
 - **Depends On**: None
 
 - **Scope**:
-  - `persons` journal and `account_person_map` in MariaDB, schema owned by the service (SeaORM migrations, ADR-0006)
+  - `persons` journal and `org_chart` in MariaDB, schema owned by the service (SeaORM migrations, ADR-0006)
   - Service read API: person profile and visibility lookups over the journal (component spec)
   - Analytics read path: `identity.identity_persons` mirror + build-time resolution through the resolve macro
   - Tenant isolation on all queries (see the known gap on the evidence read path in the PRD)
-  - Legacy: dbt seed models still populate the ClickHouse `aliases` table; it is not consumed by resolution and is retained until retirement (DESIGN §3.7)
 
 - **Out of scope**:
   - `identity_inputs` evidence contract and the seed fold (Feature 2)
@@ -86,7 +85,6 @@ The Identity Resolution DESIGN is decomposed into four features. Features 1–2 
   - [ ] `p2` - `cpt-insightspec-ir-constraint-half-open-intervals`
 
 - **Domain Model Entities**:
-  - `aliases` (create — legacy seed target, see DESIGN §3.7)
   - `persons` (journal — seeded by this domain per ADR-0002)
 
 - **Design Components**:
@@ -103,9 +101,7 @@ The Identity Resolution DESIGN is decomposed into four features. Features 1–2 
 - **Data**:
 
   - [ ] `p3` - `cpt-insightspec-ir-db-schemas`
-  - `cpt-insightspec-ir-dbtable-aliases` (legacy — not consumed by resolution)
   - `cpt-insightspec-ir-dbtable-persons-mariadb`
-  - `cpt-insightspec-ir-dbtable-account-person-map`
 
 - **Interfaces**:
 
@@ -296,7 +292,6 @@ The Identity Resolution DESIGN is decomposed into four features. Features 1–2 
 - **Domain Model Entities**:
   - `persons` (append operator corrections)
   - `operations` (journal operator calls)
-  - `account_person_map` (rebuild after corrections)
 
 - **Design Components**:
 
@@ -354,10 +349,8 @@ cpt-ir-feature-manual-resolution
 | `cpt-insightspec-ir-component-persons-sync` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-component-matching-engine` | Feature 3 (matching-engine) |
 | `cpt-insightspec-ir-component-operator-resolution-api` | Feature 4 (manual-resolution) |
-| `cpt-insightspec-ir-dbtable-aliases` | Feature 1 (initial-seed, legacy) |
 | `cpt-insightspec-ir-dbtable-identity-inputs` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-dbtable-persons-mariadb` | Feature 1 (initial-seed) |
-| `cpt-insightspec-ir-dbtable-account-person-map` | Feature 1 (initial-seed) |
 | `cpt-insightspec-ir-seq-build-resolution` | Feature 1 (initial-seed) |
 | `cpt-insightspec-ir-seq-seed-run` | Feature 2 (bootstrap-pipeline) |
 | `cpt-insightspec-ir-seq-operator-correction` | Feature 4 (manual-resolution) |

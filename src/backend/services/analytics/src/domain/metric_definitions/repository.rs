@@ -6,11 +6,13 @@ use uuid::Uuid;
 
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, SchemaStatus};
+use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 
 use crate::domain::metric_definitions::definition::{
-    ComputationSpec, CustomObservationSql, MetricBase, MetricComputation, MetricDefinition,
-    MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
-    ObservationSource, RatioDenominatorAggregation, SourceKind, ValueTransform,
+    AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricComputation,
+    MetricDefinition, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+    ObservationRelation, ObservationSource, RatioDenominatorAggregation, SourceKind,
+    ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -43,6 +45,7 @@ struct InputRow {
     metric_definition_id: Uuid,
     input_role: String,
     measure_key: String,
+    measure_alias_collapse: String,
     measure_enabled: bool,
     measure_schema_status: String,
     source_key: String,
@@ -238,7 +241,7 @@ async fn fetch_definition_rows(
     );
 
     let mut values = metric_keys.iter().map(Value::from).collect::<Vec<_>>();
-    values.push(Value::Bytes(Some(Box::new(tenant_id.as_bytes().to_vec()))));
+    values.push(Value::Bytes(Some(tenant_id.as_bytes().to_vec())));
 
     DefinitionRow::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
@@ -263,6 +266,7 @@ async fn fetch_input_rows(
             i.metric_definition_id AS metric_definition_id, \
             i.input_role AS input_role, \
             m.measure_key AS measure_key, \
+            m.alias_collapse AS measure_alias_collapse, \
             m.is_enabled AS measure_enabled, \
             m.schema_status AS measure_schema_status, \
             s.source_key AS source_key, \
@@ -279,7 +283,7 @@ async fn fetch_input_rows(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     InputRow::find_by_statement(Statement::from_sql_and_values(
@@ -334,6 +338,16 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             continue;
         }
 
+        let Some(alias_collapse) = AliasCollapse::from_db(&row.measure_alias_collapse) else {
+            tracing::error!(
+                measure_key = %row.measure_key,
+                alias_collapse = %row.measure_alias_collapse,
+                "corrupt metric definition input"
+            );
+            *entry = ClassifiedInputs::Corrupt;
+            continue;
+        };
+
         if !row.measure_enabled
             || !row.source_enabled
             || schema_status_blocks(&row.measure_schema_status)
@@ -349,6 +363,7 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
                 observation,
                 source_key: row.source_key,
                 measure_key: row.measure_key,
+                alias_collapse,
             });
         }
     }
@@ -434,7 +449,7 @@ pub(super) async fn fetch_dimensions(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     DimensionRow::find_by_statement(Statement::from_sql_and_values(
@@ -474,7 +489,7 @@ pub(super) async fn fetch_tags(
     );
     let values = definition_ids
         .iter()
-        .map(|id| Value::Bytes(Some(Box::new(id.as_bytes().to_vec()))))
+        .map(|id| Value::Bytes(Some(id.as_bytes().to_vec())))
         .collect::<Vec<_>>();
 
     TagRow::find_by_statement(Statement::from_sql_and_values(
@@ -543,6 +558,27 @@ fn build_definition(
             }
         }
         MetricComputation::Median => ComputationSpec::Median {
+            value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+        },
+        MetricComputation::Percentile => {
+            // The `scale` column doubles as the quantile for percentile
+            // metrics (see SeedComputation::scale); the CHECK constraint
+            // pairs it with the computation type.
+            let q = row.scale.ok_or_else(|| {
+                config_error(&format!("missing percentile q for {}", row.metric_key))
+            })?;
+            if !(0.0..=1.0).contains(&q) {
+                return Err(config_error(&format!(
+                    "percentile q must be within [0, 1] for {}",
+                    row.metric_key
+                )));
+            }
+            ComputationSpec::Percentile {
+                value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
+                q,
+            }
+        }
+        MetricComputation::Stddev => ComputationSpec::Stddev {
             value: one_input(&row.metric_key, inputs, MetricInputRole::Value)?,
         },
         MetricComputation::DistinctCount => ComputationSpec::DistinctCount {
@@ -634,19 +670,31 @@ pub async fn all_managed_sources(
     .await
 }
 
-pub async fn source_evidence_granularities(
+/// What a measure claims its evidence rows look like: the granularity they
+/// carry, and the declaration of the columns the drilldown projects out of
+/// them. A declaration that does not parse survives as
+/// [`StoredPresentation::Unreadable`] rather than being dropped — the validator
+/// reports it, so the loader must not hide it.
+pub struct SourceMeasureEvidence {
+    pub measure_key: String,
+    pub evidence_granularity: Option<String>,
+    pub presentation: StoredPresentation,
+}
+
+pub async fn source_evidence_contracts(
     db: &DatabaseConnection,
     source_id: Uuid,
-) -> Result<Vec<(String, Option<String>)>, sea_orm::DbErr> {
+) -> Result<Vec<SourceMeasureEvidence>, sea_orm::DbErr> {
     #[derive(FromQueryResult)]
     struct Row {
         measure_key: String,
         evidence_granularity: Option<String>,
+        evidence_presentation: Option<String>,
     }
 
     Row::find_by_statement(Statement::from_sql_and_values(
         db.get_database_backend(),
-        "SELECT measure_key, evidence_granularity \
+        "SELECT measure_key, evidence_granularity, evidence_presentation \
          FROM metric_source_measures \
          WHERE source_id = ? AND is_enabled = TRUE \
          ORDER BY measure_key",
@@ -656,7 +704,11 @@ pub async fn source_evidence_granularities(
     .await
     .map(|rows| {
         rows.into_iter()
-            .map(|row| (row.measure_key, row.evidence_granularity))
+            .map(|row| SourceMeasureEvidence {
+                measure_key: row.measure_key,
+                evidence_granularity: row.evidence_granularity,
+                presentation: StoredPresentation::read(row.evidence_presentation.as_deref()),
+            })
             .collect()
     })
 }
@@ -672,7 +724,7 @@ pub async fn update_evidence_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET evidence_schema_status = ?, \
@@ -709,7 +761,7 @@ pub async fn update_source_status(
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
     let result = db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "UPDATE metric_sources \
          SET schema_status = ?, \
@@ -744,7 +796,7 @@ pub async fn update_definitions_for_source_status(
     status: SchemaStatus,
     error_code: Option<MetricSchemaErrorCode>,
 ) -> Result<(), sea_orm::DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -763,7 +815,7 @@ pub async fn update_definitions_for_source_status(
                 Some(code) => Value::from(code.as_db()),
                 None => Value::String(None),
             },
-            Value::Bytes(Some(Box::new(source_id.as_bytes().to_vec()))),
+            Value::Bytes(Some(source_id.as_bytes().to_vec())),
         ],
     ))
     .await?;
@@ -785,7 +837,7 @@ pub async fn update_definition_status(
         Some(date) => Value::from(date.to_string()),
         None => Value::String(None),
     };
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE metric_definitions \
          SET schema_status = ?, \
@@ -814,7 +866,7 @@ pub async fn update_definition_status(
 }
 
 fn uuid_value(value: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(value.as_bytes().to_vec())))
+    Value::Bytes(Some(value.as_bytes().to_vec()))
 }
 
 fn unavailable(metric_key: &str) -> CanonicalError {
@@ -877,6 +929,7 @@ mod tests {
             metric_definition_id: definition_id,
             input_role: role.to_owned(),
             measure_key: "accepted_lines".to_owned(),
+            measure_alias_collapse: "sum".to_owned(),
             measure_enabled: enabled,
             measure_schema_status: status.to_owned(),
             source_key: "ai_usage".to_owned(),
@@ -1131,10 +1184,58 @@ mod tests {
             ),
             source_key: "ai_usage".to_owned(),
             measure_key: "accepted_lines".to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         };
         assert!(one_input("ai.x", &[], MetricInputRole::Value).is_err());
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
         assert!(one_input("ai.x", &[input.clone(), input], MetricInputRole::Value).is_err());
+    }
+
+    #[test]
+    fn percentile_and_stddev_specs_build_from_the_scale_slot() {
+        let value = MetricInput {
+            role: MetricInputRole::Value,
+            observation: ObservationSource::Managed(
+                ObservationRelation::parse("ci_metric_observations")
+                    .unwrap_or_else(|| panic!("fixture relation must parse")),
+            ),
+            source_key: "ci".to_owned(),
+            measure_key: "run_duration_min".to_owned(),
+            alias_collapse: AliasCollapse::Sum,
+        };
+
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        row.scale = Some(0.9);
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a percentile row with q builds"));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
+        match built.spec {
+            ComputationSpec::Percentile { q, .. } => {
+                assert!((q - 0.9).abs() < f64::EPSILON);
+            }
+            other => panic!("expected a percentile spec, got {other:?}"),
+        }
+
+        // The quantile is mandatory and must be a probability.
+        let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");
+        row.computation_type = "percentile".to_owned();
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+        row.scale = Some(1.5);
+        assert!(build_definition(&row, std::slice::from_ref(&value), vec![]).is_err());
+
+        let mut row = definition_row("ci.run_duration_min_stddev", None, true, "ok");
+        row.computation_type = "stddev".to_owned();
+        let built = build_definition(&row, std::slice::from_ref(&value), vec![])
+            .unwrap_or_else(|_| panic!("a stddev row builds"));
+        assert!(matches!(built.spec, ComputationSpec::Stddev { .. }));
+        assert_eq!(
+            built.observation_source().render_from_clause(),
+            "insight.ci_metric_observations"
+        );
     }
 
     #[test]

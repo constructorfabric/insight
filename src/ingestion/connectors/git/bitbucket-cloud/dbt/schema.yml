@@ -104,3 +104,6 @@ models:
 
   - name: bitbucket_cloud__pull_requests_commits
     description: "Bitbucket Cloud PR commits -> staging, feeds class_git_pull_requests_commits"
+
+  - name: bitbucket_cloud__pr_review_events
+    description: "Bitbucket Cloud review verdicts (from activity) and PR comments as one event stream -> staging, feeds class_git_pr_review_events"

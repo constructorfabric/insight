@@ -223,7 +223,10 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
     `prev_value_id` Nullable(String),
     `new_value_id` Nullable(String),
     `prev_options_json` Nullable(String),
-    `new_options_json` Nullable(String)
+    `new_options_json` Nullable(String),
+    `project_id` Nullable(String),
+    `project_number` Nullable(Int64),
+    `was_automated` Nullable(Bool)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
@@ -290,6 +293,67 @@ CREATE TABLE IF NOT EXISTS bronze_github.issues
     `updated_at` Nullable(String),
     `closed_at` Nullable(String),
     `issue_field_values_json` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_github.project_fields
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `snapshot_date` Nullable(String),
+    `project_id` Nullable(String),
+    `project_number` Nullable(Int64),
+    `field_id` Nullable(String),
+    `field_database_id` Nullable(String),
+    `field_name` Nullable(String),
+    `data_type` Nullable(String),
+    `is_multi` Nullable(Bool),
+    `is_mirror` Nullable(Bool),
+    `is_issue_field` Nullable(Bool),
+    `options_json` Nullable(String),
+    `configuration_json` Nullable(String),
+    `field_updated_at` Nullable(String)
+)
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS bronze_github.project_items
+(
+    `_airbyte_raw_id` String,
+    `_airbyte_extracted_at` DateTime64(3),
+    `_airbyte_meta` String,
+    `_airbyte_generation_id` UInt32,
+    `unique_key` Nullable(String),
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `data_source` Nullable(String),
+    `collected_at` Nullable(String),
+    `project_id` Nullable(String),
+    `project_number` Nullable(Int64),
+    `item_id` Nullable(String),
+    `item_database_id` Nullable(String),
+    `item_type` Nullable(String),
+    `content_type` Nullable(String),
+    `content_number` Nullable(Int64),
+    `content_repo_full_name` Nullable(String),
+    `is_archived` Nullable(Bool),
+    `creator_login` Nullable(String),
+    `creator_id` Nullable(Int64),
+    `created_at` Nullable(String),
+    `updated_at` Nullable(String),
+    `field_values_json` Nullable(String)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

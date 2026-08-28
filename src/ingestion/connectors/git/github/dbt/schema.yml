@@ -23,6 +23,8 @@ sources:
       - name: issues
       - name: projects_v2
       - name: issue_fields
+      - name: project_fields
+      - name: project_items
       - name: issue_types
       - name: workflow_runs
       - name: deployments
@@ -40,6 +42,16 @@ models:
 
   - name: github__repositories
     description: "GitHub repositories -> staging, feeds class_git_repositories"
+
+  - name: github__ci_runs
+    description: "GitHub Actions workflow runs -> staging, feeds class_git_ci_runs (one row per run attempt; gate + duration semantics live here)"
+
+  - name: github__deployments
+    description: "GitHub deployments -> staging, feeds class_git_deployments (no outcome — that is the events class)"
+
+  - name: github__deployment_events
+    description: "GitHub deployment statuses -> staging, feeds class_git_deployment_events"
+
 
   - name: github__repository_branches
     description: "GitHub branches -> staging, feeds class_git_repository_branches"
@@ -61,6 +73,9 @@ models:
 
   - name: github__pull_requests_commits
     description: "GitHub PR commits -> staging, feeds class_git_pull_requests_commits"
+
+  - name: github__pr_review_events
+    description: "GitHub review verdicts and PR comments as one event stream -> staging, feeds class_git_pr_review_events"
 
   - name: github__account_emails
     description: "Every (GitHub account, e-mail) pair the connector observed, one row per pair"

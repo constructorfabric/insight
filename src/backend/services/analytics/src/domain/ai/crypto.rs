@@ -4,8 +4,8 @@
 //! and person, so a ciphertext lifted into another person's row fails to open
 //! rather than handing that person someone else's key.
 
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
+use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, Generate, KeyInit, Nonce, Payload};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -31,8 +31,9 @@ pub fn seal(
     person: Uuid,
     token: &str,
 ) -> anyhow::Result<Sealed> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let cipher = Aes256Gcm::new(key.into());
+    let nonce = Nonce::<Aes256Gcm>::try_generate()
+        .map_err(|_| anyhow::anyhow!("failed to draw a nonce"))?;
 
     let aad = associated_data(tenant, person);
     let ciphertext = cipher
@@ -63,19 +64,19 @@ pub fn open(
     person: Uuid,
     sealed: &Sealed,
 ) -> anyhow::Result<Zeroizing<String>> {
-    if sealed.nonce.len() != NONCE_BYTES {
-        anyhow::bail!(
+    let nonce = Nonce::<Aes256Gcm>::try_from(sealed.nonce.as_slice()).map_err(|_| {
+        anyhow::anyhow!(
             "stored nonce is {} bytes, expected {NONCE_BYTES}",
             sealed.nonce.len()
-        );
-    }
+        )
+    })?;
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let cipher = Aes256Gcm::new(key.into());
     let aad = associated_data(tenant, person);
 
     let plaintext = cipher
         .decrypt(
-            Nonce::from_slice(&sealed.nonce),
+            &nonce,
             Payload {
                 msg: &sealed.ciphertext,
                 aad: &aad,

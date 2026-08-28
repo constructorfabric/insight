@@ -1,0 +1,16 @@
+{
+  "id": "ari:cloud:compass:11111111-2222-3333-4444-555555555555:scorecard/aaaaaaaa-0000-0000-0000-000000000000/s1",
+  "name": "Component Readiness",
+  "description": "Baseline catalog hygiene.",
+  "state": "PUBLISHED",
+  "importance": "REQUIRED",
+  "changeMetadata": {
+    "createdAt": "2025-11-10T16:39:15.852Z",
+    "lastUserModificationAt": "2026-01-04T09:12:00.000Z"
+  },
+  "criterias": [
+    {"__typename": "CompassHasOwnerScorecardCriteria", "id": "cr1", "weight": 34, "name": null},
+    {"__typename": "CompassHasLinkScorecardCriteria", "id": "cr2", "weight": 33, "name": null, "linkType": "REPOSITORY"},
+    {"__typename": "CompassHasDescriptionScorecardCriteria", "id": "cr3", "weight": 33, "name": null}
+  ]
+}

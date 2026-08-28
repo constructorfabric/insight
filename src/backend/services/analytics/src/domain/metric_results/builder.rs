@@ -2,13 +2,14 @@ use std::collections::{BTreeMap, HashMap};
 
 use toolkit_canonical_errors::CanonicalError;
 
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
 use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
-    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, RankingQueryRow,
-    RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE,
-    dimension_aliases,
+    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, PooledHistogramQueryRow,
+    RankingQueryRow, RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL,
+    UNKNOWN_DIMENSION_VALUE, dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
@@ -119,7 +120,12 @@ pub fn build_timeseries_view(
                 entity_id,
                 dimensions: dims
                     .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .map(|(key, value, label)| MetricDimensionDto {
+                        key,
+                        value,
+                        label,
+                        href: None,
+                    })
                     .collect(),
                 total: data.total,
                 rank: data.rank,
@@ -185,16 +191,33 @@ pub fn build_breakdown_view(
     req: &ValidatedMetricResultsRequest,
     dimensions: &[String],
     rows: Vec<BreakdownQueryRow>,
+    external_links: &ExternalSourceRegistry,
 ) -> Result<MetricResultViewDto, CanonicalError> {
     let values = rows
         .into_iter()
         .map(|row| {
+            let mut dimensions = row_dimensions(&row.extra, dimensions)?
+                .into_iter()
+                .map(|(key, value, label)| MetricDimensionDto {
+                    key,
+                    value,
+                    label,
+                    href: None,
+                })
+                .collect::<Vec<_>>();
+            if let Some(repository) = dimensions
+                .iter_mut()
+                .find(|dimension| dimension.key == "repository")
+            {
+                repository.href = external_links.repository_href(
+                    row.source_provider.as_deref(),
+                    row.source_id.as_deref(),
+                    repository.label.as_deref(),
+                );
+            }
             Ok(BreakdownValueDto {
                 entity_id: req.entity.canonicalize_entity_id(row.entity_id),
-                dimensions: row_dimensions(&row.extra, dimensions)?
-                    .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
-                    .collect(),
+                dimensions,
                 value: row.value,
             })
         })
@@ -218,7 +241,12 @@ pub fn build_rollup_view(
             } else {
                 row_dimensions(&row.extra, dimensions)?
                     .into_iter()
-                    .map(|(key, value, label)| MetricDimensionDto { key, value, label })
+                    .map(|(key, value, label)| MetricDimensionDto {
+                        key,
+                        value,
+                        label,
+                        href: None,
+                    })
                     .collect()
             };
             Ok(RollupValueDto {
@@ -246,61 +274,129 @@ pub fn build_histogram_view(
     req: &ValidatedMetricResultsRequest,
     rows: Vec<HistogramQueryRow>,
 ) -> MetricResultViewDto {
-    struct EntityBins {
-        lo: f64,
-        hi: f64,
-        counts: HashMap<u32, u64>,
-    }
-
-    let mut by_entity: HashMap<String, EntityBins> = HashMap::new();
+    let mut by_entity: HashMap<String, GroupBins> = HashMap::new();
     for row in rows {
         let entity_id = req.entity.canonicalize_entity_id(row.entity_id);
-        let entry = by_entity.entry(entity_id).or_insert(EntityBins {
-            lo: row.entity_lo,
-            hi: row.entity_hi,
-            counts: HashMap::new(),
-        });
-        let count = entry.counts.entry(row.bin_idx).or_insert(0);
-        *count += row.bin_count.unwrap_or(0);
+        by_entity
+            .entry(entity_id)
+            .or_insert_with(|| GroupBins::new(row.entity_lo, row.entity_hi))
+            .add(row.bin_idx, row.bin_count.unwrap_or(0));
     }
 
-    let bin_total = u32::try_from(HISTOGRAM_BINS).unwrap_or(u32::MAX);
     let values = req
         .entity
         .entity_ids()
         .into_iter()
-        .map(|person_id| {
-            let bins = match by_entity.get(&person_id) {
-                None => Vec::new(),
-                // Bounds satisfy hi >= lo by construction; a collapsed range
-                // (all values identical) renders as one [v, v] bin.
-                Some(entity) if entity.hi <= entity.lo => vec![HistogramBinDto {
-                    lo: entity.lo,
-                    hi: entity.hi,
-                    count: entity.counts.values().sum(),
-                }],
-                Some(entity) => {
-                    let width = (entity.hi - entity.lo) / f64::from(bin_total);
-                    (0..bin_total)
-                        .map(|idx| HistogramBinDto {
-                            lo: entity.lo + f64::from(idx) * width,
-                            hi: if idx == bin_total - 1 {
-                                entity.hi
-                            } else {
-                                entity.lo + f64::from(idx + 1) * width
-                            },
-                            count: entity.counts.get(&idx).copied().unwrap_or(0),
-                        })
-                        .collect()
-                }
-            };
-            HistogramValueDto {
-                entity_id: person_id,
-                bins,
-            }
+        .map(|person_id| HistogramValueDto {
+            bins: by_entity
+                .get(&person_id)
+                .map_or_else(Vec::new, GroupBins::densify),
+            entity_id: Some(person_id),
+            dimensions: Vec::new(),
         })
         .collect();
-    MetricResultViewDto::Histogram { values }
+    MetricResultViewDto::Histogram {
+        dimensions: Vec::new(),
+        values,
+    }
+}
+
+/// The pooled counterpart: one row per observed dimension tuple, binned over
+/// every selected entity's events together. Unlike the per-entity shape there
+/// is no roster to list against, so a tuple with no events simply has no row —
+/// the same absence rule rollup follows.
+pub fn build_pooled_histogram_view(
+    rows: Vec<PooledHistogramQueryRow>,
+    dimensions: &[String],
+) -> Result<MetricResultViewDto, CanonicalError> {
+    let mut by_group: Vec<(Vec<MetricDimensionDto>, GroupBins)> = Vec::new();
+    let mut index: HashMap<Vec<String>, usize> = HashMap::new();
+    for row in rows {
+        let dims = row_dimensions(&row.extra, dimensions)?;
+        let key: Vec<String> = dims.iter().map(|(_, value, _)| value.clone()).collect();
+        let position = if let Some(position) = index.get(&key) {
+            *position
+        } else {
+            by_group.push((
+                dims.into_iter()
+                    .map(|(key, value, label)| MetricDimensionDto {
+                        key,
+                        value,
+                        label,
+                        href: None,
+                    })
+                    .collect(),
+                GroupBins::new(row.group_lo, row.group_hi),
+            ));
+            index.insert(key, by_group.len() - 1);
+            by_group.len() - 1
+        };
+        by_group[position]
+            .1
+            .add(row.bin_idx, row.bin_count.unwrap_or(0));
+    }
+
+    let values = by_group
+        .into_iter()
+        .map(|(dims, bins)| HistogramValueDto {
+            entity_id: None,
+            dimensions: dims,
+            bins: bins.densify(),
+        })
+        .collect();
+    Ok(MetricResultViewDto::Histogram {
+        dimensions: dimensions.to_vec(),
+        values,
+    })
+}
+
+/// One partition's exact value bounds plus its observed bin counts. The SQL
+/// reports only observed (partition, bin) pairs, so the edge math that turns
+/// them into the full fixed-bin shape lives here alone — empty and observed
+/// bins can never disagree about a boundary.
+struct GroupBins {
+    lo: f64,
+    hi: f64,
+    counts: HashMap<u32, u64>,
+}
+
+impl GroupBins {
+    fn new(lo: f64, hi: f64) -> Self {
+        Self {
+            lo,
+            hi,
+            counts: HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, bin_idx: u32, count: u64) {
+        *self.counts.entry(bin_idx).or_insert(0) += count;
+    }
+
+    fn densify(&self) -> Vec<HistogramBinDto> {
+        let bin_total = u32::try_from(HISTOGRAM_BINS).unwrap_or(u32::MAX);
+        // Bounds satisfy hi >= lo by construction; a collapsed range (all
+        // values identical) renders as one [v, v] bin.
+        if self.hi <= self.lo {
+            return vec![HistogramBinDto {
+                lo: self.lo,
+                hi: self.hi,
+                count: self.counts.values().sum(),
+            }];
+        }
+        let width = (self.hi - self.lo) / f64::from(bin_total);
+        (0..bin_total)
+            .map(|idx| HistogramBinDto {
+                lo: self.lo + f64::from(idx) * width,
+                hi: if idx == bin_total - 1 {
+                    self.hi
+                } else {
+                    self.lo + f64::from(idx + 1) * width
+                },
+                count: self.counts.get(&idx).copied().unwrap_or(0),
+            })
+            .collect()
+    }
 }
 
 pub fn build_metric_result(
@@ -312,6 +408,8 @@ pub fn build_metric_result(
         ComputationSpec::Sum { .. } => ComputationDto::Sum,
         ComputationSpec::Ratio { scale, .. } => ComputationDto::Ratio { scale: *scale },
         ComputationSpec::Median { .. } => ComputationDto::Median,
+        ComputationSpec::Percentile { q, .. } => ComputationDto::Percentile { q: *q },
+        ComputationSpec::Stddev { .. } => ComputationDto::Stddev,
         ComputationSpec::DistinctCount { .. } => ComputationDto::DistinctCount,
     };
     MetricResultDto {
@@ -349,9 +447,10 @@ fn view_size(view: &MetricResultViewDto) -> usize {
         MetricResultViewDto::Peer { values } => values.len(),
         MetricResultViewDto::Breakdown { values, .. } => values.len(),
         MetricResultViewDto::Rollup { values, .. } => values.len(),
-        MetricResultViewDto::Histogram { values } => {
+        MetricResultViewDto::Histogram { values, .. } => {
             values.iter().map(|value| value.bins.len()).sum()
         }
+        MetricResultViewDto::Error { .. } => 0,
     }
 }
 
@@ -402,7 +501,7 @@ mod tests {
     use serde_json::json;
 
     use crate::domain::metric_definitions::definition::{
-        MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+        AliasCollapse, MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
         ObservationRelation, ObservationSource,
     };
     use crate::domain::metric_results::view::Bucket;
@@ -432,6 +531,7 @@ mod tests {
             ),
             source_key: "ai_usage".to_owned(),
             measure_key: measure_key.to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         }
     }
 
@@ -474,6 +574,17 @@ mod tests {
             base: base(),
             spec: ComputationSpec::DistinctCount {
                 value: input(MetricInputRole::Value, "active_day"),
+            },
+        }
+    }
+
+    fn percentile_metric() -> MetricDefinition {
+        MetricDefinition {
+            transform: None,
+            base: base(),
+            spec: ComputationSpec::Percentile {
+                value: input(MetricInputRole::Value, "pr_cycle_hours"),
+                q: 0.75,
             },
         }
     }
@@ -623,13 +734,16 @@ mod tests {
             histogram_row("00000000-0000-0000-0000-00000000000a", 0, 0.0, 100.0, 3),
             histogram_row("00000000-0000-0000-0000-00000000000a", 9, 0.0, 100.0, 1),
         ];
-        let MetricResultViewDto::Histogram { values } = build_histogram_view(&req, rows) else {
+        let MetricResultViewDto::Histogram { values, .. } = build_histogram_view(&req, rows) else {
             panic!("expected histogram view");
         };
         assert_eq!(values.len(), 2);
 
         let a = &values[0];
-        assert_eq!(a.entity_id, "00000000-0000-0000-0000-00000000000a");
+        assert_eq!(
+            a.entity_id.as_deref(),
+            Some("00000000-0000-0000-0000-00000000000a")
+        );
         assert_eq!(a.bins.len(), 10);
         assert_eq!(a.bins[0].count, 3);
         assert!((a.bins[0].lo - 0.0).abs() < f64::EPSILON);
@@ -643,8 +757,62 @@ mod tests {
 
         // Entity with no events stays listed with honest empty bins.
         let b = &values[1];
-        assert_eq!(b.entity_id, "00000000-0000-0000-0000-00000000000b");
+        assert_eq!(
+            b.entity_id.as_deref(),
+            Some("00000000-0000-0000-0000-00000000000b")
+        );
         assert!(b.bins.is_empty());
+    }
+
+    fn pooled_histogram_row(
+        repository: &str,
+        bin_idx: u32,
+        lo: f64,
+        hi: f64,
+        count: u64,
+    ) -> PooledHistogramQueryRow {
+        PooledHistogramQueryRow {
+            bin_idx,
+            group_lo: lo,
+            group_hi: hi,
+            bin_count: Some(count),
+            extra: HashMap::from([
+                ("dim_0_value".to_owned(), json!(repository)),
+                ("dim_0_label".to_owned(), json!(repository)),
+            ]),
+        }
+    }
+
+    #[test]
+    fn pooled_histogram_bins_per_dimension_tuple_without_entity_grain() {
+        let rows = vec![
+            pooled_histogram_row("acme/api", 0, 0.0, 100.0, 3),
+            pooled_histogram_row("acme/api", 9, 0.0, 100.0, 1),
+            pooled_histogram_row("acme/web", 0, 5.0, 5.0, 2),
+        ];
+        let Ok(view) = build_pooled_histogram_view(rows, &["repository".to_owned()]) else {
+            panic!("expected the pooled histogram to build");
+        };
+        let MetricResultViewDto::Histogram { dimensions, values } = view else {
+            panic!("expected histogram view");
+        };
+        assert_eq!(dimensions, vec!["repository".to_owned()]);
+        assert_eq!(values.len(), 2);
+
+        let api = &values[0];
+        // No entity grain: a pooled row answers for the tuple, not a person.
+        assert!(api.entity_id.is_none());
+        assert_eq!(api.dimensions[0].value, "acme/api");
+        assert_eq!(api.bins.len(), 10);
+        assert_eq!(api.bins[0].count, 3);
+        assert_eq!(api.bins[9].count, 1);
+        assert!((api.bins[9].hi - 100.0).abs() < f64::EPSILON);
+
+        // A tuple whose events all share one value collapses to a single bin,
+        // exactly as the per-entity shape does.
+        let web = &values[1];
+        assert_eq!(web.bins.len(), 1);
+        assert_eq!(web.bins[0].count, 2);
     }
 
     #[test]
@@ -661,7 +829,7 @@ mod tests {
             7.5,
             4,
         )];
-        let MetricResultViewDto::Histogram { values } = build_histogram_view(&req, rows) else {
+        let MetricResultViewDto::Histogram { values, .. } = build_histogram_view(&req, rows) else {
             panic!("expected histogram view");
         };
         assert_eq!(values[0].bins.len(), 1);
@@ -885,6 +1053,8 @@ mod tests {
         let rows = vec![BreakdownQueryRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             value: Some(1.0),
+            source_provider: None,
+            source_id: None,
             extra,
         }];
         let dimensions = vec!["tool".to_owned()];
@@ -894,7 +1064,7 @@ mod tests {
             "2026-01-31",
         );
         let Ok(MetricResultViewDto::Breakdown { values, .. }) =
-            build_breakdown_view(&req, &dimensions, rows)
+            build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())
         else {
             panic!("expected breakdown view");
         };
@@ -903,6 +1073,49 @@ mod tests {
             values[0].dimensions[0].label.as_deref(),
             Some(UNKNOWN_DIMENSION_LABEL)
         );
+    }
+
+    #[test]
+    fn breakdown_repository_uses_hidden_source_context_for_href() -> anyhow::Result<()> {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "dim_0_value".to_owned(),
+            serde_json::json!("source-a:group/repository"),
+        );
+        extra.insert(
+            "dim_0_label".to_owned(),
+            serde_json::json!("group/repository"),
+        );
+        let rows = vec![BreakdownQueryRow {
+            entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
+            value: Some(1.0),
+            source_provider: Some("github".to_owned()),
+            source_id: Some("source-a".to_owned()),
+            extra,
+        }];
+        let dimensions = vec!["repository".to_owned()];
+        let req = request(
+            vec!["00000000-0000-0000-0000-00000000000a"],
+            "2026-01-01",
+            "2026-01-31",
+        );
+        let registry = ExternalSourceRegistry::new(&[crate::config::ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: crate::config::ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let MetricResultViewDto::Breakdown { values, .. } =
+            build_breakdown_view(&req, &dimensions, rows, &registry)?
+        else {
+            panic!("expected breakdown view");
+        };
+
+        assert_eq!(
+            values[0].dimensions[0].href.as_deref(),
+            Some("https://code.example.test/group/repository")
+        );
+        Ok(())
     }
 
     #[test]
@@ -995,6 +1208,13 @@ mod tests {
         let distinct_json = serde_json::to_value(&distinct).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(distinct_json["computation"], "distinct_count");
         assert!(distinct_json.get("scale").is_none());
+
+        let percentile =
+            build_metric_result(&percentile_metric(), Vec::new(), selection("ai.percentile"));
+        let percentile_json = serde_json::to_value(&percentile).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(percentile_json["computation"], "percentile");
+        assert_eq!(percentile_json["q"], 0.75);
+        assert!(percentile_json.get("scale").is_none());
     }
 
     #[test]
@@ -1069,6 +1289,15 @@ mod tests {
             .collect();
         let view = MetricResultViewDto::Period { values };
         assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_err());
+    }
+
+    #[test]
+    fn an_error_view_never_trips_the_row_limit() {
+        let view = MetricResultViewDto::Error {
+            code: crate::domain::metric_results::dto::MetricViewErrorCode::QueryFailed,
+            message: "generic".to_owned(),
+        };
+        assert!(enforce_view_row_limit(&view, "metrics[0].views[0]").is_ok());
     }
 
     #[test]

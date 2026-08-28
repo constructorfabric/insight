@@ -4,16 +4,17 @@ use serde::Deserialize;
 
 use toolkit_canonical_errors::CanonicalError;
 
+use crate::domain::external_links::ExternalSourceRegistry;
 use crate::domain::metric_definitions::ComputationSpec;
-use crate::domain::metric_definitions::EvidenceGranularity;
 use crate::domain::metric_definitions::definition::MetricInputRole;
+use crate::domain::metric_definitions::{EvidenceColumnType, EvidenceDetailColumn};
 
 use super::cursor::encode_cursor;
 use super::dto::{
-    EvidencePlan, EvidencePresentation, EvidenceQueryRow, MetricDrilldownColumn,
-    MetricDrilldownColumnType, MetricDrilldownFilter, MetricDrilldownResponse, MetricDrilldownRow,
-    ValidatedMetricDrilldown,
+    EvidencePlan, EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownColumnType,
+    MetricDrilldownFilter, MetricDrilldownResponse, MetricDrilldownRow, ValidatedMetricDrilldown,
 };
+use super::error::config_error;
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -22,11 +23,10 @@ struct EvidenceDimension {
     label: Option<String>,
 }
 
-use super::error::config_error;
-
 pub fn build_response(
     req: &ValidatedMetricDrilldown,
     mut rows: Vec<EvidenceQueryRow>,
+    external_links: &ExternalSourceRegistry,
 ) -> Result<MetricDrilldownResponse, CanonicalError> {
     let next_cursor = if rows.len() > req.limit {
         rows.truncate(req.limit);
@@ -36,11 +36,12 @@ pub fn build_response(
     } else {
         None
     };
-    let (columns, rows) = presentation(
+    let (columns, rows) = present(
         &rows,
         &req.plan,
         &req.selection.filters,
         &req.selection.display_dimensions,
+        Some(external_links),
     )?;
     Ok(MetricDrilldownResponse {
         selection: req.selection.clone(),
@@ -56,97 +57,172 @@ pub fn presentation(
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
 ) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
+    present(rows, plan, filters, display_dimensions, None)
+}
+
+fn present(
+    rows: &[EvidenceQueryRow],
+    plan: &EvidencePlan,
+    filters: &[MetricDrilldownFilter],
+    display_dimensions: &[String],
+    external_links: Option<&ExternalSourceRegistry>,
+) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
     let details = rows
         .iter()
         .map(|row| row.details.as_object().ok_or_else(config_error))
         .collect::<Result<Vec<_>, _>>()?;
-    let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
-    let display_dimensions = if ratio { &[] } else { display_dimensions };
     let dimensions = presentation_dimensions(rows)?;
-    let mut detail_keys = if ratio {
-        BTreeSet::new()
-    } else {
-        plan.inputs
-            .iter()
-            .flat_map(|input| input.presentation.detail_keys)
-            .map(|key| (*key).to_owned())
-            .collect::<BTreeSet<_>>()
-    };
-    let dimension_keys = filters
-        .iter()
-        .filter(|filter| filter.values.len() == 1)
-        .map(|filter| filter.dimension.clone())
-        .chain(display_dimensions.iter().cloned())
-        .collect::<BTreeSet<_>>();
-    detail_keys.extend(dimension_keys);
-    let include_value = !ratio
-        && plan
-            .inputs
-            .iter()
-            .any(|input| input.presentation.show_value);
-    let mut ordered_keys = Vec::new();
-    if detail_keys.remove("ref") {
-        ordered_keys.push("ref".to_owned());
-    }
-    if detail_keys.remove("title") {
-        ordered_keys.push("title".to_owned());
-    }
-    for key in ["repository", "author"] {
-        if detail_keys.remove(key) {
-            ordered_keys.push(key.to_owned());
-        }
-    }
-    ordered_keys.extend(detail_keys);
-    ordered_keys.push("date".to_owned());
-    if ratio {
-        ordered_keys.push("numerator".to_owned());
-        ordered_keys.push("denominator".to_owned());
-    } else if include_value {
-        ordered_keys.push("value".to_owned());
-    }
+    let columns = presentation_columns(plan, filters, display_dimensions);
 
-    let columns: Vec<MetricDrilldownColumn> = ordered_keys
-        .iter()
-        .map(|key| presentation_column(key, plan))
-        .collect();
-    let column_types: BTreeMap<&str, MetricDrilldownColumnType> = columns
-        .iter()
-        .map(|column| (column.key.as_str(), column.r#type))
-        .collect();
     let projected_rows = rows
         .iter()
         .zip(details)
         .zip(dimensions)
         .map(|((row, details), dimensions)| {
-            project_row(row, details, &dimensions, &ordered_keys, &column_types)
+            project_row(row, details, &dimensions, &columns, external_links)
         })
         .collect::<Result<Vec<_>, CanonicalError>>()?;
 
     Ok((columns, projected_rows))
 }
 
+fn presentation_columns(
+    plan: &EvidencePlan,
+    filters: &[MetricDrilldownFilter],
+    display_dimensions: &[String],
+) -> Vec<MetricDrilldownColumn> {
+    // A ratio row is one side of a division, so the records behind its two
+    // measures are different things and neither measure's columns describe the
+    // pair: the two numbers are what the row has to say.
+    let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
+    let declared = if ratio {
+        Vec::new()
+    } else {
+        declared_columns(plan)
+    };
+    let display_dimensions = if ratio { &[] } else { display_dimensions };
+
+    let mut columns = declared
+        .iter()
+        .map(detail_column)
+        .collect::<Vec<MetricDrilldownColumn>>();
+    columns.extend(
+        dimension_keys(filters, display_dimensions, &declared)
+            .into_iter()
+            .map(dimension_column),
+    );
+    columns.push(MetricDrilldownColumn {
+        key: "date".to_owned(),
+        label: "Date".to_owned(),
+        r#type: MetricDrilldownColumnType::Date,
+    });
+
+    if ratio {
+        columns.push(input_column("numerator", plan, MetricInputRole::Numerator));
+        columns.push(input_column(
+            "denominator",
+            plan,
+            MetricInputRole::Denominator,
+        ));
+    } else if plan
+        .inputs
+        .iter()
+        .any(|input| input.presentation.show_value)
+    {
+        columns.push(MetricDrilldownColumn {
+            key: "value".to_owned(),
+            label: "Value".to_owned(),
+            r#type: MetricDrilldownColumnType::Number,
+        });
+    }
+    columns
+}
+
+/// The detail columns the plan's measures declare, in declaration order, each
+/// key kept once — a metric reading two measures of the same shape shows that
+/// shape once.
+fn declared_columns(plan: &EvidencePlan) -> Vec<EvidenceDetailColumn> {
+    let mut seen = BTreeSet::new();
+    plan.inputs
+        .iter()
+        .flat_map(|input| &input.presentation.detail_columns)
+        .filter(|column| seen.insert(column.key.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// The dimensions the selection pinned to one value, plus the ones it asked to
+/// display. A dimension a measure already declares as a detail is dropped here:
+/// the declared column carries it, and the row projection falls back to the
+/// dimension when the details map has nothing under that key.
+fn dimension_keys(
+    filters: &[MetricDrilldownFilter],
+    display_dimensions: &[String],
+    declared: &[EvidenceDetailColumn],
+) -> BTreeSet<String> {
+    let declared_keys = declared
+        .iter()
+        .map(|column| column.key.as_str())
+        .collect::<BTreeSet<_>>();
+    filters
+        .iter()
+        .filter(|filter| filter.values.len() == 1)
+        .map(|filter| filter.dimension.clone())
+        .chain(display_dimensions.iter().cloned())
+        .filter(|key| !declared_keys.contains(key.as_str()))
+        .collect()
+}
+
+fn detail_column(column: &EvidenceDetailColumn) -> MetricDrilldownColumn {
+    MetricDrilldownColumn {
+        key: column.key.clone(),
+        label: column.label.clone(),
+        r#type: match column.r#type {
+            EvidenceColumnType::String => MetricDrilldownColumnType::String,
+            EvidenceColumnType::Number => MetricDrilldownColumnType::Number,
+            EvidenceColumnType::Date => MetricDrilldownColumnType::Date,
+        },
+    }
+}
+
+fn dimension_column(key: String) -> MetricDrilldownColumn {
+    MetricDrilldownColumn {
+        label: humanize_field_name(&key),
+        key,
+        r#type: MetricDrilldownColumnType::String,
+    }
+}
+
+fn input_column(key: &str, plan: &EvidencePlan, role: MetricInputRole) -> MetricDrilldownColumn {
+    MetricDrilldownColumn {
+        key: key.to_owned(),
+        label: input_label(plan, role),
+        r#type: MetricDrilldownColumnType::Number,
+    }
+}
+
 fn project_row(
     row: &EvidenceQueryRow,
     details: &serde_json::Map<String, serde_json::Value>,
     dimensions: &[EvidenceDimension],
-    ordered_keys: &[String],
-    column_types: &BTreeMap<&str, MetricDrilldownColumnType>,
+    columns: &[MetricDrilldownColumn],
+    external_links: Option<&ExternalSourceRegistry>,
 ) -> Result<MetricDrilldownRow, CanonicalError> {
     let mut values = BTreeMap::new();
-    for key in ordered_keys {
-        let value = match key.as_str() {
+    for column in columns {
+        let value = match column.key.as_str() {
             "date" => row.metric_date.clone().into(),
             "value" => serde_json::to_value(row.contribution).map_err(|_| config_error())?,
             "numerator" => serde_json::to_value(row.numerator).map_err(|_| config_error())?,
             "denominator" => serde_json::to_value(row.denominator).map_err(|_| config_error())?,
-            _ => details
+            key => details
                 .get(key)
                 .filter(|value| visible_value(value))
                 .cloned()
                 .or_else(|| {
                     dimensions
                         .iter()
-                        .find(|dimension| dimension.key == *key)
+                        .find(|dimension| dimension.key == key)
                         .map(|dimension| {
                             serde_json::Value::from(
                                 dimension
@@ -159,14 +235,59 @@ fn project_row(
                 })
                 .unwrap_or(serde_json::Value::Null),
         };
-
-        let r#type = column_types
-            .get(key.as_str())
-            .copied()
-            .unwrap_or(MetricDrilldownColumnType::String);
-        values.insert(key.clone(), coerce_to_column_type(r#type, value));
+        values.insert(
+            column.key.clone(),
+            coerce_to_column_type(column.r#type, value),
+        );
     }
-    Ok(MetricDrilldownRow { values })
+    let links = external_links
+        .map(|registry| row_links(registry, row, details, dimensions, &values))
+        .unwrap_or_default();
+    Ok(MetricDrilldownRow { values, links })
+}
+
+fn row_links(
+    registry: &ExternalSourceRegistry,
+    row: &EvidenceQueryRow,
+    details: &serde_json::Map<String, serde_json::Value>,
+    dimensions: &[EvidenceDimension],
+    values: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, String> {
+    let Some(provider) = dimensions
+        .iter()
+        .find(|dimension| dimension.key == "source")
+        .map(|dimension| dimension.value.as_str())
+    else {
+        return BTreeMap::new();
+    };
+    let Some(source_id) = details.get("source_id").and_then(serde_json::Value::as_str) else {
+        return BTreeMap::new();
+    };
+    let repository = details
+        .get("repository")
+        .and_then(serde_json::Value::as_str);
+    let record_ref = details.get("ref").and_then(serde_json::Value::as_str);
+    let resolved = registry.evidence_links(
+        provider,
+        source_id,
+        &row.record_kind,
+        repository,
+        record_ref,
+    );
+    let mut links = BTreeMap::new();
+    if values.get("repository").is_some_and(visible_value)
+        && let Some(href) = resolved.repository
+    {
+        links.insert("repository".to_owned(), href);
+    }
+    if let Some(href) = resolved.record {
+        for key in ["ref", "title"] {
+            if values.get(key).is_some_and(visible_value) {
+                links.insert(key.to_owned(), href.clone());
+            }
+        }
+    }
+    links
 }
 
 fn presentation_dimensions(
@@ -178,120 +299,6 @@ fn presentation_dimensions(
                 .map_err(|_| config_error())
         })
         .collect()
-}
-
-fn presentation_column(key: &str, plan: &EvidencePlan) -> MetricDrilldownColumn {
-    let (label, r#type) = match key {
-        "ref" => ("Ref".to_owned(), MetricDrilldownColumnType::String),
-        "title" => ("Title".to_owned(), MetricDrilldownColumnType::String),
-        "repository" => ("Repository".to_owned(), MetricDrilldownColumnType::String),
-        "author" => ("Author".to_owned(), MetricDrilldownColumnType::String),
-        "date" => ("Date".to_owned(), MetricDrilldownColumnType::Date),
-        "value" => ("Value".to_owned(), MetricDrilldownColumnType::Number),
-        "numerator" => (
-            input_label(plan, MetricInputRole::Numerator),
-            MetricDrilldownColumnType::Number,
-        ),
-        "denominator" => (
-            input_label(plan, MetricInputRole::Denominator),
-            MetricDrilldownColumnType::Number,
-        ),
-        "lines_added" => ("Lines added".to_owned(), MetricDrilldownColumnType::Number),
-        "lines_removed" => (
-            "Lines removed".to_owned(),
-            MetricDrilldownColumnType::Number,
-        ),
-        "billing_month" => (
-            "Billing month".to_owned(),
-            MetricDrilldownColumnType::String,
-        ),
-        "ceiling_usd" => ("Ceiling".to_owned(), MetricDrilldownColumnType::Number),
-        _ => (humanize_field_name(key), MetricDrilldownColumnType::String),
-    };
-    MetricDrilldownColumn {
-        key: key.to_owned(),
-        label,
-        r#type,
-    }
-}
-
-pub(super) fn evidence_presentation(
-    source_key: &str,
-    measure_key: &str,
-    granularity: EvidenceGranularity,
-) -> EvidencePresentation {
-    match (source_key, measure_key) {
-        (
-            "git",
-            "commit_count"
-            | "commit_change_size"
-            | "default_commit_count"
-            | "non_default_commit_count",
-        ) => EvidencePresentation {
-            detail_keys: &[
-                "ref",
-                "title",
-                "repository",
-                "author",
-                "lines_added",
-                "lines_removed",
-            ],
-            show_value: false,
-        },
-        (
-            "git",
-            "pr_created"
-            | "pr_created_merged"
-            | "pr_merged"
-            | "default_pr_created"
-            | "non_default_pr_created"
-            | "default_pr_merged"
-            | "non_default_pr_merged",
-        ) => EvidencePresentation {
-            detail_keys: &["ref", "title", "repository", "author"],
-            show_value: false,
-        },
-        (
-            "git",
-            "pr_cycle_hours"
-            | "pr_change_size"
-            | "pr_first_review_hours"
-            | "pr_review_wait_share"
-            | "pr_review_to_merge_hours"
-            | "pr_approval_to_merge_hours",
-        ) => EvidencePresentation {
-            detail_keys: &["ref", "title", "repository", "author"],
-            show_value: true,
-        },
-        // A counting measure needs no value column — the row IS the one it
-        // counted; a duration or a page count is only readable with its number.
-        (
-            "task",
-            "tasks_closed" | "bugs_fixed" | "closed_non_bug" | "due_date_on_time"
-            | "due_date_with_due" | "late_count",
-        )
-        | ("wiki", "pages_created") => EvidencePresentation {
-            detail_keys: &["ref", "title"],
-            show_value: false,
-        },
-        ("task", _) if granularity == EvidenceGranularity::Event => EvidencePresentation {
-            detail_keys: &["ref", "title"],
-            show_value: true,
-        },
-        // A seat-month row is dated at the day its snapshot was last read, not
-        // at the month it bills for, so the month has to be a column of its own
-        // or the reader cannot tell which month the row is. The ceiling is what
-        // the amount is judged against; blank means none was set, which is why
-        // the ratio metric withholds a value for that seat.
-        ("ai_cost", _) => EvidencePresentation {
-            detail_keys: &["billing_month", "ceiling_usd"],
-            show_value: true,
-        },
-        _ => EvidencePresentation {
-            detail_keys: &[],
-            show_value: granularity != EvidenceGranularity::Event,
-        },
-    }
 }
 
 fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
@@ -339,120 +346,30 @@ fn humanize_field_name(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::AliasCollapse;
 
-    use crate::domain::metric_definitions::RatioDenominatorAggregation;
-    use crate::domain::metric_definitions::builtin::{
-        SeedComputation, builtin_metrics, builtin_sources,
-    };
+    use crate::config::{ExternalSourceConfig, ExternalSourceProvider};
+    use crate::domain::metric_definitions::EvidencePresentation;
+    use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
     use crate::domain::metric_drilldown::cursor::decode_cursor;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
-    use crate::domain::metric_drilldown::test_support::{input, plan, row, validated};
+    use crate::domain::metric_drilldown::test_support::{
+        commit_input, commit_presentation, input, plan, row, validated,
+    };
 
-    #[test]
-    fn every_event_measure_a_metric_reads_directly_declares_its_columns() {
-        // The dialog's columns come from this match rather than from the row, so
-        // a measure no arm names projects nothing and the reader gets a page of
-        // identical dates. Registering a measure is not enough — it has to be
-        // named here too, and nothing else enforces that.
-        //
-        // Read directly, because a ratio shows its numerator and denominator and
-        // `presentation` clears detail keys for it outright: a measure only
-        // ratios read needs no columns of its own, and demanding them would send
-        // the next such measure looking for an arm that changes nothing.
-        let read_directly: BTreeSet<&str> = builtin_metrics()
-            .iter()
-            .filter(|metric| !matches!(metric.computation, SeedComputation::Ratio { .. }))
-            .flat_map(|metric| &metric.inputs)
-            .map(|input| input.measure_key.as_str())
-            .collect();
-
-        let mut unnamed = Vec::new();
-        for builtin_source in builtin_sources() {
-            let source_key = builtin_source.source.key.as_str();
-            for measure in &builtin_source.measures {
-                if measure.evidence_granularity != EvidenceGranularity::Event
-                    || !read_directly.contains(measure.key.as_str())
-                {
-                    continue;
-                }
-                let presentation =
-                    evidence_presentation(source_key, &measure.key, EvidenceGranularity::Event);
-                if presentation.detail_keys.is_empty() {
-                    unnamed.push(format!("{source_key}/{}", measure.key));
-                }
-            }
-        }
-        assert!(
-            unnamed.is_empty(),
-            "event measures with no detail columns — their drilldown shows only a date: {unnamed:?}"
-        );
-    }
-
-    #[test]
-    fn a_counted_pull_request_reads_its_number_title_repository_and_author() {
-        // Absolute, because the split test below is relative: without this the
-        // whole arm could be trimmed and both would still pass.
-        for measure in [
-            "pr_created",
-            "pr_merged",
-            "default_pr_created",
-            "default_pr_merged",
-        ] {
-            let presentation = evidence_presentation("git", measure, EvidenceGranularity::Event);
-            assert_eq!(
-                presentation.detail_keys,
-                ["ref", "title", "repository", "author"],
-                "{measure} should read the request it counted"
-            );
-            // The row IS the request it counted, so a value column would be 1s.
-            assert!(!presentation.show_value, "{measure} should show no value");
-        }
-    }
-
-    #[test]
-    fn a_branch_scope_split_reads_the_same_columns_as_its_total() {
-        // The split measures count the same commits and requests the totals do,
-        // so a reader who drills into "landed" sees what they saw before, minus
-        // the rows that did not land.
-        for (total, split) in [
-            ("commit_count", "default_commit_count"),
-            ("commit_count", "non_default_commit_count"),
-            ("pr_created", "default_pr_created"),
-            ("pr_created", "non_default_pr_created"),
-            ("pr_merged", "default_pr_merged"),
-            ("pr_merged", "non_default_pr_merged"),
-        ] {
-            let expected = evidence_presentation("git", total, EvidenceGranularity::Event);
-            let actual = evidence_presentation("git", split, EvidenceGranularity::Event);
-            assert_eq!(
-                actual.detail_keys, expected.detail_keys,
-                "{split} should read the same columns as {total}"
-            );
-            assert_eq!(
-                actual.show_value, expected.show_value,
-                "{split} should show a value exactly when {total} does"
-            );
-        }
-    }
-
-    #[test]
-    fn event_presentation_projects_human_fields_and_dimensions() {
+    fn commit_plan() -> EvidencePlan {
         let value = input(MetricInputRole::Value, "commit_count");
-        let plan = plan(
+        plan(
             ComputationSpec::Sum {
                 value: value.clone(),
             },
-            vec![EvidenceInput {
-                role: MetricInputRole::Value,
-                measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
-            }],
-        );
-        let (columns, rows) = presentation(&[row()], &plan, &[], &["category".to_owned()])
+            vec![commit_input(MetricInputRole::Value, &value.measure_key)],
+        )
+    }
+
+    #[test]
+    fn declared_columns_lead_in_declaration_order_and_dimensions_follow() {
+        let (columns, rows) = presentation(&[row()], &commit_plan(), &[], &["category".to_owned()])
             .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
             columns
@@ -464,9 +381,9 @@ mod tests {
                 "title",
                 "repository",
                 "author",
-                "category",
                 "lines_added",
                 "lines_removed",
+                "category",
                 "date"
             ]
         );
@@ -477,6 +394,121 @@ mod tests {
             "line counts are whole lines, not floats: {:?}",
             rows[0].values["lines_added"]
         );
+    }
+
+    #[test]
+    fn declared_labels_and_types_reach_the_reader() {
+        let (columns, _) = presentation(&[row()], &commit_plan(), &[], &[])
+            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let lines_added = columns
+            .iter()
+            .find(|column| column.key == "lines_added")
+            .unwrap_or_else(|| panic!("declared column must be served"));
+        assert_eq!(lines_added.label, "Lines added");
+        assert_eq!(lines_added.r#type, MetricDrilldownColumnType::Number);
+    }
+
+    #[test]
+    fn a_dimension_a_measure_already_declares_stays_one_column() {
+        let (columns, rows) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &["repository".to_owned(), "category".to_owned()],
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .iter()
+                .filter(|column| column.key == "repository")
+                .count(),
+            1
+        );
+        assert_eq!(rows[0].values["repository"], "org/repo");
+    }
+
+    #[test]
+    fn an_undeclared_measure_serves_the_date_and_its_number() {
+        let value = input(MetricInputRole::Value, "meeting_hours");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
+                measure_key: value.measure_key,
+                presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
+            }],
+        );
+        let (columns, _) = presentation(&[row()], &plan, &[], &[])
+            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["date", "value"]
+        );
+    }
+
+    #[test]
+    fn a_metric_reading_two_measures_of_one_shape_shows_that_shape_once() {
+        let value = input(MetricInputRole::Value, "commit_count");
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![
+                commit_input(MetricInputRole::Value, &value.measure_key),
+                commit_input(MetricInputRole::Value, "commit_change_size"),
+            ],
+        );
+        let (columns, _) = presentation(&[row()], &plan, &[], &[])
+            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "ref",
+                "title",
+                "repository",
+                "author",
+                "lines_added",
+                "lines_removed",
+                "date"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_measure_declaring_a_value_column_gets_one() {
+        let value = input(MetricInputRole::Value, "pr_cycle_hours");
+        let mut presentation_spec = commit_presentation();
+        presentation_spec.show_value = true;
+        let plan = plan(
+            ComputationSpec::Sum {
+                value: value.clone(),
+            },
+            vec![EvidenceInput {
+                role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
+                measure_key: value.measure_key,
+                presentation: presentation_spec,
+            }],
+        );
+        let (columns, rows) = presentation(&[row()], &plan, &[], &[])
+            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .last()
+                .unwrap_or_else(|| panic!("columns must not be empty"))
+                .key,
+            "value"
+        );
+        assert_eq!(rows[0].values["value"], 1.0);
     }
 
     #[test]
@@ -526,22 +558,8 @@ mod tests {
                 denominator_aggregation: RatioDenominatorAggregation::Sum,
             },
             vec![
-                EvidenceInput {
-                    role: MetricInputRole::Numerator,
-                    measure_key: numerator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
-                },
-                EvidenceInput {
-                    role: MetricInputRole::Denominator,
-                    measure_key: denominator.measure_key,
-                    presentation: EvidencePresentation {
-                        detail_keys: &[],
-                        show_value: true,
-                    },
-                },
+                commit_input(MetricInputRole::Numerator, &numerator.measure_key),
+                commit_input(MetricInputRole::Denominator, &denominator.measure_key),
             ],
         );
         let mut ratio_row = row();
@@ -550,6 +568,14 @@ mod tests {
         ratio_row.details = serde_json::json!({});
         let (columns, rows) = presentation(&[ratio_row], &plan, &[], &[])
             .unwrap_or_else(|error| panic!("ratio presentation must build: {error}"));
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["date", "numerator", "denominator"],
+            "the records behind the two measures are different things"
+        );
         assert_eq!(columns[1].label, "Focus hours");
         assert_eq!(columns[2].label, "Work hours");
         assert_eq!(rows[0].values["numerator"], 6.0);
@@ -558,24 +584,13 @@ mod tests {
 
     #[test]
     fn response_pages_with_snapshot_bound_cursor() {
-        let value = input(MetricInputRole::Value, "commit_count");
-        let plan = plan(
-            ComputationSpec::Sum {
-                value: value.clone(),
-            },
-            vec![EvidenceInput {
-                role: MetricInputRole::Value,
-                measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
-            }],
-        );
-        let request = validated(plan);
-        let response = build_response(&request, vec![row(), row()])
-            .unwrap_or_else(|error| panic!("response must build: {error}"));
+        let request = validated(commit_plan());
+        let response = build_response(
+            &request,
+            vec![row(), row()],
+            &ExternalSourceRegistry::default(),
+        )
+        .unwrap_or_else(|error| panic!("response must build: {error}"));
         let cursor = response
             .next_cursor
             .unwrap_or_else(|| panic!("response must include a next cursor"));
@@ -588,82 +603,71 @@ mod tests {
     }
 
     #[test]
-    fn presentation_rejects_invalid_warehouse_json() {
-        let value = input(MetricInputRole::Value, "commit_count");
-        let plan = plan(
-            ComputationSpec::Sum {
-                value: value.clone(),
-            },
-            vec![EvidenceInput {
-                role: MetricInputRole::Value,
-                measure_key: value.measure_key,
-                presentation: evidence_presentation(
-                    "git",
-                    "commit_count",
-                    EvidenceGranularity::Event,
-                ),
-            }],
+    fn response_links_only_visible_columns_from_configured_source() -> anyhow::Result<()> {
+        let request = validated(commit_plan());
+        let mut evidence = row();
+        evidence.dimensions_json = r#"[
+            {"key":"source","value":"github","label":"GitHub"},
+            {"key":"repository","value":"source-a:group/repository","label":"group/repository"}
+        ]"#
+        .to_owned();
+        evidence.details["source_id"] = serde_json::json!("source-a");
+        let registry = ExternalSourceRegistry::new(&[ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let response = build_response(&request, vec![evidence], &registry)?;
+
+        assert_eq!(
+            response.rows[0].links.get("repository").map(String::as_str),
+            Some("https://code.example.test/org/repo")
         );
+        assert_eq!(
+            response.rows[0].links.get("ref").map(String::as_str),
+            Some("https://code.example.test/org/repo/commit/abc123")
+        );
+        assert_eq!(
+            response.rows[0].links.get("title").map(String::as_str),
+            Some("https://code.example.test/org/repo/commit/abc123")
+        );
+        assert!(!response.rows[0].values.contains_key("source_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn response_does_not_link_empty_record_cells() -> anyhow::Result<()> {
+        let request = validated(commit_plan());
+        let mut evidence = row();
+        evidence.dimensions_json = r#"[
+            {"key":"source","value":"github","label":"GitHub"},
+            {"key":"repository","value":"source-a:group/repository","label":"group/repository"}
+        ]"#
+        .to_owned();
+        evidence.details["source_id"] = serde_json::json!("source-a");
+        evidence.details["title"] = serde_json::json!("");
+        let registry = ExternalSourceRegistry::new(&[ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: ExternalSourceProvider::Github,
+            web_base_url: "https://code.example.test".to_owned(),
+        }])?;
+
+        let response = build_response(&request, vec![evidence], &registry)?;
+
+        assert!(response.rows[0].links.contains_key("ref"));
+        assert!(!response.rows[0].links.contains_key("title"));
+        Ok(())
+    }
+
+    #[test]
+    fn presentation_rejects_invalid_warehouse_json() {
+        let plan = commit_plan();
         let mut invalid_details = row();
         invalid_details.details = serde_json::json!("invalid");
         assert!(presentation(&[invalid_details], &plan, &[], &[]).is_err());
         let mut invalid_dimensions = row();
         invalid_dimensions.dimensions_json = "invalid".to_owned();
         assert!(presentation(&[invalid_dimensions], &plan, &[], &[]).is_err());
-    }
-
-    #[test]
-    fn evidence_presentations_cover_domain_shapes() {
-        assert!(!evidence_presentation("git", "pr_merged", EvidenceGranularity::Event).show_value);
-        assert!(
-            evidence_presentation(
-                "task",
-                "average_slip",
-                EvidenceGranularity::DerivedPopulation
-            )
-            .detail_keys
-            .is_empty()
-        );
-        assert!(evidence_presentation("task", "custom", EvidenceGranularity::Event).show_value);
-        assert!(
-            !evidence_presentation("wiki", "pages_created", EvidenceGranularity::Event).show_value
-        );
-        assert!(
-            evidence_presentation("collab", "messages", EvidenceGranularity::SourceSummary)
-                .show_value
-        );
-    }
-
-    #[test]
-    fn git_pull_request_values_keep_their_numeric_column() {
-        for measure_key in [
-            "pr_cycle_hours",
-            "pr_change_size",
-            "pr_first_review_hours",
-            "pr_review_wait_share",
-            "pr_review_to_merge_hours",
-            "pr_approval_to_merge_hours",
-        ] {
-            let presentation =
-                evidence_presentation("git", measure_key, EvidenceGranularity::Event);
-
-            assert!(presentation.show_value, "{measure_key}");
-            assert_eq!(
-                presentation.detail_keys,
-                &["ref", "title", "repository", "author"],
-                "{measure_key}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_seat_month_row_names_its_billing_month_and_ceiling() {
-        let presentation = evidence_presentation(
-            "ai_cost",
-            "extra_usage_usd",
-            EvidenceGranularity::SourceSummary,
-        );
-        assert_eq!(presentation.detail_keys, &["billing_month", "ceiling_usd"]);
-        assert!(presentation.show_value);
     }
 }

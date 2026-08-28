@@ -27,18 +27,33 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id, resolved ONCE per gold build ('' when identity
-          does not know the source email — those rows stay for coverage and
-          reach no serving relation). The same snapshot every downstream
-          relation answers for.
+          Source identity of the measured entity, normalized by
+          `normalized_email()`. For a person that is the email the source
+          recorded — NOT the canonical person id: the analytics runtime joins
+          `identity.person_map` when it serves, so a correction lands without
+          rebuilding this relation. Rows whose email cannot resolve stay here
+          and start counting the moment it does. Empty only on a row that
+          carries an account key, which resolves account-first instead.
         tests:
           - not_null
-      - name: source_entity_id
+      - name: account_source_type
         description: >
-          Source-native email the row was resolved from — provenance and the
-          coverage denominator; never a serving key.
+          Source family of the author's account binding, in the identity
+          store's vocabulary (e.g. github, bitbucket). '' when the row carries
+          no account-keyed fact: resolution then stays on the email path.
         tests:
           - not_null
+      - name: account_source_id
+        description: >
+          Raw connector source id of the account binding. The read-time join
+          hashes it with sipHash128, in lockstep with how the connectors'
+          identity_inputs mint `insight_source_id`.
+      - name: account_id
+        description: >
+          Source-native account id of the row's author. Rows with an account
+          resolve account-first through `identity.account_assignment` — an
+          account bound to the excluded person attributes to nobody and never
+          falls back to the email map.
       - name: metric_date
         description: "Date used by metric period filtering"
         tests:
@@ -75,6 +90,29 @@ models:
       - name: details
         description: "Additional display fields keyed by stable field name"
 
+  - name: git_authored_commits
+    description: >
+      One row per authored commit that reaches a git measure: the surviving row
+      of the commit-hash collapse, with branch scope, repository, project and
+      source dimensions already resolved. Materialized so the commit class read
+      and the collapse run once per build in their own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier; one row per tenant, data source and hash"
+        tests:
+          - not_null
+
+  - name: git_commit_file_changes
+    description: >
+      File changes attached to the commit row that survived the hash collapse,
+      one row per commit, path, change type and object id pair. Materialized so
+      the file-change class read runs in its own query budget.
+    columns:
+      - name: commit_hash
+        description: "Commit the change is attached to"
+        tests:
+          - not_null
+
   - name: git_default_branch_commits
     description: >
       Commits that reached a repository's default branch through a merged pull
@@ -87,6 +125,49 @@ models:
         description: "Commit identifier within the repository"
         tests:
           - not_null
+
+  - name: git_review_events
+    description: >
+      One row per pull-request review or comment, with the actor resolved, the
+      request it sits on joined, and its dimension tuple built. Materialized so
+      the identity map and the pull-request join run once per build in their own
+      query budget rather than competing for memory with every other git measure
+      inside the evidence query.
+    columns:
+      - name: event_key
+        description: "The silver event's unique key — several events by one person on one request stay distinct"
+        tests:
+          - not_null
+      - name: event_kind
+        description: "'review' for a submitted verdict, 'comment' for a conversation or review-thread comment"
+      - name: entity_id
+        description: "The actor's normalized e-mail; rows without one are dropped here, not downstream"
+        tests:
+          - not_null
+
+  - name: git_derived_commits
+    description: >
+      Commits whose work is already counted on another commit, one row per
+      tenant/data_source/commit_hash/reason. merge_result is the commit a
+      merged pull request produced on its destination (a squash result or the
+      last rebased copy), marked only when every linked branch commit was
+      collected; patch_duplicate is a later carrier of a patch id an earlier
+      commit in the same repository authored (a rebase copy or a cherry-pick).
+      The git
+      evidence build excludes these from both the commit and the line figures,
+      so one authored change counts once and the two figures describe the same
+      set of commits.
+    columns:
+      - name: commit_hash
+        description: "Commit identifier within the source"
+        tests:
+          - not_null
+      - name: reason
+        description: "Why the commit is derived"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['merge_result', 'patch_duplicate']
 
   - name: git_metric_evidence
     description: >
@@ -117,25 +198,152 @@ models:
       established daily summaries retained by the silver contracts.
     columns: *metric_evidence_columns
 
+  - name: ci_metric_evidence
+    description: >
+      Materialized MergeTree evidence serving table for CI measures — the
+      first TENANT-grain family: entity_id is the tenant id, there is no
+      person and no identity join (issue #2803). One row per decided run per
+      measure it feeds; run_duration_min keeps event grain for query-time
+      percentiles. Deployment rows fold the latest status event in; no event
+      yet reads as the visible 'pending' outcome. Deliberately NOT the shared
+      person-grain column anchor: this family's source_key and entity_type
+      would fail its accepted-values pins.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source family — always ci here"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci']
+      - name: entity_type
+        description: "Measured entity type — always the tenant for CI"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['tenant']
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — the shape the results compiler expects
+          for tenant-entity reads (entity_id = tenant_id). No identity
+          resolution happens for this family.
+        tests:
+          - not_null
+      - name: source_entity_id
+        description: >
+          Same tenant id — kept so the evidence contract keeps one column
+          set across families; there is no source-native identity to record.
+        tests:
+          - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Run start date; deployment creation date"
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Run start instant; NULL on deployment rows"
+      - name: measure_key
+        description: "Source measure key"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - runs
+                  - gate_runs
+                  - gate_passed
+                  - gate_first_try_passed
+                  - gate_retried
+                  - run_duration_min
+                  - run_hours
+                  - deployments
+                  - runs_matched_commit
+                  - commits_observed
+      - name: record_id
+        description: >
+          Deterministic total-order key within the measure scope; source_id
+          leads it, so two source instances covering the same repository
+          cannot collide.
+        tests:
+          - not_null
+      - name: record_kind
+        description: "ci_run for run measures, deployment for deployments, commit for commits_observed"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci_run', 'deployment', 'commit']
+      - name: granularity
+        description: "Always event: one row per run / deployment"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['event']
+      - name: record_label
+        description: "Pipeline name + run number, or environment + outcome"
+      - name: contribution
+        description: "Nullable numeric contribution to the source measure"
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL"
+      - name: dimensions
+        description: >
+          Run rows carry repository / pipeline / trigger / outcome /
+          hour_block; deployment rows carry repository / environment /
+          outcome / env_kind (production, or preview vs static by the
+          vendor's transient flag).
+      - name: details
+        description: "Drilldown display fields keyed by stable field name"
+
   - name: ai_cost_metric_evidence
     description: >
-      Materialized MergeTree evidence serving table for AI cost measures. Seat
-      figures are monthly snapshots rather than daily activity, so a row is one
-      seat-month at source_summary granularity, dated at the day the snapshot
-      was last read. A separate family from ai_metric_evidence because one
-      evidence relation is bound per source.
+      Materialized MergeTree evidence serving table for AI cost measures, all
+      at source_summary granularity. A month-grain row is one seat-month, dated
+      at the first day of the month it bills for; a day-grain row is one reading
+      of a seat, dated at the day it was read. A day-grain row carries
+      covers_days, the span from the previous reading in the same billing month
+      or from the 1st for the first one: a reading attributed to the wrong month
+      at a boundary keeps its money and loses that span. A separate family from
+      ai_metric_evidence because one evidence relation is bound per source.
     columns: *metric_evidence_columns
 
   - name: ai_cost_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, AI cost
-      family. One row per (tenant, entity, read day, measure, dimension tuple).
+      family. One row per (tenant, entity, metric date, measure, dimension tuple).
       seat_cost_usd is the invoiced price of the seat itself, from the per-seat
       amount on the invoice's subscription lines; extra_usage_usd is the money
       the vendor billed once that seat exhausted the usage included in its fee;
       extra_usage_limit_usd is the admin-set ceiling on that spend, and serves
       only as the utilisation denominator; daily_extra_usage_usd is the same
       billed money as extra_usage_usd, stepped across the days it was spent.
+      The month-grain measures are dated at the first day of the billing month
+      they charge for, so their date never moves with the sync schedule. A
+      reading taken on that month's last calendar day may raise the month but
+      never lower it: the endpoint names no billing period, so a drop there
+      cannot be told apart from its counter having already rolled over. A
+      reading taken before that rollover overstates the month it lands in, and
+      the same rewriting rule erases it once the month's real readings arrive —
+      a month whose only reading is that one keeps it.
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -162,14 +370,21 @@ models:
           this relation.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
-          The day the seat snapshot was last read, not the first of its billing
-          month — a date pinned to the 1st falls outside short rolling windows.
+          For a month-grain measure, the first day of the month it bills for, so
+          the date does not move with the sync schedule. For daily_extra_usage_usd,
+          the day the reading was taken.
         tests:
           - not_null
       - name: observed_at
-        description: "NULL — seat figures are month-grain aggregates."
+        description: "NULL here; the read timestamp lives on the evidence row."
       - name: measure_key
         description: "Source measure key registered in the metric registry"
         tests:
@@ -225,14 +440,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: "Observation date"
         tests:
@@ -309,14 +529,28 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: >
+          Source family of the author's account binding, in the identity
+          store's vocabulary. '' when the row carries no account-keyed fact.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: >
+          Raw connector source id of the account binding; the runtime hashes
+          it in lockstep with identity's `insight_source_id` minting.
+      - name: account_id
+        description: >
+          Source-native account id of the row's author. Account-carrying rows
+          resolve account-first through `identity.account_assignment`; an
+          account bound to the excluded person attributes to nobody.
       - name: metric_date
         description: >
           Observation date: commit date for commit-derived measures,
@@ -351,12 +585,15 @@ models:
                   - pr_multi_reviewed
                   - pr_merged
                   - pr_merged_without_approval
+                  - pr_commit_count
                   - pr_cycle_hours
                   - pr_change_size
                   - pr_first_review_hours
                   - pr_review_wait_share
                   - pr_review_to_merge_hours
                   - pr_approval_to_merge_hours
+                  - review_submitted
+                  - pr_comment
                   - default_commit_count
                   - non_default_commit_count
                   - default_code_lines_added
@@ -419,14 +656,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: "Observation date (activity date per source)."
         tests:
@@ -516,14 +758,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
           Observation date: close date for closed-issue measures, transition
@@ -613,6 +860,97 @@ models:
         tests:
           - not_null
 
+  - name: ci_metric_observations
+    description: >
+      Source measure observations for the unified metrics runtime, CI family —
+      the first TENANT-grain family (issue #2803): entity_id is the tenant id,
+      no identity resolution and no '' filter. Day-grain sums for counts and
+      hours; run_duration_min passes through at event grain for median and
+      percentile metrics. The column set is the same published contract the
+      analytics service schema validator probes (`OBSERVATION_COLUMNS`);
+      changing it requires a coordinated backend change.
+    columns:
+      - name: tenant_id
+        description: "Tenant isolation field"
+        tests:
+          - not_null
+      - name: source_key
+        description: "Logical source key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['ci']
+      - name: entity_type
+        description: "Measured entity type — always the tenant for CI"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['tenant']
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — the shape the results compiler expects
+          for tenant-entity reads (entity_id = tenant_id). No person ever
+          appears in this family (issue #2803, decision 5).
+        tests:
+          - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
+        tests:
+          - not_null
+      - name: metric_date
+        description: >
+          Run start date for run measures, deployment creation date for
+          deployments.
+        tests:
+          - not_null
+      - name: observed_at
+        description: "Reserved for point-in-time semantics. NULL for all CI measures."
+      - name: measure_key
+        description: "Source measure key registered in the metric registry"
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - runs
+                  - gate_runs
+                  - gate_passed
+                  - gate_first_try_passed
+                  - gate_retried
+                  - run_duration_min
+                  - run_hours
+                  - deployments
+                  - runs_matched_commit
+                  - commits_observed
+      - name: value
+        description: >
+          Measure value. Rows are emitted only when the run feeds the measure,
+          so value is never NULL; the column stays Nullable(Float64) in the
+          published contract.
+        tests:
+          - not_null
+      - name: subject_key
+        description: "Unused by this family (no distinct-count measure); always NULL."
+      - name: dimensions
+        description: >
+          Array(Tuple(key, value, label)). Run measures carry repository /
+          pipeline / trigger / outcome / hour_block (two-hour start block of
+          the run, UTC); deployments carry repository / environment /
+          outcome / env_kind.
+
   - name: wiki_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, wiki
@@ -645,14 +983,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
           Observation date: page creation date for pages_created, edit day
@@ -739,11 +1082,14 @@ models:
       Current cohort membership per person for peer comparison. One row per
       (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
       tests/gold/assert_metric_entity_cohorts_unique.sql, and since entity_id is
-      the canonical person id that uniqueness is per PERSON: the model collapses
-      a person's several HR emails itself and EXCLUDES anyone whose emails claim
-      different org units, so the peer query reads it straight instead of
-      repairing the grain per request. The column set is a published contract
-      probed by the analytics service schema validator (`COHORT_COLUMNS`).
+      the canonical person id that uniqueness is per PERSON: the model resolves
+      a person's several HR emails through `identity.person_map` itself and
+      EXCLUDES anyone whose emails claim different org units, so the peer query
+      reads it straight instead of repairing the grain per request. A view, so
+      it resolves against the same live map the runtime uses for observations —
+      the two sides of a peer comparison can never disagree. The column set is a
+      published contract probed by the analytics service schema validator
+      (`COHORT_COLUMNS`).
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -758,12 +1104,9 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Canonical person id: a cohort is a set of people, not of accounts, so
+          membership is resolved here through `identity.person_map` and a person
+          appears once however many HR emails they have.
         tests:
           - not_null
       - name: cohort_key
@@ -782,10 +1125,10 @@ models:
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
       rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
-      hr_cohorts for the peer-membership relation. A TABLE materialized in
-      the same gold build as the serving relations, reading the resolution
-      snapshot stamped into evidence — so coverage answers for exactly what
-      is served, never a fresher map. Row-weighted on purpose —
+      hr_cohorts for the peer-membership relation. A VIEW joining the same
+      live `identity.person_map` the runtime joins, so the rate describes what
+      a dashboard would show right now rather than what a past build stamped.
+      Row-weighted on purpose —
       unresolved_rows counts what the dashboards actually lose;
       unresolved_people counts the distinct unknown emails behind the gap
       (roughly the operator decisions that would close it). The "match rate

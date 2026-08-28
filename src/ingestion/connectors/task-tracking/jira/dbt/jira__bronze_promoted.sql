@@ -74,5 +74,13 @@
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_issuetypes',    order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_priorities',    order_by='unique_key') %}
 {% do promote_bronze_to_rmt(table='bronze_jira.jira_resolutions',   order_by='unique_key') %}
+{# Census tables (specs/DELETION-AND-VISIBILITY.md): full-refresh streams that
+   re-observe the whole visible surface each sync. RMT(_airbyte_extracted_at)
+   keyed by unique_key collapses them to one row per entity whose version IS
+   the last-seen timestamp — the absence classifier reads exactly that. #}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_project_visibility', order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_issue_census',       order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_worklog_deleted',    order_by='unique_key') %}
+{% do promote_bronze_to_rmt(table='bronze_jira.jira_board_configuration', order_by='unique_key') %}
 
 SELECT 1 AS promoted

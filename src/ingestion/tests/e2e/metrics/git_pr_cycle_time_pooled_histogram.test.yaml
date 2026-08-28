@@ -1,0 +1,105 @@
+spec_version: 1
+description: >
+  View: the POOLED histogram — `{view: histogram, dimensions: [repository]}`
+  bins one distribution per dimension tuple over every selected entity's
+  events, instead of one distribution per entity.
+
+  Seeded over git.pr_cycle_time_h (hours from open to merge, one event per
+  merged request):
+    • acme/api  — alice merges at 10 h and 30 h, bob at 20 h and 40 h
+    • acme/web  — alice and bob each merge at 5 h
+
+  What the numbers prove:
+    • acme/api pools to [10, 40] across BOTH people, so its last bin closes at
+      40. Per-entity binning would close alice's own distribution at 30 —
+      the assertion fails if the pooling is dropped.
+    • acme/web's four-way-identical values collapse to a single [5, 5] bin
+      whose count is 2, one per person: a per-entity shape would report two
+      rows of count 1.
+    • Bins are fixed-width over the tuple's own [min, max]: 10 bins of width
+      3 over [10, 40], so a bin starts exactly at 10 and the last closes at 40.
+
+  Cases: pooled bins per repository, the dimensionless request still answering
+  per entity (unchanged wire shape), empty window.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+  bronze_github.pull_requests:
+    # acme/api: alice 10 h and 30 h, bob 20 h and 40 h — all open at
+    # 2026-10-01T00:00 and dated at their merge.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-api-a1, id: 101, number: 101, repo_full_name: acme/api, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T10:00:00Z", merged_at: "2026-10-01T10:00:00Z", merge_commit_sha: merge-api-a1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-api-a2, id: 102, number: 102, repo_full_name: acme/api, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-02T06:00:00Z", merged_at: "2026-10-02T06:00:00Z", merge_commit_sha: merge-api-a2}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-api-b1, id: 103, number: 103, repo_full_name: acme/api, author_login: bob, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T20:00:00Z", merged_at: "2026-10-01T20:00:00Z", merge_commit_sha: merge-api-b1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-api-b2, id: 104, number: 104, repo_full_name: acme/api, author_login: bob, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-02T16:00:00Z", merged_at: "2026-10-02T16:00:00Z", merge_commit_sha: merge-api-b2}
+    # acme/web: both merge at 5 h, so the tuple's range collapses.
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-web-a1, id: 105, number: 105, repo_full_name: acme/web, author_login: alice, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T05:00:00Z", merged_at: "2026-10-01T05:00:00Z", merge_commit_sha: merge-web-a1}
+    - {$ref: templates/git_activity.yaml#/templates/pull_request, unique_key: pr-web-b1, id: 106, number: 106, repo_full_name: acme/web, author_login: bob, created_at: "2026-10-01T00:00:00Z", closed_at: "2026-10-01T05:00:00Z", merged_at: "2026-10-01T05:00:00Z", merge_commit_sha: merge-web-b1}
+  bronze_github.pull_request_diff_stats:
+    # GitHub staging reads a request's author_email from here and nowhere else,
+    # joining on repo_full_name — the template's default repo would miss.
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-api-a1, repo_full_name: acme/api, pull_number: 101, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-api-a2, repo_full_name: acme/api, pull_number: 102, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-api-b1, repo_full_name: acme/api, pull_number: 103, additions: 10, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-api-b2, repo_full_name: acme/api, pull_number: 104, additions: 10, author_email: bob@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-web-a1, repo_full_name: acme/web, pull_number: 105, additions: 10, author_email: alice@example.com}
+    - {$ref: templates/git_activity.yaml#/templates/diff_stat, unique_key: ds-web-b1, repo_full_name: acme/web, pull_number: 106, additions: 10, author_email: bob@example.com}
+
+cases:
+  - name: Pooled bins per repository
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, bob@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-03"}
+        metrics:
+          - metric_key: git.pr_cycle_time_h
+            views:
+              - {view: histogram, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # acme/api pools alice's [10, 30] with bob's [20, 40]: the distribution
+      # starts at 10 and closes at 40. A per-entity shape closes at 30.
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/api"}}, contains: {bins: {lo: 10, count: 1}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/api"}}, contains: {bins: {hi: 40, count: 1}}}
+      # Identical values collapse to one bin, and its count is BOTH people's.
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/web"}}, contains: {bins: {lo: 5, hi: 5, count: 2}}}
+      # Pooled rows carry no entity grain, exactly like rollup rows.
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {dimensions: {key: repository, value: "git-test:acme/web"}}, assert: "!has(it.entity_id)"}
+
+  - name: The dimensionless request still bins per entity
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, bob@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-03"}
+        metrics:
+          - metric_key: git.pr_cycle_time_h
+            views:
+              - {view: histogram}
+    expect:
+      - assert: "status == 200"
+      # alice's own three merges span [5, 30] — bob's 40 h is not hers.
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {entity_id: alice@example.com}, contains: {bins: {lo: 5, count: 1}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {entity_id: alice@example.com}, contains: {bins: {hi: 30, count: 1}}}
+      - {metric: git.pr_cycle_time_h, view: histogram, find: {entity_id: bob@example.com}, contains: {bins: {hi: 40, count: 1}}}
+
+  - name: Empty window
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com, bob@example.com]}
+        period: {from: "2025-01-01", to: "2025-01-31"}
+        metrics:
+          - metric_key: git.pr_cycle_time_h
+            views:
+              - {view: histogram, dimensions: [repository]}
+    expect:
+      - assert: "status == 200"
+      # No events, so no tuple has a row — pooled absence, unlike the
+      # per-entity shape which still lists every requested entity.
+      - {metric: git.pr_cycle_time_h, view: histogram, assert: "size(view.values) == 0"}

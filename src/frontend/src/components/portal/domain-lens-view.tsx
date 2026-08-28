@@ -15,6 +15,14 @@ import {
 } from "@/components/portal/section-trend";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -57,7 +65,6 @@ import type {
   MetricDirection,
 } from "@/api/metric-results-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { githubRepoUrl } from "@/lib/metrics/provider-links";
 import {
   personsEvidenceSelection,
   type MetricEvidenceSelection,
@@ -69,6 +76,12 @@ import {
 import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
+import {
+  toBarRows,
+  UNSPLIT_SEGMENT,
+  type BarEntry,
+  type BarRow,
+} from "@/lib/portal/bar-rows";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
@@ -93,6 +106,7 @@ import {
 } from "@/lib/portal/lens-configs";
 import {
   buildActiveContributorData,
+  buildMedianTrendData,
   buildTrendData,
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
@@ -242,38 +256,39 @@ export function DomainLensView({
     dateRange
   );
 
-  // Composition: one breakdown request covering every composition section.
-  const compSections = useMemo(
+  // Composition + ownership: one breakdown request covering every section
+  // that reads per-person dimension rows. Sections sharing a metric merge
+  // their dimension lists into one entry — the request rejects duplicate keys.
+  const breakdownSections = useMemo(
     () =>
       config.sections.filter(
-        (s): s is Extract<SectionSpec, { kind: "composition" }> =>
-          s.kind === "composition"
+        (
+          s
+        ): s is Extract<SectionSpec, { kind: "composition" | "ownership" }> =>
+          s.kind === "composition" || s.kind === "ownership"
       ),
     [config]
   );
-  const compCollection = useMemo<MetricCollectionConfig>(
-    () => ({
-      metrics: compSections.map((s) => ({
-        key: s.metric,
-        views: [
-          {
-            view: "breakdown" as const,
-            // `source` rides along so a row knows which provider it came
-            // from — the only thing that makes a link safe to build.
-            dimensions: [
-              s.dimension,
-              ...(s.splitBy ? [s.splitBy] : []),
-              ...(s.dimension === LINKABLE_DIMENSION ? [SOURCE_DIMENSION] : []),
-            ],
-          },
-        ],
+  const compCollection = useMemo<MetricCollectionConfig>(() => {
+    const dims = new Map<string, Set<string>>();
+    for (const s of breakdownSections) {
+      const set = dims.get(s.metric) ?? new Set<string>();
+      set.add(s.dimension);
+      if (s.kind === "composition" && s.splitBy) set.add(s.splitBy);
+      dims.set(s.metric, set);
+    }
+    return {
+      metrics: [...dims].map(([key, set]) => ({
+        key,
+        views: [{ view: "breakdown" as const, dimensions: [...set] }],
       })),
-    }),
-    [compSections]
-  );
+    };
+  }, [breakdownSections]);
   const compData = useMetricCollection(
-    compSections.length && memberIds.length ? compCollection : EMPTY_COLLECTION,
-    compSections.length && memberIds.length
+    breakdownSections.length && memberIds.length
+      ? compCollection
+      : EMPTY_COLLECTION,
+    breakdownSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
     dateRange
@@ -303,6 +318,41 @@ export function DomainLensView({
       ? eventCollection
       : EMPTY_COLLECTION,
     eventSections.length && memberIds.length
+      ? { type: "person", ids: memberIds }
+      : { type: "person", ids: [] },
+    dateRange
+  );
+
+  // Dimension tables: one rollup request covering every table section. The
+  // rollup view collapses the person grain server-side, so a metric appears
+  // once with the first table's dimension.
+  const tableSections = useMemo(
+    () =>
+      config.sections.filter(
+        (s): s is Extract<SectionSpec, { kind: "dimension-table" }> =>
+          s.kind === "dimension-table"
+      ),
+    [config]
+  );
+  const tableCollection = useMemo<MetricCollectionConfig>(() => {
+    const dimensionByMetric = new Map<string, string>();
+    for (const s of tableSections) {
+      for (const key of s.metrics) {
+        if (!dimensionByMetric.has(key)) dimensionByMetric.set(key, s.dimension);
+      }
+    }
+    return {
+      metrics: [...dimensionByMetric].map(([key, dimension]) => ({
+        key,
+        views: [{ view: "rollup" as const, dimensions: [dimension] }],
+      })),
+    };
+  }, [tableSections]);
+  const tableData = useMetricCollection(
+    tableSections.length && memberIds.length
+      ? tableCollection
+      : EMPTY_COLLECTION,
+    tableSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
     dateRange
@@ -438,6 +488,9 @@ export function DomainLensView({
           compRefetch={compData.refetch}
           eventByKey={eventData.byKey}
           eventIsError={eventData.isError}
+          tableByKey={tableData.byKey}
+          tableIsError={tableData.isError}
+          tableRefetch={tableData.refetch}
           memberIds={memberIds}
           cohortOf={cohortOf}
           cohortLabel={cohortLabel}
@@ -489,6 +542,9 @@ function Section({
   compRefetch,
   eventByKey,
   eventIsError,
+  tableByKey,
+  tableIsError,
+  tableRefetch,
   memberIds,
   cohortOf,
   cohortLabel,
@@ -505,6 +561,9 @@ function Section({
   compRefetch: () => void;
   eventByKey: Map<string, NormalizedMetricResult>;
   eventIsError: boolean;
+  tableByKey: Map<string, NormalizedMetricResult>;
+  tableIsError: boolean;
+  tableRefetch: () => void;
   memberIds: readonly string[];
   nameByEntity: Map<string, string>;
   personIdByEntity: Map<string, string>;
@@ -592,6 +651,25 @@ function Section({
           grid={grid}
           eventByKey={eventByKey}
           eventIsError={eventIsError}
+          memberIds={memberIds}
+        />
+      );
+    case "dimension-table":
+      return (
+        <DimensionTableSection
+          spec={spec}
+          tableByKey={tableByKey}
+          tableIsError={tableIsError}
+          tableRefetch={tableRefetch}
+        />
+      );
+    case "ownership":
+      return (
+        <OwnershipSection
+          spec={spec}
+          compData={compData}
+          compIsError={compIsError}
+          compRefetch={compRefetch}
           memberIds={memberIds}
         />
       );
@@ -1187,8 +1265,23 @@ function trendCharts(
   const charts = spec.metrics
     .map((key): TrendChart | null => {
       const r = grid.byKey.get(key);
-      if (!r || r.computation !== "sum") return null;
+      if (!r) return null;
       const label = r.short_label ?? r.label;
+      if (r.computation !== "sum") {
+        // Non-additive metrics chart the roster median per bucket — summing
+        // per-person ratios or medians would fabricate a number. `derived`
+        // because the plotted value is computed here, not a server figure a
+        // record list can back.
+        return {
+          id: key,
+          title: label,
+          description: "Median per person",
+          drilldownKey: key,
+          derived: true,
+          series: [{ key, label, type: "line" as const }],
+          data: buildMedianTrendData(key, trend.byKey, memberIds),
+        };
+      }
       return {
         id: key,
         title: label,
@@ -1711,14 +1804,7 @@ function CompositionSection({
           });
         }
         const label = dim.label?.trim() || running?.label || dim.value;
-        const href =
-          running?.href ??
-          (spec.dimension === LINKABLE_DIMENSION
-            ? (githubRepoUrl(
-                row.dimensions.find((d) => d.key === SOURCE_DIMENSION)?.value,
-                label
-              ) ?? undefined)
-            : undefined);
+        const href = running?.href ?? dim.href;
         bucket.set(dim.value, {
           label,
           value: (running?.value ?? 0) + row.value,
@@ -1738,7 +1824,330 @@ function CompositionSection({
       rows={rows}
       format={r?.format ?? "integer"}
       unit={r?.unit ?? null}
+      notes={spec.notes}
     />
+  );
+}
+
+/* ── dimension-table (rollup: one row per dimension value) ───────────── */
+
+const DIMENSION_TABLE_ROWS = 12;
+
+function tableCellText(
+  value: number | null | undefined,
+  result: NormalizedMetricResult
+): string {
+  return value == null ? "—" : formatMetricValue(value, result.format, result.unit);
+}
+
+function DimensionTableSection({
+  spec,
+  tableByKey,
+  tableIsError,
+  tableRefetch,
+}: {
+  spec: Extract<SectionSpec, { kind: "dimension-table" }>;
+  tableByKey: Map<string, NormalizedMetricResult>;
+  tableIsError: boolean;
+  tableRefetch: () => void;
+}) {
+  if (tableIsError) {
+    return (
+      <section className="flex flex-col gap-3">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          {spec.title}
+        </p>
+        <ComingSoon
+          variant="card"
+          state="error"
+          label={`${spec.title} — unable to load`}
+          onRetry={tableRefetch}
+        />
+      </section>
+    );
+  }
+
+  const results = spec.metrics
+    .map((key) => tableByKey.get(key))
+    .filter((r): r is NormalizedMetricResult => r?.rollup != null);
+  const primary = results[0];
+  if (!primary?.rollup) return null;
+
+  // Rows keyed by the dimension VALUE (the id the response groups by), shown
+  // under its label — same rule as composition bars.
+  type Row = {
+    // The id the response groups by. Two values that happen to share a label
+    // are two rows, so the id — not the label — is what identifies one.
+    value: string;
+    label: string;
+    persons: number | null;
+    cells: Map<string, number | null>;
+  };
+  const rows = new Map<string, Row>();
+  for (const r of results) {
+    for (const v of r.rollup?.values ?? []) {
+      const dim = v.dimensions.find((d) => d.key === spec.dimension);
+      if (!dim?.value) continue;
+      const row: Row = rows.get(dim.value) ?? {
+        value: dim.value,
+        label: dim.value,
+        persons: null,
+        cells: new Map(),
+      };
+      if (dim.label?.trim()) row.label = dim.label.trim();
+      row.cells.set(r.metric_key, v.value);
+      // The person count is read off the ranking metric only: rollup counts
+      // distinct contributors per metric, and mixing counts across metrics
+      // would let a row's "people" disagree with the number it ranks by.
+      if (r.metric_key === primary.metric_key) {
+        row.persons = v.contributing_entity_count;
+      }
+      rows.set(dim.value, row);
+    }
+  }
+  const ranked = [...rows.values()].sort(
+    (a, b) =>
+      (b.cells.get(primary.metric_key) ?? 0) -
+      (a.cells.get(primary.metric_key) ?? 0)
+  );
+  // A single row is an empty shell, same rule as composition.
+  if (ranked.length < 2) return null;
+
+  const limit = spec.limit ?? DIMENSION_TABLE_ROWS;
+  const visible = ranked.slice(0, limit);
+  const rest = ranked.slice(limit);
+  // A remainder only for what still adds up: sums add; a median or a ratio
+  // over "everything else" is not derivable from the shown rows.
+  const remainder = rest.length
+    ? {
+        label: `Other (${rest.length})`,
+        cells: new Map<string, number | null>(
+          results.map((r) => [
+            r.metric_key,
+            r.computation === "sum"
+              ? rest.reduce(
+                  (sum, row) => sum + (row.cells.get(r.metric_key) ?? 0),
+                  0
+                )
+              : null,
+          ])
+        ),
+      }
+    : null;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {spec.title} · {ranked.length} {spec.noun}
+      </p>
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead />
+                {results.map((r) => (
+                  <TableHead key={r.metric_key} className="text-right">
+                    {r.short_label ?? r.label}
+                  </TableHead>
+                ))}
+                <TableHead className="text-right">People</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.map((row) => (
+                <TableRow key={row.value}>
+                  <TableCell
+                    className="max-w-64 truncate text-sm font-medium"
+                    title={row.label}
+                  >
+                    {row.label}
+                  </TableCell>
+                  {results.map((r) => (
+                    <TableCell
+                      key={r.metric_key}
+                      className="text-right tabular-nums"
+                    >
+                      {tableCellText(row.cells.get(r.metric_key), r)}
+                    </TableCell>
+                  ))}
+                  <TableCell className="text-right tabular-nums">
+                    {row.persons ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {remainder ? (
+                <TableRow className="text-muted-foreground">
+                  <TableCell className="text-sm">{remainder.label}</TableCell>
+                  {results.map((r) => (
+                    <TableCell
+                      key={r.metric_key}
+                      className="text-right tabular-nums"
+                    >
+                      {tableCellText(remainder.cells.get(r.metric_key), r)}
+                    </TableCell>
+                  ))}
+                  <TableCell className="text-right">—</TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+/* ── ownership (concentration risk per dimension value; nobody named) ── */
+
+// Above this share in one person's hands a row is flagged — the same
+// "one person carries most of it" reading as the bus-factor section.
+const OWNERSHIP_RISK_SHARE = 0.6;
+const OWNERSHIP_ROWS = 12;
+
+function ownershipPct(share: number): string {
+  return `${Math.round(share * 100)}%`;
+}
+
+function OwnershipSection({
+  spec,
+  compData,
+  compIsError,
+  compRefetch,
+  memberIds,
+}: {
+  spec: Extract<SectionSpec, { kind: "ownership" }>;
+  compData: Map<string, NormalizedMetricResult>;
+  compIsError: boolean;
+  compRefetch: () => void;
+  memberIds: readonly string[];
+}) {
+  if (compIsError) {
+    return (
+      <section className="flex flex-col gap-3">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          {spec.title}
+        </p>
+        <ComingSoon
+          variant="card"
+          state="error"
+          label={`${spec.title} — unable to load`}
+          onRetry={compRefetch}
+        />
+      </section>
+    );
+  }
+
+  const bd = compData.get(spec.metric);
+  const byValue = new Map<
+    string,
+    { label: string; total: number; byEntity: Map<string, number> }
+  >();
+  if (bd) {
+    for (const id of memberIds) {
+      for (const row of forEntity(bd, id).breakdown) {
+        const dim = row.dimensions.find((d) => d.key === spec.dimension);
+        if (!dim?.value || row.value == null || row.value <= 0) continue;
+        const bucket = byValue.get(dim.value) ?? {
+          label: dim.value,
+          total: 0,
+          byEntity: new Map<string, number>(),
+        };
+        if (dim.label?.trim()) bucket.label = dim.label.trim();
+        bucket.total += row.value;
+        bucket.byEntity.set(id, (bucket.byEntity.get(id) ?? 0) + row.value);
+        byValue.set(dim.value, bucket);
+      }
+    }
+  }
+  const rows = [...byValue.entries()]
+    .map(([value, bucket]) => {
+      const shares = [...bucket.byEntity.values()].sort((a, b) => b - a);
+      const top1 = (shares[0] ?? 0) / bucket.total;
+      const top3 =
+        shares.slice(0, 3).reduce((sum, v) => sum + v, 0) / bucket.total;
+      return { value, label: bucket.label, total: bucket.total, top1, top3 };
+    })
+    .sort((a, b) => b.total - a.total);
+  if (rows.length < 2) return null;
+  const visible = rows.slice(0, OWNERSHIP_ROWS);
+
+  return (
+    <section className="flex flex-col gap-3">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {spec.title}
+      </p>
+      <Card>
+        <CardContent className="flex flex-col gap-2 p-4">
+          <ul
+            className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
+            aria-label="What each colour in a bar means"
+          >
+            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary" />
+              Top person
+            </li>
+            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] bg-primary/50" />
+              Next 2
+            </li>
+            <li className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span aria-hidden className="size-2.5 shrink-0 rounded-[2px] border border-border bg-muted" />
+              Everyone else
+            </li>
+          </ul>
+          {visible.map((row) => (
+            <div key={row.value} className="flex items-center gap-3">
+              <div
+                className="w-44 shrink-0 truncate text-sm md:w-64 lg:w-80"
+                title={row.label}
+              >
+                {row.label}
+              </div>
+              <div
+                className="flex h-3.5 flex-1 gap-0.5"
+                role="img"
+                aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
+              >
+                <span
+                  className="rounded-[3px] bg-primary"
+                  style={{ width: `${row.top1 * 100}%` }}
+                />
+                {row.top3 > row.top1 ? (
+                  <span
+                    className="rounded-[3px] bg-primary/50"
+                    style={{ width: `${(row.top3 - row.top1) * 100}%` }}
+                  />
+                ) : null}
+                {row.top3 < 1 ? (
+                  <span
+                    className="rounded-[3px] border border-border bg-muted"
+                    style={{ width: `${(1 - row.top3) * 100}%` }}
+                  />
+                ) : null}
+              </div>
+              <div className="w-40 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                <span
+                  className={
+                    row.top1 >= OWNERSHIP_RISK_SHARE
+                      ? "font-medium text-warning"
+                      : "font-medium text-foreground"
+                  }
+                >
+                  top-1 {ownershipPct(row.top1)}
+                </span>{" "}
+                · top-3 {ownershipPct(row.top3)}
+              </div>
+            </div>
+          ))}
+          {rows.length > visible.length ? (
+            <p className="text-xs text-muted-foreground">
+              +{rows.length - visible.length} more
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -1813,7 +2222,9 @@ function DirectionCardsSection({
   const cards = overviewCardDirections(showPlanned)
     .map((d) => {
       const entry = lensEntry(d.id, "Overview");
-      if (!entry || "comingSoon" in entry) return null;
+      // Overview lenses are person-grain by construction; a tenant entry here
+      // would have no roster to preview, so it contributes no card.
+      if (!entry || "comingSoon" in entry || "entity" in entry) return null;
       const gated = visibleSections(entry, showPlanned);
       const headline = gated.sections.find(
         (s): s is Extract<SectionSpec, { kind: "headline" }> =>
@@ -1966,55 +2377,7 @@ function ByUnitSection({
 /* ── shared bits ─────────────────────────────────────────────────────── */
 
 /** One slice of a bar: a value of the split dimension, and its share of the row. */
-interface BarSegment {
-  /** The split value's own key — the colour seed, stable across rows. */
-  seed: string;
-  label: string;
-  value: number;
-}
 
-interface BarRow {
-  label: string;
-  value: number;
-  pct: number;
-  /** Where the row's subject lives, when that is knowable. */
-  href?: string;
-  /** Absent when the section declares no `splitBy`. */
-  segments?: BarSegment[];
-}
-
-/**
- * One bar before it is measured against the others.
- *
- * The map key is the row's IDENTITY and this is what the reader sees. They were
- * the same string once, which is why a dimension whose ids share a prefix drew a
- * column of bars all reading alike.
- */
-interface BarEntry {
-  label: string;
-  value: number;
-  href?: string;
-  /** Totals per split value, keyed by that value. */
-  split?: Map<string, BarSegment>;
-}
-
-function toBarRows(bucket: Map<string, BarEntry>): BarRow[] {
-  const total =
-    [...bucket.values()].reduce((sum, entry) => sum + entry.value, 0) || 1;
-  return [...bucket.values()]
-    .map(({ label, value, split, href }) => ({
-      label,
-      value,
-      href,
-      segments: split
-        ? [...split.values()].sort((a, b) => b.value - a.value)
-        : undefined,
-      // Exact share; rounding happens where it is displayed, so a small one
-      // can say so instead of being flattened to zero.
-      pct: (value / total) * 100,
-    }))
-    .sort((a, b) => b.value - a.value);
-}
 
 /**
  * A share, as a reader should see it. "0%" beside a non-zero count reads as
@@ -2028,24 +2391,16 @@ function shareLabel(pct: number): string {
 /** Same dwell as every other hover explanation in the product. */
 const HOVER_DELAY_MS = 400;
 
-/** The dimension whose rows can address something outside the product. */
-const LINKABLE_DIMENSION = "repository";
-
-/** Names the provider a git row came from. */
-const SOURCE_DIMENSION = "source";
-
-/** Segment a split row falls in when the response named no split value. */
-const UNSPLIT_SEGMENT = "unsplit";
-
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
-function BarList({
+export function BarList({
   title,
   rows,
   format,
   unit,
   showShare = true,
+  notes,
 }: {
   title: string;
   rows: BarRow[];
@@ -2053,6 +2408,8 @@ function BarList({
   unit: string | null;
   /** False for per-capita values, where a share-of-total percent would mislead. */
   showShare?: boolean;
+  /** Below the bars, not above: it explains what was read, not what to read. */
+  notes?: readonly string[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
@@ -2183,6 +2540,15 @@ function BarList({
               </button>
             ) : null}
           </TooltipProvider>
+          {notes?.length ? (
+            <div className="mt-4 flex flex-col gap-1 border-t pt-3">
+              {notes.map((note) => (
+                <p key={note} className="text-xs text-muted-foreground">
+                  {note}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </section>
@@ -2197,7 +2563,7 @@ function SliceNote({ text }: { text: string }) {
   );
 }
 
-function Delta({
+export function Delta({
   now,
   prev,
   direction,

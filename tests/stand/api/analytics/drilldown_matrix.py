@@ -49,6 +49,9 @@ class Tier(StrEnum):
     #: Median over a measure whose value column is not projected, recoverable
     #: from the detail columns it was computed from.
     DERIVED_MEDIAN = "derived_median"
+    #: Percentile over event rows passed through one-for-one, like
+    #: `EXACT_MEDIAN` but at a quantile the expectation carries.
+    EXACT_PERCENTILE = "exact_percentile"
     #: Ratio of two additive measures: the summed numerator over the summed
     #: denominator, scaled, then transformed.
     EXACT_RATIO = "exact_ratio"
@@ -102,6 +105,8 @@ class Expectation:
     tier: Tier
     #: Ratio scale, from the definition's computation.
     scale: float | None = None
+    #: Quantile of an `EXACT_PERCENTILE` metric, as the registry declares it.
+    quantile: float | None = None
     transform: Transform | None = None
     #: Detail columns a `DERIVED_MEDIAN` metric's value is the sum of.
     derived_from: tuple[str, ...] = ()
@@ -158,6 +163,7 @@ MATRIX: Sequence[Expectation] = (
     ),
     Expectation("git.commits", "git", Tier.EXACT_COUNT),
     Expectation("git.commits_per_active_day", "git", Tier.EXACT_RATIO, scale=1.0),
+    Expectation("git.first_review_time_p75_h", "git", Tier.EXACT_PERCENTILE, quantile=0.75),
     Expectation("git.first_review_time_h", "git", Tier.EXACT_MEDIAN),
     Expectation("git.default_branch_code_lines", "git", Tier.EXACT_SUM),
     Expectation("git.default_branch_commits", "git", Tier.EXACT_COUNT),
@@ -177,11 +183,15 @@ MATRIX: Sequence[Expectation] = (
     Expectation("git.merges_without_approval_rate", "git", Tier.EXACT_RATIO, scale=100.0),
     Expectation("git.multi_reviewer_rate", "git", Tier.EXACT_RATIO, scale=100.0),
     Expectation("git.pr_abandonment_rate", "git", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("git.pr_comments", "git", Tier.EXACT_COUNT),
+    Expectation("git.pr_commits", "git", Tier.EXACT_MEDIAN),
     Expectation("git.pr_cycle_time_h", "git", Tier.EXACT_MEDIAN),
+    Expectation("git.pr_cycle_time_p75_h", "git", Tier.EXACT_PERCENTILE, quantile=0.75),
     Expectation("git.pr_size", "git", Tier.EXACT_MEDIAN),
     Expectation("git.prs_created", "git", Tier.EXACT_COUNT),
     Expectation("git.prs_merged", "git", Tier.EXACT_COUNT),
     Expectation("git.review_coverage", "git", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("git.reviews_performed", "git", Tier.EXACT_COUNT),
     Expectation("git.review_to_merge_time_h", "git", Tier.EXACT_MEDIAN),
     Expectation("git.review_wait_share", "git", Tier.EXACT_MEDIAN),
     Expectation("git.reviewers_per_pr", "git", Tier.EXACT_RATIO, scale=1.0),

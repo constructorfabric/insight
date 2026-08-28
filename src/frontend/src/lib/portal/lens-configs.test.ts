@@ -8,6 +8,7 @@ import {
   directionMetricKeys,
   lensEntry,
   sectionMetricKeys,
+  tenantSectionMetricKeys,
   visibleSections,
   type LensConfig,
   type SectionSpec,
@@ -29,9 +30,25 @@ describe("DIRECTION_LENSES registry", () => {
   it("references only metric keys that exist in the groups registry", () => {
     for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
       for (const [lens, entry] of Object.entries(lenses)) {
-        if ("comingSoon" in entry) continue;
+        if ("comingSoon" in entry || "entity" in entry) continue;
         for (const key of sectionMetricKeys(entry)) {
           expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps tenant lens keys out of every person surface", () => {
+    for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
+      const gridKeys = new Set(directionMetricKeys(dir));
+      for (const [lens, entry] of Object.entries(lenses)) {
+        if (!("entity" in entry)) continue;
+        for (const key of tenantSectionMetricKeys(entry)) {
+          // A tenant-entity key inside a person-entity request fails the whole
+          // batch, and GROUPS drive person surfaces — both must stay clean.
+          expect(gridKeys.has(key), `${dir}/${lens}: ${key} in grid`).toBe(false);
+          expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key} in GROUPS`).toBe(false);
+          expect(key, `${dir}/${lens}: ${key} shape`).toMatch(/^[a-z_]+\.[a-z0-9_]+$/);
         }
       }
     }
@@ -59,11 +76,37 @@ describe("DIRECTION_LENSES registry", () => {
     }
   });
 
+  it("explains a derived dimension where a label cannot", () => {
+    const entry = lensEntry("dev", "Overview");
+    const composition = (entry as LensConfig).sections.find(
+      (section): section is Extract<SectionSpec, { kind: "composition" }> =>
+        section.kind === "composition" && section.dimension === "category",
+    );
+
+    // The lead states the precedence, which is the part a reader cannot guess
+    // from the labels, and every category the warehouse can emit is named.
+    const notes = composition?.notes ?? [];
+    expect(notes[0]).toMatch(/first rule that matches wins/i);
+    for (const label of [
+      "Vendored / Generated",
+      "Tests",
+      "Documentation",
+      "Configuration",
+      "Code",
+    ]) {
+      expect(notes.some((note) => note.startsWith(label)), label).toBe(true);
+    }
+  });
+
   it("stays under the API metric cap per lens", () => {
     for (const lenses of Object.values(DIRECTION_LENSES)) {
       for (const entry of Object.values(lenses)) {
         if ("comingSoon" in entry) continue;
-        expect(sectionMetricKeys(entry).length).toBeLessThanOrEqual(50);
+        const keys =
+          "entity" in entry
+            ? tenantSectionMetricKeys(entry)
+            : sectionMetricKeys(entry);
+        expect(keys.length).toBeLessThanOrEqual(50);
       }
     }
   });
@@ -123,6 +166,31 @@ describe("sectionMetricKeys — Overview section kinds", () => {
       sections: [{ kind: "attention", metrics: ["git.commits", "wiki.edits"], max: 8 }],
     });
     expect(keys.sort()).toEqual(["git.commits", "wiki.edits"]);
+  });
+  it("collects dimension-table and ownership metrics", () => {
+    const keys = sectionMetricKeys({
+      title: "t",
+      sections: [
+        {
+          kind: "dimension-table",
+          title: "t",
+          dimension: "repository",
+          noun: "repositories",
+          metrics: ["git.prs_merged", "git.lines_added"],
+        },
+        {
+          kind: "ownership",
+          metric: "git.code_lines",
+          dimension: "repository",
+          title: "t",
+        },
+      ],
+    });
+    expect(keys.sort()).toEqual([
+      "git.code_lines",
+      "git.lines_added",
+      "git.prs_merged",
+    ]);
   });
   it("derives direction-cards keys from every configured Overview lens headline", () => {
     const keys = sectionMetricKeys({
@@ -197,6 +265,37 @@ describe("visibleSections", () => {
     );
 
     expect(gated.sections.map((s) => s.kind)).not.toContain("distribution");
+  });
+
+  it("gates dimension-table columns and drops an emptied table or ownership section", () => {
+    const repoConfig = {
+      title: "T",
+      sections: [
+        {
+          kind: "dimension-table",
+          title: "t",
+          dimension: "repository",
+          noun: "repositories",
+          metrics: ["git.prs_merged", "ai.cost"],
+        },
+        {
+          kind: "ownership",
+          metric: "ai.cost",
+          dimension: "repository",
+          title: "o",
+        },
+      ] as const satisfies readonly SectionSpec[],
+    };
+    const gated = visibleSections(repoConfig, false, gate(["metric:ai.*"]));
+    expect(gated.sections).toEqual([
+      {
+        kind: "dimension-table",
+        title: "t",
+        dimension: "repository",
+        noun: "repositories",
+        metrics: ["git.prs_merged"],
+      },
+    ]);
   });
 
   it("keeps the sections that name no metric of their own", () => {

@@ -35,6 +35,8 @@ templates:
     description: null
     product_name: null
     tier_label: null
+    price_id: null
+    product_id: null
     category: null
     is_proration: null
     amount: null

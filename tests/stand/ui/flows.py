@@ -119,21 +119,25 @@ def collect_rows(table: Locator) -> list[list[str]]:
     return _scrolled(table, read)
 
 
-def collect_page_rows(usage: PlatformUsagePage) -> list[tuple[str, str]]:
-    """Every row of "What they opened" as (the name shown, the path recorded).
+#: "What they opened" renders Page | Views | People.
+_VIEWS_CELL = 1
+
+
+def collect_page_rows(usage: PlatformUsagePage) -> list[tuple[str, str, int]]:
+    """Every row of "What they opened" as (the name shown, the path, the views).
 
     The path exists only in a hover tooltip.
     """
 
-    def read(index: int) -> tuple[str, str]:
+    def read(index: int) -> tuple[str, str, int]:
         # Two tooltips can be mounted at once; wait for zero before the next hover.
         usage.header(PAGES_TABLE).hover()
         expect(usage.tooltips()).to_have_count(0)
         row = usage.row_at(PAGES_TABLE, index)
-        label = usage.page_cell(row).inner_text().strip()
+        cells = [text.strip() for text in row.locator('[data-slot="table-cell"]').all_inner_texts()]
         usage.page_label(row).hover()
         expect(usage.tooltips()).to_have_count(1)
-        return label, usage.tooltips().inner_text().strip()
+        return cells[0], usage.tooltips().inner_text().strip(), int(cells[_VIEWS_CELL])
 
     return _scrolled(usage.table(PAGES_TABLE), read)
 

@@ -49,6 +49,23 @@ route:
   host: ""
   annotations: {}
 
+# The `insight` login theme, mounted at /opt/keycloak/themes/insight. It
+# overrides only the page Keycloak serves when a request names an execution
+# that no longer matches the authentication session, and inherits everything
+# else from `keycloak.v2`. Always mounted, but inert until a realm binds it
+# with `loginTheme: insight` — so bind it only on a Keycloak this chart
+# deploys.
+theme:
+  # Where that page hands the browser back to. Relative on purpose: Keycloak
+  # rides /kc on the same Gateway host as the SPA, so "/" is the app. An
+  # install that splits the two hosts must set an absolute URL. The
+  # `auth_error` marker drives the SPA's retry-once-then-stop guard.
+  #
+  # SAFETY: Keycloak resolves ${...} in theme properties against the server's
+  # own environment and serves the result in the page, so such a value is
+  # refused at render time rather than published.
+  returnUrl: "/?auth_error=kc_page_expired"
+
 resources:
   requests: {cpu: 100m, memory: 384Mi}
   limits: {cpu: "1", memory: 768Mi}

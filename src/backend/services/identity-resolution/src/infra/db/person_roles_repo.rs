@@ -1,6 +1,5 @@
 //! `person_roles` assignment store (grant / list / revoke).
 //!
-//! Ported from the .NET `RolesRepository` person-role methods / `Sql.Roles.cs`.
 //! Tenant-scoped SCD2-ish junction: an assignment is active while
 //! `valid_to IS NULL`; revoke = soft-delete (set `valid_to`). Revoke of an
 //! `admin` assignment is protected against removing the tenant's LAST active
@@ -17,7 +16,7 @@ const COLUMNS: &str = "person_role_id, insight_tenant_id, person_id, role_id, \
      valid_from, valid_to, author_person_id, reason, created_at";
 
 /// One `person_roles` row (a role assignment).
-#[allow(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
+#[expect(clippy::struct_field_names)] // columns are ids by nature (`*_id`)
 #[derive(Debug, Clone)]
 pub struct PersonRole {
     pub person_role_id: Uuid,
@@ -50,7 +49,7 @@ fn row_to_person_role(r: &sea_orm::QueryResult) -> anyhow::Result<PersonRole> {
     })
 }
 
-/// Fetch one assignment by id (tenant-scoped). Ported from `SqlRoles.PersonRoleById`.
+/// Fetch one assignment by id (tenant-scoped).
 ///
 /// # Errors
 ///
@@ -72,7 +71,7 @@ pub async fn get_by_id(
             person_role_id.as_bytes().to_vec().into(),
         ],
     );
-    db.query_one(stmt)
+    db.query_one_raw(stmt)
         .await?
         .as_ref()
         .map(row_to_person_role)
@@ -80,8 +79,7 @@ pub async fn get_by_id(
 }
 
 /// List assignments for the tenant, optionally filtered by person / role /
-/// active-only, newest first, capped at `limit`. Ported from
-/// `RolesRepository.ListAsync` (`SqlRoles.PersonRoleListBase` + dynamic filters).
+/// active-only, newest first, capped at `limit`.
 ///
 /// # Errors
 ///
@@ -111,7 +109,7 @@ pub async fn list(
     params.push(limit.into());
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             &sql,
             params,
@@ -121,13 +119,12 @@ pub async fn list(
 }
 
 /// Grant a role: insert an active assignment (`valid_to = NULL`). `valid_from`
-/// defaults to now when `None` (`IFNULL(?, UTC_TIMESTAMP(6))`). Ported verbatim
-/// from `SqlRoles.InsertPersonRole`.
+/// defaults to now when `None` (`IFNULL(?, UTC_TIMESTAMP(6))`).
 ///
 /// # Errors
 ///
 /// Returns an error if the insert fails.
-#[allow(clippy::too_many_arguments)] // mirrors the columns of one assignment row
+#[expect(clippy::too_many_arguments)] // mirrors the columns of one assignment row
 pub async fn insert(
     db: &DatabaseConnection,
     person_role_id: Uuid,
@@ -158,7 +155,7 @@ pub async fn insert(
             reason.into(),
         ],
     );
-    db.execute(stmt).await?;
+    db.execute_raw(stmt).await?;
     Ok(())
 }
 
@@ -196,15 +193,14 @@ pub async fn soft_delete(
             person_role_id.as_bytes().to_vec().into(),
         ],
     );
-    Ok(db.execute(stmt).await?.rows_affected())
+    Ok(db.execute_raw(stmt).await?.rows_affected())
 }
 
 /// Revoke (soft-delete) an assignment, but REFUSE to remove the tenant's last
 /// active `admin` assignment (lockout guard). Returns rows affected: 1 =
 /// revoked, 0 = already revoked / vanished / would-be-last-admin.
 ///
-/// Ported verbatim from `RolesRepository.TrySoftDeletePersonRoleProtectingLastAdminAsync`:
-/// a `RepeatableRead` **transaction** that first takes row-level write locks on
+/// A `RepeatableRead` **transaction** that first takes row-level write locks on
 /// every active admin in the target's tenant (`SELECT … FOR UPDATE`), then runs
 /// the guarded UPDATE. The correlated `COUNT` inside the single UPDATE is a
 /// snapshot read on MariaDB, so the lock is what actually closes the TOCTOU race
@@ -273,7 +269,7 @@ pub async fn try_soft_delete_protecting_last_admin(
         .begin_with_config(Some(IsolationLevel::RepeatableRead), None)
         .await?;
 
-    txn.query_one(Statement::from_sql_and_values(
+    txn.query_one_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
         LOCK_SQL,
         [pr.clone().into(), admin.clone().into()],
@@ -281,7 +277,7 @@ pub async fn try_soft_delete_protecting_last_admin(
     .await?;
 
     let rows = txn
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [admin.clone().into(), pr.into(), reason.into(), admin.into()],

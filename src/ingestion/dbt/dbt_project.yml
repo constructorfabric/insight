@@ -96,6 +96,18 @@ vars:
   # compared case-insensitively — never a localized name.
   task_issue_type_field_names:
     - type
+  # Whether a Projects V2 board's status field must be bound like any other
+  # field. Boards multiply the field set: every board defines its own status,
+  # so enforcing coverage means one authored binding per board, and there is no
+  # authoring surface for that yet — the tables are written by hand. While this
+  # is false the two coverage tests skip board fields, so collecting boards
+  # cannot turn the build red on its own.
+  #
+  # It does NOT relax the invariant it guards: an unbound or unmapped board
+  # value still produces no dimension row and still reaches no category. It
+  # goes unreported instead of failing the build. Flip this on once binding
+  # boards is something an operator can actually do.
+  task_board_bindings_enforced: false
   task_non_bug_type_names:
     - task
     - sub-task
@@ -124,6 +136,10 @@ on-run-start:
   # consumes. dbt guarantees the relations exist and reads them as sources; the
   # rows are written by an operator, so no model may own them.
   - "{{ create_task_config_tables() }}"
+  # config.ai_seat_tier_map — the operator-authored binding from an invoice
+  # line's tier identifier to the tier a seat carries. Same ownership rule: dbt
+  # guarantees the relation exists, an operator writes the rows.
+  - "{{ create_ai_config_tables() }}"
   # identity.identity_persons — the persons-log copy the identity-resolution
   # service's persons-sync fills; gold models resolve email → person_id
   # against it. The hook only guarantees the (possibly empty) table exists

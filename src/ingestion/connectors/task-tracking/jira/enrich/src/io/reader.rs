@@ -174,6 +174,7 @@ struct IssueHeaderRow {
     insight_source_id: String,
     jira_id: String,
     id_readable: String,
+    title: Option<String>,
     created_ms: i64,
     reporter_id: Option<String>,
 }
@@ -202,9 +203,13 @@ pub async fn fetch_all_snapshots(
             // FINAL forces ReplacingMergeTree merges on read. Bronze `jira_issue` is
             // append-only (Airbyte destinationSyncMode='append'); without FINAL the reader
             // can see multiple unmerged rows per issue when syncs overlap with merges.
+            // INVARIANT: despite its name, `custom_fields_json` holds the issue's WHOLE
+            // `fields` object (connector.yaml promotes `record['fields'] | tojson`), so the
+            // summary is a plain member of it and needs no promoted bronze column.
             "SELECT COALESCE(source_id, '')                 AS insight_source_id, \
                     COALESCE(toString(jira_id), '')         AS jira_id, \
                     COALESCE(toString(id_readable), '')     AS id_readable, \
+                    nullIf(JSONExtractString(COALESCE(custom_fields_json, ''), 'summary'), '') AS title, \
                     COALESCE(toInt64(toUnixTimestamp64Milli(parseDateTime64BestEffortOrNull(created, 3))), 0) AS created_ms, \
                     reporter_id \
              FROM bronze_jira.jira_issue AS ji FINAL \
@@ -225,6 +230,7 @@ pub async fn fetch_all_snapshots(
                 insight_source_id: h.insight_source_id,
                 issue_id: h.jira_id,
                 id_readable: h.id_readable,
+                title: h.title,
                 created_at: created,
                 reporter_id: h.reporter_id,
                 current_fields: HashMap::new(),

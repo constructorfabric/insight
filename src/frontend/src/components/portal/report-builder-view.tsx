@@ -40,6 +40,7 @@ import {
   periodTooShortReason,
 } from "@/lib/reports/granularity-for-period";
 import { buildReportTable, type ReportTable } from "@/lib/reports/report-table";
+import { ROW_MODES, type ReportRows } from "@/lib/reports/rows";
 import { recordUsageEvent } from "@/telemetry";
 import {
   bucketsInRange,
@@ -73,6 +74,7 @@ export function ReportBuilderView() {
   const [selected, setSelected] = useState<string[]>([]);
   const [pickedGranularity, setPickedGranularity] =
     useState<ReportGranularity>("month");
+  const [rows, setRows] = useState<ReportRows>("people");
   const granularity = clampGranularity(pickedGranularity, dateRange);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(
     null,
@@ -118,9 +120,10 @@ export function ReportBuilderView() {
           metric,
           granularity,
           computations.data ?? new Map(),
+          rows,
         ),
       })),
-    [catalogue, computations.data, granularity],
+    [catalogue, computations.data, granularity, rows],
   );
 
   const people = scope.reportPeople ?? [];
@@ -139,6 +142,7 @@ export function ReportBuilderView() {
   // rather than merely old: build it monthly, switch to yearly, and the button
   // would still offer the monthly file under the new heading.
   const recipe = [
+    rows,
     granularity,
     dateRange.from,
     dateRange.to,
@@ -180,6 +184,7 @@ export function ReportBuilderView() {
           dateRange.to,
           requestBucket(granularity),
         ).length,
+        rows,
         onProgress: (done, total) => setProgress({ done, total }),
         signal: controller.signal,
       });
@@ -201,6 +206,7 @@ export function ReportBuilderView() {
           results,
           range: dateRange,
           granularity,
+          rows,
         }),
       );
     } catch (error) {
@@ -218,10 +224,11 @@ export function ReportBuilderView() {
     }
   }
 
-  // The granularity is in the name too: two files for the same period that
-  // differ only in their buckets would otherwise overwrite each other in a
+  // What the rows ARE and the granularity are both in the name: two files for
+  // the same period that differ only in their buckets — or in whether a row is
+  // a person or a repository — would otherwise overwrite each other in a
   // downloads folder.
-  const filename = `insight-report_${granularity}_${dateRange.from}_${dateRange.to}`;
+  const filename = `insight-report_${rows}_${granularity}_${dateRange.from}_${dateRange.to}`;
 
   if (computations.isError || definitions.isError) {
     return (
@@ -237,13 +244,39 @@ export function ReportBuilderView() {
         <h1 className={TEXT_TITLE}>Report builder</h1>
         <p className="text-sm text-muted-foreground">
           {scope.label ? `${scope.label} · ` : ""}
-          {people.length} {people.length === 1 ? "person" : "people"} · one row
-          per person per period
+          {people.length} {people.length === 1 ? "person" : "people"} ·{" "}
+          {rows === "people"
+            ? "one row per person per period"
+            : "one row per repository per period"}
         </p>
       </div>
 
       <Card>
         <CardContent className="flex flex-col gap-4 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={TEXT_LABEL}>Rows</span>
+            <ToggleGroup
+              value={[rows]}
+              onValueChange={(value) => {
+                const next = Array.isArray(value) ? value[0] : value;
+                if (next) setRows(next as ReportRows);
+              }}
+              variant="outline"
+              size="sm"
+            >
+              {ROW_MODES.map((option) => (
+                <ToggleGroupItem key={option.value} value={option.value}>
+                  {option.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            <span className="text-xs text-muted-foreground">
+              {rows === "people"
+                ? "Each person's own values."
+                : "Everyone's work added up per repository — totals only."}
+            </span>
+          </div>
+
           <div className="flex flex-wrap items-center gap-3">
             <span className={TEXT_LABEL}>Granularity</span>
             <TooltipProvider delay={300}>
@@ -291,11 +324,14 @@ export function ReportBuilderView() {
 
           <div className="flex flex-col gap-2">
             <span className={TEXT_LABEL}>
-              {needsRollup(granularity)
-                ? "Metrics that can be totalled — a quarter is its months added up"
-                : "Metrics"}
+              {rows !== "people"
+                ? "Metrics that can be totalled — a repository is its people added up"
+                : needsRollup(granularity)
+                  ? "Metrics that can be totalled — a quarter is its months added up"
+                  : "Metrics"}
             </span>
-            {needsRollup(granularity) && computations.isPending ? (
+            {(rows !== "people" || needsRollup(granularity)) &&
+            computations.isPending ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Spinner className="size-4" /> Reading the catalogue…
               </div>

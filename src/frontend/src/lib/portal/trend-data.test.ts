@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import {
   buildActiveContributorData,
+  buildMedianTrendData,
   buildTrendData,
   pickTrendBucket,
 } from "./trend-data";
@@ -82,6 +83,44 @@ describe("buildTrendData", () => {
       { date: "2026-06-29", m: 1 },
       { date: "2026-07-06", m: 5 },
     ]);
+  });
+});
+
+describe("buildMedianTrendData", () => {
+  it("takes the roster median per bucket, skips nulls, drops empty buckets", () => {
+    const r = {
+      metric_key: "m",
+      computation: "ratio",
+      timeseries: {
+        view: "timeseries",
+        bucket: "week",
+        series: [
+          { entity_id: "a", points: [{ bucket_start: "2026-07-06", value: 80 }, { bucket_start: "2026-06-29", value: null }] },
+          { entity_id: "b", points: [{ bucket_start: "2026-07-06", value: 60 }] },
+          { entity_id: "c", points: [{ bucket_start: "2026-07-06", value: 70 }] },
+        ],
+      },
+    } as unknown as NormalizedMetricResult;
+    const data = buildMedianTrendData("m", new Map([["m", r]]), ["a", "b", "c"]);
+    // 2026-06-29 held only a null — dropped, not drawn as zero.
+    expect(data).toEqual([{ date: "2026-07-06", m: 70 }]);
+  });
+
+  it("averages the middle pair on an even roster", () => {
+    const r = {
+      metric_key: "m",
+      computation: "ratio",
+      timeseries: {
+        view: "timeseries",
+        bucket: "week",
+        series: [
+          { entity_id: "a", points: [{ bucket_start: "2026-07-06", value: 40 }] },
+          { entity_id: "b", points: [{ bucket_start: "2026-07-06", value: 80 }] },
+        ],
+      },
+    } as unknown as NormalizedMetricResult;
+    const data = buildMedianTrendData("m", new Map([["m", r]]), ["a", "b"]);
+    expect(data).toEqual([{ date: "2026-07-06", m: 60 }]);
   });
 });
 

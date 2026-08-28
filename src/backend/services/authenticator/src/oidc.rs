@@ -19,7 +19,7 @@ use openidconnect::{
     PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
 };
 
-use crate::config::{HostIdpConfig, IdpConfig};
+use crate::config::{HostIdpConfig, IdpConfig, ResolveBy};
 use crate::identity::IdpIdentity;
 
 /// What `authorize` hands back for the handler to stash in the login state.
@@ -133,6 +133,7 @@ pub struct OidcClient {
     tenant_claim: String,
     default_tenant_id: String,
     external_id_claim: String,
+    resolve_by: ResolveBy,
     http: reqwest::Client,
 }
 
@@ -157,6 +158,7 @@ impl OidcClient {
             tenant_claim: idp.tenant_claim.clone(),
             default_tenant_id: idp.default_tenant_id.clone(),
             external_id_claim: idp.external_id_claim.clone(),
+            resolve_by: idp.resolve_by,
             http,
         }
     }
@@ -180,6 +182,7 @@ impl OidcClient {
             tenant_claim: idp.tenant_claim.clone(),
             default_tenant_id: pick(&entry.default_tenant_id, &idp.default_tenant_id),
             external_id_claim: idp.external_id_claim.clone(),
+            resolve_by: idp.resolve_by,
             http,
         }
     }
@@ -302,29 +305,17 @@ impl OidcClient {
         }
         let idp_sid = payload_string(&raw, "sid");
 
-        // The IdP's stable external user id for `idp.source_type` — the join
-        // key identity-resolution's `persons` seeded under `value_type='id'`
-        // (e.g. Entra's `oid`; NOT `sub`, which is pairwise-unique per client
-        // for directory-backed IdPs). FAIL CLOSED: a login whose id_token
-        // lacks the configured claim (e.g. Entra without `oid`) must not
-        // silently proceed — there is no safe fallback to email or `sub` for
-        // a directory-backed IdP, and doing so was exactly the P1 bug this
-        // guards against (see `identity::ResolveTarget`).
-        let external_id =
-            extract_external_id(&raw, &self.external_id_claim, &sub).with_context(|| {
-                format!(
-                    "id_token carries no non-empty `{}` claim (idp.external_id_claim) — \
-                     cannot resolve person for login",
-                    self.external_id_claim
-                )
-            })?;
+        // How this login finds its person is decided ONCE, by config — see
+        // `resolve_target`.
+        let resolve_by =
+            resolve_target(self.resolve_by, &raw, &sub, &self.external_id_claim, &email)?;
 
         Ok(AuthenticatedIdp {
             identity: IdpIdentity {
                 sub,
                 email,
                 tenant_id,
-                resolve_by: crate::identity::ResolveTarget::ExternalId(external_id),
+                resolve_by,
             },
             issuer,
             idp_sid,
@@ -474,6 +465,86 @@ fn payload_tenant(jwt: &str, field: &str) -> String {
     }
 }
 
+/// Build the [`ResolveTarget`] this login resolves through, from the mode the
+/// install declared.
+///
+/// FAIL CLOSED in both modes: a token that cannot answer the configured
+/// question is refused, never answered a different way. Trying the second mode
+/// when the first comes up empty is what `9c666a41f` removed, and the reason
+/// the mode is a declaration rather than a fallback chain.
+///
+/// A free function so both branches are testable: `exchange_code_pkce` needs a
+/// live token exchange, so anything left inline there is only exercised by an
+/// end-to-end run.
+fn resolve_target(
+    mode: ResolveBy,
+    raw: &str,
+    sub: &str,
+    external_id_claim: &str,
+    email: &str,
+) -> anyhow::Result<crate::identity::ResolveTarget> {
+    match mode {
+        // The IdP's stable external user id for `idp.source_type` — the join
+        // key identity-resolution's `persons` seeded under `value_type='id'`
+        // (e.g. Entra's `oid`; NOT `sub`, which is pairwise-unique per client
+        // for directory-backed IdPs).
+        ResolveBy::ExternalId => {
+            let external_id =
+                extract_external_id(raw, external_id_claim, sub).with_context(|| {
+                    format!(
+                        "id_token carries no non-empty `{external_id_claim}` claim \
+                     (idp.external_id_claim) — cannot resolve person for login"
+                    )
+                })?;
+            Ok(crate::identity::ResolveTarget::ExternalId(external_id))
+        }
+        // The standard `email` claim, matched against the roster. An install
+        // picks this when its IdP has no directory connector, so nothing ever
+        // seeds an id binding for the provider.
+        ResolveBy::Email => {
+            let email = email.trim();
+            if email.is_empty() {
+                // The install declared that logins resolve by address and the
+                // token brought none — a misconfigured claim mapping, not a user
+                // error, and it would otherwise surface only as an unexplained
+                // refusal for every single person. The address itself is not
+                // logged here: absence is the fact worth recording, and `sub`
+                // already names the account.
+                tracing::warn!(
+                    sub = %sub,
+                    "id_token carries no `email` claim but idp.resolve_by is email — \
+                     check the IdP's claim mapping; refusing the login"
+                );
+                anyhow::bail!(
+                    "id_token carries no non-empty `email` claim (idp.resolve_by = email) — \
+                     cannot resolve person for login"
+                );
+            }
+            // In this mode the address IS the credential, so an IdP that tells
+            // us it has not verified it must not be taken at its word. Only an
+            // explicit `false` refuses: many providers omit the claim entirely,
+            // and treating absence as unverified would deny every login on the
+            // installs this mode exists for. An install whose IdP lets a user
+            // or a partner admin edit their own address without verification
+            // therefore needs that verification at the IdP, not here.
+            if payload_bool(raw, "email_verified") == Some(false) {
+                tracing::warn!(
+                    sub = %sub,
+                    "id_token says email_verified=false and idp.resolve_by is email — \
+                     refusing the login"
+                );
+                anyhow::bail!(
+                    "id_token carries email_verified=false (idp.resolve_by = email) — \
+                     refusing to resolve a person by an unverified address"
+                );
+            }
+            Ok(crate::identity::ResolveTarget::RosterEmail(
+                email.to_owned(),
+            ))
+        }
+    }
+}
+
 /// Resolve the IdP's stable external user id for `external_id_claim`
 /// (`idp.external_id_claim`, default `"sub"`) from an already-validated
 /// id_token. `sub` is passed in already-extracted (the typed claim, always
@@ -496,6 +567,12 @@ pub(crate) fn payload_string(jwt: &str, field: &str) -> Option<String> {
         .get(field)?
         .as_str()
         .map(std::borrow::ToOwned::to_owned)
+}
+
+/// A boolean claim off the already-validated payload. `None` when the claim is
+/// absent or not a boolean — the caller decides what absence means.
+fn payload_bool(jwt: &str, field: &str) -> Option<bool> {
+    payload(jwt)?.get(field)?.as_bool()
 }
 
 /// Decode the payload segment of a compact JWT to JSON (no verification — the
@@ -575,6 +652,77 @@ mod tests {
             extract_external_id(&jwt, "sub", "idp|dev-lead").as_deref(),
             Some("idp|dev-lead")
         );
+    }
+
+    #[test]
+    fn external_id_mode_is_unchanged_and_still_fails_closed() {
+        let with_oid = jwt_with(&serde_json::json!({"sub": "pairwise", "oid": "dir-id"}));
+        assert!(matches!(
+            resolve_target(ResolveBy::ExternalId, &with_oid, "pairwise", "oid", "ivan@vz.com")
+                .expect("resolves"),
+            crate::identity::ResolveTarget::ExternalId(ref v) if v == "dir-id"
+        ));
+
+        // The address is present in the token and must NOT be reached for:
+        // there is no fallback from one mode to the other.
+        let without_oid = jwt_with(&serde_json::json!({"sub": "pairwise"}));
+        assert!(
+            resolve_target(
+                ResolveBy::ExternalId,
+                &without_oid,
+                "pairwise",
+                "oid",
+                "ivan@vz.com"
+            )
+            .is_err(),
+            "a missing external id must refuse, not fall through to the address",
+        );
+    }
+
+    #[test]
+    fn email_mode_resolves_against_the_roster_and_refuses_without_an_address() {
+        let jwt = jwt_with(&serde_json::json!({"sub": "kc-uuid", "email": "ivan@vz.com"}));
+        assert!(matches!(
+            resolve_target(ResolveBy::Email, &jwt, "kc-uuid", "sub", "ivan@vz.com")
+                .expect("resolves"),
+            crate::identity::ResolveTarget::RosterEmail(ref v) if v == "ivan@vz.com"
+        ));
+
+        // `sub` is right there and is never substituted — an install that
+        // declared the address mode gets a refusal, not a different answer.
+        for absent in ["", "   "] {
+            assert!(
+                resolve_target(ResolveBy::Email, &jwt, "kc-uuid", "sub", absent).is_err(),
+                "an empty address must refuse the login",
+            );
+        }
+    }
+
+    #[test]
+    fn an_unverified_address_is_refused_only_when_the_idp_says_so() {
+        // In this mode the address IS the credential, so an explicit denial
+        // from the IdP is decisive.
+        let unverified = jwt_with(
+            &serde_json::json!({"sub": "s", "email": "ivan@vz.com", "email_verified": false}),
+        );
+        assert!(
+            resolve_target(ResolveBy::Email, &unverified, "s", "sub", "ivan@vz.com").is_err(),
+            "email_verified=false must refuse",
+        );
+
+        // Absence is not denial: plenty of providers omit the claim, and
+        // refusing on absence would deny every login on exactly the installs
+        // this mode exists for.
+        for tolerated in [
+            serde_json::json!({"sub": "s", "email": "ivan@vz.com", "email_verified": true}),
+            serde_json::json!({"sub": "s", "email": "ivan@vz.com"}),
+        ] {
+            let jwt = jwt_with(&tolerated);
+            assert!(
+                resolve_target(ResolveBy::Email, &jwt, "s", "sub", "ivan@vz.com").is_ok(),
+                "{tolerated} must resolve",
+            );
+        }
     }
 
     #[test]

@@ -1,9 +1,9 @@
 //! Operator-correction write store (MariaDB).
 //!
 //! Corrections append binding observations to `persons`. Nothing here updates
-//! or deletes a journal row, and nothing here rebuilds the derived caches:
-//! those stay the persons-seed's to own, on its own schedule, the way the
-//! ClickHouse mirror already works. The journal is the source of truth and
+//! or deletes a journal row, and nothing here rebuilds `org_chart`: that stays
+//! the persons-seed's to own, on its own schedule, the way the ClickHouse
+//! mirror already works. The journal is the source of truth and
 //! every read path — the correction verbs, the review queue, the history —
 //! reads it directly, so a correction is visible the moment it commits.
 
@@ -141,7 +141,7 @@ pub async fn current_bindings(
         }
 
         let rows = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -186,7 +186,7 @@ pub async fn current_bindings_in_tenant(
     // truncation would then refuse a complete answer.
     let probe = ceiling.rows().saturating_add(1);
     let mut rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             current_bindings_sql(Scope::WholeTenant),
             [tenant_id.as_bytes().to_vec().into(), probe.into()],
@@ -271,7 +271,7 @@ pub async fn accounts_of_person(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -310,7 +310,7 @@ pub async fn person_exists(
         "SELECT 1 AS hit FROM persons WHERE insight_tenant_id = ? AND person_id = ? LIMIT 1";
 
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -326,14 +326,14 @@ pub async fn person_exists(
 /// actually appended (a re-emitted identical observation is ignored by the
 /// natural key).
 ///
-/// The tenant's derived caches are deliberately NOT rebuilt here. The rebuild
-/// is whole-tenant — it deletes and re-derives `account_person_map` and
-/// `org_chart` from the entire journal — and it grows far worse than linearly,
-/// so putting it in a request path makes one operator decision cost minutes on
-/// a large tenant. It also buys nothing: a correction appends only
-/// `value_type='id'` rows, while `org_chart` is derived from the parent, status
-/// and e-mail observations a correction never touches. The caches stay the
-/// seed's to refresh on its own schedule, like the ClickHouse mirror.
+/// The tenant's `org_chart` is deliberately NOT rebuilt here. The rebuild is
+/// whole-tenant — it deletes and re-derives the edges from the entire journal
+/// — and it grows far worse than linearly, so putting it in a request path
+/// makes one operator decision cost minutes on a large tenant. It also buys
+/// nothing: a correction appends only `value_type='id'` rows, while `org_chart`
+/// is derived from the parent, status and e-mail observations a correction
+/// never touches. It stays the seed's to refresh on its own schedule, like the
+/// ClickHouse mirror.
 ///
 /// # Errors
 ///
@@ -421,7 +421,7 @@ pub async fn append_binding_if_unbound(
         ],
     );
 
-    let result = match txn.execute(statement).await {
+    let result = match txn.execute_raw(statement).await {
         Ok(result) => result,
         // A lock conflict here means another login is writing THIS account
         // right now. "We did not write" is the truthful answer, and the
@@ -492,7 +492,7 @@ pub async fn append_bindings(
         }
 
         let res = txn
-            .execute(Statement::from_sql_and_values(
+            .execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,
@@ -539,7 +539,7 @@ pub async fn binding_history(
     ";
 
     let rows = db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             SQL,
             [
@@ -608,7 +608,7 @@ pub async fn present_rows(
         }
 
         let hits = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 &sql,
                 params,

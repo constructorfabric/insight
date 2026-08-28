@@ -4,6 +4,7 @@ use uuid::Uuid;
 use crate::domain::metric_definitions::builtin::{
     BuiltinSource, CohortKey, InputSeed, MetricSeed, builtin_metrics, builtin_sources,
 };
+use crate::domain::metric_definitions::evidence_presentation::EvidencePresentation;
 
 pub async fn reconcile_builtin_definitions(db: &DatabaseConnection) -> Result<(), DbErr> {
     for builtin_source in builtin_sources() {
@@ -38,26 +39,31 @@ async fn reconcile_source(
     let source_id = fetch_source_id(db, &builtin_source.source.key).await?;
 
     for measure in &builtin_source.measures {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, evidence_granularity, is_enabled) \
-             VALUES (?, ?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, alias_collapse, \
+                 evidence_presentation, is_enabled) \
+             VALUES (?, ?, ?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
                 evidence_granularity = VALUES(evidence_granularity), \
+                alias_collapse = VALUES(alias_collapse), \
+                evidence_presentation = VALUES(evidence_presentation), \
                 is_enabled = VALUES(is_enabled)",
             [
                 uuid_value(Uuid::now_v7()),
                 uuid_value(source_id),
                 Value::from(measure.key.as_str()),
                 Value::from(measure.evidence_granularity.as_db()),
+                Value::from(measure.alias_collapse.as_db()),
+                presentation_value(measure.evidence_presentation.as_ref())?,
             ],
         ))
         .await?;
     }
 
     for (idx, dimension_key) in builtin_source.dimensions.iter().enumerate() {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_dimensions \
                 (id, source_id, dimension_key, display_order) \
@@ -81,7 +87,7 @@ async fn upsert_source(
     db: &DatabaseConnection,
     builtin_source: &BuiltinSource,
 ) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "INSERT INTO metric_sources \
             (id, tenant_id, source_key, source_kind, source_ref, evidence_ref, origin, is_enabled) \
@@ -105,7 +111,7 @@ async fn upsert_source(
 }
 
 async fn upsert_metric(db: &impl ConnectionTrait, metric: &MetricSeed) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "INSERT INTO metric_definitions \
             (id, tenant_id, metric_key, label, short_label, subject, description, explanation, unit, format, direction, entity_type, \
@@ -167,7 +173,7 @@ async fn replace_inputs(
     metric_id: Uuid,
     inputs: &[InputSeed],
 ) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "DELETE FROM metric_definition_inputs WHERE metric_definition_id = ?",
         [uuid_value(metric_id)],
@@ -176,7 +182,7 @@ async fn replace_inputs(
 
     for input in inputs {
         let measure_id = fetch_measure_id(db, source_id, &input.measure_key).await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_inputs \
                 (id, metric_definition_id, input_role, source_measure_id) \
@@ -199,7 +205,7 @@ async fn replace_dimensions(
     metric_id: Uuid,
     dimensions: &[String],
 ) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "DELETE FROM metric_definition_dimensions WHERE metric_definition_id = ?",
         [uuid_value(metric_id)],
@@ -208,7 +214,7 @@ async fn replace_dimensions(
 
     for (idx, dimension) in dimensions.iter().enumerate() {
         let dimension_id = fetch_source_dimension_id(db, source_id, dimension).await?;
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_dimensions \
                 (id, metric_definition_id, source_dimension_id, display_order) \
@@ -230,7 +236,7 @@ async fn replace_tags(
     metric_id: Uuid,
     tags: &[String],
 ) -> Result<(), DbErr> {
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "DELETE FROM metric_definition_tags WHERE metric_definition_id = ?",
         [uuid_value(metric_id)],
@@ -238,7 +244,7 @@ async fn replace_tags(
     .await?;
 
     for (idx, tag) in tags.iter().enumerate() {
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_definition_tags \
                 (id, metric_definition_id, tag, display_order) \
@@ -301,7 +307,7 @@ async fn disable_missing_builtin_rows(db: &DatabaseConnection) -> Result<(), DbE
 
         let mut values = vec![uuid_value(source_id)];
         values.extend(measure_keys.iter().map(|key| Value::from(*key)));
-        db.execute(Statement::from_sql_and_values(
+        db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             sql,
             values,
@@ -325,7 +331,7 @@ async fn disable_missing(
         format!("{base_sql} AND {key_column} NOT IN ({placeholders})")
     };
     let values = keys.iter().map(|key| Value::from(*key)).collect::<Vec<_>>();
-    db.execute(Statement::from_sql_and_values(
+    db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         sql,
         values,
@@ -389,7 +395,7 @@ async fn fetch_uuid(
     key: &str,
 ) -> Result<Uuid, DbErr> {
     let row = db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             sql,
             values.to_vec(),
@@ -404,7 +410,18 @@ fn order_value(idx: usize) -> i32 {
 }
 
 fn uuid_value(id: Uuid) -> Value {
-    Value::Bytes(Some(Box::new(id.as_bytes().to_vec())))
+    Value::Bytes(Some(id.as_bytes().to_vec()))
+}
+
+// MariaDB stores JSON as a LONGTEXT alias and validates a bound string
+// server-side, so the declaration goes over as text rather than a CAST.
+fn presentation_value(presentation: Option<&EvidencePresentation>) -> Result<Value, DbErr> {
+    let Some(presentation) = presentation else {
+        return Ok(Value::String(None));
+    };
+    serde_json::to_string(presentation)
+        .map(Value::from)
+        .map_err(|error| DbErr::Custom(format!("evidence presentation is not storable: {error}")))
 }
 
 fn nullable_str(value: Option<&str>) -> Value {
