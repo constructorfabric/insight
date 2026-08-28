@@ -150,55 +150,55 @@
     "items": {
       "new_pages": {
         "title": "The pages the portal has now",
-        "description_html": "The portal replaced the old sidebar app, and what it holds today is <strong>Overview, Directions, Person, People, AI & Cost and a Report builder</strong> — plus a Manage area carrying <strong>the Metric catalog, Connector health, Identities and Platform usage.</strong>"
+        "description_html": "The portal replaced the old sidebar app. It holds Overview, Directions, Person, People, AI & Cost and a Report builder, plus a Manage area with the Metric catalog, Connector health, Identities and Platform usage."
       },
       "drilldown": {
         "title": "See the records behind a number",
-        "description_html": "Drill-down was added: <strong>open a metric and see the commits, pull requests and tasks behind the number.</strong>"
+        "description_html": "Drill-down was added: open a metric and see the commits, pull requests and tasks behind the number."
       },
       "git_proxy": {
         "title": "Git data comes through our own proxy",
-        "description_html": "Git collection ran through the vendor connector and gave out on big repositories. It now goes through <strong>our own proxy, which handles larger repositories.</strong>"
+        "description_html": "Git collection ran through the vendor connector and gave out on big repositories. It now goes through our own proxy, which handles larger repositories."
       },
       "default_branch": {
         "title": "Git output split by what reached the default branch",
-        "description_html": "Commits and lines counted everything pushed anywhere, so abandoned work read like delivered work. Every Git total is now <strong>paired with how much of it reached the default branch.</strong>"
+        "description_html": "Commits and lines counted everything pushed anywhere, so abandoned work read like delivered work. Every Git total is now paired with how much of it reached the default branch."
       },
       "bamboohr": {
         "title": "BambooHR: every custom field, without naming them",
-        "description_html": "Custom fields had to be configured one by one to be collected. <strong>All of them now come across on their own,</strong> and the sync completes on the fields the API key can read instead of failing on the ones it cannot."
+        "description_html": "Custom fields had to be configured one by one. They now come across on their own, and the sync completes on the fields the API key can read instead of failing on the ones it cannot."
       },
       "jira": {
         "title": "Jira: the whole data set, not just open issues",
-        "description_html": "Collection now covers <strong>deleted and trashed issues, projects access was lost to, deleted worklogs, every custom field, board columns and estimation fields, and project leads.</strong> A deletion and a lost permission used to look identical — both simply silence — and are now told apart and kept as history. Story points are read from the instance's own field metadata rather than one hardcoded field id."
+        "description_html": "Collection now covers deleted and trashed issues, projects access was lost to, deleted worklogs, custom fields, board columns and estimation fields, and project leads. A deletion and a lost permission used to look the same — both silence — and are now told apart."
       },
       "github": {
         "title": "GitHub: issues, boards and file-level changes",
-        "description_html": "The GitHub connector was rebuilt. It now collects <strong>Issues and Projects V2 boards as task delivery, and file-level changes identified by their content,</strong> with commits and pull requests attributed through the account that authored them."
+        "description_html": "The GitHub connector was rebuilt. It now collects Issues and Projects V2 boards as task delivery, and file-level changes identified by their content."
       },
       "bitbucket": {
         "title": "Bitbucket: moved onto the git proxy",
-        "description_html": "The Bitbucket connector was replaced. <strong>It reads through the git proxy now,</strong> and repositories can be left out by name pattern."
+        "description_html": "The Bitbucket connector was replaced. It reads through the git proxy now, and repositories can be left out by name pattern."
       },
       "claude_team": {
         "title": "Claude Team: seats and spend collected",
-        "description_html": "Claude Team is now a connector like any other. <strong>Seats, per-person usage and the billed spend</strong> arrive on their own sync."
+        "description_html": "Claude Team is now a connector like any other. Seats, per-person usage and the billed spend arrive on their own sync."
       },
       "identity_resolution": {
         "title": "Identity resolution",
-        "description_html": "One person turns up as several accounts — GitHub, Jira, BambooHR, Claude — and their work was counted as several people. Those accounts are now <strong>matched to one person,</strong> and where the match is not certain, <strong>an operator decides it by hand under Manage → Identities.</strong>"
+        "description_html": "One person turns up as several accounts — GitHub, Jira, BambooHR, Claude — and their work was counted as several people. Those accounts are now matched to one person, and where the match is not certain an operator decides it under Manage → Identities."
       },
       "data_health": {
         "title": "Data health — when each source last synced",
-        "description_html": "Nothing said whether the data behind a chart was current. <strong>Connector health now lists every source with the state of its last sync,</strong> as reported by the process that ran it, so a connector that stalled says so instead of going quiet."
+        "description_html": "Nothing said whether the data behind a chart was current. Connector health lists each source with the state of its last sync, so a connector that stalled says so instead of going quiet."
       },
       "reports": {
         "title": "Take any metric away as a file",
-        "description_html": "A new Report builder lets you <strong>pick the metrics, the people and the period, and download the result</strong> as CSV or Excel."
+        "description_html": "A new Report builder lets you pick the metrics, the people and the period, and download the result as CSV or Excel."
       },
       "github_login": {
         "title": "Sign in with GitHub",
-        "description_html": "Getting into Insight meant being provisioned first. <strong>GitHub sign-in works now.</strong>"
+        "description_html": "Getting into Insight meant being provisioned first. GitHub sign-in works now."
       }
     },
     "history_label": "Earlier releases",

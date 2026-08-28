@@ -89,10 +89,10 @@ describe("WhatsNewScreen", () => {
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
   });
 
-  it("renders the connector entry under the Platform section", () => {
+  it("renders the data-health entry", () => {
     renderScreen();
     expect(
-      screen.getByText(/as reported by the process that ran it/)
+      screen.getByText(/lists each source with the state of its last sync/)
     ).toBeInTheDocument();
   });
 
