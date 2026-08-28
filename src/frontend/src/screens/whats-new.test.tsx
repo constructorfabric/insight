@@ -50,7 +50,7 @@ describe("WhatsNewScreen", () => {
     expect(
       screen.getByRole("heading", { name: "What's new · 31 August 2026" })
     ).toBeInTheDocument();
-    expect(screen.getByText("0.6.12")).toBeInTheDocument();
+    expect(screen.getByText("26.08")).toBeInTheDocument();
     expect(screen.getByText("13 improvements")).toBeInTheDocument();
     expect(
       screen.getByText("more data coming in, and the new UI over it")
