@@ -30,7 +30,7 @@ use super::AppState;
 use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
 use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, SOURCE_TYPE, fixture_or_skip};
-use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo};
+use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo, visibility_repo};
 
 type TestResult = anyhow::Result<()>;
 
@@ -1547,5 +1547,265 @@ async fn a_correction_without_a_caller_is_unauthenticated() -> TestResult {
 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(bound_to(&f, "acct-anon").await?, Some(person));
+    Ok(())
+}
+
+// ── /v1/{roles,person-roles,visibility} ─────────────────────
+//
+// The catalogue and the two grant surfaces. Two of their rules are enforced by
+// a single conditional UPDATE rather than by a read-then-write, so only a live
+// database can say whether they hold: a role in use cannot be deleted, and the
+// last admin of a tenant cannot be revoked.
+
+async fn delete(app: Router, uri: &str) -> anyhow::Result<(StatusCode, Value)> {
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(uri)
+        .body(Body::empty())?;
+    let resp = app.oneshot(req).await?;
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
+    let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    Ok((status, payload))
+}
+
+/// A role nobody else's case can collide with.
+async fn a_role(f: &Fixture, caller: Uuid, name: &str) -> anyhow::Result<Uuid> {
+    let unique = format!("{name}-{}", Uuid::now_v7().simple());
+    let (status, body) = post(app(f, caller), "/v1/roles", &json!({"name": unique})).await?;
+    anyhow::ensure!(status == StatusCode::CREATED, "creating {unique}: {body}");
+    let id = body["role_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no role_id in {body}"))?;
+    Ok(id.parse()?)
+}
+
+#[tokio::test]
+async fn a_created_role_is_listed_and_a_second_of_that_name_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let name = format!("reviewer-{}", Uuid::now_v7().simple());
+
+    let (created, body) = post(app(&f, caller), "/v1/roles", &json!({"name": name})).await?;
+    assert_eq!(created, StatusCode::CREATED, "{body}");
+
+    let (_, listed) = get(app(&f, caller), "/v1/roles").await?;
+    let names: Vec<&str> = listed["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no items in {listed}"))?
+        .iter()
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&name.as_str()),
+        "{name} missing from {listed}"
+    );
+
+    let (again, _) = post(app(&f, caller), "/v1/roles", &json!({"name": name})).await?;
+    assert_eq!(
+        again,
+        StatusCode::CONFLICT,
+        "the catalogue holds one of a name"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let unused = a_role(&f, caller, "unused").await?;
+    let held = a_role(&f, caller, "held").await?;
+    let holder = f.person("role-holder@http-live.test").await?;
+
+    let (granted, body) = post(
+        app(&f, caller),
+        "/v1/person-roles",
+        &json!({"person_id": holder.to_string(), "role_id": held.to_string()}),
+    )
+    .await?;
+    assert_eq!(granted, StatusCode::CREATED, "{body}");
+
+    let (gone, _) = delete(app(&f, caller), &format!("/v1/roles/{unused}")).await?;
+    assert_eq!(gone, StatusCode::NO_CONTENT);
+
+    // The guard is a conditional UPDATE, not a read-then-write: a role somebody
+    // holds must not be removable however the two calls interleave.
+    let (refused, answer) = delete(app(&f, caller), &format!("/v1/roles/{held}")).await?;
+    assert_ne!(
+        refused,
+        StatusCode::NO_CONTENT,
+        "a role with a live assignment was deleted: {answer}"
+    );
+    assert!(
+        roles_repo::get_by_id(&f.db, held).await?.is_some(),
+        "and it must still be in the catalogue"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_last_admin_of_a_tenant_cannot_be_revoked() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("sole-admin@http-live.test").await?;
+    let grant = grant_admin(&f, caller).await?;
+
+    let (refused, answer) = delete(app(&f, caller), &format!("/v1/person-roles/{grant}")).await?;
+
+    assert_ne!(
+        refused,
+        StatusCode::NO_CONTENT,
+        "revoking the only admin locks the tenant out of its own operator surface: {answer}"
+    );
+    let (status, me) = get(app(&f, caller), "/v1/me").await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        role_names(&me)?,
+        vec!["admin".to_owned()],
+        "the caller must still hold it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_admin_who_is_not_the_last_one_can_be_revoked() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("first-admin@http-live.test").await?;
+    grant_admin(&f, caller).await?;
+    let second = f.person("second-admin@http-live.test").await?;
+    let second_grant = grant_admin(&f, second).await?;
+
+    let (status, _) = delete(app(&f, caller), &format!("/v1/person-roles/{second_grant}")).await?;
+
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the guard protects the last admin, not every admin"
+    );
+    let (_, me) = get(app(&f, second), "/v1/me").await?;
+    assert!(
+        role_names(&me)?.is_empty(),
+        "and the revoked assignment stops counting"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_revoked_assignment_cannot_be_revoked_again() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("revoker@http-live.test").await?;
+    grant_admin(&f, caller).await?;
+    let other = f.person("revokee@http-live.test").await?;
+    let grant = grant_admin(&f, other).await?;
+
+    let (first, _) = delete(app(&f, caller), &format!("/v1/person-roles/{grant}")).await?;
+    let (second, _) = delete(app(&f, caller), &format!("/v1/person-roles/{grant}")).await?;
+
+    assert_eq!(first, StatusCode::NO_CONTENT);
+    assert_eq!(
+        second,
+        StatusCode::NOT_FOUND,
+        "an assignment that is already gone is not there to revoke"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_visibility_grant_reaches_the_visible_set_and_leaves_it_when_revoked() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let viewer = f.person("viewer@http-live.test").await?;
+    let target = f.person("target@http-live.test").await?;
+
+    assert!(
+        !f.can_see(viewer, target).await?,
+        "nothing connects them to begin with"
+    );
+
+    let (created, body) = post(
+        app(&f, caller),
+        "/v1/visibility",
+        &json!({
+            "viewer_person_id": viewer.to_string(),
+            "viewed_person_id": target.to_string(),
+        }),
+    )
+    .await?;
+    assert_eq!(created, StatusCode::CREATED, "{body}");
+    let grant_id = body["visibility_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no visibility_id in {body}"))?;
+
+    assert!(
+        f.can_see(viewer, target).await?,
+        "a grant the endpoint wrote must be one the visible set honours"
+    );
+
+    let (revoked, _) = delete(app(&f, caller), &format!("/v1/visibility/{grant_id}")).await?;
+
+    assert_eq!(revoked, StatusCode::NO_CONTENT);
+    assert!(
+        !f.can_see(viewer, target).await?,
+        "and revoking it must take the reach away again"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn another_tenants_visibility_grant_is_neither_listed_nor_revocable() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let other = f.in_another_tenant();
+    let their_admin = other.person("their-admin@http-live.test").await?;
+    other.make_admin(their_admin).await?;
+    let their_viewer = other.person("their-viewer@http-live.test").await?;
+
+    let (created, body) = post(
+        app(&other, their_admin),
+        "/v1/visibility",
+        &json!({"viewer_person_id": their_viewer.to_string()}),
+    )
+    .await?;
+    assert_eq!(created, StatusCode::CREATED, "{body}");
+    let theirs = body["visibility_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no visibility_id in {body}"))?;
+
+    let (_, listed) = get(app(&f, caller), "/v1/visibility").await?;
+    let ids: Vec<&str> = listed["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no items in {listed}"))?
+        .iter()
+        .filter_map(|g| g["visibility_id"].as_str())
+        .collect();
+    assert!(!ids.contains(&theirs), "another tenant's grant was listed");
+
+    let (status, _) = delete(app(&f, caller), &format!("/v1/visibility/{theirs}")).await?;
+
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "and it must not be reachable for revocation either"
+    );
+    assert!(
+        visibility_repo::get_by_id(&other.db, other.tenant, theirs.parse()?)
+            .await?
+            .is_some_and(|g| g.valid_to.is_none()),
+        "the grant must still stand in the tenant that made it"
+    );
     Ok(())
 }
