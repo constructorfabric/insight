@@ -54,6 +54,13 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 #: from outside, so they never count against coverage.
 SERVER_FAULT_FLOOR = 500
 
+#: Statuses that prove only that a route refused somebody. An operation observed
+#: at nothing else was swept, never tested — `test_gateway.py` calls every
+#: operation anonymously and `test_admin.py` calls every admin-gated one without
+#: the grant, so both leave an observation behind that says nothing about what
+#: the route does when it answers.
+REFUSALS = frozenset({401, 403})
+
 #: Excluded on every analytics route. 429 only — nothing rate-limits this stand.
 #:
 #: NOT 401 and NOT 403. See the module docstring: they are the two codes a
@@ -341,8 +348,9 @@ class CatalogueReport:
     """Which catalogued operations were genuinely exercised.
 
     "Genuinely" is the whole content of this report. `api/test_gateway.py`
-    sweeps every operation anonymously, so presence in the ledger proves nothing
-    — an operation whose only observed status is 401 was swept and never tested.
+    sweeps every operation anonymously and `identity/test_admin.py` sweeps every
+    admin-gated one without the grant, so presence in the ledger proves nothing —
+    an operation observed only at a refusal was swept and never tested.
     """
 
     catalogue: Sequence[Operation]
@@ -357,7 +365,7 @@ class CatalogueReport:
             codes = folded.get(operation.key)
             if not codes:
                 self.unobserved.append(operation.key)
-            elif codes <= {401}:
+            elif codes <= REFUSALS:
                 self.swept_only.append(operation.key)
             else:
                 self.exercised.append(operation.key)
