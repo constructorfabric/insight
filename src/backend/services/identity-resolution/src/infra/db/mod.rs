@@ -35,7 +35,11 @@ pub mod visibility_repo;
 #[cfg(test)]
 mod binding_reads_live_tests;
 #[cfg(test)]
+mod email_map_live_tests;
+#[cfg(test)]
 mod person_listing_live_tests;
+#[cfg(test)]
+mod profile_resolve_live_tests;
 #[cfg(test)]
 mod roster_email_live_tests;
 #[cfg(test)]
