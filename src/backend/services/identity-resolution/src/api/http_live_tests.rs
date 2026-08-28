@@ -999,14 +999,9 @@ async fn an_over_long_roster_query_is_refused_rather_than_scanned() -> TestResul
 
 // ── POST /v1/resolution/{bind,merge,detach,exclude} ─────────
 //
-// The write surface, driven through the real router. What the domain tests
-// cannot reach from where they sit: the admin gate, the validation order, the
-// binding that is in force once the call returns, and the journal row the
-// operator is answerable by.
-//
-// Every case seeds the account's binding first. The alternative path — an
-// account no binding names, vouched for by connector evidence — is a ClickHouse
-// read, and this suite has no ClickHouse; it is the rig's case, not this one's.
+// INVARIANT: every case seeds the account's binding first. The other way in —
+// an account no binding names, vouched for by connector evidence — is a
+// ClickHouse read, and this suite has none.
 
 /// A caller who may correct: the admin grant is what every one of these needs.
 async fn operator(f: &Fixture) -> anyhow::Result<Uuid> {
@@ -1023,8 +1018,10 @@ fn account_ref(f: &Fixture, account_id: &str) -> Value {
     })
 }
 
-/// The person the account is bound to right now, by the read the review surface
-/// uses — the answer a correction has to have changed.
+/// The person the account is bound to right now. This is the by-name read the
+/// correction itself performs; the review surface asks the same question of the
+/// whole tenant through a different statement, and nothing here corroborates the
+/// two against each other.
 async fn bound_to(f: &Fixture, account_id: &str) -> anyhow::Result<Option<Uuid>> {
     let key = f.account(account_id);
     Ok(
@@ -1081,7 +1078,14 @@ async fn binding_a_decision_already_recorded_applies_nothing_further() -> TestRe
     f.bound_at("acct-again", person, FIXTURE_REASON, 60).await?;
 
     let body = bind_body(&f, "acct-again", person);
-    post(app(&f, caller), "/v1/resolution/bind", &body).await?;
+    // The first call is the confirm act — recording the operator's agreement
+    // with what automation chose — and it must APPLY, not report nothing to do.
+    let (_, first) = post(app(&f, caller), "/v1/resolution/bind", &body).await?;
+    assert_eq!(
+        first["applied"], 1,
+        "confirming a binding is a decision: {first}"
+    );
+
     let (status, second) = post(app(&f, caller), "/v1/resolution/bind", &body).await?;
 
     assert_eq!(status, StatusCode::OK, "{second}");
@@ -1097,9 +1101,14 @@ async fn one_call_naming_an_account_twice_is_refused() -> TestResult {
         return Ok(());
     };
     let caller = operator(&f).await?;
+    let held_by = f.person("held-by@http-live.test").await?;
     let one = f.person("one@http-live.test").await?;
     let other = f.person("other@http-live.test").await?;
-    f.bound_at("acct-twice", one, FIXTURE_REASON, 60).await?;
+    // The seed names a THIRD person: were the first item written before the
+    // refusal, the account would move, and an assertion naming the first item's
+    // person could not tell that apart from nothing having happened.
+    f.bound_at("acct-twice", held_by, FIXTURE_REASON, 60)
+        .await?;
 
     let (status, body) = post(
         app(&f, caller),
@@ -1114,7 +1123,7 @@ async fn one_call_naming_an_account_twice_is_refused() -> TestResult {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(
         bound_to(&f, "acct-twice").await?,
-        Some(one),
+        Some(held_by),
         "a refused call must leave the account where it was"
     );
     Ok(())
@@ -1369,5 +1378,174 @@ async fn a_correction_names_its_operator_in_the_journal() -> TestResult {
     )?;
     assert_eq!(request["verb"], "operator-bind");
     assert_eq!(request["target_person_id"], target.to_string());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bulk_call_moves_every_account_it_names() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let automation_chose = f.person("bulk-wrong@http-live.test").await?;
+    let first = f.person("bulk-first@http-live.test").await?;
+    let second = f.person("bulk-second@http-live.test").await?;
+    f.bound_at("acct-bulk-1", automation_chose, FIXTURE_REASON, 60)
+        .await?;
+    f.bound_at("acct-bulk-2", automation_chose, FIXTURE_REASON, 60)
+        .await?;
+
+    // A prepared matching table is submitted as ONE call, and the outcomes come
+    // back by position — the shape the whole bulk contract exists for.
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &json!({"bindings": [
+            {"account": account_ref(&f, "acct-bulk-1"), "person_id": first.to_string()},
+            {"account": account_ref(&f, "acct-bulk-2"), "person_id": second.to_string()},
+        ]}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], 2, "a bulk call applies every item: {body}");
+    assert_eq!(bound_to(&f, "acct-bulk-1").await?, Some(first));
+    assert_eq!(
+        bound_to(&f, "acct-bulk-2").await?,
+        Some(second),
+        "the second item is not the first item's echo"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bulk_call_beyond_the_ceiling_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("ceiling@http-live.test").await?;
+    let bindings: Vec<Value> = (0..=super::resolution::MAX_BULK_ITEMS)
+        .map(|i| json!({"account": account_ref(&f, &format!("acct-{i}")), "person_id": person.to_string()}))
+        .collect();
+
+    let (status, _) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &json!({"bindings": bindings}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_merge_naming_the_excluded_sentinel_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("merge-sentinel@http-live.test").await?;
+
+    for body in [
+        json!({"source_person_id": EXCLUDED_PERSON.to_string(), "target_person_id": person.to_string()}),
+        json!({"source_person_id": person.to_string(), "target_person_id": EXCLUDED_PERSON.to_string()}),
+    ] {
+        let (status, answer) = post(app(&f, caller), "/v1/resolution/merge", &body).await?;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "the sentinel on either side would move every excluded account: {answer}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn each_verb_journals_the_decision_it_made() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let absorbed = f.person("verb-absorbed@http-live.test").await?;
+    let survivor = f.person("verb-survivor@http-live.test").await?;
+    let holder = f.person("verb-holder@http-live.test").await?;
+    f.bound_at("acct-verb-merge", absorbed, FIXTURE_REASON, 60)
+        .await?;
+    f.bound_at("acct-verb-detach", holder, FIXTURE_REASON, 60)
+        .await?;
+    f.bound_at("acct-verb-exclude", holder, FIXTURE_REASON, 60)
+        .await?;
+
+    post(
+        app(&f, caller),
+        "/v1/resolution/merge",
+        &json!({
+            "source_person_id": absorbed.to_string(),
+            "target_person_id": survivor.to_string(),
+        }),
+    )
+    .await?;
+    post(
+        app(&f, caller),
+        "/v1/resolution/detach",
+        &json!({"account": account_ref(&f, "acct-verb-detach")}),
+    )
+    .await?;
+    post(
+        app(&f, caller),
+        "/v1/resolution/exclude",
+        &json!({"account": account_ref(&f, "acct-verb-exclude")}),
+    )
+    .await?;
+
+    // The reason code is what makes a binding's history explain itself without
+    // joining the operations log, so a verb that journals another verb's name
+    // corrupts both records at once.
+    for (account, verb) in [
+        ("acct-verb-merge", "operator-merge"),
+        ("acct-verb-detach", "operator-detach"),
+        ("acct-verb-exclude", "operator-exclude"),
+    ] {
+        let trail = ops_repo::corrections_for_account(
+            &f.db,
+            f.tenant,
+            crate::api::resolution::RESOLUTION_OP,
+            SOURCE_TYPE,
+            f.source_id,
+            account,
+            10,
+        )
+        .await?;
+        assert_eq!(trail.len(), 1, "{account} must have journalled once");
+        let request: Value = serde_json::from_str(
+            trail[0]
+                .request_json
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("{account}: journal row carries no request"))?,
+        )?;
+        assert_eq!(request["verb"], verb, "{account} journalled the wrong verb");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_correction_without_a_caller_is_unauthenticated() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let person = f.person("no-caller@http-live.test").await?;
+    f.bound_at("acct-anon", person, FIXTURE_REASON, 60).await?;
+
+    let (status, _) = post(
+        app(&f, Uuid::nil()),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-anon", person),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(bound_to(&f, "acct-anon").await?, Some(person));
     Ok(())
 }

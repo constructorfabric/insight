@@ -38,7 +38,7 @@ const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
-const MAX_BULK_ITEMS: usize = 1_000;
+pub(super) const MAX_BULK_ITEMS: usize = 1_000;
 
 /// A source-native account, as named by the caller.
 ///
