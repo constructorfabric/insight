@@ -214,7 +214,7 @@ impl ScanScope {
         };
         match (self, req.compare_to) {
             (Self::WithComparison, Some(compare_to)) => vec![primary, compare_to],
-            _ => vec![primary],
+            (Self::WithComparison, None) | (Self::PrimaryOnly, _) => vec![primary],
         }
     }
 }
