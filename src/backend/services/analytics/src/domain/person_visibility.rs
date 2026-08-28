@@ -3,7 +3,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::api::error::MetricError;
-use crate::infra::identity::IdentityClient;
+use crate::infra::identity::{IdentityClient, IdentityProfile};
 
 const SERVICE_SUBJECT_TYPE: &str = "service";
 
@@ -18,6 +18,66 @@ pub(crate) async fn authorize_person_ids(
     }
 
     authorize_visible_person_ids(identity, ctx.subject_id(), authorization, person_ids).await
+}
+
+pub(crate) async fn authorize_and_hydrate_person_profiles(
+    identity: &IdentityClient,
+    ctx: &SecurityContext,
+    authorization: Option<&str>,
+    person_ids: &[Uuid],
+) -> Result<Vec<IdentityProfile>, CanonicalError> {
+    if !identity.is_configured() {
+        tracing::error!("identity service is not configured; reports cannot hydrate profiles");
+        return Err(unavailable());
+    }
+
+    let caller = ctx.subject_id();
+    if caller.is_nil() {
+        tracing::error!("report access attempted with no resolved caller");
+        return Err(unavailable());
+    }
+
+    let Some(authorization) = authorization else {
+        tracing::error!(caller = %caller, "no Authorization header to forward to identity");
+        return Err(unavailable());
+    };
+
+    let profiles = identity
+        .profiles_batch(person_ids, Some(authorization))
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %error, caller = %caller, "profile batch failed");
+            unavailable()
+        })?;
+
+    if !profile_batch_contract_holds(person_ids, &profiles) {
+        tracing::error!(caller = %caller, "identity profile batch violated its ordered-subset contract");
+        return Err(unavailable());
+    }
+
+    let unmatched = person_ids.len().saturating_sub(profiles.len());
+    if unmatched > 0 {
+        return Err(denied(caller, unmatched));
+    }
+
+    Ok(profiles)
+}
+
+fn profile_batch_contract_holds(requested: &[Uuid], profiles: &[IdentityProfile]) -> bool {
+    let mut requested = requested.iter();
+    profiles.iter().all(|profile| {
+        if profile
+            .supervisor
+            .as_ref()
+            .is_some_and(|supervisor| supervisor.person_id.is_nil())
+        {
+            return false;
+        }
+
+        requested
+            .by_ref()
+            .any(|person_id| *person_id == profile.person_id)
+    })
 }
 
 async fn authorize_visible_person_ids(
@@ -137,6 +197,17 @@ mod tests {
         let app = Router::new().route(
             "/v1/visible-persons",
             post(move || async move { status.into_response() }),
+        );
+        IdentityClient::new(&serve(app).await).unwrap()
+    }
+
+    async fn spawn_profiles_identity(body: serde_json::Value) -> IdentityClient {
+        let app = Router::new().route(
+            "/v1/profiles/batch",
+            post(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
         );
         IdentityClient::new(&serve(app).await).unwrap()
     }
@@ -287,6 +358,131 @@ mod tests {
             status,
             StatusCode::INTERNAL_SERVER_ERROR,
             "a broken authn path is not a visibility denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_hydration_requires_every_requested_person_in_order() {
+        let identity = spawn_profiles_identity(serde_json::json!({
+            "profiles": [
+                {"person_id": SELF_PERSON, "attributes": {}},
+                {"person_id": REPORT_PERSON, "attributes": {"display_name": "Example User"}}
+            ]
+        }))
+        .await;
+        let ctx = ctx_for("user", CALLER);
+
+        let profiles = authorize_and_hydrate_person_profiles(
+            &identity,
+            &ctx,
+            Some("Bearer tok"),
+            &[SELF_PERSON, REPORT_PERSON],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            profiles
+                .iter()
+                .map(|profile| profile.person_id)
+                .collect::<Vec<_>>(),
+            vec![SELF_PERSON, REPORT_PERSON]
+        );
+    }
+
+    #[tokio::test]
+    async fn omitted_profile_rejects_the_whole_report_as_not_visible() {
+        let identity = spawn_profiles_identity(serde_json::json!({
+            "profiles": [{"person_id": SELF_PERSON, "attributes": {}}]
+        }))
+        .await;
+        let ctx = ctx_for("user", CALLER);
+
+        let error = authorize_and_hydrate_person_profiles(
+            &identity,
+            &ctx,
+            Some("Bearer tok"),
+            &[SELF_PERSON, STRANGER_PERSON],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.into_response().status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn reordered_profile_success_is_a_dependency_error() {
+        let identity = spawn_profiles_identity(serde_json::json!({
+            "profiles": [
+                {"person_id": REPORT_PERSON, "attributes": {}},
+                {"person_id": SELF_PERSON, "attributes": {}}
+            ]
+        }))
+        .await;
+        let ctx = ctx_for("user", CALLER);
+
+        let error = authorize_and_hydrate_person_profiles(
+            &identity,
+            &ctx,
+            Some("Bearer tok"),
+            &[SELF_PERSON, REPORT_PERSON],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[tokio::test]
+    async fn unrequested_profile_success_is_a_dependency_error() {
+        let identity = spawn_profiles_identity(serde_json::json!({
+            "profiles": [{"person_id": STRANGER_PERSON, "attributes": {}}]
+        }))
+        .await;
+        let ctx = ctx_for("user", CALLER);
+
+        let error = authorize_and_hydrate_person_profiles(
+            &identity,
+            &ctx,
+            Some("Bearer tok"),
+            &[SELF_PERSON],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[tokio::test]
+    async fn nil_supervisor_success_is_a_dependency_error() {
+        let identity = spawn_profiles_identity(serde_json::json!({
+            "profiles": [{
+                "person_id": SELF_PERSON,
+                "attributes": {},
+                "supervisor": {"person_id": Uuid::nil(), "attributes": {}}
+            }]
+        }))
+        .await;
+        let ctx = ctx_for("user", CALLER);
+
+        let error = authorize_and_hydrate_person_profiles(
+            &identity,
+            &ctx,
+            Some("Bearer tok"),
+            &[SELF_PERSON],
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
         );
     }
 }
