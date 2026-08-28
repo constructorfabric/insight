@@ -1838,9 +1838,13 @@ async fn another_tenants_visibility_grant_is_neither_listed_nor_revocable() -> T
     Ok(())
 }
 
-/// Every route behind `require_admin`, as one table. Each handler calls the gate
-/// separately, so a gate removed from one of them is invisible to a case that
-/// only drives another.
+/// Every route behind `require_admin`, as one table — all 22 of them. Each
+/// handler calls the gate separately, so a gate removed from one of them is
+/// invisible to a case that only drives another.
+///
+/// INVARIANT: this must stay level with the `require_admin` call sites in
+/// `api/`. Nothing derives it, so a gated route added and not listed here is a
+/// gate no test drives.
 fn operator_routes(f: &Fixture, person: Uuid) -> Vec<(&'static str, String, Option<Value>)> {
     let some = Uuid::now_v7();
     let account = json!({"account": account_ref(f, "acct-gate")});
@@ -1864,7 +1868,25 @@ fn operator_routes(f: &Fixture, person: Uuid) -> Vec<(&'static str, String, Opti
         ),
         ("POST", "/v1/resolution/exclude".to_owned(), Some(account)),
         ("GET", "/v1/resolution/attention".to_owned(), None),
+        ("GET", "/v1/resolution/accounts".to_owned(), None),
+        (
+            "GET",
+            format!(
+                "/v1/resolution/accounts/{SOURCE_TYPE}/{}/acct-gate",
+                f.source_id
+            ),
+            None,
+        ),
+        (
+            "GET",
+            format!("/v1/resolution/persons/{person}/accounts"),
+            None,
+        ),
         ("GET", "/v1/persons?q=anything".to_owned(), None),
+        ("GET", "/v1/persons-seed".to_owned(), None),
+        ("GET", format!("/v1/persons-seed/{some}"), None),
+        ("GET", "/v1/persons-sync".to_owned(), None),
+        ("GET", format!("/v1/persons-sync/{some}"), None),
         (
             "POST",
             "/v1/roles".to_owned(),
@@ -1921,6 +1943,30 @@ async fn every_operator_route_refuses_a_caller_without_the_admin_grant() -> Test
             status,
             StatusCode::FORBIDDEN,
             "{method} {uri} let a non-admin through"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_admin_of_another_tenant_is_refused_here() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // The grant is a row in THIS tenant, not a property of the person. Somebody
+    // who administers one tenant is an ordinary caller in every other, and the
+    // gate reads the row scoped to the tenant the gateway named.
+    let other = f.in_another_tenant();
+    let caller = other.person("admin-elsewhere@http-live.test").await?;
+    other.make_admin(caller).await?;
+    f.bound_at("acct-gate", caller, FIXTURE_REASON, 60).await?;
+
+    for (method, uri, body) in operator_routes(&f, caller) {
+        let status = send(app(&f, caller), method, &uri, body.as_ref()).await?;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri} accepted an admin of another tenant"
         );
     }
     Ok(())

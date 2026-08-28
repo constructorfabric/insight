@@ -27,6 +27,7 @@ from insight_stand import ApiClient, PersonaSession, identity_path
 
 from .. import scratch
 from ..operations import ADMIN_GATED, IDENTITY_OPERATIONS, SOME_ACCOUNT_ID, Operation
+from ..schemas import PROBLEM_CONTENT_TYPE, ProblemDocument
 
 #: `{id}`-taking routes, admin-gated unless noted. `/v1/subchart/{id}` is the
 #: one an ordinary session reaches, so it is asked for by a lead below.
@@ -242,6 +243,16 @@ def test_every_admin_gated_operation_is_403_without_the_grant(
         f"{operation.label} answered {response.status_code} to a caller holding the "
         f"realm role but no grant: {response.text[:300]}"
     )
+    # Both halves, as the 401 sweep does them: a refusal whose body a client
+    # cannot read is only half a rejection, and the console decides what to show
+    # from `status` and the reason it carries.
+    assert response.content_type == PROBLEM_CONTENT_TYPE, (
+        f"{operation.label} refused with content-type {response.content_type!r}, "
+        f"expected {PROBLEM_CONTENT_TYPE!r}: {response.text[:300]}"
+    )
+    problem = response.parse(ProblemDocument)
+    assert problem.status == 403
+    assert problem.detail, f"{operation.label}: the refusal carries no detail a caller can act on"
 
 
 @pytest.mark.requires_seed("admin_operator")
