@@ -9,6 +9,7 @@ use uuid::Uuid;
 use serde::de::DeserializeOwned;
 
 use super::super::catalog::MetricCatalog;
+use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
 use super::super::execute::fetch;
 use super::super::provenance::{metric_versions, provenance};
@@ -49,7 +50,7 @@ pub async fn answer(
         .zip(bodies?)
         .map(|(query, result)| QueryResult {
             metric: query.metric_key.clone(),
-            provenance: provenance(&versions, &query.metric_key),
+            provenance: provenance(&versions, &query.metric_key, ServedFrom::Computed),
             result,
         })
         .collect();

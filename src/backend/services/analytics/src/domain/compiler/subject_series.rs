@@ -6,18 +6,20 @@
 
 use std::fmt::Write;
 
-use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
+use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::field_catalog::model::CatalogDataset;
 
-use super::dimensions::dimension_select_group;
+use super::dimensions::{DimensionSource, dimension_select_group};
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
 use super::group_cap::{
     CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
 };
 use super::pool::{Pool, carried_entity, first_cte, scan_clause};
-use super::request::{Bucket, MetricQuery, SubjectSeriesView};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, bucket_expr, read_predicates};
+use super::request::{MetricQuery, SubjectSeriesView};
+use super::sql::{
+    CompiledMeasureQuery, QueryParam, ReadScope, bucket_expr, from_clause, read_predicates,
+};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -49,9 +51,10 @@ fn compile_uncapped(
     dimensions: &[String],
     pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let (select, group) = dimension_select_group(fold.grain, dimensions)?;
+    let (select, group) = dimension_select_group(&DimensionSource::Row(fold.grain), dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
-    let inner = uncapped_sql(fold.grain, &read, query.bucket, (&select, &group));
+    let bucket = bucket_expr(&fold.grain.event_time, query.bucket);
+    let inner = uncapped_sql(&read, &bucket, (&select, &group));
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -62,13 +65,7 @@ fn compile_uncapped(
 }
 
 /// `dimensions` is the projection and the group keys, empty when none are named.
-fn uncapped_sql(
-    measure: &MeasureDefinition,
-    read: &ScopedRead,
-    bucket: Bucket,
-    dimensions: (&str, &str),
-) -> String {
-    let bucket = bucket_expr(&measure.event_time, bucket);
+pub(super) fn uncapped_sql(read: &ScopedRead, bucket: &str, dimensions: (&str, &str)) -> String {
     let (select, group) = dimensions;
     let (bucket_set, total_set) = if group.is_empty() {
         (format!("entity_id, {bucket}"), "entity_id".to_owned())
@@ -129,7 +126,7 @@ fn compile_capped(
 
     let mut sql = ranked_scan_ctes(
         head,
-        &scan_clause(dataset, pool, fold.grain, "    "),
+        &scan_clause(from_clause(dataset), pool, &fold.grain.entity, "    "),
         &projections,
         &predicates,
         &rank,
@@ -140,7 +137,7 @@ fn compile_capped(
     let _ = writeln!(
         sql,
         "        {} AS entity_id,",
-        carried_entity(pool, fold.grain)
+        carried_entity(pool, &fold.grain.entity)
     );
     let _ = writeln!(sql, "        bucket_start,");
     let _ = writeln!(sql, "        group_rank,");

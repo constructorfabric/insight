@@ -15,7 +15,7 @@ use super::error::CompileError;
 use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::sql::{
     CompiledMeasureQuery, EmptyFold, QueryParam, ReadScope, aggregate_expr,
-    conditional_aggregate_expr, read_predicates, render_filter,
+    conditional_aggregate_expr, from_clause, read_predicates, render_filter,
 };
 
 /// Everything a read renders itself from over one scan, with the parameters
@@ -42,7 +42,7 @@ pub(super) struct Fold<'a> {
     kind: FoldKind<'a>,
 }
 
-enum FoldKind<'a> {
+pub(super) enum FoldKind<'a> {
     Aggregate(&'a MeasureDefinition),
     Ratio {
         numerator: &'a MeasureDefinition,
@@ -181,12 +181,17 @@ impl<'a> Fold<'a> {
 
         Ok(ScopedRead {
             head,
-            scan: scan_clause(dataset, pool, self.grain, ""),
-            entity: joined_entity(pool, self.grain).to_owned(),
+            scan: scan_clause(from_clause(dataset), pool, &self.grain.entity, ""),
+            entity: joined_entity(pool, &self.grain.entity).to_owned(),
             value,
             predicates,
             params,
         })
+    }
+
+    /// The computation this fold renders, with the measures it resolved.
+    pub fn kind(&self) -> &FoldKind<'a> {
+        &self.kind
     }
 
     /// The measures the value is computed from, each tagged with the part it

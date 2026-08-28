@@ -15,8 +15,8 @@ use super::fold::Fold;
 use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::request::{DrilldownCursor, DrilldownQuery};
 use super::sql::{
-    QueryParam, ReadScope, dimension_binding, placeholders, read_predicates, subject_operand,
-    value_operand,
+    QueryParam, ReadScope, dimension_binding, from_clause, placeholders, read_predicates,
+    subject_operand, value_operand,
 };
 
 /// The part an input plays in the metric's value, tagged on every row so a
@@ -148,7 +148,7 @@ pub(super) fn compile_drilldown_rows(
 
     let mut params = Vec::new();
     let head = only_cte(pool.as_ref(), &mut params)?;
-    let entity = joined_entity(pool.as_ref(), measure);
+    let entity = joined_entity(pool.as_ref(), &measure.entity);
 
     let mut projection = Projection::default();
     projection.push(ENTITY_ID, entity, DrilldownColumnKind::EntityId);
@@ -182,7 +182,7 @@ pub(super) fn compile_drilldown_rows(
     let _ = writeln!(
         sql,
         "FROM {}",
-        scan_clause(dataset, pool.as_ref(), measure, "")
+        scan_clause(from_clause(dataset), pool.as_ref(), &measure.entity, "")
     );
     let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
     if let Some(group) = grain.group_by() {

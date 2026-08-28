@@ -313,14 +313,6 @@ class HistogramBinDto(BaseModel):
     lo: float
 
 
-class HistogramValueDto(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    bins: list[HistogramBinDto] = Field(..., description="Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
-    entity_id: str
-
-
 class ImportCustomMetricsResponse(BaseModel):
     """
     `POST /v1/metrics/import` result — counts landed and the `metric_key`s
@@ -346,6 +338,7 @@ class MetricDimensionDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    href: str | None = None
     key: str
     label: str | None = None
     value: str
@@ -468,6 +461,7 @@ class MetricDrilldownRow(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    links: dict[str, str]
     values: dict[str, Any]
 
 
@@ -601,14 +595,6 @@ class View5(StrEnum):
     histogram = 'histogram'
 
 
-class MetricResultViewDto6(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    values: list[HistogramValueDto]
-    view: View5
-
-
 class View6(StrEnum):
     error = 'error'
 
@@ -686,6 +672,7 @@ class MetricResultsPeriodDto(BaseModel):
 class MetricSchemaErrorCode(StrEnum):
     table_not_found = 'table_not_found'
     column_not_found = 'column_not_found'
+    detail_key_not_found = 'detail_key_not_found'
     dimension_not_covered = 'dimension_not_covered'
     unknown = 'unknown'
 
@@ -768,6 +755,7 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    dimensions: list[str] | None = None
     view: View12
 
 
@@ -874,17 +862,6 @@ class Problem(BaseModel):
     type: str
 
 
-class Provenance(BaseModel):
-    """
-    What produced this answer.
-    """
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    definition_version: int | None = Field(None, description='The definition version the store holds; absent when it carries no row.')
-    executor: Executor
-
-
 class PutCredentialRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -934,18 +911,6 @@ class RowColumn(BaseModel):
     key: str
     kind: ColumnKind
     label: str = Field(..., description="The column's name as a reader sees it, derived from its key.")
-
-
-class RowsResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    columns: list[RowColumn]
-    input: str = Field(..., description="The part of the metric's computation these rows were folded into.")
-    metric: str
-    next_cursor: str | None = Field(None, description='Absent when this page is the last one.')
-    provenance: Provenance
-    rows: list[list[Any]] = Field(..., description="One entry per row, holding one value per column, in the columns' order.")
 
 
 class RunResponse(BaseModel):
@@ -1018,6 +983,13 @@ class Scope(StrEnum):
     person = 'person'
 
 
+class ServedFrom(StrEnum):
+    """
+    Where the rows behind this answer came from.
+    """
+    computed = 'computed'
+
+
 class SnapshotScope(StrEnum):
     """
     Whose reading this is.
@@ -1079,6 +1051,26 @@ class Subjects2(BaseModel):
 
 class Subjects(RootModel[Subjects1 | Subjects2]):
     root: Subjects1 | Subjects2 = Field(..., description='Whose values a question is about, internally tagged on `type` so a subject\nkind carries only its own fields.')
+
+
+class SyncFact(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    duration_ms: int | None = Field(None, description='Absent for a job still in flight, and for one the mover gave no usable\npair of stamps for. Never zero to mean absent.', ge=0)
+    job_id: str = Field(..., description="The mover's own job identity.")
+    records_reported: int | None = Field(None, description='What the mover states it moved. Absent where it reported no count at\nall, which is a different answer from a reported zero.', ge=0)
+    started_at: str | None = Field(None, description='Absent for a job the mover had not started.')
+    status: str = Field(..., description="The mover's own word for how the sync ended, or `unknown` where the\nrecorded word was outside its documented vocabulary.")
+
+
+class SyncHistoryResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    connector: str
+    syncs: list[SyncFact] = Field(..., description='A bounded window, newest first — not the full retained history.')
+    window: int = Field(..., description='How many rows this window holds at most, so the page can say the list\nis a window rather than everything.', ge=0)
 
 
 class TargetComparison(BaseModel):
@@ -1259,15 +1251,6 @@ class ComparisonQuery(BaseModel):
     time: TimeRange
 
 
-class ComparisonResult(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    metric: str
-    provenance: Provenance
-    targets: list[TargetComparison] = Field(..., description='One entry per requested target, in the order they were asked.')
-
-
 class ComparisonsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1275,11 +1258,24 @@ class ComparisonsRequest(BaseModel):
     queries: list[ComparisonQuery]
 
 
-class ComparisonsResponse(BaseModel):
+class ConnectorHealth(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    results: list[ComparisonResult] = Field(..., description='One entry per requested query, in the order they were asked.')
+    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
+    connector: str
+    last_sync: SyncFact | None = None
+
+
+class ConnectorHealthResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
+    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
+    connectors: list[ConnectorHealth]
+    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
+    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
 
 
 class ContextEntryResponse(BaseModel):
@@ -1402,6 +1398,21 @@ class Histogram(BaseModel):
     lo: float | None = Field(None, description='The smallest value observed; absent when nothing was.')
 
 
+class HistogramValueDto(BaseModel):
+    """
+    One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
+    every requested entity listed. Pooled shape (dimensioned request):
+    `dimensions` set, `entity_id` absent, one row per observed dimension tuple
+    over all selected entities' events — no entity grain, like rollup.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: list[HistogramBinDto] = Field(..., description="Empty when a listed entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
+    dimensions: list[MetricDimensionDto] | None = None
+    entity_id: str | None = None
+
+
 class MetricDefinitionView(BaseModel):
     """
     One metric definition, display fields only.
@@ -1514,6 +1525,15 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
+class MetricResultViewDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str] | None = Field(None, description='Present only for the pooled (dimensioned) shape; absent for the\nper-entity shape, keeping that wire form unchanged.')
+    values: list[HistogramValueDto]
+    view: View5
+
+
 class MetricResultViewDto7(BaseModel):
     """
     This view's computation failed; sibling views and metrics are
@@ -1559,6 +1579,18 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class Provenance(BaseModel):
+    """
+    What produced this answer.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    definition_version: int | None = Field(None, description='The definition version the store holds; absent when it carries no row.')
+    executor: Executor
+    served_from: ServedFrom
+
+
 class ResultBody1(BaseModel):
     """
     The answer's shape, decided by the question's grain: `total` answers with
@@ -1599,6 +1631,18 @@ class RowsRequest(BaseModel):
     page_size: int | None = Field(None, description='Rows per page. Absent means 100.', ge=0)
     subjects: Subjects
     time: TimeRange
+
+
+class RowsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[RowColumn]
+    input: str = Field(..., description="The part of the metric's computation these rows were folded into.")
+    metric: str
+    next_cursor: str | None = Field(None, description='Absent when this page is the last one.')
+    provenance: Provenance
+    rows: list[list[Any]] = Field(..., description="One entry per row, holding one value per column, in the columns' order.")
 
 
 class SavedQueryListResponse(BaseModel):
@@ -1676,6 +1720,22 @@ class ValuesRequest(BaseModel):
         extra='forbid',
     )
     queries: list[ValuesQuery]
+
+
+class ComparisonResult(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metric: str
+    provenance: Provenance
+    targets: list[TargetComparison] = Field(..., description='One entry per requested target, in the order they were asked.')
+
+
+class ComparisonsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    results: list[ComparisonResult] = Field(..., description='One entry per requested query, in the order they were asked.')
 
 
 class CustomMetric(BaseModel):

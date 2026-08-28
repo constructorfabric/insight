@@ -6,7 +6,7 @@ use std::fmt::Write;
 use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::field_catalog::model::CatalogDataset;
 
-use super::dimensions::dimension_select_group;
+use super::dimensions::{DimensionSource, dimension_select_group};
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query};
 use super::pool::Pool;
@@ -27,7 +27,7 @@ pub(super) fn compile(
         });
     }
 
-    let (select, group) = dimension_select_group(fold.grain, dimensions)?;
+    let (select, group) = dimension_select_group(&DimensionSource::Row(fold.grain), dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
     let inner = subject_split_sql(&read, &select, &group);
 
@@ -39,7 +39,7 @@ pub(super) fn compile(
     ))
 }
 
-fn subject_split_sql(read: &ScopedRead, select: &str, group: &str) -> String {
+pub(super) fn subject_split_sql(read: &ScopedRead, select: &str, group: &str) -> String {
     let mut sql = read.head.clone();
     sql.push_str("SELECT\n");
     let _ = writeln!(sql, "    {} AS entity_id,", read.entity);

@@ -73,7 +73,7 @@ pub fn compile_metric_query(
     }
 }
 
-fn subject_total_sql(read: &ScopedRead) -> String {
+pub(super) fn subject_total_sql(read: &ScopedRead) -> String {
     let mut sql = read.head.clone();
     sql.push_str("SELECT\n");
     let _ = writeln!(sql, "    {} AS entity_id,", read.entity);

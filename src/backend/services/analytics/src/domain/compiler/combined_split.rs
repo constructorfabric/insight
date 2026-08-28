@@ -9,7 +9,7 @@ use std::fmt::Write;
 use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::field_catalog::model::CatalogDataset;
 
-use super::dimensions::combined_split_dimension_select_group;
+use super::dimensions::{DimensionSource, combined_split_dimension_select_group};
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
 use super::group_cap::{
@@ -17,7 +17,7 @@ use super::group_cap::{
 };
 use super::pool::{Pool, carried_entity, first_cte, scan_clause};
 use super::request::{CombinedSplitView, MetricQuery};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -50,7 +50,8 @@ fn compile_uncapped(
     dimensions: &[String],
     pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let (select, group) = combined_split_dimension_select_group(fold.grain, dimensions)?;
+    let (select, group) =
+        combined_split_dimension_select_group(&DimensionSource::Row(fold.grain), dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
     let inner = uncapped_sql(&read, &select, &group);
 
@@ -62,7 +63,7 @@ fn compile_uncapped(
     ))
 }
 
-fn uncapped_sql(read: &ScopedRead, select: &str, group: &str) -> String {
+pub(super) fn uncapped_sql(read: &ScopedRead, select: &str, group: &str) -> String {
     let mut sql = read.head.clone();
     sql.push_str("SELECT\n");
     sql.push_str(select);
@@ -110,7 +111,7 @@ fn compile_capped(
 
     let mut sql = ranked_scan_ctes(
         head,
-        &scan_clause(dataset, pool, fold.grain, "    "),
+        &scan_clause(from_clause(dataset), pool, &fold.grain.entity, "    "),
         &raw_dimensions,
         &predicates,
         &rank,
@@ -123,7 +124,7 @@ fn compile_capped(
     let _ = writeln!(
         sql,
         "        uniqExact({}) AS contributing_entity_count",
-        carried_entity(pool, fold.grain)
+        carried_entity(pool, &fold.grain.entity)
     );
     let _ = writeln!(sql, "    FROM filtered");
     let _ = writeln!(sql, "    GROUP BY group_rank");

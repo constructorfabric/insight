@@ -84,7 +84,7 @@ impl toolkit::api::api_dto::ResponseApiDto for RowsResponse {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::super::dto::Executor;
+    use super::super::super::dto::{Executor, ServedFrom};
     use super::*;
 
     #[test]
@@ -154,6 +154,7 @@ mod tests {
             provenance: Provenance {
                 executor: Executor::Semantic,
                 definition_version: Some(4),
+                served_from: ServedFrom::Computed,
             },
             input: "value".to_owned(),
             columns: vec![
@@ -179,7 +180,7 @@ mod tests {
             serde_json::to_value(&response).expect("the page serializes"),
             serde_json::json!({
                 "metric": "git.commits",
-                "provenance": { "executor": "semantic", "definition_version": 4 },
+                "provenance": { "served_from": "computed", "executor": "semantic", "definition_version": 4 },
                 "input": "value",
                 "columns": [
                     { "key": "subject", "kind": "text", "label": "Subject" },
@@ -198,6 +199,7 @@ mod tests {
             provenance: Provenance {
                 executor: Executor::Semantic,
                 definition_version: None,
+                served_from: ServedFrom::Computed,
             },
             input: "value".to_owned(),
             columns: Vec::new(),
@@ -209,7 +211,7 @@ mod tests {
             serde_json::to_value(&response).expect("the page serializes"),
             serde_json::json!({
                 "metric": "git.commits",
-                "provenance": { "executor": "semantic" },
+                "provenance": { "served_from": "computed", "executor": "semantic" },
                 "input": "value",
                 "columns": [],
                 "rows": [],

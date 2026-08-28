@@ -91,7 +91,7 @@ impl toolkit::api::api_dto::ResponseApiDto for ComparisonsResponse {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::super::dto::Executor;
+    use super::super::super::dto::{Executor, ServedFrom};
     use super::*;
 
     #[test]
@@ -174,6 +174,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: Some(4),
+                    served_from: ServedFrom::Computed,
                 },
                 targets: vec![TargetComparison {
                     subject: "00000000-0000-0000-0000-000000000001".to_owned(),
@@ -195,7 +196,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic", "definition_version": 4 },
+                    "provenance": { "served_from": "computed", "executor": "semantic", "definition_version": 4 },
                     "targets": [{
                         "subject": "00000000-0000-0000-0000-000000000001",
                         "value": 12.0,
@@ -221,6 +222,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: None,
+                    served_from: ServedFrom::Computed,
                 },
                 targets: vec![TargetComparison {
                     subject: "00000000-0000-0000-0000-000000000001".to_owned(),
@@ -242,7 +244,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.commits",
-                    "provenance": { "executor": "semantic" },
+                    "provenance": { "served_from": "computed", "executor": "semantic" },
                     "targets": [{
                         "subject": "00000000-0000-0000-0000-000000000001",
                         "value": null,

@@ -78,4 +78,16 @@ pub enum CompileError {
         named: usize,
         requested: usize,
     },
+    #[error(
+        "measure `{measure}` was not decided readable from the cache, so no cached read names it"
+    )]
+    MeasureNotCached { measure: String },
+    #[error(
+        "measure `{measure}` folds with `{aggregation}`, which its cached `{kind}` rows cannot answer"
+    )]
+    CachedFoldMismatch {
+        measure: String,
+        aggregation: &'static str,
+        kind: &'static str,
+    },
 }

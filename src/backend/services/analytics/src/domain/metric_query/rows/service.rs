@@ -13,6 +13,7 @@ use crate::domain::compiler::drilldown::CompiledDrilldown;
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 
 use super::super::catalog::MetricCatalog;
+use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
 use super::super::execute::fetch;
 use super::super::provenance::{metric_versions, provenance};
@@ -79,7 +80,7 @@ pub async fn answer(
         .transpose()?;
 
     Ok(RowsResponse {
-        provenance: provenance(&versions, &request.metric_key),
+        provenance: provenance(&versions, &request.metric_key, ServedFrom::Computed),
         metric: request.metric_key,
         input: request.input_role,
         columns: shape.columns(),

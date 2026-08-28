@@ -102,7 +102,7 @@ impl toolkit::api::api_dto::ResponseApiDto for DistributionsResponse {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::super::super::dto::Executor;
+    use super::super::super::dto::{Executor, ServedFrom};
     use super::*;
 
     #[test]
@@ -179,6 +179,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: Some(2),
+                    served_from: ServedFrom::Computed,
                 },
                 subjects: vec![SubjectDistribution {
                     subject: "00000000-0000-0000-0000-000000000001".to_owned(),
@@ -211,7 +212,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.pr_size",
-                    "provenance": { "executor": "semantic", "definition_version": 2 },
+                    "provenance": { "served_from": "computed", "executor": "semantic", "definition_version": 2 },
                     "subjects": [{
                         "subject": "00000000-0000-0000-0000-000000000001",
                         "histogram": {
@@ -237,6 +238,7 @@ mod tests {
                 provenance: Provenance {
                     executor: Executor::Semantic,
                     definition_version: None,
+                    served_from: ServedFrom::Computed,
                 },
                 subjects: vec![SubjectDistribution {
                     subject: "00000000-0000-0000-0000-000000000001".to_owned(),
@@ -255,7 +257,7 @@ mod tests {
             serde_json::json!({
                 "results": [{
                     "metric": "git.pr_size",
-                    "provenance": { "executor": "semantic" },
+                    "provenance": { "served_from": "computed", "executor": "semantic" },
                     "subjects": [{
                         "subject": "00000000-0000-0000-0000-000000000001",
                         "histogram": { "lo": null, "hi": null, "bins": [] },

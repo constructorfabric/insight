@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 
 use super::super::catalog::MetricCatalog;
+use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
 use super::super::execute::fetch;
 use super::super::provenance::{metric_versions, provenance};
@@ -53,7 +54,7 @@ pub async fn answer(
         .zip(observed?)
         .map(|(query, observations)| DistributionResult {
             metric: query.metric_key.clone(),
-            provenance: provenance(&versions, &query.metric_key),
+            provenance: provenance(&versions, &query.metric_key, ServedFrom::Computed),
             subjects: subject_distributions(
                 &query.subjects,
                 query.bins,

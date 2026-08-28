@@ -14,7 +14,9 @@ use super::pool::{Pool, continued_cte, joined_entity, scan_clause};
 use super::request::{
     CohortMembersQuery, ComparisonPopulation, ComparisonView, EntityScope, MetricQuery,
 };
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, placeholders, read_predicates};
+use super::sql::{
+    CompiledMeasureQuery, QueryParam, ReadScope, from_clause, placeholders, read_predicates,
+};
 
 /// Where cohort membership is declared.
 const COHORT_RELATION: &str = "insight.metric_entity_cohorts_current";
@@ -215,13 +217,13 @@ fn member_values_cte(
     let _ = writeln!(
         sql,
         "        {} AS entity_id,",
-        joined_entity(Some(pool), fold.grain)
+        joined_entity(Some(pool), &fold.grain.entity)
     );
     let _ = writeln!(sql, "        {value} AS value");
     let _ = writeln!(
         sql,
         "    FROM {}",
-        scan_clause(dataset, Some(pool), fold.grain, "    ")
+        scan_clause(from_clause(dataset), Some(pool), &fold.grain.entity, "    ")
     );
     let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
     let _ = writeln!(sql, "    GROUP BY entity_id");
