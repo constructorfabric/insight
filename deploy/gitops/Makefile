@@ -139,10 +139,11 @@ ARGO_VERSION     ?= 1.0.13
 ARGO_RBAC_TMPL   ?= bootstrap/argo-rbac.yaml.template
 ARGO_WORKFLOW_SA ?= argo-workflow
 
-# Observability stack (LGTM — logs first). Installed only when the bundled
-# stack is enabled via inventory.system.{loki,alloy,grafana}; otherwise the
-# host cluster collects from stdout and these targets are skipped.
-# Chart versions verified latest via `helm search repo grafana/<chart>
+# Observability stack (LGTM). Installed only when the bundled stack is
+# enabled via inventory.system.{victoriametrics,loki,alloy,grafana};
+# otherwise the host cluster collects from stdout and these targets are
+# skipped.
+# Chart versions verified latest via `helm search repo <repo>/<chart>
 # --versions` (bump deliberately, same discipline as the pins above).
 LOKI_RELEASE     ?= loki
 LOKI_CHART       ?= grafana/loki
@@ -155,6 +156,12 @@ ALLOY_VERSION    ?= 1.9.0      # app v1.16.3
 GRAFANA_RELEASE  ?= grafana
 GRAFANA_CHART    ?= grafana/grafana
 GRAFANA_VERSION  ?= 10.5.15    # app 12.3.1
+
+# Metrics store — PromQL-compatible, remote-write receiver built in at
+# /api/v1/write (always on, no flag needed).
+VICTORIAMETRICS_RELEASE ?= victoriametrics
+VICTORIAMETRICS_CHART   ?= vm/victoria-metrics-single
+VICTORIAMETRICS_VERSION ?= 0.45.0
 
 # Per-cluster bootstrap controllers (gateway, cert-manager, sealed-secrets).
 # Versions pinned here; bump deliberately. Per-env overrides go in
@@ -210,6 +217,7 @@ help:
 	@echo "  make system-redpanda-console ENV=$(ENV)   }"
 	@echo "  make system-airbyte ENV=$(ENV)            }   (Airbyte = chart + post-install setup wizard)"
 	@echo "  make system-argo ENV=$(ENV)               }   (Argo Workflows = chart + supplemental RBAC apply)"
+	@echo "  make system-victoriametrics ENV=$(ENV)    }"
 	@echo "  make system-loki ENV=$(ENV)               }"
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
 	@echo "  make system-grafana ENV=$(ENV)            }"
@@ -614,6 +622,7 @@ system: inventory-present vpn-up kube-ctx
 	$(call _run_if_enabled,system.redpandaConsole,system-redpanda-console)
 	$(call _run_if_enabled,system.airbyte,system-airbyte)
 	$(call _run_if_enabled,system.argoWorkflows,system-argo)
+	$(call _run_if_enabled,system.victoriametrics,system-victoriametrics)
 	$(call _run_if_enabled,system.loki,system-loki)
 	$(call _run_if_enabled,system.alloy,system-alloy)
 	$(call _run_if_enabled,system.grafana,system-grafana)
@@ -716,11 +725,22 @@ system-redpanda-console: vpn-up kube-ctx
 		--wait --timeout 5m
 
 # ── Observability (LGTM) ────────────────────────────────────────────────
-# Loki (store) + Alloy (DaemonSet collector) + Grafana (UI). Install order
-# matters: Loki first (Alloy/Grafana point at it), then Alloy, then
-# Grafana. `make system` honours that ordering via the chain above.
+# VictoriaMetrics (metrics store) + Loki (log store) + Alloy (DaemonSet
+# collector) + Grafana (UI). Install order matters: stores first (Alloy/
+# Grafana point at them), then Alloy, then Grafana. `make system` honours
+# that ordering via the chain above.
 # No required creds in the baseline (single-tenant, no auth); the optional-
 # secrets helper picks up a sealed `grafana-creds` if an env adds one.
+.PHONY: system-victoriametrics
+system-victoriametrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,vm,https://victoriametrics.github.io/helm-charts/)
+	$(call _apply_optional_system_secrets,victoriametrics)
+	helm upgrade --install $(VICTORIAMETRICS_RELEASE) $(VICTORIAMETRICS_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(VICTORIAMETRICS_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,victoriametrics) \
+		--wait --timeout 10m
+
 .PHONY: system-loki
 system-loki: vpn-up kube-ctx
 	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)

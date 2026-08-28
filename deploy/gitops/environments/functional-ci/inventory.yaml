@@ -41,6 +41,7 @@ system:
   redpandaConsole: false
   airbyte: false
   argoWorkflows: false
+  victoriametrics: false
   loki: false
   alloy: false
   grafana: false

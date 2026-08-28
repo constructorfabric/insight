@@ -216,6 +216,47 @@ SQL
 
 heal_task_field_history_table silver class_task_field_history
 
+# The column above only makes room for the summary; jira-enrich fills it. That
+# binary skips any issue that already has rows, so on a warm installation the
+# summary never reaches a Jira issue whose changelog has gone quiet — and a
+# closed issue, the kind task metrics count, never moves again. Emptying the
+# staging table makes the next enrich run bootstrap every issue from bronze,
+# which is the only channel that rewrites those rows.
+#
+# The window is invisible downstream: this hook builds tag:gold only, silver's
+# delete+insert removes just the unique_keys the incoming batch carries (an
+# empty Jira arm carries none), and the sync pipeline runs enrich before dbt.
+#
+# Self-limiting instead of ledger-backed, per this script's re-run contract:
+# rows but not one title means the table predates the enrich change, and the
+# bronze probe keeps an instance whose issues genuinely carry no summary from
+# truncating on every deploy.
+
+# SAFETY: callers use `ch_answer_is_yes ... || return 0`, which disables `set -e`
+# for the body — a probe failure (auth/transient, or a column the DDL macro has
+# not added yet, since it runs at dbt on-run-start below) reads as "no" and the
+# caller skips its heal rather than aborting the deploy.
+ch_answer_is_yes() {
+  local query="$1" answer
+  answer="$(printf '%s' "$query" | _ch_http_query | tr -d '[:space:]')"
+  [[ "$answer" == "1" ]]
+}
+
+heal_jira_task_history_titles() {
+  ch_table_is_real staging jira__task_field_history || return 0
+  ch_table_is_real bronze_jira jira_issue || return 0
+  ch_answer_is_yes "SELECT count() = 1 FROM system.columns WHERE database='staging' AND table='jira__task_field_history' AND name='title'" || return 0
+  ch_answer_is_yes "SELECT count() > 0 AND countIf(title IS NOT NULL) = 0 FROM staging.jira__task_field_history" || return 0
+  ch_answer_is_yes "SELECT count() > 0 FROM bronze_jira.jira_issue WHERE JSONExtractString(COALESCE(custom_fields_json, ''), 'summary') != ''" || return 0
+
+  echo "  staging.jira__task_field_history (emptied; next enrich run re-bootstraps it with summaries)"
+  run_ch <<SQL
+TRUNCATE TABLE staging.jira__task_field_history;
+SQL
+}
+
+heal_jira_task_history_titles
+
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds
 # class_git_file_changes. Pre-existing tables lack them and the positional

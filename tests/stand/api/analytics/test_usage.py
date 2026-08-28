@@ -201,6 +201,84 @@ def test_a_beacon_carrying_no_session_is_not_a_visit(
     )
 
 
+def _figures_for(summary: UsageSummaryResponse, person_id: str) -> tuple[int, int]:
+    """That person's (visits, page_views) in this summary. (0, 0) when absent."""
+    for person in summary.by_person:
+        if person.person_id == person_id:
+            return person.visits, person.page_views
+    return 0, 0
+
+
+@pytest.mark.requires_seed("dev_lead", "admin_operator")
+@pytest.mark.security
+def test_the_sender_owns_the_visit_whoever_the_message_names(
+    lead_session: PersonaSession, admin_operator_session: PersonaSession
+) -> None:
+    """#2573 scenario 9 — the session decides whose visit it is, not the body.
+
+    The message names a second person everywhere a handler could be tempted to
+    read an identity from: beside the record, inside its data, and in the meta
+    the batch shares. The wire type declares none of these, and serde drops what
+    it does not declare — which is the property under test, not an accident to
+    rely on silently.
+    """
+    if not _config(lead_session.client).enabled:
+        pytest.skip("this instance does not record usage")
+
+    admin = admin_operator_session.client
+    day = _today()
+    sender = lead_session.person.uuid
+    named = admin_operator_session.person.uuid
+    assert sender != named, "the sender and the person named must differ"
+
+    before = _summary(admin, day)
+    before_sender = _figures_for(before, sender)
+    before_named = _figures_for(before, named)
+
+    tag = f"{scratch.SCRATCH_PREFIX}-{scratch.RUN_TAG}-impostor"
+    path = f"/portal/{tag}"
+    claimed: JsonValue = {
+        "meta": {"person_id": named, "user_id": named},
+        "records": [
+            {
+                "name": "page_view",
+                "context_session_id": tag,
+                "context_app_name": "insight-stand-tests",
+                "context_app_version": "0",
+                "person_id": named,
+                "user_id": named,
+                "email": admin_operator_session.email,
+                "data": {
+                    "path": path,
+                    "person_id": named,
+                    "email": admin_operator_session.email,
+                },
+            }
+        ],
+    }
+    accepted = lead_session.client.post(
+        EVENTS,
+        content=json.dumps(claimed),
+        headers={"Content-Type": SDK_CONTENT_TYPE},
+    )
+    assert accepted.status_code == 204, accepted.text[:300]
+
+    wait_until(
+        lambda: path in {page.path for page in _summary(admin, day).by_page},
+        timeout_s=20,
+        description="the page view claiming to be somebody else to reach the summary",
+    )
+
+    after = _summary(admin, day)
+    assert _figures_for(after, sender) == (before_sender[0] + 1, before_sender[1] + 1), (
+        f"the sender was not credited: {before_sender} -> {_figures_for(after, sender)}"
+    )
+    assert _figures_for(after, named) == before_named, (
+        f"the person the message named gained activity they did not make: "
+        f"{before_named} -> {_figures_for(after, named)}"
+    )
+
+
 @pytest.mark.security
 def test_the_summary_is_refused_without_the_admin_grant(api: ApiClient) -> None:
     """Admin-only is enforced by the service, not by hiding the nav entry.

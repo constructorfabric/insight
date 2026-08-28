@@ -12,29 +12,32 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 // Each section is one row of the release card, styled like the archived
 // releases below: its name sits in the left column, its entries on the right.
 const RELEASE_SECTIONS = [
-  { id: "new_ui", itemKeys: ["new_interface"] },
+  { id: "new_ui", itemKeys: ["new_pages", "drilldown"] },
+  { id: "git", itemKeys: ["git_proxy", "default_branch"] },
   {
-    id: "dashboards",
-    itemKeys: ["activity_over_time", "metric_catalog", "honest_no_data"],
+    id: "connectors",
+    itemKeys: ["bamboohr", "jira", "github", "bitbucket", "claude_team"],
   },
-  { id: "connectors", itemKeys: ["steadier_data"] },
-] as const;
-
-// Each entry states today's limitation before the plan that addresses it —
-// there is no separate "still on our list" section, which only restated these.
-// Grouped and rendered like a release, so what is coming reads the same way as
-// what shipped.
-const COMING_SECTIONS = [
-  { id: "trust", itemKeys: ["drill_down"] },
-  { id: "platform", itemKeys: ["people_matching", "role_cohorts"] },
+  { id: "identity", itemKeys: ["identity_resolution"] },
+  { id: "data_health", itemKeys: ["data_health"] },
+  { id: "reports", itemKeys: ["reports"] },
+  { id: "sign_in", itemKeys: ["github_login"] },
 ] as const;
 
 // Past releases stay on the page so a reader can see the whole history, newest
-// first, and are grouped into sections the same way the current one is. Each
-// entry keeps the improvements it announced; its "still on our list" and
-// "coming next" lists are not repeated, since the current release's lists
-// supersede them.
+// first, and are grouped into sections the same way the current one is.
 const PAST_RELEASES = [
+  {
+    id: "release_2026_07_31",
+    sections: [
+      { id: "new_ui", itemKeys: ["new_interface"] },
+      {
+        id: "dashboards",
+        itemKeys: ["activity_over_time", "metric_catalog", "honest_no_data"],
+      },
+      { id: "connectors", itemKeys: ["steadier_data"] },
+    ],
+  },
   {
     id: "release_2026_07_13",
     sections: [
@@ -192,18 +195,6 @@ export function WhatsNewBody() {
           </h3>
           <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
             <ReleaseSections baseKey="whats_new" sections={RELEASE_SECTIONS} />
-          </div>
-        </section>
-
-        <section>
-          <h3 className="text-xs font-semibold tracking-widest text-muted-foreground uppercase">
-            {t("whats_new.coming.label")}
-          </h3>
-          <div className="mt-3 divide-y overflow-hidden rounded-lg border bg-card">
-            <ReleaseSections
-              baseKey="whats_new.coming"
-              sections={COMING_SECTIONS}
-            />
           </div>
         </section>
 

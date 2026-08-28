@@ -23,7 +23,7 @@ fn sync(status: SyncStatus, started: Option<i64>) -> LastSync {
         job_id: "8412".to_owned(),
         status,
         started_at: started.map(moment),
-        job_created_at: started.map(|at| moment(at - 10)),
+        job_updated_at: started.map(|at| moment(at - 10)),
         duration_ms: Some(142_000),
         records_reported: Some(12_400),
     }
@@ -175,7 +175,7 @@ fn absence_crosses_the_wire_as_absence() {
         job_id: "1".to_owned(),
         status: SyncStatus::Pending,
         started_at: None,
-        job_created_at: Some(moment(0)),
+        job_updated_at: Some(moment(0)),
         duration_ms: None,
         records_reported: None,
     });
@@ -197,13 +197,13 @@ fn a_reported_zero_crosses_the_wire_as_zero() {
 }
 
 #[test]
-fn the_creation_time_is_not_serialised() {
-    // It exists to order rows, and a job's creation time is not something the
+fn the_ordering_stamp_is_not_serialised() {
+    // It exists to order rows, and the mover's update stamp is not something the
     // page has any use for. Serialising it would invite a client to read it as
     // the start.
     let json = serde_json::to_string(&SyncFact::from(sync(SyncStatus::Succeeded, Some(0))))
         .expect("serialisable");
-    assert!(!json.contains("job_created_at"), "{json}");
+    assert!(!json.contains("job_updated_at"), "{json}");
 }
 
 #[test]

@@ -114,76 +114,133 @@
   "whats_new": {
     "nav_label": "What's new",
     "eyebrow": "Insight · What's new",
-    "title": "What's new · 31 July 2026",
+    "title": "What's new · 31 August 2026",
     "stamp": {
       "release_label": "Release",
-      "release": "0.4.69",
+      "release": "26.08",
       "highlights_label": "Highlights",
-      "highlights": "5 improvements",
+      "highlights": "13 improvements",
       "focus_label": "Focus",
-      "focus": "the new interface, two new pages"
+      "focus": "more data coming in, and the new UI over it"
     },
     "improvements_label": "Improvements you'll notice",
     "sections": {
       "new_ui": {
         "title": "New UI"
       },
-      "dashboards": {
-        "title": "Dashboards"
+      "git": {
+        "title": "Git"
       },
       "connectors": {
-        "title": "Platform"
+        "title": "Connectors"
+      },
+      "identity": {
+        "title": "Identity"
+      },
+      "data_health": {
+        "title": "Data health"
+      },
+      "reports": {
+        "title": "Reports"
+      },
+      "sign_in": {
+        "title": "Sign-in"
       }
     },
     "items": {
-      "new_interface": {
-        "title": "We've moved to the new interface for good",
-        "description_html": "Until now the new interface was an option in the sidebar. Now it's what Insight looks like."
+      "new_pages": {
+        "title": "The pages the portal has now",
+        "description_html": "The portal replaced the old sidebar app. It holds Overview, Directions, Person, People, AI & Cost and a Report builder, plus a Manage area with the Metric catalog, Connector health, Identities and Platform usage."
       },
-      "activity_over_time": {
-        "title": "Activity over time, by repository",
-        "description_html": "A new table and chart in Git output: commits, merged pull requests and lines, <strong>split by repository</strong> and grouped by day, week or month to match the period you picked. The 10 busiest repositories are listed, the rest roll up into “Other”, and the totals always add up. Switch between chart and table, and <strong>download it as CSV or Excel.</strong>"
+      "drilldown": {
+        "title": "See the records behind a number",
+        "description_html": "Drill-down was added: open a metric and see the commits, pull requests and tasks behind the number."
       },
-      "metric_catalog": {
-        "title": "Metric catalog",
-        "description_html": "A new page in the sidebar lists every metric we report: what it means, its unit, which breakdowns it supports, and <strong>when it last had data.</strong> If a chart looks empty, that last column usually explains why."
+      "git_proxy": {
+        "title": "Git data comes through our own proxy",
+        "description_html": "Git collection ran through the vendor connector and gave out on big repositories. It now goes through our own proxy, which handles larger repositories."
       },
-      "honest_no_data": {
-        "title": "“No data” instead of a misleading zero",
-        "description_html": "Collaboration, task delivery and wiki now measure the same way as Git and AI. Where something isn't measured yet, <strong>you'll see “no data” rather than a zero that looks like a real result.</strong>"
+      "default_branch": {
+        "title": "Git output split by what reached the default branch",
+        "description_html": "Commits and lines counted everything pushed anywhere, so abandoned work read like delivered work. Every Git total is now paired with how much of it reached the default branch."
       },
-      "steadier_data": {
-        "title": "Steadier data across your connectors",
-        "description_html": "Connector fixes across <strong>Jira, Bitbucket, Zoom, Claude and Microsoft 365</strong>, plus the data preparation behind them, so syncs finish and resume where they stopped instead of stalling."
-      }
-    },
-    "coming": {
-      "label": "Coming next",
-      "sections": {
-        "trust": {
-          "title": "Trust"
-        },
-        "platform": {
-          "title": "Platform"
-        }
+      "bamboohr": {
+        "title": "BambooHR: every custom field, without naming them",
+        "description_html": "Custom fields had to be configured one by one. They now come across on their own, and the sync completes on the fields the API key can read instead of failing on the ones it cannot."
       },
-      "items": {
-        "drill_down": {
-          "title": "See the records behind a number",
-          "description_html": "Right now a metric group shows trends, distributions and peer standing, but not the records themselves. We're building the next step: the actual commits, pull requests and tasks behind a number, with a link straight to the source."
-        },
-        "people_matching": {
-          "title": "Better people matching",
-          "description_html": "Work by someone whose email doesn't match still isn't attributed, which can leave some Git and Jira metrics incomplete. Better matching is in flight."
-        },
-        "role_cohorts": {
-          "title": "Compare like with like",
-          "description_html": "A person is currently compared against their whole department. Role-based comparison is planned: peers whose role is expected to do the same kind of work."
-        }
+      "jira": {
+        "title": "Jira: the whole data set, not just open issues",
+        "description_html": "Collection now covers deleted and trashed issues, projects access was lost to, deleted worklogs, custom fields, board columns and estimation fields, and project leads. A deletion and a lost permission used to look the same — both silence — and are now told apart."
+      },
+      "github": {
+        "title": "GitHub: issues, boards and file-level changes",
+        "description_html": "The GitHub connector was rebuilt. It now collects Issues and Projects V2 boards as task delivery, and file-level changes identified by their content."
+      },
+      "bitbucket": {
+        "title": "Bitbucket: moved onto the git proxy",
+        "description_html": "The Bitbucket connector was replaced. It reads through the git proxy now, and repositories can be left out by name pattern."
+      },
+      "claude_team": {
+        "title": "Claude Team: seats and spend collected",
+        "description_html": "Claude Team is now a connector like any other. Seats, per-person usage and the billed spend arrive on their own sync."
+      },
+      "identity_resolution": {
+        "title": "Identity resolution",
+        "description_html": "One person turns up as several accounts — GitHub, Jira, BambooHR, Claude — and their work was counted as several people. Those accounts are now matched to one person, and where the match is not certain an operator decides it under Manage → Identities."
+      },
+      "data_health": {
+        "title": "Data health — when each source last synced",
+        "description_html": "Nothing said whether the data behind a chart was current. Connector health lists each source with the state of its last sync, so a connector that stalled says so instead of going quiet."
+      },
+      "reports": {
+        "title": "Take any metric away as a file",
+        "description_html": "A new Report builder lets you pick the metrics, the people and the period, and download the result as CSV or Excel."
+      },
+      "github_login": {
+        "title": "Sign in with GitHub",
+        "description_html": "Getting into Insight meant being provisioned first. GitHub sign-in works now."
       }
     },
     "history_label": "Earlier releases",
     "history": {
+      "release_2026_07_31": {
+        "title": "What's new — 31 July 2026",
+        "release": "0.4.69",
+        "summary": "5 improvements · the new interface, two new pages",
+        "sections": {
+          "new_ui": {
+            "title": "New UI"
+          },
+          "dashboards": {
+            "title": "Dashboards"
+          },
+          "connectors": {
+            "title": "Platform"
+          }
+        },
+        "items": {
+          "new_interface": {
+            "title": "We've moved to the new interface for good",
+            "description_html": "Until now the new interface was an option in the sidebar. Now it's what Insight looks like."
+          },
+          "activity_over_time": {
+            "title": "Activity over time, by repository",
+            "description_html": "A new table and chart in Git output: commits, merged pull requests and lines, <strong>split by repository</strong> and grouped by day, week or month to match the period you picked. The 10 busiest repositories are listed, the rest roll up into “Other”, and the totals always add up. Switch between chart and table, and <strong>download it as CSV or Excel.</strong>"
+          },
+          "metric_catalog": {
+            "title": "Metric catalog",
+            "description_html": "A new page in the sidebar lists every metric we report: what it means, its unit, which breakdowns it supports, and <strong>when it last had data.</strong> If a chart looks empty, that last column usually explains why."
+          },
+          "honest_no_data": {
+            "title": "“No data” instead of a misleading zero",
+            "description_html": "Collaboration, task delivery and wiki now measure the same way as Git and AI. Where something isn't measured yet, <strong>you'll see “no data” rather than a zero that looks like a real result.</strong>"
+          },
+          "steadier_data": {
+            "title": "Steadier data across your connectors",
+            "description_html": "Connector fixes across <strong>Jira, Bitbucket, Zoom, Claude and Microsoft 365</strong>, plus the data preparation behind them, so syncs finish and resume where they stopped instead of stalling."
+          }
+        }
+      },
       "release_2026_07_13": {
         "title": "What's new — 13 July 2026",
         "release": "0.3.42",
@@ -245,7 +302,7 @@
         }
       }
     },
-    "footer": "Insight · what's new · 31 July 2026"
+    "footer": "Insight · what's new · 31 August 2026"
   },
   "auth": {
     "loginFailedAccessDenied": "Your account is not authorized to access this application. Contact your administrator if you believe this is a mistake.",

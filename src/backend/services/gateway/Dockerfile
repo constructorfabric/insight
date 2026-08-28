@@ -25,7 +25,8 @@ FROM openresty/openresty:1.31.1.1-2-alpine
 #     correlation ids. Alpine ships only libuuid.so.1, but the FFI loader wants
 #     libuuid.so, so symlink it.
 # opm needs perl + curl to fetch the modules; those are build-only, dropped after.
-RUN apk add --no-cache libuuid \
+RUN apk upgrade --no-cache libcrypto3 libssl3 \
+    && apk add --no-cache libuuid \
     && apk add --no-cache --virtual .opm-deps perl curl \
     && opm get ledgetech/lua-resty-http \
     && opm get bungle/lua-resty-uuid \

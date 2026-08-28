@@ -208,9 +208,9 @@ class AnalyticsProcess:
                         "clickhouse_url": "",
                         "clickhouse_database": "insight",
                         "identity_url": "",
-                        # Tenant metrics ship enabled (issue #2803 decision 1);
-                        # the rig mirrors the shipped default so the CI-family
-                        # tenant-entity tests exercise the real read path.
+                        # Tenant metrics ship disabled (opt-in per installation);
+                        # the rig diverges from that default so the CI-family
+                        # tenant-entity tests have a read path at all.
                         "metric_catalog": {"tenant_metrics_enabled": True},
                     }
                 },

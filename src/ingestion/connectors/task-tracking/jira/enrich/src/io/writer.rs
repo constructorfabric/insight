@@ -28,6 +28,7 @@ pub struct FieldHistoryInsert {
     pub data_source: String,
     pub issue_id: String,
     pub id_readable: String,
+    pub title: Option<String>,
     pub event_id: String,
     #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
     pub event_at: DateTime<Utc>,
@@ -66,6 +67,7 @@ impl From<FieldHistoryRecord> for FieldHistoryInsert {
             data_source: data_source.into(),
             issue_id: r.issue_id,
             id_readable: r.id_readable,
+            title: r.title,
             event_id: r.event_id,
             event_at: r.event_at,
             event_kind: event_kind_enum(r.event_kind),
