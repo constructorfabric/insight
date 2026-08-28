@@ -3,7 +3,7 @@
     severity='warn',
     store_failures=true,
     meta={
-        'title': 'An invoiced seat price reaches a seat',
+        'title': 'An invoiced seat receives a price',
         'domain': 'ai',
         'category': 'coverage',
         'tier': 'error',
