@@ -20,11 +20,14 @@ The 401 half is in `test_gateway.py`, swept over every operation at once.
 
 from __future__ import annotations
 
+from typing import Final
+
 import pytest
 from insight_stand import ADMIN_ROLE, ApiClient, Manifest, PersonaSession, identity_path
 from pydantic import BaseModel
 
 from .. import scratch
+from ..operations import ADMIN_GATED, IDENTITY_OPERATIONS, Operation
 from ..schemas import (
     PersonRole,
     PersonRoleList,
@@ -100,29 +103,79 @@ def test_admin_listing_is_200_for_the_operator(
     response.parse(model)
 
 
-@pytest.mark.requires_seed("admin_operator", "ceo")
-@pytest.mark.parametrize("path", [path for path, _ in ADMIN_LISTINGS_WITH_MODELS])
+#: Every operation the gate guards, as objects rather than labels.
+ADMIN_GATED_OPERATIONS: Final[tuple[Operation, ...]] = tuple(
+    op for op in IDENTITY_OPERATIONS if op.label in ADMIN_GATED
+)
+
+#: A second id for the operations that need two distinct persons.
+_OTHER_ID: Final[str] = "01900000-0000-7000-8000-0000000000ff"
+
+
+def _account() -> dict[str, str]:
+    return {
+        "source": scratch.SCRATCH_SOURCE_TYPE,
+        "source_id": scratch.SCRATCH_SOURCE_ID,
+        "id": "stand-in-account",
+    }
+
+
+#: A minimally valid body per mutating operation.
+#:
+#: INVARIANT: the body must satisfy the request model. The gate is the first
+#: thing every handler does, but the JSON extractor runs BEFORE the handler — an
+#: empty body is refused at 400 by the extractor and never reaches the gate, so
+#: a sweep sending `{}` would report a gate that no longer exists as green.
+_BODIES: Final[dict[str, dict[str, object]]] = {
+    identity_path("/v1/resolution/bind"): {
+        "bindings": [{"account": _account(), "person_id": scratch.UNKNOWN_ID}]
+    },
+    identity_path("/v1/resolution/merge"): {
+        "source_person_id": scratch.UNKNOWN_ID,
+        "target_person_id": _OTHER_ID,
+    },
+    identity_path("/v1/resolution/detach"): {"account": _account()},
+    identity_path("/v1/resolution/exclude"): {"account": _account()},
+    identity_path("/v1/roles"): {"name": "gate-probe"},
+    identity_path("/v1/person-roles"): {
+        "person_id": scratch.UNKNOWN_ID,
+        "role_id": _OTHER_ID,
+    },
+    identity_path("/v1/visibility"): {"viewer_person_id": scratch.UNKNOWN_ID},
+}
+
+
+@pytest.mark.requires_seed("ceo")
+@pytest.mark.parametrize("operation", ADMIN_GATED_OPERATIONS, ids=lambda op: op.label)
 @pytest.mark.security
-def test_admin_listing_is_403_for_a_realm_admin_without_the_grant(
-    realm_admin_session: PersonaSession, path: str
+def test_every_admin_gated_operation_is_403_for_a_caller_without_the_grant(
+    realm_admin_session: PersonaSession, operation: Operation
 ) -> None:
     """Holding `insight-admin` in the realm is NOT administrative authority.
 
     The sharpest statement of what the gate reads. This persona carries the
     realm's admin role in its token and is still refused, because the gate
     consults `person_roles` and nothing else. A regression that started trusting
-    the token's roles would open the admin API to the CEO, and only this test
-    would notice.
+    the token's roles would open the admin API to the CEO.
+
+    Swept over every guarded operation rather than the listings alone: each
+    handler calls `require_admin` for itself, so a gate dropped from one of them
+    is invisible to a case that drives another. The 401 half is swept the same
+    way in `test_gateway.py`.
     """
     assert realm_admin_session.has_realm_role(ADMIN_ROLE)
-    response = realm_admin_session.client.get(identity_path(path))
+
+    response = realm_admin_session.client.request(
+        operation.method, operation.path, json_body=_BODIES.get(operation.path)
+    )
+
     assert response.status_code == 403, (
-        f"{path} answered {response.status_code} to {realm_admin_session.name}, who holds "
-        f"{ADMIN_ROLE} in the realm but no person_roles grant: {response.text[:300]}"
+        f"{operation.label} answered {response.status_code} to {realm_admin_session.name}, who "
+        f"holds {ADMIN_ROLE} in the realm but no person_roles grant: {response.text[:300]}"
     )
     problem = response.parse(ProblemDocument)
     assert problem.status == 403
-    assert problem.detail, f"{path}: the refusal carries no detail a caller can act on"
+    assert problem.detail, f"{operation.label}: the refusal carries no detail a caller can act on"
 
 
 #: The two admin listings that also serve a per-operation detail route. The
