@@ -99,10 +99,11 @@ def seed_deployments(
     """Deployments and their status events, indexed off merged pull requests.
 
     Every merge deploys to a preview environment; a third also reach staging
-    and a tenth reach production. All but the newest production deployment
-    carry a status event: the newest is left pending, and a production
-    deployment superseded by another within a day reports `inactive` rather
-    than its rolled outcome.
+    and a tenth reach production. Within each repository's production
+    environment, all but the newest deployment carry a status event: the
+    newest is left pending, and a deployment superseded by another to the
+    same repository's production environment within a day reports `inactive`
+    rather than its rolled outcome.
     """
     truncate(client, "bronze_github", "deployments")
     truncate(client, "bronze_github", "deployment_statuses")
@@ -180,17 +181,29 @@ def seed_deployments(
                     )
                 )
 
-    production_ids.sort()
-    for position, (created, deploy_id, env, repo) in enumerate(production_ids[:-1]):
-        following = production_ids[position + 1][0]
-        superseded = following - created < _dt.timedelta(days=1)
-        rng = seeded_rng(repo.full_name, created.date(), f"ci.depstatus.{deploy_id}")
-        state = "inactive" if superseded else pick(rng, _DEPLOY_STATES)
-        statuses.append(
-            _status_row(
-                tenant_uuid, repo, deploy_id, env, state, created + _dt.timedelta(minutes=4), None
+    by_repo_environment: dict[tuple[str, str], list[tuple[_dt.datetime, int, str, Repo]]] = {}
+    for entry in production_ids:
+        _created, _deploy_id, entry_env, entry_repo = entry
+        by_repo_environment.setdefault((entry_repo.full_name, entry_env), []).append(entry)
+
+    for group in by_repo_environment.values():
+        group.sort(key=lambda item: (item[0], item[1]))
+        for position, (created, deploy_id, env, repo) in enumerate(group[:-1]):
+            following = group[position + 1][0]
+            superseded = following - created < _dt.timedelta(days=1)
+            rng = seeded_rng(repo.full_name, created.date(), f"ci.depstatus.{deploy_id}")
+            state = "inactive" if superseded else pick(rng, _DEPLOY_STATES)
+            statuses.append(
+                _status_row(
+                    tenant_uuid,
+                    repo,
+                    deploy_id,
+                    env,
+                    state,
+                    created + _dt.timedelta(minutes=4),
+                    None,
+                )
             )
-        )
 
     return (
         bulk_insert(client, "bronze_github", "deployments", _DEPLOY_COLS, deployments),
