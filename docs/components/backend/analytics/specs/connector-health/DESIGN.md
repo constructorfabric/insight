@@ -272,10 +272,12 @@ by `argMax` over
 
 Every component earns its place, and each closes a wrong answer that was measured first:
 
-- **`coalesce(job_updated_at, ts)`** — NULLs sort last in ClickHouse in BOTH directions, so a
-  job the mover gave no update stamp for does not merely lose the comparison: a different,
-  older job wins it, and the page presents a stale success as the current state. Falling back
-  to when the row was recorded places the job by a real recorded moment instead.
+- **`coalesce(job_updated_at, ts)`** — a defence against a NULL this writer no longer produces
+  and a reader cannot survive. Rows recorded before the placement rule settled still hold one,
+  and NULLs sort last in ClickHouse in BOTH directions: such a row does not merely lose the
+  comparison, a different and older job wins it, and the page presents a stale success as the
+  current state. Falling back to when the row was recorded places it by a real recorded moment
+  instead.
 - **`toUInt64OrZero(job_id)`** — the mover's ids are numbers stored as text, so comparing them
   as text makes `"9"` newer than `"10"`.
 - **the terminal flag** — within one job a final row outranks a provisional one whatever the
