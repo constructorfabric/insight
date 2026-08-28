@@ -99,7 +99,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 22 operations.
+#: analytics — 24 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -142,7 +142,7 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
-#: identity-resolution — 26 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 28 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
@@ -209,7 +209,7 @@ _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     f"/v1/visibility/{SOME_ID}",
 )
 
-#: The 21 identity operations behind `require_admin`, which resolves the caller
+#: The 22 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
 #: it never reads the `insight-admin` REALM role. The seed grants that row to
 #: exactly one persona, the admin operator; every other persona is refused.

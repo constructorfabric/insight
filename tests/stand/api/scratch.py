@@ -71,6 +71,11 @@ SCRATCH_QUERY_REF: Final[str] = "SELECT 1 AS one FROM system.one"
 #: A well-formed v7 UUID nothing claims, for the unknown-id 404 cases.
 UNKNOWN_ID: Final[str] = "01900000-0000-7000-8000-000000000000"
 
+#: A second one, for the routes that need two persons told apart. Merge
+#: refuses a person named as both sides before it checks anything else, so a
+#: single id would prove the validator rather than the gate.
+OTHER_UNKNOWN_ID: Final[str] = "01900000-0000-7000-8000-0000000000ff"
+
 #: Not a UUID, for the path-parse 400 cases: every `{id}` route binds
 #: `Path<Uuid>`, whose deserialization failure is a 400 raised before any
 #: handler logic runs.
