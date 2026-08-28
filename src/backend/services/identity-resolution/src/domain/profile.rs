@@ -1,14 +1,79 @@
 //! Profile domain: the `POST /v1/profiles` request/response DTOs and the
 //! assembly of a person's observations into the response.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
+use utoipa::openapi::schema::{
+    Array, ArrayBuilder, KnownFormat, ObjectBuilder, SchemaFormat, Type,
+};
 use uuid::Uuid;
 
 use crate::infra::db::entities::persons;
 use crate::infra::db::persons_repo::SourceIdRow;
+
+pub const MAX_PROFILE_BATCH_PERSON_IDS: usize = 1000;
+
+pub const SAFE_PROFILE_ATTRIBUTE_TYPES: [&str; 10] = [
+    "email",
+    "display_name",
+    "first_name",
+    "last_name",
+    "department",
+    "division",
+    "job_title",
+    "status",
+    "username",
+    "employee_id",
+];
+
+/// Ordered canonical people to hydrate for an authorized consumer.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchProfilesRequest {
+    #[serde(deserialize_with = "deserialize_batch_person_ids")]
+    #[schema(schema_with = batch_person_ids_schema)]
+    pub person_ids: Vec<Uuid>,
+}
+
+fn batch_person_ids_schema() -> Array {
+    let uuid = ObjectBuilder::new()
+        .schema_type(Type::String)
+        .format(Some(SchemaFormat::KnownFormat(KnownFormat::Uuid)));
+
+    ArrayBuilder::new()
+        .items(uuid)
+        .min_items(Some(1))
+        .max_items(Some(MAX_PROFILE_BATCH_PERSON_IDS))
+        .unique_items(true)
+        .build()
+}
+
+/// Ordered visible profiles from [`BatchProfilesRequest`].
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchProfilesResponse {
+    pub profiles: Vec<BatchProfileResponse>,
+}
+
+/// Generic safe profile data for one canonical person.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchProfileResponse {
+    pub person_id: Uuid,
+    pub attributes: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<BatchSupervisorResponse>,
+}
+
+/// Supervisor associated with one batch profile.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BatchSupervisorResponse {
+    pub person_id: Uuid,
+    pub attributes: BTreeMap<String, String>,
+}
 
 /// Body of `POST /v1/profiles`. `value_type = "email"` matches across all
 /// sources for the tenant; `value_type = "id"` matches a source-native account
@@ -131,8 +196,80 @@ pub struct ParentProjection {
 
 // Marker traits the toolkit `OperationBuilder` requires (alongside `ToSchema`).
 impl toolkit::api::api_dto::RequestApiDto for ResolveProfileRequest {}
+impl toolkit::api::api_dto::RequestApiDto for BatchProfilesRequest {}
 impl toolkit::api::api_dto::ResponseApiDto for ProfileResponse {}
 impl toolkit::api::api_dto::ResponseApiDto for PersonResponse {}
+impl toolkit::api::api_dto::ResponseApiDto for BatchProfilesResponse {}
+
+fn deserialize_batch_person_ids<'de, D>(deserializer: D) -> Result<Vec<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let person_ids = Vec::<Uuid>::deserialize(deserializer)?;
+    validate_batch_person_ids(&person_ids).map_err(serde::de::Error::custom)?;
+    Ok(person_ids)
+}
+
+fn validate_batch_person_ids(person_ids: &[Uuid]) -> Result<(), &'static str> {
+    if person_ids.is_empty() {
+        return Err("person_ids must not be empty");
+    }
+    if person_ids.len() > MAX_PROFILE_BATCH_PERSON_IDS {
+        return Err("too many person_ids");
+    }
+
+    let mut seen = HashSet::with_capacity(person_ids.len());
+    for person_id in person_ids {
+        if person_id.is_nil() {
+            return Err("person_ids must not contain nil UUIDs");
+        }
+        if !seen.insert(*person_id) {
+            return Err("person_ids must not contain duplicates");
+        }
+    }
+    Ok(())
+}
+
+#[must_use]
+pub fn assemble_batch_profile(
+    person_id: Uuid,
+    observations: Vec<persons::Model>,
+    supervisor: Option<(Uuid, Vec<persons::Model>)>,
+) -> BatchProfileResponse {
+    let supervisor = supervisor.map(|(person_id, observations)| BatchSupervisorResponse {
+        person_id,
+        attributes: safe_attributes(observations),
+    });
+
+    BatchProfileResponse {
+        person_id,
+        attributes: safe_attributes(observations),
+        supervisor,
+    }
+}
+
+fn safe_attributes(observations: Vec<persons::Model>) -> BTreeMap<String, String> {
+    let mut attributes = latest_values(observations)
+        .into_iter()
+        .filter(|(value_type, _)| SAFE_PROFILE_ATTRIBUTE_TYPES.contains(&value_type.as_str()))
+        .filter_map(|(value_type, value)| non_blank(value).map(|value| (value_type, value)))
+        .collect::<BTreeMap<_, _>>();
+
+    if !attributes.contains_key("first_name")
+        && !attributes.contains_key("last_name")
+        && let Some(display_name) = attributes.get("display_name")
+    {
+        let (first_name, last_name) = split_display_name(display_name);
+        if let Some(first_name) = non_blank(first_name) {
+            attributes.insert("first_name".to_owned(), first_name);
+        }
+        if let Some(last_name) = non_blank(last_name) {
+            attributes.insert("last_name".to_owned(), last_name);
+        }
+    }
+
+    attributes
+}
 
 /// Collapse a person's observations to the current value per attribute — the
 /// latest by `created_at` (ADR-0003) — and map
@@ -317,6 +454,107 @@ fn non_blank(s: String) -> Option<String> {
 mod tests {
     use super::*;
     use sea_orm::prelude::DateTime;
+
+    #[test]
+    fn batch_request_rejects_duplicate_and_unknown_fields() {
+        let person_id = Uuid::from_u128(1);
+
+        let duplicate = serde_json::json!({
+            "person_ids": [person_id, person_id],
+        });
+        let unknown = serde_json::json!({
+            "person_ids": [person_id],
+            "unexpected": true,
+        });
+
+        assert!(serde_json::from_value::<BatchProfilesRequest>(duplicate).is_err());
+        assert!(serde_json::from_value::<BatchProfilesRequest>(unknown).is_err());
+    }
+
+    #[test]
+    fn batch_request_rejects_empty_nil_and_oversized_person_lists() {
+        for person_ids in [
+            Vec::new(),
+            vec![Uuid::nil()],
+            (0..=MAX_PROFILE_BATCH_PERSON_IDS)
+                .map(|offset| Uuid::from_u128(offset as u128 + 1))
+                .collect(),
+        ] {
+            let body = serde_json::json!({"person_ids": person_ids});
+            assert!(
+                serde_json::from_value::<BatchProfilesRequest>(body).is_err(),
+                "should reject {person_ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn batch_response_rejects_unknown_fields() {
+        let body = serde_json::json!({
+            "profiles": [],
+            "unexpected": true,
+        });
+
+        assert!(serde_json::from_value::<BatchProfilesResponse>(body).is_err());
+    }
+
+    #[test]
+    fn batch_profile_exposes_only_safe_present_attributes() -> anyhow::Result<()> {
+        let person_id = Uuid::from_u128(1);
+        let supervisor_id = Uuid::from_u128(2);
+        let created_at: DateTime = "2026-01-01T00:00:00".parse()?;
+
+        let profile = assemble_batch_profile(
+            person_id,
+            vec![
+                obs("email", "person@example.test", created_at),
+                obs("department", "Engineering", created_at),
+                obs("insight_source_id", "not safe", created_at),
+            ],
+            Some((
+                supervisor_id,
+                vec![obs("display_name", "Supervisor", created_at)],
+            )),
+        );
+
+        let body = serde_json::to_value(profile)?;
+        assert_eq!(body["person_id"], person_id.to_string());
+        assert_eq!(body["attributes"]["email"], "person@example.test");
+        assert_eq!(body["attributes"]["department"], "Engineering");
+        assert!(body["attributes"].get("insight_source_id").is_none());
+        assert!(body["attributes"].get("first_name").is_none());
+        assert_eq!(body["supervisor"]["person_id"], supervisor_id.to_string());
+        assert_eq!(
+            body["supervisor"]["attributes"]["display_name"],
+            "Supervisor"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn batch_profile_matches_safe_profile_name_fallbacks() -> anyhow::Result<()> {
+        let created_at: DateTime = "2026-01-01T00:00:00".parse()?;
+
+        let profile = assemble_batch_profile(
+            Uuid::from_u128(1),
+            vec![
+                obs("display_name", "Example User", created_at),
+                obs("department", "   ", created_at),
+            ],
+            None,
+        );
+
+        assert_eq!(
+            profile.attributes.get("first_name").map(String::as_str),
+            Some("Example")
+        );
+        assert_eq!(
+            profile.attributes.get("last_name").map(String::as_str),
+            Some("User")
+        );
+        assert!(!profile.attributes.contains_key("department"));
+        Ok(())
+    }
 
     /// Minimal observation carrying only the fields `assemble_profile` reads.
     fn obs(value_type: &str, value_effective: &str, created_at: DateTime) -> persons::Model {
