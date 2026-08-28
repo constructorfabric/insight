@@ -131,6 +131,19 @@ IDENTITY_INPUTS_SELECT = "+identity_inputs"
 # staging models too, and the placeholder-drop hook then empties their class.
 AI_INVOICE_SELECT = "claude_team__ai_invoice+"
 
+# The bronze-derived CI chain. INVARIANT: no entry may feed a silver relation
+# the generators write directly — the on-run-start placeholder hook would drop
+# it and rebuild it from an empty staging union. `tests/test_dbt_selector_guard.py`
+# enforces this against RESET_TARGETS.
+CI_CHAIN_SELECT = (
+    "github__ci_runs+",
+    "github__deployments+",
+    "github__deployment_events+",
+    "github__repositories+",
+    "gitlab__repositories+",
+    "bitbucket_cloud__repositories+",
+)
+
 
 def apply_ch_migrations(dbt_select: str | None = None, *, full_refresh: bool = False) -> None:
     """Apply gold-view migrations + build dbt-owned gold models.
@@ -233,7 +246,9 @@ def run() -> None:
         #    builds unresolved here — the orchestrator runs the persons-seed/
         #    sync pair and then the `gold` subcommand to rebuild it.
         apply_ch_migrations(
-            dbt_select=f"tag:gold {IDENTITY_INPUTS_SELECT} {AI_INVOICE_SELECT}",
+            dbt_select=" ".join(
+                ["tag:gold", IDENTITY_INPUTS_SELECT, AI_INVOICE_SELECT, *CI_CHAIN_SELECT]
+            ),
             full_refresh=True,
         )
     finally:

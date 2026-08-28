@@ -197,6 +197,12 @@ def seed_workflow_runs(
     tenant_uuid: str,
 ) -> int:
     truncate(client, "bronze_github", "workflow_runs")
+    truncate(client, "staging", "github__ci_runs")
+    # INVARIANT: this model declines a dbt full refresh because in production
+    # it archives history past the source API's retention. A stand is not an
+    # archive: without this, a re-seed at a different anchor strands the
+    # previous window's runs permanently.
+    truncate(client, "silver", "class_git_ci_runs")
     repos = ci_repos(grid)
     weighted = [(r, r.weight) for r in repos]
     rows: list[tuple[object, ...]] = []

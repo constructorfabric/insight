@@ -106,6 +106,14 @@ def seed_deployments(
     """
     truncate(client, "bronze_github", "deployments")
     truncate(client, "bronze_github", "deployment_statuses")
+    truncate(client, "staging", "github__deployments")
+    truncate(client, "staging", "github__deployment_events")
+    # INVARIANT: these models decline a dbt full refresh because in production
+    # they archive history past the source API's retention. A stand is not an
+    # archive: without this, a re-seed at a different anchor strands the
+    # previous window's runs permanently.
+    truncate(client, "silver", "class_git_deployments")
+    truncate(client, "silver", "class_git_deployment_events")
     repos = ci_repos(grid)
     weighted = [(r, r.weight) for r in repos]
     merged = _merged_prs(history)

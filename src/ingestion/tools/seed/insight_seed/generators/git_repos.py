@@ -42,6 +42,8 @@ def seed_github_repositories(
     client: clickhouse_connect.driver.client.Client, grid: Sequence[Repo], tenant_uuid: str
 ) -> int:
     truncate(client, "bronze_github", "repositories")
+    truncate(client, "staging", "github__repositories")
+    truncate(client, "silver", "class_git_repositories")
     cols = [
         "_airbyte_raw_id",
         "_airbyte_extracted_at",
@@ -99,6 +101,7 @@ def seed_gitlab_projects(
     client: clickhouse_connect.driver.client.Client, grid: Sequence[Repo], tenant_uuid: str
 ) -> int:
     truncate(client, "bronze_gitlab", "projects")
+    truncate(client, "staging", "gitlab__repositories")
     cols = [
         "_airbyte_raw_id",
         "_airbyte_extracted_at",
@@ -154,6 +157,7 @@ def seed_bitbucket_repositories(
     client: clickhouse_connect.driver.client.Client, grid: Sequence[Repo], tenant_uuid: str
 ) -> int:
     truncate(client, "bronze_bitbucket_cloud", "repositories")
+    truncate(client, "staging", "bitbucket_cloud__repositories")
     cols = [
         "_airbyte_raw_id",
         "_airbyte_extracted_at",

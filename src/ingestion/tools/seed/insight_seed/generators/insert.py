@@ -50,10 +50,14 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("silver", "class_crm_deals"),
     ("silver", "class_crm_users"),
     ("silver", "class_focus_metrics"),
+    ("silver", "class_git_ci_runs"),
     ("silver", "class_git_commits"),
+    ("silver", "class_git_deployment_events"),
+    ("silver", "class_git_deployments"),
     ("silver", "class_git_file_changes"),
     ("silver", "class_git_pull_requests"),
     ("silver", "class_git_pull_requests_commits"),
+    ("silver", "class_git_repositories"),
     ("silver", "class_people"),
     ("silver", "class_support_activity"),
     ("silver", "class_task_field_history"),
@@ -64,9 +68,13 @@ RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("silver", "class_wiki_activity"),
     ("silver", "class_wiki_engagement"),
     ("silver", "class_wiki_pages"),
-    # The only staging target: invoices are the one generator that seeds bronze and
-    # lets dbt build the layers above, so a re-seed has to clear them itself.
+    ("staging", "bitbucket_cloud__repositories"),
     ("staging", "claude_team__ai_invoice"),
+    ("staging", "github__ci_runs"),
+    ("staging", "github__deployment_events"),
+    ("staging", "github__deployments"),
+    ("staging", "github__repositories"),
+    ("staging", "gitlab__repositories"),
 )
 
 
