@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from ..profiles import Person
 
-#: Triggers a pipeline responds to, in the vendor's own vocabulary.
+# INVARIANT: Event names must match GitHub exactly; merge_group maps to merge_queue trigger_category in connectors/git/github/dbt/github__ci_runs.sql.
 COMMIT_TRIGGERS = ("push", "pull_request", "merge_group")
 
 
