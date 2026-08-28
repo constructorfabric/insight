@@ -28,7 +28,7 @@ model and full workflow.
 | `alloy/` | `grafana/alloy` | `alloy` | not in baseline |
 | `kube-state-metrics/` | `prometheus-community/kube-state-metrics` | `kube-state-metrics` | not in baseline |
 | `alloy-metrics/` | `grafana/alloy` | `alloy-metrics` | not in baseline |
-| `grafana/` | `grafana-community/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
+| `grafana/` | `grafana-community/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`); ClickHouse datasource needs `grafana-clickhouse-creds` (see grafana/values.yaml, #2888) |
 
 ### Observability (victoriametrics / loki / tempo / alloy / kube-state-metrics / alloy-metrics / grafana)
 
@@ -49,9 +49,21 @@ without touching the services: `alloy-metrics` is a second Alloy release
 would scrape each once per node) that pull-scrapes the kubelet's cAdvisor
 (per-container CPU / memory / network) and the `kube-state-metrics` release
 (pod readiness, container restarts, OOMKills, deployment status),
-remote-writing both into VictoriaMetrics. Enable them together with
-`inventory.system.{kubeStateMetrics,alloyMetrics}`; they need
+remote-writing both into VictoriaMetrics. It also scrapes ClickHouse's
+built-in Prometheus endpoint (`metrics.enabled` in
+`system/clickhouse/values.yaml`, port 8001, #2888). Enable them together
+with `inventory.system.{kubeStateMetrics,alloyMetrics}`; they need
 `victoriametrics` on to have somewhere to write.
+
+**ClickHouse SQL from Grafana (#2888).** Grafana also carries a
+`clickhouse` fixed-uid datasource for direct SQL over the native protocol,
+authenticating as the SELECT-only `grafana` user the app deploy hook
+provisions (`provision-grafana-access.sh`). It needs the same password in
+two Secrets: `insight-db-creds` key `clickhouse-grafana-password` (ns
+`insight`, consumed by the hook) and `grafana-clickhouse-creds` key
+`CLICKHOUSE_GRAFANA_PASSWORD` (ns `insight-infra`, injected into Grafana's
+environment). Both optional — without them the role is still provisioned
+and only the datasource stays dark.
 
 Two independent decisions, mirroring the
 managed-vs-bundled choice for the data stores above:

@@ -107,4 +107,13 @@ spec:
                   name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  "clickhouse-presentation-password"
                   optional: true
+            # Grant-less SELECT-only `grafana` user's password (#2888), shared
+            # with the Grafana datasource secret in insight-infra. Optional:
+            # unset -> the script provisions the role only.
+            - name: CLICKHOUSE_GRAFANA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
+                  key:  "clickhouse-grafana-password"
+                  optional: true
 {{- end }}

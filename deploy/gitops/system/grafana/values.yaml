@@ -41,15 +41,33 @@ persistence:
 initChownData:
   enabled: false
 
+# The ClickHouse SQL datasource plugin (#2888). Space-separated pin — the
+# image's run.sh passes "id version" to `grafana cli plugins install`.
+plugins:
+  - grafana-clickhouse-datasource 4.21.1
+
+# Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
+# by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
+# from the insight-db-creds key `clickhouse-grafana-password`. Seal the SAME
+# value here as `grafana-clickhouse-creds` (key CLICKHOUSE_GRAFANA_PASSWORD,
+# ns insight-infra) — `make system-grafana` applies any
+# environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml.
+# Optional: without it Grafana still runs, only the ClickHouse datasource
+# fails to authenticate.
+envFromSecrets:
+  - name: grafana-clickhouse-creds
+    optional: true
+
 # Loki wired as the default datasource so Explore works out of the box,
 # VictoriaMetrics as the PromQL datasource for metrics, Tempo as the trace
-# store. Fixed uids so provisioned dashboards can reference them on any
-# environment. Loki's `derivedFields` turn a `trace_id` in a JSON log line
-# into a Tempo link (log → trace correlation).
+# store, ClickHouse as the direct-SQL datasource. Fixed uids so provisioned
+# dashboards can reference them on any environment. Loki's `derivedFields`
+# turn a `trace_id` in a JSON log line into a Tempo link (log → trace
+# correlation).
 # INVARIANT: helm REPLACES lists — a per-env overlay that touches
 # `datasources` must restate every entry below, and the uids (`loki`, `vm`,
-# `tempo`) must stay what they are or every provisioned dashboard panel
-# goes dark.
+# `tempo`, `clickhouse`) must stay what they are or every provisioned
+# dashboard panel goes dark.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -87,6 +105,23 @@ datasources:
         jsonData:
           timeInterval: "30s"
           httpMethod: POST
+
+      # Direct SQL over the native protocol as the SELECT-only `grafana`
+      # user (#2888). Single `$`: provisioning expands the env ref, which
+      # envFromSecrets above injects from grafana-clickhouse-creds.
+      - name: ClickHouse
+        uid: clickhouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        isDefault: false
+        jsonData:
+          host: clickhouse.insight-infra.svc.cluster.local
+          port: 9000
+          protocol: native
+          secure: false
+          username: grafana
+        secureJsonData:
+          password: $CLICKHOUSE_GRAFANA_PASSWORD
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
 # Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over

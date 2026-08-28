@@ -67,6 +67,9 @@ SQL
 echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
+echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
+bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
 

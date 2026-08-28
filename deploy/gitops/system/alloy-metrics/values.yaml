@@ -89,6 +89,17 @@ alloy:
         forward_to      = [prometheus.relabel.drop_noise.receiver]
       }
 
+      // ── ClickHouse — server metrics ─────────────────────────────────────
+      // The bitnami chart's built-in Prometheus endpoint (metrics.enabled in
+      // system/clickhouse/values.yaml): /metrics on the Service's 8001 port.
+      prometheus.scrape "clickhouse" {
+        targets = [
+          {"__address__" = "clickhouse.insight-infra.svc.cluster.local:8001", "job" = "clickhouse"},
+        ]
+        scrape_interval = "30s"
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+      }
+
       // ── Series-level pruning, then remote_write ─────────────────────────
       prometheus.relabel "drop_noise" {
         // kubelet /metrics/resource re-exports cAdvisor's container_cpu/

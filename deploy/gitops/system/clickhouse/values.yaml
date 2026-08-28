@@ -54,5 +54,7 @@ zookeeper:
 keeper:
   enabled: false
 
+# Built-in Prometheus endpoint (#2888): /metrics on port 8001, exposed as the
+# Service's `http-metrics` port. alloy-metrics scrapes it into VictoriaMetrics.
 metrics:
-  enabled: false
+  enabled: true
