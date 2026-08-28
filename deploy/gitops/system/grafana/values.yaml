@@ -27,8 +27,11 @@
 # An env where people also author dashboards in the UI can keep them by
 # enabling a PVC in its overlay — paired with Recreate, or problem 1 above
 # returns (problem 2 cannot: every provisioned datasource now has a uid):
-#   deploymentStrategy: { type: Recreate }
+#   deploymentStrategy: { type: Recreate, rollingUpdate: null }
 #   persistence: { enabled: true, size: 10Gi }
+# (rollingUpdate: null is required on an existing install — server-side
+# apply keeps the old rollingUpdate block otherwise, and the API forbids
+# it alongside Recreate.)
 persistence:
   enabled: false
 
