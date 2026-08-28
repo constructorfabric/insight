@@ -1,3 +1,9 @@
+#[cfg(test)]
+mod benchmark_clickhouse_tests;
+#[cfg(test)]
+mod benchmark_support;
+#[cfg(test)]
+mod benchmark_tests;
 pub(crate) mod columns;
 pub(crate) mod csv;
 pub mod dto;
@@ -13,5 +19,6 @@ pub(crate) mod planner;
 mod planner_tests;
 pub(crate) mod query;
 pub(crate) mod row;
+pub(crate) mod telemetry;
 pub mod validation;
 pub(crate) mod xlsx;

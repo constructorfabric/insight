@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Json;
@@ -8,6 +9,7 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
 use super::AppState;
+use crate::api::error::ReportError;
 use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::person_visibility::authorize_and_hydrate_person_profiles;
 use crate::domain::reports::dto::{ReportPreviewRequest, ReportPreviewResponse};
@@ -33,7 +35,14 @@ pub async fn preview_report(
     headers: HeaderMap,
     Json(request): Json<ReportPreviewRequest>,
 ) -> Result<Json<ReportPreviewResponse>, CanonicalError> {
-    let response = build_preview(&state, &ctx, &headers, request).await?;
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_secs(state.config.reports.request_timeout_secs);
+    let response = tokio::time::timeout_at(
+        deadline,
+        build_preview(&state, &ctx, &headers, request, deadline),
+    )
+    .await
+    .map_err(|_| report_limit("report preview timed out"))??;
 
     Ok(Json(response))
 }
@@ -43,17 +52,20 @@ async fn build_preview(
     ctx: &SecurityContext,
     headers: &HeaderMap,
     request: ReportPreviewRequest,
+    deadline: tokio::time::Instant,
 ) -> Result<ReportPreviewResponse, CanonicalError> {
     authorize_tenant_subject(state, &request)?;
 
     let recipe = validate_preview(&state.db, ctx.subject_tenant_id(), request).await?;
     let profiles = hydrate_profiles(state, ctx, headers, &recipe).await?;
-    let full_plan = plan_report(&recipe, &profiles, planner_limits()).map_err(report_internal)?;
+    let limits = planner_limits(state);
+    let full_plan = plan_report(&recipe, &profiles, limits).map_err(map_planning_error)?;
     let (preview_recipe, preview_profiles) = preview_inputs(&recipe, &full_plan, profiles)
         .ok_or_else(|| CanonicalError::internal("report preview could not be planned").create())?;
-    let mut preview_plan = plan_report(&preview_recipe, &preview_profiles, planner_limits())
-        .map_err(report_internal)?;
+    let mut preview_plan =
+        plan_report(&preview_recipe, &preview_profiles, limits).map_err(map_planning_error)?;
     preview_plan.columns = full_plan.columns.clone();
+    let _generation = export::acquire_generation(state, deadline).await?;
 
     let runner = ClickHouseReportQueryRunner::new(&state.ch);
     let rows = execute_report(
@@ -114,10 +126,27 @@ pub(super) async fn hydrate_profiles(
     .await
 }
 
-fn planner_limits() -> ReportPlannerLimits {
+fn planner_limits(state: &AppState) -> ReportPlannerLimits {
     ReportPlannerLimits {
-        max_batch_cells: usize::MAX,
+        max_batch_cells: state.config.reports.max_batch_cells,
+        max_total_cells: state.config.reports.max_total_cells,
     }
+}
+
+pub(super) fn map_planning_error(
+    error: crate::domain::reports::planner::ReportPlanningError,
+) -> CanonicalError {
+    if matches!(
+        error,
+        crate::domain::reports::planner::ReportPlanningError::CellLimitExceeded
+            | crate::domain::reports::planner::ReportPlanningError::BatchLimitTooSmall
+    ) {
+        return ReportError::resource_exhausted("Report exceeds resource limits.")
+            .with_quota_violation("report cells", "configured cell limit exceeded")
+            .create();
+    }
+
+    report_internal(error)
 }
 
 fn preview_inputs(
@@ -159,6 +188,12 @@ pub(super) fn report_internal(error: impl std::fmt::Debug) -> CanonicalError {
     CanonicalError::internal("report processing failed").create()
 }
 
+pub(super) fn report_limit(description: &str) -> CanonicalError {
+    ReportError::resource_exhausted("Report exceeded resource limits.")
+        .with_quota_violation("report", description)
+        .create()
+}
+
 #[derive(Debug, Default)]
 struct PreviewSink {
     rows: Vec<ReportRow>,
@@ -184,6 +219,8 @@ impl ReportRowSink for PreviewSink {
 mod tests {
     use std::collections::BTreeMap;
 
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use chrono::NaiveDate;
     use uuid::Uuid;
 
@@ -206,12 +243,26 @@ mod tests {
             granularity: ReportGranularity::Month,
             metrics: vec![],
         };
-        let full_plan = plan_report(&recipe, &profiles, planner_limits())
-            .unwrap_or_else(|error| panic!("full report should plan: {error}"));
+        let full_plan = plan_report(
+            &recipe,
+            &profiles,
+            ReportPlannerLimits {
+                max_batch_cells: usize::MAX,
+                max_total_cells: u64::MAX,
+            },
+        )
+        .unwrap_or_else(|error| panic!("full report should plan: {error}"));
         let (preview_recipe, preview_profiles) = preview_inputs(&recipe, &full_plan, profiles)
             .unwrap_or_else(|| panic!("preview inputs should exist"));
-        let mut preview_plan = plan_report(&preview_recipe, &preview_profiles, planner_limits())
-            .unwrap_or_else(|error| panic!("preview report should plan: {error}"));
+        let mut preview_plan = plan_report(
+            &preview_recipe,
+            &preview_profiles,
+            ReportPlannerLimits {
+                max_batch_cells: usize::MAX,
+                max_total_cells: u64::MAX,
+            },
+        )
+        .unwrap_or_else(|error| panic!("preview report should plan: {error}"));
         preview_plan.columns = full_plan.columns.clone();
 
         assert_eq!(preview_plan.size.total_rows, 24);
@@ -239,6 +290,19 @@ mod tests {
     }
 
     #[test]
+    fn planner_capacity_failures_are_resource_exhausted() {
+        for error in [
+            crate::domain::reports::planner::ReportPlanningError::CellLimitExceeded,
+            crate::domain::reports::planner::ReportPlanningError::BatchLimitTooSmall,
+        ] {
+            assert_eq!(
+                map_planning_error(error).into_response().status(),
+                StatusCode::TOO_MANY_REQUESTS
+            );
+        }
+    }
+
+    #[test]
     fn tenant_preview_stops_after_twenty_periods() {
         let tenant_id = Uuid::from_u128(9);
         let recipe = ValidatedReportRecipe {
@@ -248,11 +312,11 @@ mod tests {
             granularity: ReportGranularity::Day,
             metrics: vec![],
         };
-        let full_plan = plan_report(&recipe, &[], planner_limits())
+        let full_plan = plan_report(&recipe, &[], test_planner_limits())
             .unwrap_or_else(|error| panic!("full report should plan: {error}"));
         let (preview_recipe, preview_profiles) = preview_inputs(&recipe, &full_plan, vec![])
             .unwrap_or_else(|| panic!("preview inputs should exist"));
-        let preview_plan = plan_report(&preview_recipe, &preview_profiles, planner_limits())
+        let preview_plan = plan_report(&preview_recipe, &preview_profiles, test_planner_limits())
             .unwrap_or_else(|error| panic!("preview report should plan: {error}"));
 
         assert_eq!(preview_plan.size.total_rows, MAX_PREVIEW_ROWS as u64);
@@ -265,6 +329,13 @@ mod tests {
     fn date(value: &str) -> NaiveDate {
         NaiveDate::parse_from_str(value, "%Y-%m-%d")
             .unwrap_or_else(|error| panic!("fixture date must parse: {error}"))
+    }
+
+    const fn test_planner_limits() -> ReportPlannerLimits {
+        ReportPlannerLimits {
+            max_batch_cells: usize::MAX,
+            max_total_cells: u64::MAX,
+        }
     }
 
     fn profile<const N: usize>(id: u128, attributes: [(&str, &str); N]) -> IdentityProfile {

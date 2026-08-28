@@ -92,7 +92,10 @@ fn preserves_people_order_and_builds_sequential_cell_bounded_batches() {
     let plan = plan_report(
         &recipe,
         &profiles,
-        ReportPlannerLimits { max_batch_cells: 6 },
+        ReportPlannerLimits {
+            max_batch_cells: 6,
+            max_total_cells: u64::MAX,
+        },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
 
@@ -149,6 +152,7 @@ fn every_person_batch_satisfies_metric_query_value_limit() {
         &profiles,
         ReportPlannerLimits {
             max_batch_cells: usize::MAX,
+            max_total_cells: u64::MAX,
         },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
@@ -178,6 +182,7 @@ fn tenant_plan_supports_more_than_fifty_metrics_without_profile_columns() {
         &[],
         ReportPlannerLimits {
             max_batch_cells: 100_000,
+            max_total_cells: u64::MAX,
         },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
@@ -206,6 +211,7 @@ fn rejects_profiles_that_do_not_match_people_order() {
         &profiles,
         ReportPlannerLimits {
             max_batch_cells: 100,
+            max_total_cells: u64::MAX,
         },
     );
     let Err(error) = result else {
@@ -213,6 +219,32 @@ fn rejects_profiles_that_do_not_match_people_order() {
     };
 
     assert_eq!(error, ReportPlanningError::ProfileSetMismatch);
+}
+
+#[test]
+fn rejects_total_cells_before_materializing_periods() {
+    let profiles = vec![profile(1)];
+    let recipe = people_recipe(
+        vec![profiles[0].person_id],
+        "2020-01-01",
+        "2026-12-31",
+        ReportGranularity::Day,
+        64,
+    );
+
+    let result = plan_report(
+        &recipe,
+        &profiles,
+        ReportPlannerLimits {
+            max_batch_cells: 100_000,
+            max_total_cells: 10_000,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(ReportPlanningError::CellLimitExceeded)
+    ));
 }
 
 #[test]

@@ -66,6 +66,37 @@ pub(crate) fn enumerate_periods(
     periods
 }
 
+pub(crate) fn count_periods(from: NaiveDate, to: NaiveDate, bucket: ReportBucket) -> Option<usize> {
+    if from > to {
+        return Some(0);
+    }
+
+    let first = containing_bucket_start(from, bucket);
+    let last = containing_bucket_start(to, bucket);
+    let distance = match bucket {
+        ReportBucket::Day => (last - first).num_days(),
+        ReportBucket::Week => (last - first).num_days().checked_div(7)?,
+        ReportBucket::Month => calendar_index(last, 12)?.checked_sub(calendar_index(first, 12)?)?,
+        ReportBucket::Quarter => calendar_index(last, 4)?.checked_sub(calendar_index(first, 4)?)?,
+        ReportBucket::Year => i64::from(last.year()).checked_sub(i64::from(first.year()))?,
+    };
+    let count = distance.checked_add(1)?;
+
+    usize::try_from(count).ok()
+}
+
+fn calendar_index(date: NaiveDate, periods_per_year: i64) -> Option<i64> {
+    let period = match periods_per_year {
+        12 => i64::from(date.month0()),
+        4 => i64::from(date.month0() / 3),
+        _ => return None,
+    };
+
+    i64::from(date.year())
+        .checked_mul(periods_per_year)?
+        .checked_add(period)
+}
+
 fn containing_bucket_start(date: NaiveDate, bucket: ReportBucket) -> NaiveDate {
     match bucket {
         ReportBucket::Day => date,
@@ -197,6 +228,11 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(actual, expected, "wrong periods for {bucket:?}");
+            assert_eq!(
+                count_periods(date(from), date(to), bucket),
+                Some(actual.len()),
+                "wrong period count for {bucket:?}"
+            );
         }
     }
 }

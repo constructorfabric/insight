@@ -124,6 +124,16 @@ data:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
+          reports:
+            temp_dir: {{ .Values.reports.tempDir | quote }}
+            max_batch_cells: {{ .Values.reports.maxBatchCells }}
+            max_total_cells: {{ .Values.reports.maxTotalCells | int64 }}
+            max_generated_bytes: {{ .Values.reports.maxGeneratedBytes | int64 }}
+            request_timeout_secs: {{ .Values.reports.requestTimeoutSeconds }}
+            capacity_wait_secs: {{ .Values.reports.capacityWaitSeconds }}
+            max_concurrent_generations: {{ .Values.reports.maxConcurrentGenerations }}
+            max_concurrent_artifacts: {{ .Values.reports.maxConcurrentArtifacts }}
+            writer_channel_batches: {{ .Values.reports.writerChannelBatches }}
           external_sources: {{- if not .Values.externalSources }} []{{- end }}
             {{- range .Values.externalSources }}
             - id: {{ .id | quote }}

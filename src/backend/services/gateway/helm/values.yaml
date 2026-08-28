@@ -54,7 +54,7 @@ gateway:
   routes:
     - prefix: /api/analytics
       upstream: 'http://{{ .Release.Name }}-analytics:8081'
-      timeoutMs: 60000
+      timeoutMs: 135000
       stripPrefix: true
     - prefix: /api/identity
       upstream: 'http://{{ .Release.Name }}-identity-resolution:8082'

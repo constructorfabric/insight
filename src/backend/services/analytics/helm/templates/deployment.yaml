@@ -59,6 +59,8 @@ spec:
             # binds its UDS under /tmp (both set in the ConfigMap).
             - name: data
               mountPath: /app/data
+            - name: report-artifacts
+              mountPath: {{ .Values.reports.tempDir | quote }}
             - name: tmp
               mountPath: /tmp
           ports:
@@ -96,6 +98,9 @@ spec:
             name: {{ include "insight-analytics.fullname" . }}-gears-config
         - name: data
           emptyDir: {}
+        - name: report-artifacts
+          emptyDir:
+            sizeLimit: {{ .Values.reports.storageSizeLimit | quote }}
         - name: tmp
           emptyDir: {}
         {{- if .Values.gateway.caCertSecret }}

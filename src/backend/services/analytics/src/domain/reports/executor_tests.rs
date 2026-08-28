@@ -23,7 +23,10 @@ async fn executes_people_batches_sequentially_and_emits_person_major_rows() {
     let plan = plan_report(
         &recipe,
         &profiles,
-        ReportPlannerLimits { max_batch_cells: 4 },
+        ReportPlannerLimits {
+            max_batch_cells: 4,
+            max_total_cells: u64::MAX,
+        },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
     let runner = FakeRunner::new(HashMap::from([
@@ -73,6 +76,7 @@ async fn tenant_execution_has_no_profile_columns_and_orders_periods_chronologica
         &[],
         ReportPlannerLimits {
             max_batch_cells: 100,
+            max_total_cells: u64::MAX,
         },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
@@ -128,6 +132,7 @@ async fn keeps_more_than_fifty_metrics_in_recipe_order_with_four_queries_in_flig
         &[],
         ReportPlannerLimits {
             max_batch_cells: 100_000,
+            max_total_cells: u64::MAX,
         },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));
@@ -175,6 +180,7 @@ async fn query_failure_writes_no_batch_and_never_finishes_sink() {
         &[],
         ReportPlannerLimits {
             max_batch_cells: 100,
+            max_total_cells: u64::MAX,
         },
     )
     .unwrap_or_else(|error| panic!("report should plan: {error}"));

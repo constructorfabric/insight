@@ -137,6 +137,7 @@ pub struct MetricCatalogConfig {
 pub struct ReportsConfig {
     pub temp_dir: PathBuf,
     pub max_batch_cells: usize,
+    pub max_total_cells: u64,
     pub max_generated_bytes: usize,
     pub request_timeout_secs: u64,
     pub capacity_wait_secs: u64,
@@ -150,8 +151,9 @@ impl Default for ReportsConfig {
         Self {
             temp_dir: PathBuf::from("/app/data/reports"),
             max_batch_cells: 100_000,
+            max_total_cells: 6_000_000,
             max_generated_bytes: 25 * 1024 * 1024,
-            request_timeout_secs: 60,
+            request_timeout_secs: 120,
             capacity_wait_secs: 2,
             max_concurrent_generations: 2,
             max_concurrent_artifacts: 2,

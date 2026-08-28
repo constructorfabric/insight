@@ -15,12 +15,26 @@ resources:
   requests:
     cpu: 100m
     memory: 128Mi
+    ephemeral-storage: 128Mi
   limits:
     cpu: 500m
     memory: 512Mi
+    ephemeral-storage: 512Mi
 
 metricCatalog:
   tenantMetricsEnabled: false
+
+reports:
+  tempDir: /app/data/reports
+  maxBatchCells: 100000
+  maxTotalCells: 6000000
+  maxGeneratedBytes: 26214400
+  requestTimeoutSeconds: 120
+  capacityWaitSeconds: 2
+  maxConcurrentGenerations: 2
+  maxConcurrentArtifacts: 2
+  writerChannelBatches: 1
+  storageSizeLimit: 256Mi
 
 externalSources: []
 
