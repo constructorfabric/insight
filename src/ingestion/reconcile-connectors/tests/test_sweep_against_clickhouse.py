@@ -64,6 +64,16 @@ def _ch_stamp(iso: str) -> str:
     return iso.replace("T", " ").replace("Z", "") + ".000"
 
 
+def _placed(entry: dict) -> datetime:
+    """Where the real listing places an entry for its own filter.
+
+    Its last update, or its start when it has none: a job in flight was
+    measured to be served when the filter starts at or before its start, and
+    withheld when the filter starts after it.
+    """
+    return _parse_iso(entry.get("lastUpdatedAt") or entry["startTime"])
+
+
 #: Every parameter the sweep is allowed to send. A name outside it is a filter
 #: the real listing would silently ignore.
 _LISTING_PARAMETERS = frozenset(
@@ -90,12 +100,22 @@ def _closed_job(index: int) -> dict:
 
 
 def _running_job() -> dict:
-    """No start, no duration, no count — the mover has nothing to report yet."""
+    """A job in flight, in the shape the listing serves one.
+
+    It has started and it carries no update stamp at all — the mover reports
+    one only once it has something to update. A stub that hands out an update
+    stamp here tests a shape the listing never sends, and lets a planner that
+    refuses the real one pass.
+    """
     return {
         "jobId": 999,
         "connectionId": CONNECTION,
+        "jobType": "sync",
         "status": "running",
-        "lastUpdatedAt": _stamp(8),
+        "startTime": _stamp(8),
+        "duration": "PT46M18S",
+        "bytesSynced": 0,
+        "rowsSynced": 0,
     }
 
 
@@ -153,9 +173,7 @@ class _StubMover:
                     # as raw strings is what let a wrongly-formatted watermark
                     # look like a working filter.
                     edge = _parse_iso(since)
-                    entries = [
-                        e for e in entries if _parse_iso(e["lastUpdatedAt"]) >= edge
-                    ]
+                    entries = [e for e in entries if _placed(e) >= edge]
                 offset = int(flat.get("offset", "0"))
                 window = entries[offset : offset + stub.page_size]
 
@@ -351,17 +369,24 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         self.assertEqual(summary[0]["job_id"], "999")
         self.assertEqual(summary[0]["status"], "failed")
 
-    def test_an_unfinished_job_stores_no_start_and_no_duration(self) -> None:
+    def test_a_job_in_flight_is_recorded_and_placed_at_its_start(self) -> None:
+        """The listing sends a running job with a start and no update stamp.
+
+        Refusing it for the missing stamp costs the state the page exists for:
+        the connector would read as last synced whenever it last finished,
+        while a sync is in flight or stuck.
+        """
         with _StubMover():
             self._tick("tick-a")
 
         running = _rows(
-            f"SELECT started_at, duration_ms, records_reported FROM {TABLE} "
+            f"SELECT status, toString(started_at) AS started, "
+            f"toString(job_updated_at) AS placed FROM {TABLE} "
             "WHERE event = 'sync.completed' AND job_id = '999'"
         )
-        self.assertIsNone(running[0]["started_at"])
-        self.assertIsNone(running[0]["duration_ms"])
-        self.assertIsNone(running[0]["records_reported"])
+        self.assertEqual(len(running), 1, "the job in flight must be recorded")
+        self.assertEqual(running[0]["status"], "running")
+        self.assertEqual(running[0]["placed"], running[0]["started"])
 
     def test_no_connectors_records_nothing_at_all(self) -> None:
         """An empty configured set is indistinguishable from "all removed"."""

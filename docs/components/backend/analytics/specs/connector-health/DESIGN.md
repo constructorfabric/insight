@@ -210,7 +210,7 @@ them, so an absent-value type would buy nothing and cost a nullable read on the 
 out-of-range one — it clamps a `DateTime64` and wraps a `UInt64`. A year-1000 stamp lands as
 1900 and a count above 2^64 lands as a different number, and the page would label both as
 what the mover reported. A stamp or a count the column cannot hold is therefore treated as
-absent, and a job whose update stamp is unusable is not recorded at all.
+absent, and a job carrying no usable moment at all is not recorded.
 
 **Resolution.** The summary takes, per connector, the newest `sync.completed` by the mover's
 own last-update stamp for the job; the configured set is the membership of the newest *sealed*
@@ -230,8 +230,8 @@ page shows it as a state it could not read. It is also not terminal: coverage fa
 a status the sweep could not read is one it keeps re-reading until it becomes one it can.
 
 **Two timestamps, kept apart.** `started_at` is when the mover says the sync began, and is
-absent for a job it has not started. `job_updated_at` is the mover's own last-update stamp for
-the job, which is the field the listing is ordered and filtered by — and therefore the axis
+absent for a job it has not started. `job_updated_at` is the mover's last word about the job
+— its last update, or its start when the mover has not updated it — which is the field the listing is ordered and filtered by — and therefore the axis
 the sweep's own watermark moves along. Substituting one for the other would report a start
 that never happened and still leave the cursor on the wrong axis.
 
@@ -253,10 +253,18 @@ bounded by that same watermark and so cannot filter them out; and a capped pass 
 short of the newest jobs while still sealing, leaving the page dated as freshly checked on
 facts it never reached.
 
-**`job_updated_at` is never NULL on a sync row.** The listing is ordered by it, so a job the
-mover returns always carries one; the column is nullable only because snapshot and seal rows
-are not about a job at all. A job the mover returns without an update stamp is one the planner
-cannot place in time, so it is skipped and logged rather than written with a NULL.
+**A job in flight carries no update stamp at all**, only a start — the mover reports an
+update once it has one to report. Refusing such an entry costs the state the page exists for:
+the connector reads as last synced whenever it last finished, while a sync is in flight or
+stuck. So the planner falls back to the start, and the fallback is not a guess — the listing
+places such an entry around its start, serving it when the filter begins at or before that
+moment and withholding it when the filter begins after. Recording the start therefore keeps
+the watermark on the axis the filter runs on.
+
+**`job_updated_at` is never NULL on a sync row.** Every entry the mover returns carries one of
+the two stamps; the column is nullable only because snapshot and seal rows are not about a job
+at all. An entry carrying neither is one the planner cannot place in time, so it is skipped and
+logged rather than written with a NULL.
 
 **The resolution is one aggregate over an ordering tuple.** Per connector the newest row wins
 by `argMax` over
@@ -264,10 +272,12 @@ by `argMax` over
 
 Every component earns its place, and each closes a wrong answer that was measured first:
 
-- **`coalesce(job_updated_at, ts)`** — NULLs sort last in ClickHouse in BOTH directions, so a
-  job the mover gave no update stamp for does not merely lose the comparison: a different,
-  older job wins it, and the page presents a stale success as the current state. Falling back
-  to when the row was recorded places the job by a real recorded moment instead.
+- **`coalesce(job_updated_at, ts)`** — a defence against a NULL this writer no longer produces
+  and a reader cannot survive. Rows recorded before the placement rule settled still hold one,
+  and NULLs sort last in ClickHouse in BOTH directions: such a row does not merely lose the
+  comparison, a different and older job wins it, and the page presents a stale success as the
+  current state. Falling back to when the row was recorded places it by a real recorded moment
+  instead.
 - **`toUInt64OrZero(job_id)`** — the mover's ids are numbers stored as text, so comparing them
   as text makes `"9"` newer than `"10"`.
 - **the terminal flag** — within one job a final row outranks a provisional one whatever the
@@ -619,7 +629,7 @@ customer extracts, which must never carry service rows.
 | `event` | `LowCardinality(String)` | `sync.completed` \| `connector.configured` \| `sweep.completed` |
 | `status` | `LowCardinality(String)` | on a sync row, the mover's own word or `unknown`; empty elsewhere |
 | `started_at` | `Nullable(DateTime64(3, 'UTC'))` | when the mover says the sync began; NULL for a job it has not started |
-| `job_updated_at` | `Nullable(DateTime64(3, 'UTC'))` | the mover's last-update stamp for the job — the axis the watermark moves along, and the field the listing is ordered and filtered by; never NULL on a sync row |
+| `job_updated_at` | `Nullable(DateTime64(3, 'UTC'))` | the mover's last word about the job — its last update, or its start while it is still in flight. The axis the watermark moves along and the field the listing is ordered and filtered by; never NULL on a sync row |
 | `duration_ms` | `Nullable(UInt64)` | between the mover's own start and end stamps; NULL while a job is in flight and where either stamp is missing, which a zero could not express |
 | `records_reported` | `Nullable(UInt64)` | the mover's own count; NULL where it reported none |
 

@@ -81,9 +81,10 @@ static READ_INTERVAL_SQL: LazyLock<String> = LazyLock::new(|| {
 /// Four components, each earning its place:
 ///
 /// * `coalesce(job_updated_at, ts)` — the axis the ledger places jobs along,
-///   falling back to when the row was recorded. A NULL here would be worse than
-///   a fallback: ClickHouse sorts NULLs last in BOTH directions, so a job the
-///   mover gave no update stamp for would not merely lose the comparison — a
+///   falling back to when the row was recorded. The writer no longer leaves a
+///   NULL here, but rows recorded before the placement rule settled still hold
+///   one and a reader cannot survive it: ClickHouse sorts NULLs last in BOTH
+///   directions, so such a row would not merely lose the comparison — a
 ///   different, older job would win it, and the page would present a stale
 ///   success as the current state.
 /// * `toUInt64OrZero(job_id)` — the mover's ids are numbers stored as text, so

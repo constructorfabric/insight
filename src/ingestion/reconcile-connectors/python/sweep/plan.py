@@ -11,8 +11,10 @@ ISO-8601 duration, so both are parsed rather than cast.
 
 INVARIANT: the entry carries no creation time. The listing accepts a creation
 filter but never reports one, so reading a job's moment from anything other
-than its last-update stamp refuses every entry — indistinguishable, from the
-page, from a mover that has run no syncs at all.
+than the stamps it does carry refuses every entry — indistinguishable, from the
+page, from a mover that has run no syncs at all. Nor does every entry carry
+every stamp it does report: a job still running can arrive with a start and no
+update at all.
 """
 
 from __future__ import annotations
@@ -96,13 +98,24 @@ def moment(stamp: object) -> str | None:
 
 
 def entry_moment(entry: Mapping[str, Any]) -> str | None:
-    """One listing entry's last-update moment, in the ledger's own form.
+    """Where one listing entry sits on the axis the ledger orders jobs along.
 
-    The single reader of that field: the watermark is compared against it, the
-    listing is filtered by it and the planner records it, and the three must
-    never disagree about which of an entry's stamps places it.
+    The mover's last word about the job — its last update, or its start when the
+    mover has not updated it yet. A job still running can carry no update stamp
+    at all, and refusing it would drop the one state the page most needs to
+    show: the connector reads as last synced whenever it last finished, while a
+    sync is in flight or stuck.
+
+    The fallback is not a guess. The listing itself places such an entry around
+    its start — it serves the entry when filtered from that moment and withholds
+    it when filtered from after — so recording the start keeps the watermark on
+    the same axis the filter runs on.
+
+    INVARIANT: the watermark is compared against this, the listing is filtered
+    by it and the planner records it, and the three must never disagree about
+    which of an entry's stamps places it.
     """
-    return moment(entry.get("lastUpdatedAt"))
+    return moment(entry.get("lastUpdatedAt")) or moment(entry.get("startTime"))
 
 
 def as_listing_stamp(recorded: str | None) -> str | None:
@@ -233,9 +246,9 @@ def sync_row(
     # SAFETY: the summary resolves the newest sync per connector along this
     # column, and a row without it can never win that comparison. Recording it
     # anyway would hide the connector rather than the row.
-    updated = entry_moment(entry)
-    if updated is None:
-        return Skipped(job_id, "job carries no readable update time")
+    placed = entry_moment(entry)
+    if placed is None:
+        return Skipped(job_id, "job carries no readable moment")
 
     return {
         "tick_id": tick_id,
@@ -244,7 +257,7 @@ def sync_row(
         "event": SYNC_COMPLETED,
         "status": vocab.normalise(entry.get("status")),
         "started_at": moment(entry.get("startTime")),
-        "job_updated_at": updated,
+        "job_updated_at": placed,
         "duration_ms": duration_ms(entry.get("duration")),
         "records_reported": records_reported(entry),
     }
