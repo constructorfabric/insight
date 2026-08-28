@@ -161,6 +161,16 @@ ALLOY_RELEASE    ?= alloy
 ALLOY_CHART      ?= grafana/alloy
 ALLOY_VERSION    ?= 1.12.1     # app v1.19.2
 
+# Second Alloy release for METRICS collection (kubelet/cAdvisor +
+# kube-state-metrics → VictoriaMetrics). Same chart and version as the log
+# collector so the config dialect is identical; single-replica Deployment
+# because every scrape target is cluster-wide.
+ALLOY_METRICS_RELEASE ?= alloy-metrics
+
+KUBE_STATE_METRICS_RELEASE ?= kube-state-metrics
+KUBE_STATE_METRICS_CHART   ?= prometheus-community/kube-state-metrics
+KUBE_STATE_METRICS_VERSION ?= 8.4.1   # app v2.20.0
+
 GRAFANA_RELEASE  ?= grafana
 # grafana/grafana is deprecated (frozen 2026-01-30); development moved to
 # grafana-community/helm-charts. Alloy still lives in the old repo.
@@ -231,6 +241,8 @@ help:
 	@echo "  make system-loki ENV=$(ENV)               }"
 	@echo "  make system-tempo ENV=$(ENV)              }"
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
+	@echo "  make system-kube-state-metrics ENV=$(ENV) }"
+	@echo "  make system-alloy-metrics ENV=$(ENV)      }   (infra metrics → VictoriaMetrics)"
 	@echo "  make system-grafana ENV=$(ENV)            }"
 	@echo "  make system-status ENV=$(ENV)             Show what's installed in insight-infra"
 	@echo "  make provision-ci ENV=$(ENV)      Provision the namespace-scoped CI deploy credential"
@@ -637,6 +649,8 @@ system: inventory-present vpn-up kube-ctx
 	$(call _run_if_enabled,system.loki,system-loki)
 	$(call _run_if_enabled,system.tempo,system-tempo)
 	$(call _run_if_enabled,system.alloy,system-alloy)
+	$(call _run_if_enabled,system.kubeStateMetrics,system-kube-state-metrics)
+	$(call _run_if_enabled,system.alloyMetrics,system-alloy-metrics)
 	$(call _run_if_enabled,system.grafana,system-grafana)
 	@echo "$(C_GRN)system complete$(C_RST) → $(NS_INFRA)"
 
@@ -781,6 +795,28 @@ system-alloy: vpn-up kube-ctx
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,alloy) \
+		--wait --timeout 5m
+
+# Infra metrics: kube-state-metrics first (alloy-metrics scrapes it),
+# then the alloy-metrics scraper. Both remote-write into VictoriaMetrics.
+.PHONY: system-kube-state-metrics
+system-kube-state-metrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,prometheus-community,https://prometheus-community.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,kube-state-metrics)
+	helm upgrade --install $(KUBE_STATE_METRICS_RELEASE) $(KUBE_STATE_METRICS_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(KUBE_STATE_METRICS_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,kube-state-metrics) \
+		--wait --timeout 5m
+
+.PHONY: system-alloy-metrics
+system-alloy-metrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,alloy-metrics)
+	helm upgrade --install $(ALLOY_METRICS_RELEASE) $(ALLOY_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,alloy-metrics) \
 		--wait --timeout 5m
 
 .PHONY: system-grafana

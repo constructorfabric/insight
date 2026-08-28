@@ -1,0 +1,54 @@
+##
+## kube-state-metrics — Kubernetes object state as metrics: pod readiness,
+## container restarts, OOMKills, deployment/statefulset status. The
+## `alloy-metrics` release scrapes it over the Service on :8080 and
+## remote-writes into VictoriaMetrics.
+##
+## Chart: prometheus-community/kube-state-metrics
+## Pin in Makefile: KUBE_STATE_METRICS_VERSION
+## Release: `kube-state-metrics` in namespace `insight-infra`.
+##
+## Per-env overrides go in environments/<env>/kube-state-metrics-values.yaml
+## — custom-resource metrics (e.g. Argo Workflow phase) belong there, since
+## the CRDs present differ per cluster.
+##
+
+# The alloy-metrics scrape config addresses the Service by this exact name;
+# don't let a release-name change move it.
+fullnameOverride: kube-state-metrics
+
+replicas: 1
+
+resources:
+  requests: { cpu: 20m,  memory: 64Mi }
+  limits:   { cpu: 200m, memory: 256Mi }
+
+service:
+  type: ClusterIP
+
+# Only the collectors that answer a question the dashboards ask. The chart's
+# default set covers ~35 resources (certificatesigningrequests, leases,
+# ingressclasses, volumeattachments, …) whose series would be pure noise.
+collectors:
+  - cronjobs
+  - daemonsets
+  - deployments
+  - jobs
+  - namespaces
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
+  - pods
+  - replicasets
+  - statefulsets
+
+# Cluster-wide: the workloads live in `insight`, the data stores in
+# `insight-infra`.
+namespaces: ""
+
+selfMonitor:
+  enabled: false
+
+prometheus:
+  monitor:
+    enabled: false # no prometheus-operator assumed; alloy-metrics scrapes statically

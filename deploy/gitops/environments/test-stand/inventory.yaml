@@ -212,6 +212,8 @@ system:
   loki: false
   tempo: false
   alloy: false
+  kubeStateMetrics: false
+  alloyMetrics: false
   grafana: false
 
 # ─── Secrets (drives `make seal`) ──────────────────────────────────────

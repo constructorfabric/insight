@@ -54,6 +54,10 @@ system:
   loki:            false
   tempo:           false
   alloy:           false
+  # Infra metrics (kubelet/cAdvisor + kube-state-metrics → VictoriaMetrics).
+  # Needs victoriametrics on.
+  kubeStateMetrics: false
+  alloyMetrics:     false
   grafana:         false
 
 # ─── Secrets (drives `make seal`) ──────────────────────────────────────

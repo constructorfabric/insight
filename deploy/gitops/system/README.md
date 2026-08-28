@@ -26,9 +26,11 @@ model and full workflow.
 | `loki/` | `grafana-community/loki` | `loki` | not in baseline (single-tenant, no auth) |
 | `tempo/` | `grafana-community/tempo` | `tempo` | not in baseline |
 | `alloy/` | `grafana/alloy` | `alloy` | not in baseline |
+| `kube-state-metrics/` | `prometheus-community/kube-state-metrics` | `kube-state-metrics` | not in baseline |
+| `alloy-metrics/` | `grafana/alloy` | `alloy-metrics` | not in baseline |
 | `grafana/` | `grafana-community/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
 
-### Observability (victoriametrics / loki / tempo / alloy / grafana)
+### Observability (victoriametrics / loki / tempo / alloy / kube-state-metrics / alloy-metrics / grafana)
 
 These are the bundled observability stack: VictoriaMetrics stores metrics
 (PromQL-compatible, remote-write receiver at `/api/v1/write`), Loki stores
@@ -39,11 +41,24 @@ to VictoriaMetrics and forwarding the traces to Tempo — and Grafana
 serves all three — provisioned as the fixed-uid
 datasources `vm`, `loki` and `tempo` so dashboards reference them portably;
 a `trace_id` in a JSON log line links to the trace via Loki's
-`derivedFields`. Two independent decisions, mirroring the
+`derivedFields`.
+
+**Infra metrics (kube-state-metrics / alloy-metrics).** Service health
+without touching the services: `alloy-metrics` is a second Alloy release
+(single-replica Deployment — every target is cluster-wide, so a DaemonSet
+would scrape each once per node) that pull-scrapes the kubelet's cAdvisor
+(per-container CPU / memory / network) and the `kube-state-metrics` release
+(pod readiness, container restarts, OOMKills, deployment status),
+remote-writing both into VictoriaMetrics. Enable them together with
+`inventory.system.{kubeStateMetrics,alloyMetrics}`; they need
+`victoriametrics` on to have somewhere to write.
+
+Two independent decisions, mirroring the
 managed-vs-bundled choice for the data stores above:
 
 1. **Install the bundled stack?** — the
-   `inventory.system.{victoriametrics,loki,tempo,alloy,grafana}` toggles.
+   `inventory.system.{victoriametrics,loki,tempo,alloy,kubeStateMetrics,alloyMetrics,grafana}`
+   toggles.
    On = self-host the stack in `insight-infra`. Off = don't (the cluster
    already runs observability, or stdout is enough).
 2. **Where do services export?** — the umbrella's `observability.otlp.endpoint`
@@ -73,8 +88,11 @@ kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}'
 # Explore → Loki:
 {namespace="insight"}            # service logs
 {component="reconcile-loop"}     # reconcile ticks
-# Explore → VictoriaMetrics (PromQL; empty until a collector remote-writes):
+# Explore → VictoriaMetrics (PromQL; empty until a collector remote-writes —
+# alloy-metrics fills it with per-pod series when enabled):
 up
+container_memory_working_set_bytes{namespace="insight"}
+kube_pod_container_status_restarts_total{namespace="insight"}
 ```
 
 Putting Grafana behind auth is a tracked follow-up: seal a `grafana-creds`

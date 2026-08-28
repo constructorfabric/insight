@@ -1,0 +1,128 @@
+##
+## Grafana Alloy — METRICS collector. Second, independent release alongside
+## the `alloy` log/OTLP collector, on the same chart and version so the
+## config dialect is identical. It pull-scrapes what the push pipeline
+## cannot see: the kubelet's cAdvisor (per-container CPU / memory / network
+## for every workload, no application change required) and
+## kube-state-metrics (pod readiness, restarts, OOMKills, deployment
+## status), remote-writing both into VictoriaMetrics.
+##
+## Chart: grafana/alloy
+## Pin in Makefile: ALLOY_VERSION (shared with the log collector)
+## Release: `alloy-metrics` in namespace `insight-infra`.
+##
+## Deployment rather than DaemonSet: every target is discovered
+## cluster-wide, so one replica scrapes the whole cluster; a DaemonSet
+## would scrape every target once per node.
+##
+## Per-env overrides go in environments/<env>/alloy-metrics-values.yaml.
+## `configMap.content` is a single string that helm REPLACES rather than
+## merges — an env that needs extra scrape jobs or series pruning carries
+## the whole config in its overlay.
+##
+
+controller:
+  type: deployment
+  replicas: 1
+
+alloy:
+  clustering:
+    enabled: false
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+  configMap:
+    content: |-
+      // ── Kubelet — cAdvisor + resource metrics ──────────────────────────
+      // Per-container CPU / memory / network for every pod on every node.
+      // The chart's ClusterRole already grants nodes + nodes/metrics +
+      // nonResourceURLs:/metrics, which authorises scraping the kubelet
+      // DIRECTLY on :10250 — the API-server proxy path would need
+      // `nodes/proxy`, which it does not grant. The kubelet's serving cert
+      // is typically self-signed for the node IP, hence insecure_skip_verify.
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.relabel "kubelet" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets           = discovery.relabel.kubelet.output
+        job_name          = "kubelet-cadvisor"
+        scheme            = "https"
+        metrics_path      = "/metrics/cadvisor"
+        scrape_interval   = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          insecure_skip_verify = true
+        }
+        forward_to = [prometheus.relabel.drop_noise.receiver]
+      }
+
+      prometheus.scrape "kubelet_resource" {
+        targets           = discovery.relabel.kubelet.output
+        job_name          = "kubelet-resource"
+        scheme            = "https"
+        metrics_path      = "/metrics/resource"
+        scrape_interval   = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          insecure_skip_verify = true
+        }
+        forward_to = [prometheus.relabel.drop_noise.receiver]
+      }
+
+      // ── kube-state-metrics — object state ──────────────────────────────
+      // Static target: the system-kube-state-metrics release in this
+      // namespace (fullnameOverride pins the Service name).
+      prometheus.scrape "kube_state_metrics" {
+        targets = [
+          {"__address__" = "kube-state-metrics.insight-infra.svc.cluster.local:8080", "job" = "kube-state-metrics"},
+        ]
+        scrape_interval = "30s"
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+      }
+
+      // ── Series-level pruning, then remote_write ─────────────────────────
+      prometheus.relabel "drop_noise" {
+        // kubelet /metrics/resource re-exports cAdvisor's container_cpu/
+        // memory families under job=kubelet-resource — with both jobs
+        // stored, every sum() across them double-counts. cAdvisor stays the
+        // single source for container_* series.
+        rule {
+          source_labels = ["__name__", "job"]
+          regex         = "container_[^;]*;kubelet-resource"
+          action        = "drop"
+        }
+        // Container-scoped families are emitted twice: once per container
+        // and once as a pod-level roll-up with container="". Drop the
+        // roll-up. The families are listed explicitly rather than matched
+        // as `container_.*` because container_network_* is ONLY ever
+        // pod-level (it legitimately has container="") — a blanket rule
+        // would delete every network series.
+        rule {
+          source_labels = ["__name__", "container"]
+          regex         = "container_(cpu|memory|fs|blkio|file|last_seen|processes|sockets|start_time|spec|tasks|threads|ulimits)[^;]*;"
+          action        = "drop"
+        }
+        // The host's systemd slice tree is not a workload.
+        rule {
+          source_labels = ["id"]
+          regex         = "/system\\.slice.*|/user\\.slice.*|/init\\.scope"
+          action        = "drop"
+        }
+
+        forward_to = [prometheus.remote_write.victoriametrics.receiver]
+      }
+
+      prometheus.remote_write "victoriametrics" {
+        endpoint {
+          url = "http://victoriametrics-server.insight-infra.svc.cluster.local:8428/api/v1/write"
+        }
+      }
