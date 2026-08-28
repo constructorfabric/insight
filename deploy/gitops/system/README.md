@@ -33,7 +33,10 @@ model and full workflow.
 These are the bundled observability stack: VictoriaMetrics stores metrics
 (PromQL-compatible, remote-write receiver at `/api/v1/write`), Loki stores
 logs, Tempo stores traces (OTLP ingest on `tempo:4317`/`4318`), Alloy
-collects, Grafana serves all three — provisioned as the fixed-uid
+collects — it tails pod stdout to Loki and accepts OTLP from the services
+on `alloy:4317` (gRPC) / `alloy:4318` (HTTP), remote-writing the metrics
+to VictoriaMetrics and forwarding the traces to Tempo — and Grafana
+serves all three — provisioned as the fixed-uid
 datasources `vm`, `loki` and `tempo` so dashboards reference them portably;
 a `trace_id` in a JSON log line links to the trace via Loki's
 `derivedFields`. Two independent decisions, mirroring the

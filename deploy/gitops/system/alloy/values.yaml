@@ -1,6 +1,11 @@
 ##
-## Grafana Alloy — log collector for the L2 system layer (observability
-## `bundled` mode).
+## Grafana Alloy — telemetry collector for the L2 system layer
+## (observability `bundled` mode). Two pipelines:
+##   logs: node-local pod stdout → Loki (DaemonSet tail, below);
+##   OTLP: services push to alloy:4317 (gRPC) / 4318 (HTTP) — metrics
+##         remote-write to VictoriaMetrics, traces forward to Tempo.
+## The umbrella's `observability.otlp.endpoint` points here when the
+## bundled stack is on.
 ##
 ## Chart: grafana/alloy   (https://grafana.github.io/helm-charts)
 ## Pin in Makefile: ALLOY_VERSION
@@ -26,6 +31,20 @@ alloy:
   # read pod stdout. The chart wires the hostPath mounts for daemonset mode.
   mounts:
     varlog: true
+  # OTLP listeners, added to both the container and the chart's ClusterIP
+  # Service — `alloy.insight-infra.svc.cluster.local:4317/4318` is the
+  # stable endpoint services export to. The Service spans every DaemonSet
+  # pod; any node's agent accepts and routes the payload.
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+      appProtocol: h2c
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
   configMap:
     content: |-
       // ── Discover pods scheduled on THIS node ───────────────────────────
@@ -80,5 +99,43 @@ alloy:
       loki.write "default" {
         endpoint {
           url = "http://loki.insight-infra.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+      // ── OTLP entry point for the app services (umbrella
+      //    `observability.otlp.endpoint` → alloy:4317). Metrics go to
+      //    VictoriaMetrics, traces to Tempo. The logs signal is NOT routed:
+      //    logs reach Loki through the stdout tail above, and routing both
+      //    would double every line.
+      otelcol.receiver.otlp "services" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          metrics = [otelcol.exporter.prometheus.to_victoriametrics.input]
+          traces  = [otelcol.exporter.otlp.to_tempo.input]
+        }
+      }
+
+      otelcol.exporter.prometheus "to_victoriametrics" {
+        forward_to = [prometheus.remote_write.victoriametrics.receiver]
+      }
+
+      prometheus.remote_write "victoriametrics" {
+        endpoint {
+          url = "http://victoriametrics-server.insight-infra.svc.cluster.local:8428/api/v1/write"
+        }
+      }
+
+      otelcol.exporter.otlp "to_tempo" {
+        client {
+          endpoint = "tempo.insight-infra.svc.cluster.local:4317"
+          tls {
+            // In-cluster hop inside insight-infra; Tempo's ingest is plaintext.
+            insecure = true
+          }
         }
       }
