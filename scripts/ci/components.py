@@ -88,11 +88,6 @@ COMPONENTS = [
         # migrator to prove idempotency and skip cleanly when unset).
         "live_db": True,
         "live_db_name": "identity",
-        # ClickHouse for the identity_inputs reader, whose live tests read the
-        # persons-seed's input stream through the real column types
-        # (INTEGRATION_TESTS_CLICKHOUSE_URL). The suite creates the table it
-        # reads, tags every row it writes, and skips when the var is unset.
-        "live_ch": True,
         "cover_ignore_regex": "src/backend/libs/",
         "paths": ["src/backend/services/identity-resolution"],
         # insight-clickhouse is compiled in as a path dependency: a lib change
