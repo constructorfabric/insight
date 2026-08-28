@@ -138,6 +138,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(handlers::resolve_profile)
         .register(router, openapi);
 
+    let router = OperationBuilder::post("/v1/profiles/batch")
+        .operation_id("identity_resolution.profiles.batch")
+        .summary("Resolve visible profiles by canonical person id")
+        .authenticated()
+        .no_license_required()
+        .json_request::<profile::BatchProfilesRequest>(openapi, "Canonical people to resolve")
+        .json_response_with_schema::<profile::BatchProfilesResponse>(
+            openapi,
+            StatusCode::OK,
+            "Visible profiles",
+        )
+        .standard_errors(openapi)
+        .handler(handlers::batch_profiles)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/v1/me")
         .operation_id("identity_resolution.me.get")
         .summary("The caller's identity and active roles")

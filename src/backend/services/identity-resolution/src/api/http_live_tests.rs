@@ -153,6 +153,10 @@ fn by_person_id(person_id: Uuid) -> Value {
     json!({"value_type": "person_id", "value": person_id.to_string()})
 }
 
+fn batch_person_ids(person_ids: &[Uuid]) -> Value {
+    json!({"person_ids": person_ids})
+}
+
 // ── POST /v1/visible-persons ────────────────────────────────
 
 #[tokio::test]
@@ -438,6 +442,106 @@ async fn an_unknown_value_type_is_a_client_error() -> TestResult {
     .await?;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+// ── POST /v1/profiles/batch ─────────────────────────────────
+
+#[tokio::test]
+async fn batch_profiles_preserves_order_and_omits_hidden_or_unknown_people() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let manager = f.person("batch-manager@http-live.test").await?;
+    let github_only = f.emailless_person().await?;
+    let hidden = f.person("batch-hidden@http-live.test").await?;
+    f.observed_from("github", github_only, "username", "github-only")
+        .await?;
+    f.observed(github_only, "department", "Engineering").await?;
+    f.observed(manager, "display_name", "Batch Manager").await?;
+    f.reports_to(github_only, manager).await?;
+
+    let unknown = Uuid::now_v7();
+    let (status, body) = post(
+        app(&f, manager),
+        "/v1/profiles/batch",
+        &batch_person_ids(&[hidden, github_only, unknown, manager]),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let profiles = body["profiles"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing profiles: {body}"))?;
+    let ids = profiles
+        .iter()
+        .filter_map(|profile| profile["person_id"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![github_only.to_string(), manager.to_string()]);
+    assert_eq!(profiles[0]["attributes"]["username"], "github-only");
+    assert_eq!(profiles[0]["attributes"]["department"], "Engineering");
+    assert!(profiles[0]["attributes"].get("email").is_none());
+    assert_eq!(profiles[0]["supervisor"]["person_id"], manager.to_string());
+    assert_eq!(
+        profiles[0]["supervisor"]["attributes"]["display_name"],
+        "Batch Manager"
+    );
+    for forbidden in ["insight_tenant_id", "ids", "subordinates"] {
+        assert!(
+            profiles[0].get(forbidden).is_none(),
+            "must omit {forbidden}"
+        );
+    }
+    assert!(profiles[1].get("supervisor").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_profiles_apply_flat_visibility_with_tenant_isolation() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("batch-flat-caller@http-live.test").await?;
+    let unrelated = f.person("batch-flat-unrelated@http-live.test").await?;
+    let foreign = f
+        .in_another_tenant()
+        .person("batch-flat-foreign@http-live.test")
+        .await?;
+
+    let (status, body) = post(
+        flat_app(&f, caller),
+        "/v1/profiles/batch",
+        &batch_person_ids(&[foreign, unrelated]),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["profiles"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing profiles: {body}"))?
+            .iter()
+            .filter_map(|profile| profile["person_id"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>(),
+        vec![unrelated.to_string()]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_profiles_reject_duplicate_and_unknown_request_fields() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("batch-invalid-caller@http-live.test").await?;
+
+    for body in [
+        batch_person_ids(&[caller, caller]),
+        json!({"person_ids": [caller], "unexpected": true}),
+    ] {
+        let (status, _) = post(app(&f, caller), "/v1/profiles/batch", &body).await?;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "should reject: {body}");
+    }
     Ok(())
 }
 

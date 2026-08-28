@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use super::entities::persons;
 use crate::domain::person_card::{self, CARD_VALUE_TYPES, PersonCard};
+use crate::domain::profile::SAFE_PROFILE_ATTRIBUTE_TYPES;
 use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
@@ -566,6 +567,57 @@ pub async fn person_cards(
     Ok(person_card::assemble_cards(rows))
 }
 
+pub async fn current_profile_observations(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashMap<Uuid, Vec<persons::Model>>> {
+    if person_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let id_placeholders = vec!["?"; person_ids.len()].join(", ");
+    let type_list = SAFE_PROFILE_ATTRIBUTE_TYPES
+        .iter()
+        .map(|value_type| format!("'{value_type}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        r"
+        SELECT id, value_type, insight_source_type, insight_source_id,
+               insight_tenant_id, value_id, value_full_text, value,
+               value_effective, person_id, author_person_id,
+               reason, created_at
+        FROM (
+            SELECT p.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons p
+            WHERE insight_tenant_id = ?
+              AND person_id IN ({id_placeholders})
+              AND value_type IN ({type_list})
+        ) current_rows
+        WHERE rn = 1
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(person_ids.iter().map(|id| id.as_bytes().to_vec().into()));
+
+    let stmt = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
+    let rows = persons::Entity::find().from_raw_sql(stmt).all(db).await?;
+    let mut observations = HashMap::new();
+    for row in rows {
+        observations
+            .entry(Uuid::from_slice(&row.person_id)?)
+            .or_insert_with(Vec::new)
+            .push(row);
+    }
+    Ok(observations)
+}
+
 /// Fetch every observation row for a person within the tenant (all value types,
 /// all sources). The caller collapses them to the current value per attribute.
 ///
@@ -662,6 +714,12 @@ pub struct OrgChartEdge {
     pub parent_person_id: Uuid,
 }
 
+pub struct OrgChartParentEdge {
+    pub child_person_id: Uuid,
+    pub source_type: String,
+    pub parent_person_id: Uuid,
+}
+
 /// Current parent edges for one child (`valid_to IS NULL`), across every source
 /// instance, ordered by source. The caller filters to the configured
 /// `org_chart` source.
@@ -707,6 +765,56 @@ pub async fn current_parents_for_child(
         edges.push(OrgChartEdge {
             source_type,
             source_id: Uuid::from_slice(&source_id)?,
+            parent_person_id: Uuid::from_slice(&parent_person_id)?,
+        });
+    }
+    Ok(edges)
+}
+
+pub async fn current_parents_for_children(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    child_person_ids: &[Uuid],
+) -> anyhow::Result<Vec<OrgChartParentEdge>> {
+    if child_person_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = vec!["?"; child_person_ids.len()].join(", ");
+    let sql = format!(
+        r"
+        SELECT child_person_id, insight_source_type, parent_person_id
+        FROM org_chart
+        WHERE insight_tenant_id = ?
+          AND child_person_id IN ({placeholders})
+          AND valid_to IS NULL
+          AND parent_person_id IS NOT NULL
+        ORDER BY child_person_id, insight_source_type, insight_source_id
+    "
+    );
+
+    let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
+    values.extend(
+        child_person_ids
+            .iter()
+            .map(|person_id| person_id.as_bytes().to_vec().into()),
+    );
+
+    let rows = db
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            &sql,
+            values,
+        ))
+        .await?;
+    let mut edges = Vec::with_capacity(rows.len());
+    for row in rows {
+        let child_person_id: Vec<u8> = row.try_get("", "child_person_id")?;
+        let source_type: String = row.try_get("", "insight_source_type")?;
+        let parent_person_id: Vec<u8> = row.try_get("", "parent_person_id")?;
+        edges.push(OrgChartParentEdge {
+            child_person_id: Uuid::from_slice(&child_person_id)?,
+            source_type,
             parent_person_id: Uuid::from_slice(&parent_person_id)?,
         });
     }
