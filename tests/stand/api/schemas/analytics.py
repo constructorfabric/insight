@@ -25,11 +25,20 @@ service serialises timestamps with no offset. See `common.UnzonedDatetime`.
 from __future__ import annotations
 
 from .common import UnzonedDatetime
-from pydantic import BaseModel, ConfigDict, Field, RootModel
 from enum import StrEnum
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 from typing import Any
 from uuid import UUID
 from datetime import date as date_aliased
+
+
+class Aggregation(StrEnum):
+    count = 'count'
+    sum = 'sum'
+    avg = 'avg'
+    min = 'min'
+    max = 'max'
+    count_distinct = 'count_distinct'
 
 
 class AiConfigResponse(BaseModel):
@@ -62,6 +71,88 @@ class Bucket(StrEnum):
     day = 'day'
     week = 'week'
     month = 'month'
+
+
+class Type(StrEnum):
+    direct = 'direct'
+
+
+class CatalogComputation1(BaseModel):
+    """
+    How the value is computed, named without the measures it is computed from.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type
+
+
+class Type1(StrEnum):
+    ratio = 'ratio'
+
+
+class CatalogComputation2(BaseModel):
+    """
+    How the value is computed, named without the measures it is computed from.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type1
+
+
+class Type2(StrEnum):
+    percentile = 'percentile'
+
+
+class CatalogComputation3(BaseModel):
+    """
+    How the value is computed, named without the measures it is computed from.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type2
+
+
+class Type3(StrEnum):
+    stddev = 'stddev'
+
+
+class CatalogComputation4(BaseModel):
+    """
+    How the value is computed, named without the measures it is computed from.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type3
+
+
+class Type4(StrEnum):
+    derived = 'derived'
+
+
+class CatalogComputation5(BaseModel):
+    """
+    How the value is computed, named without the measures it is computed from.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type4
+
+
+class CatalogComputation(RootModel[CatalogComputation1 | CatalogComputation2 | CatalogComputation3 | CatalogComputation4 | CatalogComputation5]):
+    root: CatalogComputation1 | CatalogComputation2 | CatalogComputation3 | CatalogComputation4 | CatalogComputation5 = Field(..., description='How the value is computed, named without the measures it is computed from.')
+
+
+class CatalogDimension(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    key: str = Field(..., description='What a filter, a split or a display dimension names.')
+    label: str
 
 
 class ColumnKind(StrEnum):
@@ -99,7 +190,97 @@ class Comparison(BaseModel):
     value: float | None = Field(None, description='What the same question answered over the compared window.')
 
 
-class Computation(StrEnum):
+class Type5(StrEnum):
+    direct = 'direct'
+
+
+class Computation1(BaseModel):
+    """
+    A percentile is metric-level because a percentile of pre-aggregated values
+    is not a percentile; a standard deviation is metric-level for the same
+    reason.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    measure: str
+    type: Type5
+
+
+class Type6(StrEnum):
+    ratio = 'ratio'
+
+
+class Computation2(BaseModel):
+    """
+    A percentile is metric-level because a percentile of pre-aggregated values
+    is not a percentile; a standard deviation is metric-level for the same
+    reason.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    denominator: str
+    numerator: str
+    type: Type6
+
+
+class Type7(StrEnum):
+    percentile = 'percentile'
+
+
+class Computation3(BaseModel):
+    """
+    A percentile is metric-level because a percentile of pre-aggregated values
+    is not a percentile; a standard deviation is metric-level for the same
+    reason.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    measure: str
+    quantile: float = Field(..., description='The quantile to serve, in `(0, 1)`.')
+    type: Type7
+
+
+class Type8(StrEnum):
+    stddev = 'stddev'
+
+
+class Computation4(BaseModel):
+    """
+    A percentile is metric-level because a percentile of pre-aggregated values
+    is not a percentile; a standard deviation is metric-level for the same
+    reason.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    measure: str
+    type: Type8
+
+
+class Type9(StrEnum):
+    derived = 'derived'
+
+
+class Computation5(BaseModel):
+    """
+    Arithmetic over measures the expression names by alias.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    expr: str
+    inputs: dict[str, str] = Field(..., description='Alias to measure key. The alias is what `expr` may reference.')
+    type: Type9
+
+
+class Computation(RootModel[Computation1 | Computation2 | Computation3 | Computation4 | Computation5]):
+    root: Computation1 | Computation2 | Computation3 | Computation4 | Computation5 = Field(..., description='A percentile is metric-level because a percentile of pre-aggregated values\nis not a percentile; a standard deviation is metric-level for the same\nreason.')
+
+
+class Computation6(StrEnum):
     sum = 'sum'
 
 
@@ -107,10 +288,10 @@ class ComputationDto1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation
+    computation: Computation6
 
 
-class Computation1(StrEnum):
+class Computation7(StrEnum):
     ratio = 'ratio'
 
 
@@ -118,11 +299,11 @@ class ComputationDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation1
+    computation: Computation7
     scale: float
 
 
-class Computation2(StrEnum):
+class Computation8(StrEnum):
     median = 'median'
 
 
@@ -130,10 +311,10 @@ class ComputationDto3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation2
+    computation: Computation8
 
 
-class Computation3(StrEnum):
+class Computation9(StrEnum):
     percentile = 'percentile'
 
 
@@ -141,11 +322,11 @@ class ComputationDto4(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation3
+    computation: Computation9
     q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
 
 
-class Computation4(StrEnum):
+class Computation10(StrEnum):
     stddev = 'stddev'
 
 
@@ -153,10 +334,10 @@ class ComputationDto5(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation4
+    computation: Computation10
 
 
-class Computation5(StrEnum):
+class Computation11(StrEnum):
     distinct_count = 'distinct_count'
 
 
@@ -164,7 +345,7 @@ class ComputationDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation5
+    computation: Computation11
 
 
 class ComputationDto(RootModel[ComputationDto1 | ComputationDto2 | ComputationDto3 | ComputationDto4 | ComputationDto5 | ComputationDto6]):
@@ -183,6 +364,15 @@ class CreateSavedQueryRequest(BaseModel):
     sql: str
 
 
+class DimensionBinding(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    key: str
+    label_field: str | None = None
+    value_field: str
+
+
 class DimensionFilter(BaseModel):
     """
     Keeps only the rows whose dimension holds one of the named values.
@@ -192,6 +382,19 @@ class DimensionFilter(BaseModel):
     )
     dimension: str = Field(..., description="A dimension key the metric's grain measure declares.")
     values: list[str]
+
+
+class Direction(StrEnum):
+    higher_is_better = 'higher_is_better'
+    lower_is_better = 'lower_is_better'
+    neutral = 'neutral'
+
+
+class DistributionQuestions(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    admitted: bool = Field(..., description="Whether the metric's computation is taken over per-row values, which is\nwhat having a distribution means.")
 
 
 class EntityType(StrEnum):
@@ -249,12 +452,32 @@ class FeedbackRequest(BaseModel):
     path: str | None = Field(None, description='The screen the sender was on. Empty when the SPA cannot name one.')
 
 
+class FilterOp(StrEnum):
+    eq = 'eq'
+    neq = 'neq'
+    gt = 'gt'
+    gte = 'gte'
+    lt = 'lt'
+    lte = 'lte'
+    in_ = 'in'
+    not_in = 'not_in'
+    is_null = 'is_null'
+    not_null = 'not_null'
+
+
 class Fold(StrEnum):
     """
     Whether each subject keeps its own value or the subjects fold into one.
     """
     per_subject = 'per_subject'
     combined = 'combined'
+
+
+class Format(StrEnum):
+    integer = 'integer'
+    decimal = 'decimal'
+    currency = 'currency'
+    percent = 'percent'
 
 
 class Grain(StrEnum):
@@ -268,11 +491,11 @@ class Grain(StrEnum):
     month = 'month'
 
 
-class Type(StrEnum):
+class Type10(StrEnum):
     dimensions = 'dimensions'
 
 
-class Type1(StrEnum):
+class Type11(StrEnum):
     remainder = 'remainder'
 
 
@@ -283,7 +506,7 @@ class Group2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type1
+    type: Type11
 
 
 class GroupDimension(BaseModel):
@@ -386,7 +609,7 @@ class MetricDrilldownColumnType(StrEnum):
     number = 'number'
 
 
-class Type2(StrEnum):
+class Type12(StrEnum):
     person = 'person'
 
 
@@ -395,10 +618,10 @@ class MetricDrilldownEntity1(BaseModel):
         extra='forbid',
     )
     id: str
-    type: Type2
+    type: Type12
 
 
-class Type3(StrEnum):
+class Type13(StrEnum):
     persons = 'persons'
 
 
@@ -412,10 +635,10 @@ class MetricDrilldownEntity2(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type3
+    type: Type13
 
 
-class Type4(StrEnum):
+class Type14(StrEnum):
     tenant = 'tenant'
 
 
@@ -423,7 +646,7 @@ class MetricDrilldownEntity3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type4
+    type: Type14
 
 
 class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3]):
@@ -509,7 +732,7 @@ class MetricOrigin(StrEnum):
     custom = 'custom'
 
 
-class Computation6(StrEnum):
+class Computation12(StrEnum):
     sum = 'sum'
 
 
@@ -517,10 +740,10 @@ class MetricResultDto1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation6
+    computation: Computation12
 
 
-class Computation7(StrEnum):
+class Computation13(StrEnum):
     ratio = 'ratio'
 
 
@@ -528,11 +751,11 @@ class MetricResultDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation7
+    computation: Computation13
     scale: float
 
 
-class Computation8(StrEnum):
+class Computation14(StrEnum):
     median = 'median'
 
 
@@ -540,10 +763,10 @@ class MetricResultDto3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation8
+    computation: Computation14
 
 
-class Computation9(StrEnum):
+class Computation15(StrEnum):
     percentile = 'percentile'
 
 
@@ -551,11 +774,11 @@ class MetricResultDto4(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation9
+    computation: Computation15
     q: float = Field(..., description='The quantile — a probability, matching the definition validation.', ge=0.0, le=1.0)
 
 
-class Computation10(StrEnum):
+class Computation16(StrEnum):
     stddev = 'stddev'
 
 
@@ -563,10 +786,10 @@ class MetricResultDto5(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation10
+    computation: Computation16
 
 
-class Computation11(StrEnum):
+class Computation17(StrEnum):
     distinct_count = 'distinct_count'
 
 
@@ -574,7 +797,7 @@ class MetricResultDto6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    computation: Computation11
+    computation: Computation17
 
 
 class View(StrEnum):
@@ -613,7 +836,7 @@ class View6(StrEnum):
     error = 'error'
 
 
-class Type5(StrEnum):
+class Type15(StrEnum):
     person = 'person'
 
 
@@ -622,10 +845,10 @@ class MetricResultsEntity1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type5
+    type: Type15
 
 
-class Type6(StrEnum):
+class Type16(StrEnum):
     tenant = 'tenant'
 
 
@@ -633,14 +856,14 @@ class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type6
+    type: Type16
 
 
 class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
     root: MetricResultsEntity1 | MetricResultsEntity2
 
 
-class Type7(StrEnum):
+class Type17(StrEnum):
     person = 'person'
 
 
@@ -649,10 +872,10 @@ class MetricResultsEntityDto1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type7
+    type: Type17
 
 
-class Type8(StrEnum):
+class Type18(StrEnum):
     tenant = 'tenant'
 
 
@@ -660,7 +883,7 @@ class MetricResultsEntityDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type8
+    type: Type18
 
 
 class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
@@ -805,7 +1028,7 @@ class Point(BaseModel):
     value: float | None = None
 
 
-class Type9(StrEnum):
+class Type19(StrEnum):
     cohort = 'cohort'
 
 
@@ -818,10 +1041,10 @@ class Population1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type9
+    type: Type19
 
 
-class Type10(StrEnum):
+class Type20(StrEnum):
     tenant = 'tenant'
 
 
@@ -834,7 +1057,7 @@ class Population2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type10
+    type: Type20
 
 
 class Population(RootModel[Population1 | Population2]):
@@ -936,6 +1159,13 @@ class RowColumn(BaseModel):
     label: str = Field(..., description="The column's name as a reader sees it, derived from its key.")
 
 
+class RowsQuestions(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    inputs: list[str] = Field(..., description='The parts of the computation a page of rows may be asked for.')
+
+
 class RowsResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1004,6 +1234,10 @@ class SavedQuerySummary(BaseModel):
     name: str
 
 
+class Scalar(RootModel[bool | float | str]):
+    root: bool | float | str
+
+
 class SchemaStatus(StrEnum):
     ok = 'ok'
     error = 'error'
@@ -1046,7 +1280,7 @@ class SplitLimit(BaseModel):
     top: int = Field(..., description='How many groups to keep.', ge=0)
 
 
-class Type11(StrEnum):
+class Type21(StrEnum):
     persons = 'persons'
 
 
@@ -1059,10 +1293,10 @@ class Subjects1(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type11
+    type: Type21
 
 
-class Type12(StrEnum):
+class Type22(StrEnum):
     tenant = 'tenant'
 
 
@@ -1074,7 +1308,7 @@ class Subjects2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type12
+    type: Type22
 
 
 class Subjects(RootModel[Subjects1 | Subjects2]):
@@ -1121,6 +1355,20 @@ class TimeseriesPointDto(BaseModel):
     )
     bucket_start: str
     value: float | None = None
+
+
+class Transform(BaseModel):
+    """
+    Post-aggregation shaping: `clamp(min, max, multiplier * value + offset)`.
+    Absent fields are the identity.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    clamp_max: float | None = None
+    clamp_min: float | None = None
+    multiplier: float | None = None
+    offset: float | None = None
 
 
 class UpdateContextRequest(BaseModel):
@@ -1214,6 +1462,38 @@ class UsageTotals(BaseModel):
     visits: int = Field(..., ge=0)
 
 
+class ValidationErrorKind(StrEnum):
+    """
+    Which rule was broken, as a discriminant a machine can branch on.
+    """
+    key_shape = 'key_shape'
+    metric_key_shape = 'metric_key_shape'
+    duplicate_key = 'duplicate_key'
+    dataset_not_found = 'dataset_not_found'
+    field_not_found = 'field_not_found'
+    role_mismatch = 'role_mismatch'
+    filter = 'filter'
+    expression = 'expression'
+    operand = 'operand'
+    measure_not_found = 'measure_not_found'
+    quantile_out_of_range = 'quantile_out_of_range'
+    mixed_datasets = 'mixed_datasets'
+    distribution_without_value = 'distribution_without_value'
+    no_derived_inputs = 'no_derived_inputs'
+    metric_expression = 'metric_expression'
+    unknown_derived_input = 'unknown_derived_input'
+    unused_derived_input = 'unused_derived_input'
+    dimension_bindings_disagree = 'dimension_bindings_disagree'
+
+
+class ValidationFailure(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    kind: ValidationErrorKind
+    message: str
+
+
 class ValueTransform(BaseModel):
     """
     Affine + clamp shaping for a computed metric value:
@@ -1227,6 +1507,16 @@ class ValueTransform(BaseModel):
     clamp_min: float | None = None
     multiplier: float | None = None
     offset: float | None = None
+
+
+class ValuesQuestions(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    compare: list[CompareOffset] = Field(..., description='The earlier windows the same question may be set beside.')
+    folds: list[Fold]
+    grains: list[Grain]
+    split: bool = Field(..., description='Whether the metric declares a dimension to break its value out by.')
 
 
 class BreakdownValueDto(BaseModel):
@@ -1257,6 +1547,13 @@ class ComparisonQuery(BaseModel):
     population: Population
     targets: list[str] = Field(..., description='The people the answer reports a value for.')
     time: TimeRange
+
+
+class ComparisonQuestions(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    populations: list[Population] = Field(..., description="Written as a comparison question's `population` field takes them.")
 
 
 class ComparisonResult(BaseModel):
@@ -1353,6 +1650,10 @@ class DistributionsRequest(BaseModel):
     queries: list[DistributionQuery]
 
 
+class FilterValue(RootModel[Scalar | list[Scalar]]):
+    root: Scalar | list[Scalar]
+
+
 class Group1(BaseModel):
     """
     Which slice of the split a row belongs to.
@@ -1361,7 +1662,7 @@ class Group1(BaseModel):
         extra='forbid',
     )
     dimensions: list[GroupDimension]
-    type: Type
+    type: Type10
 
 
 class Group(RootModel[Group1 | Group2]):
@@ -1400,6 +1701,21 @@ class Histogram(BaseModel):
     bins: list[HistogramBin] = Field(..., description='Empty when the subject was observed for no event in the window.')
     hi: float | None = Field(None, description='The largest value observed; absent when nothing was.')
     lo: float | None = Field(None, description='The smallest value observed; absent when nothing was.')
+
+
+class MetricDefinition(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cohort_key: str | None = None
+    computation: Computation
+    description: str | None = None
+    direction: Direction
+    entity_type: str
+    format: Format
+    key: str
+    label: str | None = None
+    transform: Transform | None = None
 
 
 class MetricDefinitionView(BaseModel):
@@ -1459,6 +1775,16 @@ class MetricDrilldownResponse(BaseModel):
     next_cursor: str | None = None
     rows: list[MetricDrilldownRow]
     selection: MetricDrilldownSelection
+
+
+class MetricQuestions(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    comparisons: ComparisonQuestions
+    distributions: DistributionQuestions
+    rows: RowsQuestions
+    values: ValuesQuestions
 
 
 class MetricRequest(BaseModel):
@@ -1658,6 +1984,14 @@ class UsageSummaryResponse(BaseModel):
     until: str
 
 
+class ValidateDefinitionsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    errors: list[ValidationFailure] = Field(..., description='Every offender, not the first one.')
+    valid: bool
+
+
 class ValuesQuery(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1676,6 +2010,22 @@ class ValuesRequest(BaseModel):
         extra='forbid',
     )
     queries: list[ValuesQuery]
+
+
+class CatalogMetric(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cohort_key: str | None = Field(None, description='The grouping a cohort comparison reads; absent when the metric declares\nnone, and then no cohort comparison is offered.')
+    computation: CatalogComputation
+    description: str | None = None
+    dimensions: list[CatalogDimension]
+    direction: Direction
+    entity_type: str = Field(..., description="What the metric's values are keyed by, such as `person`.")
+    format: Format
+    key: str = Field(..., description='The key a question names, such as `git.commits`.')
+    label: str | None = None
+    questions: MetricQuestions
 
 
 class CustomMetric(BaseModel):
@@ -1753,6 +2103,15 @@ class ExportCustomMetricsResponse(BaseModel):
     metrics: list[CustomMetric]
 
 
+class FilterLeaf(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    field: str
+    op: FilterOp
+    value: FilterValue | None = None
+
+
 class ImportCustomMetricsRequest(BaseModel):
     """
     `POST /v1/metrics/import` body.
@@ -1761,6 +2120,13 @@ class ImportCustomMetricsRequest(BaseModel):
         extra='forbid',
     )
     metrics: list[CustomMetric]
+
+
+class MetricCatalogResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metrics: list[CatalogMetric] = Field(..., description='Every metric the definitions carry, in key order.')
 
 
 class MetricDefinitionListResponse(BaseModel):
@@ -1866,3 +2232,61 @@ class MetricResultsResponse(BaseModel):
         extra='forbid',
     )
     metrics: list[MetricResultDto]
+
+
+class AllNode(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    all: list[FilterTree]
+
+
+class AnyNode(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    any: list[FilterTree]
+
+
+class MeasureDefinition(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    aggregation: Aggregation
+    dataset: str
+    description: str | None = None
+    dimensions: list[DimensionBinding] | None = None
+    entity: str
+    event_time: str
+    filter: FilterTree | None = None
+    key: str
+    subject_expr: str | None = Field(None, description='What `count_distinct` counts one of.')
+    value_expr: str | None = Field(None, description='The operand for the numeric folds; absent for `count`/`count_distinct`.')
+
+
+class NotNode(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    not_: FilterTree = Field(..., alias='not')
+
+
+class ValidateDefinitionsRequest(BaseModel):
+    """
+    Definitions to judge, in the shape the authored YAML parses into.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    measures: list[MeasureDefinition] | None = None
+    metrics: list[MetricDefinition] | None = None
+
+
+class FilterTree(RootModel[AllNode | AnyNode | NotNode | FilterLeaf]):
+    root: AllNode | AnyNode | NotNode | FilterLeaf
+
+
+AllNode.model_rebuild()
+AnyNode.model_rebuild()
+MeasureDefinition.model_rebuild()
+NotNode.model_rebuild()

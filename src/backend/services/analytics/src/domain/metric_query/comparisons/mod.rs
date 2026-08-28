@@ -10,6 +10,7 @@ mod pool;
 mod service;
 mod validation;
 
-pub use dto::{ComparisonsRequest, ComparisonsResponse};
+pub use dto::{ComparisonsRequest, ComparisonsResponse, Population};
 pub use service::answer;
+pub(super) use validation::population;
 pub use validation::validate_request;

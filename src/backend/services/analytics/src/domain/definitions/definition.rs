@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::filter::FilterTree;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Aggregation {
     Count,
@@ -25,7 +25,7 @@ pub enum Origin {
     Custom,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DimensionBinding {
     pub key: String,
@@ -35,7 +35,7 @@ pub struct DimensionBinding {
 }
 
 /// How a relation must be read for its rows to be the deduplicated truth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadDiscipline {
     /// Collapse duplicates at read time.
@@ -57,7 +57,7 @@ pub struct DatasetDefinition {
     pub retention_horizon: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeasureDefinition {
     pub key: String,
@@ -82,7 +82,7 @@ pub struct MeasureDefinition {
 /// A percentile is metric-level because a percentile of pre-aggregated values
 /// is not a percentile; a standard deviation is metric-level for the same
 /// reason.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Computation {
     Direct {
@@ -110,7 +110,7 @@ pub enum Computation {
 
 /// Post-aggregation shaping: `clamp(min, max, multiplier * value + offset)`.
 /// Absent fields are the identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Transform {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,7 +123,7 @@ pub struct Transform {
     pub clamp_max: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Format {
     Integer,
@@ -132,7 +132,7 @@ pub enum Format {
     Percent,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
     HigherIsBetter,
@@ -140,7 +140,7 @@ pub enum Direction {
     Neutral,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricDefinition {
     pub key: String,

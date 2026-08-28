@@ -99,7 +99,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 26 operations.
+#: analytics — 28 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -108,6 +108,11 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("DELETE", f"/v1/queries/{SOME_ID}"),
     _a("POST", f"/v1/queries/{SOME_ID}/run"),
     _a("GET", "/v1/metric-definitions"),
+    # Discovery over the semantic definitions, and the authoring dry run against
+    # them. Both are tenant-invariant: the first reads no context, the second
+    # writes nothing.
+    _a("GET", "/v1/catalog/metrics"),
+    _a("POST", "/v1/definitions/validate"),
     _a("POST", "/v1/metric-results"),
     _a("POST", "/v1/metric-drilldown"),
     # The only operation here that does not answer JSON — it serves CSV or

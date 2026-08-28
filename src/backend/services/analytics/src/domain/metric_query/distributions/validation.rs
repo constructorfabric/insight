@@ -99,7 +99,10 @@ fn validate_query(
 /// INVARIANT: the rule is the compiler's own — only a computation taken over
 /// the measure's per-row values has a distribution — so a question refused
 /// here would have been refused there, and one admitted here compiles.
-fn distributable(catalog: &MetricCatalog, metric_key: &str) -> Result<(), QueryError> {
+pub(in crate::domain::metric_query) fn distributable(
+    catalog: &MetricCatalog,
+    metric_key: &str,
+) -> Result<(), QueryError> {
     let Some(metric) = catalog.metric(metric_key) else {
         return Err(QueryError::UnknownMetric {
             metric: metric_key.to_owned(),

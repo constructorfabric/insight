@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::domain::compiler::drilldown::{Contribution, DrilldownColumn, DrilldownColumnKind};
 use crate::domain::field_catalog::model::DisplayRole;
 
+use super::super::label::humanized;
 use super::dto::{ColumnKind, RowColumn};
 
 /// The alias a value is read from, beside the column it is reported as.
@@ -128,21 +129,6 @@ fn display_key(role: DisplayRole) -> String {
         DisplayRole::Link => "link",
     }
     .to_owned()
-}
-
-/// One rule for every column: the key read as words, each of them capitalized.
-fn humanized(key: &str) -> String {
-    key.split('_')
-        .filter(|word| !word.is_empty())
-        .map(|word| {
-            let mut characters = word.chars();
-            match characters.next() {
-                Some(first) => first.to_uppercase().chain(characters).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]

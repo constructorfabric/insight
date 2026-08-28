@@ -3,10 +3,12 @@
 //! the answer in explicit fields. One directory per kind of question, over the
 //! definitions, refusals, reads and provenance they all share.
 
+pub(crate) mod capability;
 mod catalog;
 pub(crate) mod dto;
 mod error;
 mod execute;
+mod label;
 mod provenance;
 mod question;
 

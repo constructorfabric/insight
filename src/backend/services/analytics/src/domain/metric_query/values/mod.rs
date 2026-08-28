@@ -2,6 +2,7 @@
 //! number per subject, or one series per bucket, optionally broken out by a
 //! dimension and set beside an earlier window's.
 
+mod answerable;
 mod assemble;
 mod dto;
 mod group_cap;
@@ -9,9 +10,11 @@ mod plan;
 mod service;
 mod validation;
 
-pub use dto::{ValuesRequest, ValuesResponse};
+pub use dto::{CompareOffset, Fold, Grain, ValuesRequest, ValuesResponse};
 pub use service::answer;
 pub use validation::{ValidatedBatch, validate_request};
+
+pub(super) use answerable::{offered_compare_offsets, offered_folds, offered_grains};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

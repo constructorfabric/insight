@@ -1,7 +1,9 @@
 //! HTTP API layer — routes and handlers.
 
 pub(crate) mod ai;
+pub(crate) mod catalog;
 mod connector_health;
+pub(crate) mod definitions;
 pub(crate) mod error;
 mod feedback;
 mod metric_definitions;
@@ -559,6 +561,47 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_415(openapi)
         .error_500(openapi)
         .handler(query::rows::query_rows)
+        .register(router, openapi);
+
+    // Discovery over the same definitions the question surface answers from:
+    // what exists, and which question each metric admits. Tenant-invariant, so
+    // the handler reads no context and the answer carries no dimension value.
+    router = OperationBuilder::get("/v1/catalog/metrics")
+        .operation_id("analytics_api.catalog.metrics")
+        .summary("Every metric and the questions it admits")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<crate::domain::metric_query::capability::MetricCatalogResponse>(
+            openapi,
+            StatusCode::OK,
+            "The metrics a question may name",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .handler(catalog::metrics::list_metric_catalog)
+        .register(router, openapi);
+
+    // The authoring dry run: definitions are judged beside the shipped ones and
+    // discarded. The outcome is the 200 body, never a refusal status.
+    router = OperationBuilder::post("/v1/definitions/validate")
+        .operation_id("analytics_api.definitions.validate")
+        .summary("Judge definitions without keeping them")
+        .authenticated()
+        .no_license_required()
+        .json_request::<crate::domain::definitions::dry_run::ValidateDefinitionsRequest>(
+            openapi,
+            "Measures and metrics to judge",
+        )
+        .json_response_with_schema::<crate::domain::definitions::dry_run::ValidateDefinitionsResponse>(
+            openapi,
+            StatusCode::OK,
+            "Whether the definitions are valid, and every rule they break",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_415(openapi)
+        .error_500(openapi)
+        .handler(definitions::validate::validate_definitions)
         .register(router, openapi);
 
     // Saved-query CRUD + run (#1965) — the presentation-layer "Data Analytics"
