@@ -166,8 +166,7 @@ pub(crate) fn compile_period_batch_query(
         ));
     }
     let read = batch_resolved_observation_from(defs, req, &mut params);
-    let metric_scope =
-        shared_observation_where_within(defs, req, filters, &mut params, observation_bounds(req));
+    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
     let observation_table = &read.from;
     let limit = query_row_limit();
@@ -202,30 +201,51 @@ fn column_windows(req: &ValidatedMetricResultsRequest) -> Vec<Option<DateWindow>
     windows
 }
 
-/// Bind the scan range an identity-resolving read must cover.
+/// The date predicate a windowed read scans: the primary period, then every
+/// extra window, as a disjunction of closed ranges.
 ///
-/// INVARIANT: this is the union, not `req.from..req.to`. The resolved read
-/// pre-filters observations before the conditional aggregates run, so scoping
-/// it to the primary period alone would answer NULL for every extra window.
-fn push_observation_bounds(req: &ValidatedMetricResultsRequest, params: &mut Vec<String>) {
-    let bounds = observation_bounds(req);
-    params.push(bounds.from.to_string());
-    params.push(bounds.to.to_string());
+/// INVARIANT: a disjunction, never `min(from)..max(to)`. The envelope form
+/// reads every day BETWEEN two far-apart windows and lets the conditional
+/// aggregates discard it, which is the cost this whole request shape exists to
+/// avoid. A single-range request yields the bare term it always had, so its
+/// compiled SQL is unchanged.
+fn scan_window_predicate(
+    req: &ValidatedMetricResultsRequest,
+    column: &str,
+    separator: &str,
+    params: &mut Vec<String>,
+) -> String {
+    let mut terms = Vec::with_capacity(req.windows.len() + 1);
+    for window in scanned_windows(req) {
+        params.push(window.from.to_string());
+        params.push(window.to.to_string());
+        terms.push(format!(
+            "{column} >= toDate(?){separator}AND {column} <= toDate(?)"
+        ));
+    }
+    match terms.len() {
+        1 => terms.into_iter().next().unwrap_or_default(),
+        _ => format!(
+            "({})",
+            terms
+                .into_iter()
+                .map(|term| format!("({term})"))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        ),
+    }
 }
 
-/// The union of the primary period and every extra window — the range the
-/// observation scan has to cover for the conditional aggregates to see their
-/// rows.
-fn observation_bounds(req: &ValidatedMetricResultsRequest) -> DateWindow {
-    let mut bounds = DateWindow {
+/// Every range a request's rows can come from: the primary period first, then
+/// the extra windows in request order.
+fn scanned_windows(req: &ValidatedMetricResultsRequest) -> Vec<DateWindow> {
+    let mut windows = Vec::with_capacity(req.windows.len() + 1);
+    windows.push(DateWindow {
         from: req.from,
         to: req.to,
-    };
-    for window in &req.windows {
-        bounds.from = bounds.from.min(window.from);
-        bounds.to = bounds.to.max(window.to);
-    }
-    bounds
+    });
+    windows.extend(req.windows.iter().copied());
+    windows
 }
 
 /// The SQL term scoping one conditional aggregate to a window, with its bounds
@@ -508,20 +528,29 @@ pub(crate) fn compile_breakdown_query(
     let mut params = Vec::new();
     let aliases = breakdown_aliases(req);
     let mut value_selects = String::new();
-    for (alias, window) in &aliases {
+    for (column_index, (alias, window)) in aliases.iter().enumerate() {
         let expr = grouped_value_expr_within(def, *window, &mut params);
         let _ = write!(
             value_selects,
             ",
             {expr} AS {alias}"
         );
+        // Presence is its own column because the value cannot carry it: a
+        // ratio over a group that IS in the window reads NULL whenever its
+        // denominator is zero, which is indistinguishable from a group the
+        // window never had. A standalone request over that window returns the
+        // first and omits the second, so the projection needs both facts.
+        let Some(window) = *window else { continue };
+        let presence = window_presence_expr(window, &mut params);
+        let alias = breakdown_presence_alias(column_index);
+        let _ = write!(
+            value_selects,
+            ",
+            {presence} AS {alias}"
+        );
     }
     let read = single_resolved_observation_from(def, req, &mut params);
-    params.extend(metric_where_params_within(
-        def,
-        req,
-        observation_bounds(req),
-    ));
+    let metric_where = metric_where_scanned(def, req, &mut params);
     let filter_where = dimension_filter_where(filters, &mut params);
     let entity_scope = read.entity_scope(req, &mut params);
     let observation_table = &read.from;
@@ -544,8 +573,7 @@ pub(crate) fn compile_breakdown_query(
         GROUP BY {group}
         ORDER BY entity_id
         LIMIT {limit}
-        ",
-        metric_where = metric_where(def, req.enforce_tenant_scope),
+        "
     );
     let sql = if req.windows.is_empty() {
         transformed_single(def, inner)
@@ -585,6 +613,68 @@ fn staged_window_alias(column_index: usize) -> String {
 
 pub(crate) fn breakdown_window_alias(window_index: usize) -> String {
     format!("value_w{window_index}")
+}
+
+/// The wire name of one column's presence flag: `present` for the primary
+/// window, `present_w{n}` for each extra one. Emitted by the inner query and
+/// carried through the projection stage untouched — unlike the value columns,
+/// these names cannot collide with an observation column.
+pub(crate) fn breakdown_presence_alias(column_index: usize) -> String {
+    match column_index.checked_sub(1) {
+        None => "present".to_owned(),
+        Some(window_index) => format!("present_w{window_index}"),
+    }
+}
+
+/// Whether a group has any row inside one window — the fact a standalone
+/// request over that window expresses by emitting the group or not.
+fn window_presence_expr(window: DateWindow, params: &mut Vec<String>) -> String {
+    params.push(window.from.to_string());
+    params.push(window.to.to_string());
+    "countIf(metric_date >= toDate(?) AND metric_date <= toDate(?)) > 0".to_owned()
+}
+
+/// `metric_where` with its own placeholders bound, so the scanned dates can be
+/// a disjunction whose arity depends on the request.
+fn metric_where_scanned(
+    def: &MetricDefinition,
+    req: &ValidatedMetricResultsRequest,
+    params: &mut Vec<String>,
+) -> String {
+    let (source_key, measures) = match &def.spec {
+        ComputationSpec::Sum { value }
+        | ComputationSpec::Median { value }
+        | ComputationSpec::Percentile { value, .. }
+        | ComputationSpec::Stddev { value }
+        | ComputationSpec::DistinctCount { value } => {
+            (value.source_key.clone(), vec![value.measure_key.clone()])
+        }
+        ComputationSpec::Ratio {
+            numerator,
+            denominator,
+            ..
+        } => (
+            numerator.source_key.clone(),
+            vec![
+                numerator.measure_key.clone(),
+                denominator.measure_key.clone(),
+            ],
+        ),
+    };
+    let tenant = tenant_predicate(req.enforce_tenant_scope);
+    params.push(req.tenant_id.to_string());
+    params.push(source_key);
+    params.push(req.entity.entity_type().to_owned());
+    let scan = scan_window_predicate(req, "metric_date", " ", params);
+    let measure_predicate = if measures.len() == 1 {
+        "measure_key = ?"
+    } else {
+        "measure_key IN (?, ?)"
+    };
+    for measure in measures {
+        params.push(measure);
+    }
+    format!("{tenant} AND source_key = ? AND entity_type = ? AND {scan} AND {measure_predicate}")
 }
 
 /// Rename the staged window columns to their wire names, applying the value
@@ -1009,7 +1099,7 @@ fn compile_declared_cohort_peer_batch_query(
         &mut params,
     )
     .from;
-    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
+    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
 
     let entity_id_params = placeholders(req.entity.len());
     let cohort_table = cohort_table(CohortSource::MetricEntityCohortsCurrent);
@@ -1083,7 +1173,7 @@ fn compile_tenant_peer_batch_query(
         &mut params,
     )
     .from;
-    let metric_scope = shared_observation_where(defs, req, filters, &mut params);
+    let metric_scope = shared_observation_where_within(defs, req, filters, &mut params);
 
     let entity_id_params = placeholders(req.entity.len());
     let limit = query_row_limit();
@@ -1439,24 +1529,6 @@ fn push_cohort_scope(
     params.push(cohort_key.to_owned());
 }
 
-fn shared_observation_where(
-    defs: &[&MetricDefinition],
-    req: &ValidatedMetricResultsRequest,
-    filters: &[ValidatedDimensionFilter],
-    params: &mut Vec<String>,
-) -> String {
-    shared_observation_where_within(
-        defs,
-        req,
-        filters,
-        params,
-        DateWindow {
-            from: req.from,
-            to: req.to,
-        },
-    )
-}
-
 /// `shared_observation_where` over an explicit scan range: a windowed batch
 /// scans the union of its windows once and lets each conditional aggregate
 /// pick its own out of it.
@@ -1465,12 +1537,10 @@ fn shared_observation_where_within(
     req: &ValidatedMetricResultsRequest,
     filters: &[ValidatedDimensionFilter],
     params: &mut Vec<String>,
-    bounds: DateWindow,
 ) -> String {
     params.push(req.tenant_id.to_string());
     params.push(req.entity.entity_type().to_owned());
-    params.push(bounds.from.to_string());
-    params.push(bounds.to.to_string());
+    let scan = scan_window_predicate(req, "metric_date", " ", params);
     let pairs = measure_pairs(defs);
     for (source_key, measure_key) in &pairs {
         params.push(source_key.clone());
@@ -1479,7 +1549,7 @@ fn shared_observation_where_within(
     let pair_placeholders = vec!["(?, ?)"; pairs.len()].join(", ");
     let tenant = tenant_predicate(req.enforce_tenant_scope);
     let mut where_clause = format!(
-        "{tenant} AND entity_type = ? AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND (source_key, measure_key) IN ({pair_placeholders})"
+        "{tenant} AND entity_type = ? AND {scan} AND (source_key, measure_key) IN ({pair_placeholders})"
     );
     where_clause.push_str(&dimension_filter_where(filters, params));
     where_clause
@@ -1626,23 +1696,6 @@ fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {
 }
 
 fn metric_where_params(def: &MetricDefinition, req: &ValidatedMetricResultsRequest) -> Vec<String> {
-    metric_where_params_within(
-        def,
-        req,
-        DateWindow {
-            from: req.from,
-            to: req.to,
-        },
-    )
-}
-
-/// `metric_where_params` over an explicit scan range, for a query whose value
-/// columns pick their own window out of a wider scan.
-fn metric_where_params_within(
-    def: &MetricDefinition,
-    req: &ValidatedMetricResultsRequest,
-    bounds: DateWindow,
-) -> Vec<String> {
     match &def.spec {
         ComputationSpec::Sum { value }
         | ComputationSpec::Median { value }
@@ -1652,8 +1705,8 @@ fn metric_where_params_within(
             req.tenant_id.to_string(),
             value.source_key.clone(),
             req.entity.entity_type().to_owned(),
-            bounds.from.to_string(),
-            bounds.to.to_string(),
+            req.from.to_string(),
+            req.to.to_string(),
             value.measure_key.clone(),
         ],
         ComputationSpec::Ratio {
@@ -1664,8 +1717,8 @@ fn metric_where_params_within(
             req.tenant_id.to_string(),
             numerator.source_key.clone(),
             req.entity.entity_type().to_owned(),
-            bounds.from.to_string(),
-            bounds.to.to_string(),
+            req.from.to_string(),
+            req.to.to_string(),
             numerator.measure_key.clone(),
             denominator.measure_key.clone(),
         ],
@@ -1830,12 +1883,19 @@ fn resolved_observation_from(
         };
     }
 
-    let date_scope =
-        "\n          AND obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)";
+    // INVARIANT: this read pre-filters observations before the outer aggregates
+    // run, so its dates must cover EVERY window the request asks for — scoping
+    // it to the primary period alone would answer NULL for each extra one.
+    let scan_of = |req: &ValidatedMetricResultsRequest, params: &mut Vec<String>| {
+        format!(
+            "\n          AND {}",
+            scan_window_predicate(req, "obs.metric_date", "\n          ", params)
+        )
+    };
     let (inner_where, resolved_filter) = match scope {
         PersonScope::Requested(req) => {
             params.extend(req.entity.entity_ids());
-            push_observation_bounds(req, params);
+            let date_scope = scan_of(req, params);
             params.extend(req.entity.entity_ids());
             let person_params = placeholders(req.entity.len());
             (
@@ -1847,7 +1907,7 @@ fn resolved_observation_from(
             )
         }
         PersonScope::CohortMembers(req) => {
-            push_observation_bounds(req, params);
+            let date_scope = scan_of(req, params);
             (
                 format!(
                     "(obs.entity_id IN (SELECT email FROM {PERSON_MAP_RELATION} \
@@ -1858,12 +1918,8 @@ fn resolved_observation_from(
             )
         }
         PersonScope::TenantWide(req) => {
-            push_observation_bounds(req, params);
-            (
-                "obs.metric_date >= toDate(?)\n          AND obs.metric_date <= toDate(?)"
-                    .to_owned(),
-                "resolved_person_id != ''".to_owned(),
-            )
+            let date_scope = scan_window_predicate(req, "obs.metric_date", "\n          ", params);
+            (date_scope, "resolved_person_id != ''".to_owned())
         }
     };
 
@@ -2324,20 +2380,18 @@ mod tests {
     }
 
     #[test]
-    fn period_batch_over_windows_scans_their_union_and_scopes_every_column() {
+    fn period_batch_over_windows_scans_each_range_and_scopes_every_column() {
         let sum = sum_metric();
         let query = compile_period_batch_query(&[&sum], &windowed_request(), &[]);
 
         assert!(query.sql.contains("AS m0"));
         assert!(query.sql.contains("AS m0_w0"));
-        assert_eq!(
-            query
-                .sql
-                .matches("AND metric_date >= toDate(?) AND metric_date <= toDate(?)")
-                .count(),
-            3,
-            "one term per value column plus the shared scan range"
-        );
+        // The scan is a disjunction of the requested ranges. The envelope form
+        // — one range from the earliest `from` to the latest `to` — would read
+        // every day between two far-apart windows.
+        assert!(query.sql.contains(
+            "(metric_date >= toDate(?) AND metric_date <= toDate(?)) OR (metric_date >= toDate(?) AND metric_date <= toDate(?))"
+        ));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
         assert_eq!(
             query.params,
@@ -2352,24 +2406,44 @@ mod tests {
                 "accepted_lines",
                 "2025-12-01",
                 "2025-12-31",
-                // the identity-resolving read, scoped to the union: it filters
-                // observations BEFORE the aggregates, so the primary period
-                // alone would answer NULL for the extra window
+                // the identity-resolving read: it filters observations BEFORE
+                // the aggregates, so it scans both ranges and neither the gap
+                // nor the primary period alone
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                "2025-12-01",
+                "2026-01-01",
                 "2026-01-31",
+                "2025-12-01",
+                "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                // shared scope over the union of both windows
+                // shared scope, same two ranges
                 TEST_TENANT_STR,
                 "person",
-                "2025-12-01",
+                "2026-01-01",
                 "2026-01-31",
+                "2025-12-01",
+                "2025-12-31",
                 "ai_usage",
                 "accepted_lines",
             ]
         );
+    }
+
+    #[test]
+    fn an_unwindowed_batch_keeps_the_single_range_form() {
+        // The whole change rests on this: a request that asks for no extra
+        // window compiles the SQL it always did.
+        let sum = sum_metric();
+        let query = compile_period_batch_query(&[&sum], &request(), &[]);
+
+        assert!(
+            query
+                .sql
+                .contains("AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND")
+        );
+        assert!(!query.sql.contains(" OR ("));
+        assert!(!query.sql.contains("AS m0_w0"));
     }
 
     #[test]
@@ -2399,14 +2473,18 @@ mod tests {
                 "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                "2025-12-01",
+                "2026-01-01",
                 "2026-01-31",
+                "2025-12-01",
+                "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
                 TEST_TENANT_STR,
                 "person",
-                "2025-12-01",
+                "2026-01-01",
                 "2026-01-31",
+                "2025-12-01",
+                "2025-12-31",
                 "ai_usage",
                 "accepted_edit_actions",
                 "ai_usage",
@@ -2416,7 +2494,7 @@ mod tests {
     }
 
     #[test]
-    fn breakdown_over_windows_emits_one_value_column_per_window() {
+    fn breakdown_over_windows_emits_a_value_and_a_presence_column_per_window() {
         let sum = sum_metric();
         let query = compile_breakdown_query(
             &sum,
@@ -2427,34 +2505,71 @@ mod tests {
 
         assert!(query.sql.contains("AS value"));
         assert!(query.sql.contains("AS value_w0"));
+        // Presence rides its own column: a group's value cannot express it,
+        // because a ratio over a group that IS in the window reads NULL when
+        // its denominator is zero.
+        assert!(query.sql.contains("AS present"));
+        assert!(query.sql.contains("AS present_w0"));
+        assert_eq!(
+            query
+                .sql
+                .matches("countIf(metric_date >= toDate(?) AND metric_date <= toDate(?)) > 0")
+                .count(),
+            2,
+            "one presence column per window, the primary included"
+        );
         // The aggregates stage under names that cannot collide with the
         // observation's own `value` column — see `breakdown_aliases`.
         assert!(query.sql.contains("AS staged_w0"));
-        assert!(!query.sql.contains(
-            "IS NOT NULL AND metric_date >= toDate(?) AND metric_date <= toDate(?)) AS value"
-        ));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
         assert_eq!(
             query.params,
             vec![
+                // primary value, then primary presence
+                "2026-01-01",
+                "2026-01-31",
+                "2026-01-01",
+                "2026-01-31",
+                // the extra window's value, then its presence
+                "2025-12-01",
+                "2025-12-31",
+                "2025-12-01",
+                "2025-12-31",
+                // identity-resolving read over both ranges
+                "00000000-0000-0000-0000-00000000000a",
+                "00000000-0000-0000-0000-00000000000b",
                 "2026-01-01",
                 "2026-01-31",
                 "2025-12-01",
                 "2025-12-31",
                 "00000000-0000-0000-0000-00000000000a",
                 "00000000-0000-0000-0000-00000000000b",
-                "2025-12-01",
-                "2026-01-31",
-                "00000000-0000-0000-0000-00000000000a",
-                "00000000-0000-0000-0000-00000000000b",
+                // metric scope, same two ranges
                 TEST_TENANT_STR,
                 "ai_usage",
                 "person",
-                "2025-12-01",
+                "2026-01-01",
                 "2026-01-31",
+                "2025-12-01",
+                "2025-12-31",
                 "accepted_lines",
             ]
         );
+    }
+
+    #[test]
+    fn an_unwindowed_breakdown_carries_no_presence_column() {
+        let sum = sum_metric();
+        let query = compile_breakdown_query(
+            &sum,
+            &request(),
+            std::slice::from_ref(&"tool".to_owned()),
+            &[],
+        );
+
+        assert!(!query.sql.contains("present"));
+        assert!(!query.sql.contains("staged_w"));
+        assert!(!query.sql.contains(" OR ("));
     }
 
     #[test]

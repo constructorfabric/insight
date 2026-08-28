@@ -17,6 +17,7 @@ import {
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
+  projectPrimary,
   projectWindow,
   type MetricCollectionConfig,
   type MetricCollectionEntity,
@@ -158,21 +159,21 @@ export function useMetricCollection(
     placeholderData: options?.keepPreviousData ? keepPreviousData : undefined,
   });
 
-  const byKey = useMemo(
+  // INVARIANT: both projections read the RAW response. A windowed breakdown
+  // groups over every window at once, so filtering the primary first would hide
+  // the groups that belong only to a comparison window — the very rows those
+  // windows exist to carry.
+  const served = useMemo(
     () => normalizeMetricResults(current.data?.metrics),
     [current.data]
   );
+  const byKey = useMemo(() => projectPrimary(served), [served]);
   // One window's values, read as if they had been their own request — a period
   // and its comparison window now stand or fall together, so there is no
-  // mispairing to guard against.
-  const windowCount = windows.length;
-  const windowsByKey = useMemo(
-    () =>
-      Array.from({ length: windowCount }, (_, index) =>
-        projectWindow(byKey, index)
-      ),
-    [byKey, windowCount]
-  );
+  // mispairing to guard against. Left for the compiler to memoize: `windows` is
+  // built in this render, so a hand-written dependency on it cannot be
+  // preserved (`react-hooks/preserve-manual-memoization`).
+  const windowsByKey = windows.map((_, index) => projectWindow(served, index));
   const previousByKey = options?.previousPeriod
     ? (windowsByKey[0] ?? null)
     : null;
@@ -322,10 +323,9 @@ export function useMetricCollectionSet(
   for (const [key, maps] of chunkMaps) {
     const entry = out.get(key);
     if (!entry) continue;
-    entry.byKey = mergeNormalizedResults(maps);
-    entry.windowsByKey = windows.map((_, index) =>
-      projectWindow(entry.byKey, index)
-    );
+    const served = mergeNormalizedResults(maps);
+    entry.byKey = projectPrimary(served);
+    entry.windowsByKey = windows.map((_, index) => projectWindow(served, index));
   }
   return out;
 }

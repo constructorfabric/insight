@@ -29,6 +29,7 @@ use crate::domain::metric_definitions::definition::ValueTransform;
 use crate::domain::metric_definitions::definition::{
     AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition,
     MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
+    RatioDenominatorAggregation,
 };
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
@@ -73,6 +74,25 @@ fn nullable_date_sql() -> String {
             CAST([] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions \
         FROM numbers(4)"
     )
+}
+
+/// Two dimension groups that do NOT overlap in time: `org/a` only in
+/// 2026-08-15..16, `org/b` only in 2026-08-13..14. A standalone request over
+/// either window returns exactly one of them — which is what the windowed
+/// shape has to reproduce.
+fn disjoint_groups_sql() -> String {
+    let row = |repo: &str, day: &str, value: &str, measure: &str| {
+        format!(
+            "SELECT                 '{TENANT}' AS tenant_id,                 'custom_repro' AS source_key,                 'person' AS entity_type,                 '{PERSON}' AS entity_id,                 CAST(toDate('{day}') AS Nullable(Date)) AS metric_date,                 '{measure}' AS measure_key,                 now() AS observed_at,                 toFloat64({value}) AS value,                 CAST(NULL AS Nullable(String)) AS subject_key,                 CAST([('repository', '{repo}', NULL)] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions"
+        )
+    };
+    [
+        row("org/a", "2026-08-15", "10", "repro_value"),
+        row("org/a", "2026-08-16", "0", "repro_denominator"),
+        row("org/b", "2026-08-13", "20", "repro_value"),
+        row("org/b", "2026-08-13", "4", "repro_denominator"),
+    ]
+    .join(" UNION ALL ")
 }
 
 fn nullable_date_metric() -> MetricDefinition {
@@ -201,6 +221,123 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
     Ok(())
 }
 
+/// A ratio over the disjoint-group fixture: `org/a` lives only in the primary
+/// window and its denominator is zero there, `org/b` only in the extra window.
+/// This is the case a value column cannot express on its own.
+fn disjoint_ratio_metric() -> MetricDefinition {
+    let sql = disjoint_groups_sql();
+    MetricDefinition {
+        transform: None,
+        base: MetricBase {
+            key: "custom.disjoint_ratio".to_owned(),
+            label: "Disjoint ratio".to_owned(),
+            short_label: None,
+            description: None,
+            explanation: None,
+            entity_type: "person".to_owned(),
+            format: MetricFormat::Percent,
+            unit: None,
+            direction: MetricDirection::HigherIsBetter,
+            peer_cohort_key: None,
+            allowed_dimensions: vec!["repository".to_owned()],
+        },
+        spec: ComputationSpec::Ratio {
+            numerator: MetricInput {
+                role: MetricInputRole::Numerator,
+                observation: ObservationSource::Custom(CustomObservationSql::new(sql.clone())),
+                source_key: "custom_repro".to_owned(),
+                measure_key: "repro_value".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
+            },
+            denominator: MetricInput {
+                role: MetricInputRole::Denominator,
+                observation: ObservationSource::Custom(CustomObservationSql::new(sql)),
+                source_key: "custom_repro".to_owned(),
+                measure_key: "repro_denominator".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
+            },
+            scale: 100.0,
+            denominator_aggregation: RatioDenominatorAggregation::Sum,
+        },
+    }
+}
+
+/// The contract a projected window rests on: per group and per window, the
+/// response has to say whether a standalone request over that window would
+/// have returned the group at all — independently of its value.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let def = disjoint_ratio_metric();
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.windows = vec![DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    }];
+    let dimensions = vec!["repository".to_owned()];
+
+    let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
+    let rows: Vec<BreakdownQueryRow> = fetch_rows(&ch, &query).await?;
+    let view = build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())?;
+    let MetricResultViewDto::Breakdown { values, .. } = view else {
+        anyhow::bail!("expected a breakdown view");
+    };
+
+    let group = |repo: &str| {
+        values.iter().find(|value| {
+            value
+                .dimensions
+                .iter()
+                .any(|dimension| dimension.value == repo)
+        })
+    };
+    let Some(a) = group("org/a") else {
+        anyhow::bail!("org/a must be in the combined row set");
+    };
+    let Some(b) = group("org/b") else {
+        anyhow::bail!("org/b must be in the combined row set");
+    };
+
+    // org/a IS in the primary window, and its ratio reads NULL there because
+    // the denominator sums to zero. A reader dropping NULL values would lose a
+    // row that a standalone request returns.
+    anyhow::ensure!(
+        a.present == Some(true) && a.value.is_none(),
+        "org/a must be present in the primary window with a NULL value, got {:?}",
+        (a.present, a.value)
+    );
+    let [ref a_window] = a.windows[..] else {
+        anyhow::bail!("expected one extra window for org/a");
+    };
+    anyhow::ensure!(
+        !a_window.present,
+        "org/a has no rows in the extra window, got present={}",
+        a_window.present
+    );
+
+    // org/b is the mirror image: absent from the primary window, present in
+    // the extra one with a real value.
+    let [ref b_window] = b.windows[..] else {
+        anyhow::bail!("expected one extra window for org/b");
+    };
+    anyhow::ensure!(
+        b.present == Some(false),
+        "org/b has no rows in the primary window, got {:?}",
+        b.present
+    );
+    anyhow::ensure!(
+        b_window.present && b_window.value == Some(500.0),
+        "org/b must read 100 * 20 / 4 in the extra window, got {:?}",
+        (b_window.present, b_window.value)
+    );
+    Ok(())
+}
+
 /// The breakdown's window columns, through the transform projection stage that
 /// re-selects every one of them by name.
 #[tokio::test]
@@ -241,10 +378,18 @@ async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result
         "the primary window must be the transformed 3 + 4, got {:?}",
         one.value
     );
+    let [ref window] = one.windows[..] else {
+        anyhow::bail!("expected one extra window, got {}", one.windows.len());
+    };
     anyhow::ensure!(
-        one.windows == vec![Some(30.0)],
-        "the extra window must be transformed too, got {:?}",
-        one.windows
+        window.value == Some(30.0) && window.present,
+        "the extra window must be present and transformed, got {:?}",
+        (window.value, window.present)
+    );
+    anyhow::ensure!(
+        one.present == Some(true),
+        "the group is observed in the primary window too, got {:?}",
+        one.present
     );
     Ok(())
 }

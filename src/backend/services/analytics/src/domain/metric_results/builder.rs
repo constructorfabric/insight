@@ -9,12 +9,12 @@ use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
     BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, PooledHistogramQueryRow,
     RankingQueryRow, RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL,
-    UNKNOWN_DIMENSION_VALUE, breakdown_window_alias, dimension_aliases,
+    UNKNOWN_DIMENSION_VALUE, breakdown_presence_alias, breakdown_window_alias, dimension_aliases,
 };
 use super::dto::{
-    BreakdownValueDto, ComputationDto, HistogramBinDto, HistogramValueDto, MetricDimensionDto,
-    MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto, RollupValueDto,
-    TimeseriesDto, TimeseriesPointDto,
+    BreakdownValueDto, BreakdownWindowValueDto, ComputationDto, HistogramBinDto, HistogramValueDto,
+    MetricDimensionDto, MetricResultDto, MetricResultViewDto, PeerValueDto, PeriodValueDto,
+    RollupValueDto, TimeseriesDto, TimeseriesPointDto,
 };
 use super::validation::{
     HISTOGRAM_BINS, ValidatedMetricResultsRequest, enumerate_buckets, metric_result_too_large,
@@ -230,13 +230,20 @@ pub fn build_breakdown_view(
                     repository.label.as_deref(),
                 );
             }
+            let windowed = !req.windows.is_empty();
             let windows = (0..req.windows.len())
-                .map(|window_index| window_value(&row.extra, window_index))
+                .map(|window_index| {
+                    Ok(BreakdownWindowValueDto {
+                        value: window_value(&row.extra, window_index)?,
+                        present: presence_flag(&row.extra, window_index + 1)?,
+                    })
+                })
                 .collect::<Result<Vec<_>, CanonicalError>>()?;
             Ok(BreakdownValueDto {
                 entity_id: req.entity.canonicalize_entity_id(row.entity_id),
                 dimensions,
                 value: row.value,
+                present: windowed.then(|| presence_flag(&row.extra, 0)).transpose()?,
                 windows,
             })
         })
@@ -491,6 +498,26 @@ fn window_value(
         tracing::error!(alias = %alias, "breakdown window value is not a number");
         CanonicalError::internal("metric result shape mismatch").create()
     })
+}
+
+/// One column's presence flag off a breakdown row. `countIf(...) > 0` arrives
+/// as 0/1, which is what the wire's boolean is built from.
+fn presence_flag(
+    extra: &HashMap<String, serde_json::Value>,
+    column_index: usize,
+) -> Result<bool, CanonicalError> {
+    let alias = breakdown_presence_alias(column_index);
+    let raw = extra.get(&alias).ok_or_else(|| {
+        tracing::error!(alias = %alias, "breakdown row missing presence alias");
+        CanonicalError::internal("metric result shape mismatch").create()
+    })?;
+    match raw.as_u64() {
+        Some(flag) => Ok(flag != 0),
+        None => {
+            tracing::error!(alias = %alias, "breakdown presence flag is not a number");
+            Err(CanonicalError::internal("metric result shape mismatch").create())
+        }
+    }
 }
 
 fn row_dimensions(

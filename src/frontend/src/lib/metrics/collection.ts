@@ -251,6 +251,12 @@ export function normalizeMetricResult(
  * (`peer`, `timeseries`, `histogram`, `rollup`) are dropped rather than
  * repeated — reading them here would silently answer over the primary period.
  * This is what lets a window feed the same selectors a separate request did.
+ *
+ * A windowed breakdown groups over every window at once, so its row set is the
+ * union of them; `present` says which rows each window actually had, and a row
+ * the window never had is dropped here. Presence cannot be read off the value:
+ * a ratio over a group that IS in the window is null whenever its denominator
+ * is zero, and dropping that row would lose one a standalone request returns.
  */
 export function projectWindow(
   results: Map<string, NormalizedMetricResult>,
@@ -279,13 +285,43 @@ export function projectWindow(
     if (result.breakdown) {
       projected.breakdown = {
         ...result.breakdown,
-        values: result.breakdown.values.map((value) => ({
-          ...value,
-          value: value.windows?.[windowIndex] ?? null,
-        })),
+        values: result.breakdown.values.flatMap((row) => {
+          const window = row.windows?.[windowIndex];
+          if (!window?.present) return [];
+          return [{ ...row, value: window.value, present: undefined, windows: undefined }];
+        }),
       };
     }
     out.set(key, projected);
+  }
+  return out;
+}
+
+/**
+ * The primary period of a windowed response, read the same way: its breakdown
+ * row set is the union across windows too, so the groups the primary period
+ * never had are dropped. A response without windows is returned untouched.
+ */
+export function projectPrimary(
+  results: Map<string, NormalizedMetricResult>
+): Map<string, NormalizedMetricResult> {
+  const out = new Map<string, NormalizedMetricResult>();
+  for (const [key, result] of results) {
+    if (!result.breakdown?.values.some((row) => row.present !== undefined)) {
+      out.set(key, result);
+      continue;
+    }
+    out.set(key, {
+      ...result,
+      breakdown: {
+        ...result.breakdown,
+        values: result.breakdown.values.flatMap((row) =>
+          row.present === false
+            ? []
+            : [{ ...row, present: undefined, windows: undefined }]
+        ),
+      },
+    });
   }
   return out;
 }

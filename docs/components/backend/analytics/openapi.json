@@ -71,6 +71,13 @@
           "entity_id": {
             "type": "string"
           },
+          "present": {
+            "description": "Whether this group has any observation inside the primary period.\nPresent only on a windowed response, where the group set spans every\nwindow and a reader has to know which of them each group belongs to.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "value": {
             "format": "double",
             "type": [
@@ -81,11 +88,7 @@
           "windows": {
             "description": "One entry per requested extra window, in request order; empty when the\nrequest asked for none.",
             "items": {
-              "format": "double",
-              "type": [
-                "number",
-                "null"
-              ]
+              "$ref": "#/components/schemas/BreakdownWindowValueDto"
             },
             "type": "array"
           }
@@ -93,6 +96,25 @@
         "required": [
           "entity_id",
           "dimensions"
+        ],
+        "type": "object"
+      },
+      "BreakdownWindowValueDto": {
+        "description": "One group's reading over one extra window.\n\n`value` and `present` are independent: a ratio over a group that IS in the\nwindow reads NULL whenever its denominator is zero, so absence cannot be\ninferred from the value. A reader that wants what a standalone request over\nthis window would have returned keeps the rows with `present` and renders\ntheir `value` as it stands, NULL included.",
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "present"
         ],
         "type": "object"
       },

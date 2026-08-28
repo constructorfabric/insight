@@ -299,10 +299,28 @@ pub struct BreakdownValueDto {
     pub entity_id: String,
     pub dimensions: Vec<MetricDimensionDto>,
     pub value: Option<f64>,
+    /// Whether this group has any observation inside the primary period.
+    /// Present only on a windowed response, where the group set spans every
+    /// window and a reader has to know which of them each group belongs to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub present: Option<bool>,
     /// One entry per requested extra window, in request order; empty when the
     /// request asked for none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub windows: Vec<Option<f64>>,
+    pub windows: Vec<BreakdownWindowValueDto>,
+}
+
+/// One group's reading over one extra window.
+///
+/// `value` and `present` are independent: a ratio over a group that IS in the
+/// window reads NULL whenever its denominator is zero, so absence cannot be
+/// inferred from the value. A reader that wants what a standalone request over
+/// this window would have returned keeps the rows with `present` and renders
+/// their `value` as it stands, NULL included.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct BreakdownWindowValueDto {
+    pub value: Option<f64>,
+    pub present: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]

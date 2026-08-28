@@ -17,6 +17,7 @@ import {
   mergeNormalizedResults,
   normalizeMetricResult,
   normalizeMetricResults,
+  projectPrimary,
   projectViews,
   projectWindow,
   resolveBucket,
@@ -106,6 +107,97 @@ describe("buildMetricCollectionRequest", () => {
       { from: "2026-05-01", to: "2026-05-31" },
       { from: "2026-04-01", to: "2026-04-30" },
     ]);
+  });
+});
+
+/**
+ * A windowed breakdown groups over every window at once, so its row set is the
+ * union of them. These cases pin the rule that makes a projected window equal
+ * to the standalone request it replaced: rows are chosen by `present`, never by
+ * whether the value happens to be null.
+ */
+describe("a windowed breakdown's row set", () => {
+  /** `org/a` only in the primary period (ratio null there), `org/b` only in the window. */
+  const disjoint = (): Map<string, NormalizedMetricResult> =>
+    new Map([
+      [
+        "ci.gate_pass_rate",
+        {
+          metric_key: "ci.gate_pass_rate",
+          label: "Pass rate",
+          unit: null,
+          computation: "ratio",
+          format: "percent",
+          direction: "higher_is_better",
+          breakdown: {
+            view: "breakdown",
+            dimensions: ["repository"],
+            values: [
+              {
+                entity_id: "t",
+                dimensions: [{ key: "repository", value: "org/a" }],
+                value: null,
+                present: true,
+                windows: [{ value: null, present: false }],
+              },
+              {
+                entity_id: "t",
+                dimensions: [{ key: "repository", value: "org/b" }],
+                value: null,
+                present: false,
+                windows: [{ value: 20, present: true }],
+              },
+            ],
+          },
+        } satisfies NormalizedMetricResult,
+      ],
+    ]);
+
+  const repositories = (result: NormalizedMetricResult | undefined) =>
+    result?.breakdown?.values.map((row) => row.dimensions[0]?.value);
+
+  it("gives a window only the groups that window had", () => {
+    // A standalone request over the window would have returned org/b alone.
+    const projected = projectWindow(disjoint(), 0).get("ci.gate_pass_rate");
+    expect(repositories(projected)).toEqual(["org/b"]);
+    expect(projected?.breakdown?.values[0]?.value).toBe(20);
+  });
+
+  it("keeps a present group whose value is genuinely null", () => {
+    // org/a IS in the primary period; its ratio is null because the
+    // denominator is zero. Dropping it would lose a row the standalone
+    // request returns — which is why presence cannot be read off the value.
+    const primary = projectPrimary(disjoint()).get("ci.gate_pass_rate");
+    expect(repositories(primary)).toEqual(["org/a"]);
+    expect(primary?.breakdown?.values[0]?.value).toBeNull();
+  });
+
+  it("leaves an unwindowed response untouched", () => {
+    const plain = new Map([
+      [
+        "git.commits",
+        {
+          metric_key: "git.commits",
+          label: "Commits",
+          unit: null,
+          computation: "sum",
+          format: "integer",
+          direction: "higher_is_better",
+          breakdown: {
+            view: "breakdown",
+            dimensions: ["repository"],
+            values: [
+              {
+                entity_id: "t",
+                dimensions: [{ key: "repository", value: "org/a" }],
+                value: 0,
+              },
+            ],
+          },
+        } satisfies NormalizedMetricResult,
+      ],
+    ]);
+    expect(projectPrimary(plain).get("git.commits")).toBe(plain.get("git.commits"));
   });
 });
 

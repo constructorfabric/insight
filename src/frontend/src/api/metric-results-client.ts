@@ -192,6 +192,16 @@ export interface PeerView {
   }>;
 }
 
+export interface BreakdownWindowValue {
+  value: number | null;
+  /**
+   * Whether a standalone request over that window would have returned this
+   * group at all. Independent of `value`: a ratio over a group that IS in the
+   * window reads null whenever its denominator is zero.
+   */
+  present: boolean;
+}
+
 export interface BreakdownView {
   view: "breakdown";
   dimensions: string[];
@@ -199,8 +209,10 @@ export interface BreakdownView {
     entity_id: string;
     dimensions: MetricDimension[];
     value: number | null;
+    /** Whether the group has observations inside the primary period. */
+    present?: boolean;
     /** One entry per requested extra window, in request order. */
-    windows?: Array<number | null>;
+    windows?: BreakdownWindowValue[];
   }>;
 }
 
