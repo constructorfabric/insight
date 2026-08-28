@@ -74,13 +74,30 @@ async fn another_tenants_address_resolves_nobody_here() -> TestResult {
     };
     let other = f.in_another_tenant();
     let addr = format!("elsewhere.{}@profiles.test", other.tenant.simple());
-    other.person(&addr).await?;
+    let theirs = other.person(&addr).await?;
+    let ours = f
+        .person(&format!("ours.{}@profiles.test", f.tenant.simple()))
+        .await?;
 
     assert!(
         persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &addr)
             .await?
             .is_empty(),
         "a person another tenant states must not resolve here"
+    );
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_email(&other.db, other.tenant, &addr).await?,
+        vec![theirs],
+        "and they must still resolve where they were stated"
+    );
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_email(
+            &f.db,
+            f.tenant,
+            &format!("ours.{}@profiles.test", f.tenant.simple())
+        )
+        .await?,
+        vec![ours],
     );
     Ok(())
 }
@@ -139,13 +156,20 @@ async fn the_excluded_sentinel_never_resolves_as_a_person() -> TestResult {
         return Ok(());
     };
     let addr = format!("excluded.{}@profiles.test", f.tenant.simple());
+    let real = format!("real.{}@profiles.test", f.tenant.simple());
     f.person_as(EXCLUDED_PERSON, &addr).await?;
+    let person = f.person(&real).await?;
 
     assert!(
         persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &addr)
             .await?
             .is_empty(),
         "the exclusion sentinel is not a person any lookup may answer with"
+    );
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_email(&f.db, f.tenant, &real).await?,
+        vec![person],
+        "while a person stated the same way still resolves"
     );
     Ok(())
 }
@@ -249,6 +273,48 @@ async fn an_id_another_instance_of_the_same_source_stated_resolves_its_own_perso
         )
         .await?,
         vec![theirs],
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn another_tenants_account_id_resolves_nobody_here() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    // The same source INSTANCE serving two tenants — what `in_another_tenant`
+    // models by carrying the source id over. Only the tenant tells the two
+    // accounts apart, and this lookup is what a login resolves through.
+    let other = f.in_another_tenant();
+    let account = format!("acct-tenant-{}", f.tenant.simple());
+    let theirs = other
+        .person(&format!("theirs.{}@profiles.test", other.tenant.simple()))
+        .await?;
+    other.observed(theirs, "id", &account).await?;
+
+    assert!(
+        persons_repo::resolve_person_ids_by_source_id(
+            &f.db,
+            f.tenant,
+            SOURCE_TYPE,
+            f.source_id,
+            &account
+        )
+        .await?
+        .is_empty(),
+        "an account another tenant holds must resolve nobody here"
+    );
+    assert_eq!(
+        persons_repo::resolve_person_ids_by_source_id(
+            &other.db,
+            other.tenant,
+            SOURCE_TYPE,
+            other.source_id,
+            &account
+        )
+        .await?,
+        vec![theirs],
+        "and it must still resolve for the tenant that holds it"
     );
     Ok(())
 }

@@ -82,13 +82,20 @@ async fn another_tenants_address_is_absent_from_this_tenants_map() -> TestResult
     };
     let other = f.in_another_tenant();
     let addr = format!("elsewhere.{}@emailmap.test", other.tenant.simple());
+    let ours = format!("ours.{}@emailmap.test", f.tenant.simple());
     other.person(&addr).await?;
+    let mine = f.person(&ours).await?;
 
     let map = seed_repo::latest_email_to_person(&f.db, f.tenant).await?;
 
     assert!(
         !map.contains_key(&addr),
         "the map stops at the tenant that asked for it"
+    );
+    assert_eq!(
+        map.get(&ours),
+        Some(&mine),
+        "while this tenant's own address is in it"
     );
     Ok(())
 }
