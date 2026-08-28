@@ -260,6 +260,19 @@ export const TestColumnClickDrilldown: Story = {
     // The series render in rank order, making the first segment org/repo-a's.
     const segment = () => barSegments(canvasElement)[0]!;
 
+    // A click with nothing under the pointer yet: recharts reports the active
+    // bucket as null there, and null must not read as the first bucket. Raw,
+    // because any pointer gesture would activate a bucket on its way in. What
+    // it must not do is land in `drilled` — the assertions below would then be
+    // reading it instead of the clicks they name.
+    wrapper.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: wrapper.getBoundingClientRect().left + 4,
+        clientY: wrapper.getBoundingClientRect().top + 4,
+      })
+    );
+
     await clickAt(segment(), centreOf(segment()));
     await waitFor(() => expect(drilled).toHaveLength(1));
     await expect(drilled[0]?.[0]).toMatchObject({

@@ -140,8 +140,10 @@ export function MetricTimeseriesChart({
       />
     </>
   );
+  // Recharts reports no active bucket as null, and `Number(null)` is 0 — which
+  // would read as the first bucket rather than as "none".
   const bucketAt = (index: MouseHandlerDataParam["activeTooltipIndex"]) =>
-    data[Number(index)]?.bucketStart;
+    index == null ? undefined : data[Number(index)]?.bucketStart;
   const openBucketFrom = (bucketStart: string) =>
     onEvidence?.(chartModel.valueMetric.metric_key, null, bucketStart);
   const openSegment = (
