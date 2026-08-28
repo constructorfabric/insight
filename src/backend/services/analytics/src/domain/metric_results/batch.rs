@@ -372,7 +372,7 @@ fn plan_timeseries(
         query: compile_timeseries_query(
             &metric.def,
             req,
-            *bucket,
+            (*bucket).into(),
             dimensions,
             &metric.filters,
             resolved.as_ref(),

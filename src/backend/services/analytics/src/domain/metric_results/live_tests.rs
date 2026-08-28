@@ -404,7 +404,7 @@ async fn timeseries_over_nullable_metric_date_builds_every_bucket() -> anyhow::R
     let req = request();
 
     for bucket in [Bucket::Day, Bucket::Week, Bucket::Month] {
-        let query = compile_timeseries_query(&def, &req, bucket, &[], &[], None);
+        let query = compile_timeseries_query(&def, &req, bucket.into(), &[], &[], None);
         let rows: Vec<TimeseriesQueryRow> = fetch_rows(&ch, &query)
             .await
             .map_err(|e| anyhow::anyhow!("bucket {bucket:?}: {e}"))?;
@@ -457,7 +457,7 @@ async fn capped_timeseries_over_nullable_metric_date_builds() -> anyhow::Result<
     let query = compile_timeseries_query(
         &def,
         &req,
-        Bucket::Day,
+        Bucket::Day.into(),
         &dimensions,
         &[],
         Some(&group_limit),
