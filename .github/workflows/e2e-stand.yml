@@ -368,7 +368,7 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat coverage.md >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then
-            echo "::error::API coverage gate failed — a catalogued operation was never called, was called only by the anonymous sweep, or a documented operation has no test"
+            echo "::error::API coverage gate failed — a catalogued operation was never called, was only ever refused (anonymous or admin-gate sweep), or a documented operation has no test"
           fi
           exit "$rc"
 
