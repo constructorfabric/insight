@@ -93,8 +93,8 @@ async function openExportMenu(): Promise<void> {
   await userEvent.click(screen.getByRole("button", { name: "Export" }));
 }
 
-/** Selections the chart asked to drill into, newest last. */
-const drilled: MetricEvidenceSelection[] = [];
+/** One entry per drilldown the chart asked for, holding all of its targets. */
+const drilled: MetricEvidenceSelection[][] = [];
 
 /**
  * Stands in for the dialog provider: the assertion is which selection a click
@@ -106,11 +106,9 @@ function captureDrilldowns(Story: () => ReactNode) {
   return (
     <EvidenceDialogContext.Provider
       value={{
-        openEvidence: (selection) => drilled.push(selection),
-        openEvidenceTargets: (targets: readonly EvidenceDialogTarget[]) => {
-          const own = targets[0];
-          if (own) drilled.push(own.selection);
-        },
+        openEvidence: (selection) => drilled.push([selection]),
+        openEvidenceTargets: (targets: readonly EvidenceDialogTarget[]) =>
+          drilled.push(targets.map((target) => target.selection)),
         openEvidencePeople: () => {},
       }}
     >
@@ -280,7 +278,7 @@ export const TestColumnClickDrilldown: Story = {
 
     await clickAt(segment(), centreOf(segment()));
     await waitFor(() => expect(drilled).toHaveLength(1));
-    await expect(drilled[0]).toMatchObject({
+    await expect(drilled[0]?.[0]).toMatchObject({
       metric_key: COMMITS,
       period: { from: "2026-04-20", to: "2026-04-26" },
       filters: [{ dimension: "repository", values: ["org/repo-a"] }],
@@ -303,7 +301,7 @@ export const TestColumnClickDrilldown: Story = {
 
     await clickAt(wrapper, spot);
     await waitFor(() => expect(drilled).toHaveLength(2));
-    await expect(drilled[1]).toMatchObject({
+    await expect(drilled[1]?.[0]).toMatchObject({
       metric_key: COMMITS,
       period: { from: "2026-04-27", to: "2026-05-03" },
       filters: [],
@@ -339,11 +337,21 @@ export const TestLineClickDrilldown: Story = {
     await clickAt(wrapper, spot);
 
     await waitFor(() => expect(drilled).toHaveLength(1));
-    await expect(drilled[0]).toMatchObject({
+    const bucket = { from: "2026-04-27", to: "2026-05-03" };
+    await expect(drilled[0]?.[0]).toMatchObject({
       metric_key: COMMITS,
-      period: { from: "2026-04-27", to: "2026-05-03" },
+      period: bucket,
       filters: [],
     });
+    // Both metrics reach the dialog, and picking the other one there must not
+    // widen the period back out to the widget's own range.
+    await expect(drilled[0]?.map((selection) => selection.metric_key)).toEqual([
+      COMMITS,
+      LINES_ADDED,
+    ]);
+    await expect(
+      drilled[0]?.map((selection) => selection.period)
+    ).toEqual([bucket, bucket]);
   },
 };
 

@@ -358,21 +358,29 @@ export function MetricTimeseriesView({
       : selectedMetric
         ? [selectedMetric]
         : [];
-  const evidenceTargets = evidenceMetrics.flatMap<EvidenceDialogTarget>(
-    (metric) => {
+  /**
+   * Every metric the dialog can offer, over one period. Switching metric in the
+   * dialog must not switch period with it, so the caller's period reaches all
+   * of them rather than only the one that was opened.
+   */
+  const evidenceTargetsOver = (
+    period: DateRange,
+    exactFilters: typeof filters
+  ): EvidenceDialogTarget[] =>
+    evidenceMetrics.flatMap<EvidenceDialogTarget>((metric) => {
       if (!metric.drilldown) return [];
       const selection = evidenceSelection(
         metric.selection,
         entityId,
-        range,
-        filters,
+        period,
+        exactFilters,
         metric.computation !== "ratio" && selectedGroupBy
           ? [selectedGroupBy]
           : []
       );
       return selection ? [{ selection, label: metric.label }] : [];
-    }
-  );
+    });
+  const evidenceTargets = evidenceTargetsOver(range, filters);
   const filterModels = dimensionOptions
     .filter((dimension) => dimension !== selectedGroupBy)
     .map((dimension) => {
@@ -467,18 +475,22 @@ export function MetricTimeseriesView({
           : range.to,
       };
     }
+    const narrowed = [...exactFilters.values()].sort((left, right) =>
+      left.dimension.localeCompare(right.dimension)
+    );
     const selection = evidenceSelection(
       metric.selection,
       entityId,
       period,
-      [...exactFilters.values()].sort((left, right) =>
-        left.dimension.localeCompare(right.dimension)
-      ),
+      narrowed,
       metric.computation !== "ratio" && selectedGroupBy ? [selectedGroupBy] : []
     );
     if (selection) {
       evidenceContext?.openEvidenceTargets(
-        withOwnTarget(evidenceTargets, { selection, label: metric.label }),
+        withOwnTarget(evidenceTargetsOver(period, narrowed), {
+          selection,
+          label: metric.label,
+        }),
         { activeMetricKey: selection.metric_key }
       );
     }
