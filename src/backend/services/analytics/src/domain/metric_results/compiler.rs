@@ -239,6 +239,27 @@ pub(crate) fn compile_timeseries_query(
     CompiledQuery { sql, params }
 }
 
+pub(crate) fn compile_report_timeseries_query(
+    def: &MetricDefinition,
+    tenant_id: uuid::Uuid,
+    entity: ValidatedEntitySelection,
+    from: chrono::NaiveDate,
+    to: chrono::NaiveDate,
+    enforce_tenant_scope: bool,
+    bucket: QueryBucket,
+) -> CompiledQuery {
+    let request = ValidatedMetricResultsRequest {
+        tenant_id,
+        entity,
+        from,
+        to,
+        metrics: Vec::new(),
+        enforce_tenant_scope,
+    };
+
+    compile_timeseries_query(def, &request, bucket, &[], &[], None)
+}
+
 pub(crate) fn compile_group_ranking_query(
     def: &MetricDefinition,
     req: &ValidatedMetricResultsRequest,
