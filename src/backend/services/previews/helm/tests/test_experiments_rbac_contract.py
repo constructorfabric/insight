@@ -90,12 +90,13 @@ def test_an_unmanaged_namespace_still_gets_the_rbac() -> None:
     assert len(_kind(docs, "RoleBinding")) == 1
 
 
-def test_a_second_replica_is_refused() -> None:
-    """The TTL sweep has no leader election — the chart, not a reviewer,
-    holds the single-replica line."""
-    code, _, err = _render("--set", "replicaCount=2")
+@pytest.mark.parametrize("replicas", [0, 2])
+def test_anything_but_one_replica_is_refused(replicas: int) -> None:
+    """The TTL sweep has no leader election and zero pods serves nothing —
+    the chart, not a reviewer, holds the exactly-one-replica line."""
+    code, _, err = _render("--set", f"replicaCount={replicas}")
 
-    assert code != 0
+    assert code != 0, f"should refuse replicaCount={replicas}"
     assert "leader election" in err
 
 

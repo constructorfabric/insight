@@ -1,5 +1,5 @@
-{{- if gt (int .Values.replicaCount) 1 }}
-{{- fail "previews runs exactly one replica: the TTL sweep has no leader election and the live-count cap is checked per pod — a second replica double-sweeps and over-admits. Leave replicaCount=1." }}
+{{- if ne (int .Values.replicaCount) 1 }}
+{{- fail "previews runs exactly one replica: the TTL sweep has no leader election and the live-count cap is checked per pod — a second replica double-sweeps and over-admits, and zero leaves /api/previews with no backing pod (use previews.deploy=false to leave it out). Leave replicaCount=1." }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment

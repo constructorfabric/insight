@@ -1690,6 +1690,7 @@ jobs:
       - merge-gateway
       - merge-identity-resolution
       - merge-git-cli-proxy
+      - merge-previews
       - merge-frontend
       - merge-toolbox
       - merge-image
@@ -1713,6 +1714,7 @@ jobs:
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
+      && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
@@ -1889,6 +1891,7 @@ jobs:
       - merge-gateway
       - merge-identity-resolution
       - merge-git-cli-proxy
+      - merge-previews
       - merge-frontend
       - merge-toolbox
       - merge-seed
@@ -1904,6 +1907,7 @@ jobs:
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
+      && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-seed.result          == 'success' || needs.merge-seed.result          == 'skipped')
