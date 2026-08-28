@@ -10,9 +10,16 @@
 //! without `--include-ignored`, so an ignored case silently stops running.
 //!
 //! Every row a case writes carries a source type minted for that case, and each
-//! case reads back only its own rows. The stream is deliberately unfiltered, so
-//! this is what keeps the suite parallel-safe and lets it share an instance with
-//! rows it did not write — it never deletes and never truncates.
+//! case reads back only its own rows — the stream is deliberately unfiltered, so
+//! that tag is what keeps the suite parallel-safe.
+//!
+//! SAFETY: the suite writes into the table the persons-seed consumes, so it
+//! refuses to run at all unless every row present is one it wrote, and it clears
+//! its own leavings before the first case rather than after the last — a panic,
+//! a kill or a failed assertion must not be able to leave a fake observation
+//! behind for a real seed to read.
+
+use std::sync::LazyLock;
 
 use clickhouse::Row;
 use insight_clickhouse::{Client, Config};
@@ -30,7 +37,7 @@ const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
 
 /// The table the stream reads, as `connectors-ddl/identity.sql` declares it.
 /// Created when absent so the suite runs against a bare instance; never dropped,
-/// because the instance may be carrying rows this suite did not write.
+/// because a deployment's own table is not this suite's to remove.
 const DDL: &str = "CREATE TABLE IF NOT EXISTS identity.identity_inputs (
         `unique_key` String,
         `insight_tenant_id` UUID,
@@ -61,9 +68,30 @@ const REQUIRED_TYPES: [(&str, &str); 7] = [
     ("_synced_at", "DateTime64(3)"),
 ];
 
-/// The prefix every source type this suite mints carries, so its own rows can
-/// be told from anybody else's.
+/// The prefix every source type this suite mints carries, so its own rows can be
+/// told from anybody else's.
+///
+/// INVARIANT: `TAG_FAMILY` must match every tag this suite has ever written, not
+/// just the current one — leavings from an older tag are still this suite's to
+/// clear, and treating them as foreign would wedge the instance for good.
 const TAG_PREFIX: &str = "ci-identity-inputs-";
+const TAG_FAMILY: &str = "ci-%";
+
+/// Runs once per process, before any case is handed a fixture, so it cannot
+/// delete rows a concurrent case is still using.
+static LEAVINGS_CLEARED: LazyLock<tokio::sync::OnceCell<()>> =
+    LazyLock::new(tokio::sync::OnceCell::new);
+
+async fn clear_leavings(ch: &Client) -> anyhow::Result<()> {
+    ch.query(
+        "ALTER TABLE identity.identity_inputs DELETE \
+         WHERE insight_source_type LIKE ? SETTINGS mutations_sync = 2",
+    )
+    .bind(TAG_FAMILY)
+    .execute()
+    .await?;
+    Ok(())
+}
 
 #[derive(Row, Deserialize)]
 struct RowCount {
@@ -77,27 +105,25 @@ struct ColumnShape {
     ch_type: String,
 }
 
-/// SAFETY: `stream()` reads the whole table and this suite writes into the
-/// table the persons-seed actually consumes, so rows it leaves behind become
-/// somebody's real seed input. Refuse to write at all unless every row present
-/// is one this suite wrote.
-async fn table_holds_only_our_rows(ch: &Client) -> anyhow::Result<bool> {
+/// Fails rather than skips: the environment variable being set says the caller
+/// asked for this suite, so a table it must not write into is an error to
+/// report, not an absence to pass over quietly.
+async fn refuse_a_table_holding_other_rows(ch: &Client) -> anyhow::Result<()> {
     let counted: Vec<RowCount> = ch
         .query(
             "SELECT count() AS n FROM identity.identity_inputs \
              WHERE insight_source_type NOT LIKE ?",
         )
-        .bind(format!("{TAG_PREFIX}%"))
+        .bind(TAG_FAMILY)
         .fetch_all()
         .await?;
     let foreign = counted.first().map_or(0, |c| c.n);
-    if foreign > 0 {
-        eprintln!(
-            "skip: identity.identity_inputs here holds rows this suite did not write ({foreign})"
-        );
-        return Ok(false);
-    }
-    Ok(true)
+    anyhow::ensure!(
+        foreign == 0,
+        "identity.identity_inputs on this instance holds {foreign} rows this suite did not \
+         write; it seeds real persons, so point {URL_VAR} at an instance that does not carry it"
+    );
+    Ok(())
 }
 
 /// `Ok(false)` when the table is not the shape this suite writes and reads.
@@ -163,9 +189,13 @@ async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
         .await?;
     let ch = connect("identity");
     ch.query(DDL).execute().await?;
-    if !shape_matches(&ch).await? || !table_holds_only_our_rows(&ch).await? {
+    if !shape_matches(&ch).await? {
         return Ok(None);
     }
+    LEAVINGS_CLEARED
+        .get_or_try_init(|| clear_leavings(&ch))
+        .await?;
+    refuse_a_table_holding_other_rows(&ch).await?;
 
     Ok(Some(Fixture {
         ch,
@@ -207,8 +237,9 @@ impl Fixture {
         Ok(())
     }
 
-    /// Drop everything this case wrote. Synchronous so a following read cannot
-    /// observe the rows on their way out.
+    /// Drop everything this case wrote, so a green run leaves the table as it
+    /// found it. Not the safety net — that is `clear_leavings`, which runs
+    /// before the first case and therefore survives a panic here.
     async fn forget(&self) -> anyhow::Result<()> {
         self.ch
             .query(
