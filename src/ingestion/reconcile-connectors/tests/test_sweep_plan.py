@@ -100,14 +100,16 @@ class StatusKeepsTheMoversWord(unittest.TestCase):
 
 
 class AJobMustBePlaceable(unittest.TestCase):
-    def test_a_job_with_no_update_time_is_refused(self) -> None:
+    def test_a_job_with_neither_stamp_readable_is_refused(self) -> None:
+        """Both, because either one places the job. A case that blanks only the
+        update stamp stops testing the refusal the moment a fallback exists."""
         for absent in (None, 0, -1, "yesterday", True):
             with self.subTest(absent=absent):
                 planned = plan.sync_row(
-                    entry(lastUpdatedAt=absent), CONNECTORS, TICK
+                    entry(lastUpdatedAt=absent, startTime=absent), CONNECTORS, TICK
                 )
                 self.assertIsInstance(
-                    planned, plan.Skipped, f"should refuse lastUpdatedAt={absent!r}"
+                    planned, plan.Skipped, f"should refuse both stamps = {absent!r}"
                 )
 
     def test_a_job_with_no_identity_is_refused(self) -> None:
@@ -119,8 +121,10 @@ class AJobMustBePlaceable(unittest.TestCase):
         self.assertIsInstance(planned, plan.Skipped)
 
     def test_a_refusal_carries_its_reason(self) -> None:
-        planned = plan.sync_row(entry(lastUpdatedAt=None), CONNECTORS, TICK)
-        self.assertIn("update time", planned.reason)
+        planned = plan.sync_row(
+            entry(lastUpdatedAt=None, startTime=None), CONNECTORS, TICK
+        )
+        self.assertIn("moment", planned.reason)
 
 
 class AbsenceIsNotZero(unittest.TestCase):
@@ -195,7 +199,11 @@ class WhatIsRead(unittest.TestCase):
     def test_an_epoch_number_is_not_a_stamp(self) -> None:
         """The listing sends strings. A number here would be a different
         endpoint's shape, and guessing at it would date every job to 1970."""
-        planned = plan.sync_row(entry(lastUpdatedAt=1_700_000_000), CONNECTORS, TICK)
+        planned = plan.sync_row(
+            entry(lastUpdatedAt=1_700_000_000, startTime=1_700_000_000),
+            CONNECTORS,
+            TICK,
+        )
         self.assertIsInstance(planned, plan.Skipped)
 
     def test_the_duration_is_read_as_an_iso_8601_duration(self) -> None:
@@ -244,7 +252,10 @@ class CoverageSkipsWhatIsClosed(unittest.TestCase):
 
     def test_refusals_are_reported_beside_the_rows(self) -> None:
         planned = plan.plan_syncs(
-            [entry(), entry(jobId=7, lastUpdatedAt=None)], CONNECTORS, TICK, frozenset()
+            [entry(), entry(jobId=7, lastUpdatedAt=None, startTime=None)],
+            CONNECTORS,
+            TICK,
+            frozenset(),
         )
         self.assertEqual(len(planned.rows), 1)
         self.assertEqual(len(planned.skipped), 1)
@@ -299,12 +310,67 @@ class TheListingsOwnShape(unittest.TestCase):
     def test_a_creation_stamp_does_not_place_a_job(self) -> None:
         """The listing filters on creation and reports none, so an entry
         carrying only a creation stamp is one the mover cannot have sent."""
-        invented = {k: v for k, v in entry().items() if k != "lastUpdatedAt"}
+        invented = {
+            k: v for k, v in entry().items() if k not in ("lastUpdatedAt", "startTime")
+        }
         invented["createdAt"] = "2026-08-27T08:00:00Z"
 
         planned = plan.sync_row(invented, CONNECTORS, TICK)
 
         self.assertIsInstance(planned, plan.Skipped)
+
+
+class AJobStillRunningIsPlaceable(unittest.TestCase):
+    """A running job can arrive with a start and no update stamp at all.
+
+    Refusing it costs the one state the page most needs: the connector reads as
+    last synced whenever it last finished, while a sync is in flight or stuck.
+    The whole page exists to tell those apart.
+    """
+
+    #: A running job as the listing serves one: started, not finished, nothing
+    #: reported yet, and no update stamp.
+    RUNNING = {
+        "jobId": 9001,
+        "connectionId": CONNECTION,
+        "jobType": "sync",
+        "status": "running",
+        "startTime": "2026-08-27T08:00:30Z",
+        "duration": "PT46M18S",
+        "bytesSynced": 0,
+        "rowsSynced": 0,
+    }
+
+    def test_it_is_recorded_rather_than_skipped(self) -> None:
+        planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
+
+        self.assertNotIsInstance(planned, plan.Skipped, planned)
+        self.assertEqual(planned["status"], "running")
+
+    def test_it_is_placed_at_its_start(self) -> None:
+        """The listing places such an entry around its start — it serves the
+        entry when filtered from that moment and withholds it when filtered
+        from after — so the ledger must place it there too, or the watermark
+        and the filter part company."""
+        planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
+
+        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:00:30.000")
+
+    def test_an_update_stamp_still_wins_when_there_is_one(self) -> None:
+        """The fallback must not outrank the field it stands in for."""
+        self.assertEqual(row()["job_updated_at"], "2026-08-27 08:02:52.000")
+
+    def test_it_outranks_the_finished_job_it_follows(self) -> None:
+        """A sync that started after the last one finished is the newer fact,
+        and the summary orders along the same column the planner writes."""
+        finished = entry(jobId=8900, lastUpdatedAt="2026-08-27T07:00:00Z")
+        planned = plan.plan_syncs(
+            [finished, self.RUNNING], CONNECTORS, TICK, frozenset()
+        )
+
+        placed = {r["job_id"]: r["job_updated_at"] for r in planned.rows}
+        self.assertEqual(len(placed), 2)
+        self.assertGreater(placed["9001"], placed["8900"])
 
 
 class AnIgnoredFilterIsVisible(unittest.TestCase):

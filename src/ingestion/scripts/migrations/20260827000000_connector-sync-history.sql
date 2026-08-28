@@ -11,10 +11,10 @@
 -- job at all, and is never NULL on a sync row — the read surface orders jobs
 -- along it, and a row without it cannot be placed among them.
 --
--- `job_updated_at` is the mover's own last-update stamp for the job, not a
--- creation time: the listing does not report when a job was created, and it is
--- also the field the listing filters on, so the sweep reads back exactly the
--- field it asks by.
+-- `job_updated_at` is the mover's last word about the job — its last update, or
+-- its start while it is still in flight — never a creation time: the listing
+-- does not report when a job was created, and it is also the field the listing
+-- filters on, so the sweep reads back exactly the field it asks by.
 --
 -- Spec: docs/components/backend/analytics/specs/connector-health.
 
