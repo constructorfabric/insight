@@ -8,6 +8,7 @@ test at all. This module closes those gaps one at a time.
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -86,7 +87,27 @@ def _bamboohr_employee(
     *, run_tag: str, entity_id: str, email: str, display_name: str, supervisor_email: str | None
 ) -> dict:
     """A minimal `bronze_bamboohr.employees` row — the real shape the bamboohr
-    connector would append, not a hand-crafted identity_inputs row."""
+    connector would append, not a hand-crafted identity_inputs row.
+
+    The identity fields go in BOTH the top-level columns and `raw_data`. Since
+    the connector began collecting every employee field without configuration,
+    the snapshot versions on `raw_data` and the field history is derived from
+    its keys — a row carrying only the columns yields no history, and with it
+    no identity_inputs at all.
+    """
+    fields = {
+        "workEmail": email,
+        "displayName": display_name,
+        "firstName": display_name.split(" ")[0],
+        "lastName": display_name.split(" ")[-1],
+        "employeeNumber": entity_id,
+        "jobTitle": "Engineer",
+        "department": "Engineering",
+        "division": "Engineering",
+        "status": "Active",
+        "supervisorEmail": supervisor_email,
+        "supervisorEId": None,
+    }
     return {
         # Non-nullable Airbyte CDK columns — real connector rows always carry
         # these; some staging transformations (e.g. latest-row selection)
@@ -99,17 +120,8 @@ def _bamboohr_employee(
         "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
         "tenant_id": f"pipeline-tenant-{run_tag}",
         "source_id": f"pipeline-source-{run_tag}",
-        "workEmail": email,
-        "displayName": display_name,
-        "firstName": display_name.split(" ")[0],
-        "lastName": display_name.split(" ")[-1],
-        "employeeNumber": entity_id,
-        "jobTitle": "Engineer",
-        "department": "Engineering",
-        "division": "Engineering",
-        "status": "Active",
-        "supervisorEmail": supervisor_email,
-        "supervisorEId": None,
+        "raw_data": json.dumps(fields),
+        **fields,
     }
 
 
