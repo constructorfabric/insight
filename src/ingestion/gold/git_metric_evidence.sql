@@ -1,4 +1,16 @@
-{{ metric_evidence_table(join_use_nulls=1) }}
+{# 3 GiB, and spill thresholds to match: this build outgrew the shared 2 GiB
+   ceiling and failed the post-upgrade migration hook with MEMORY_LIMIT_EXCEEDED,
+   taking the whole deploy down with it. Same pairing the other heavy gold
+   models carry (task_issue_state, task_status_spans, account_attribute_values).
+   Raising the ceiling buys headroom, not a cure — the inputs keep growing. #}
+{{ metric_evidence_table(
+    join_use_nulls=1,
+    query_settings_overrides={
+        'max_memory_usage': 3221225472,
+        'max_bytes_before_external_group_by': 805306368,
+        'max_bytes_before_external_sort': 805306368
+    }
+) }}
 
 -- Resolution happens at READ time, and account-first: a row naming its author's
 -- account (pull requests) resolves through that binding, everything else

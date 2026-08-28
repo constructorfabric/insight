@@ -1,4 +1,4 @@
-{% macro metric_serving_query_settings(join_use_nulls=none) %}
+{% macro metric_serving_query_settings(join_use_nulls=none, query_settings_overrides=none) %}
     {% set settings = {
         'max_memory_usage': 2147483648,
         'max_threads': 2,
@@ -15,10 +15,16 @@
     {% if join_use_nulls is not none %}
         {% do settings.update({'join_use_nulls': join_use_nulls}) %}
     {% endif %}
+    {# A model whose inputs outgrew the shared ceiling raises its own rather
+       than lifting it for every serving table: the cap is what keeps one heavy
+       build from starving the rest of the gold run. #}
+    {% if query_settings_overrides %}
+        {% do settings.update(query_settings_overrides) %}
+    {% endif %}
     {{ return(settings) }}
 {% endmacro %}
 
-{% macro metric_serving_table(include_record_id, join_use_nulls=none) %}
+{% macro metric_serving_table(include_record_id, join_use_nulls=none, query_settings_overrides=none) %}
     {% set order_by = [
         'tenant_id',
         'source_key',
@@ -37,12 +43,19 @@
         partition_by='toYYYYMM(metric_date)',
         schema=var('gold_database'),
         tags=['gold'],
-        query_settings=metric_serving_query_settings(join_use_nulls=join_use_nulls)
+        query_settings=metric_serving_query_settings(
+            join_use_nulls=join_use_nulls,
+            query_settings_overrides=query_settings_overrides
+        )
     ) }}
 {% endmacro %}
 
-{% macro metric_evidence_table(join_use_nulls=none) %}
-    {{ metric_serving_table(true, join_use_nulls=join_use_nulls) }}
+{% macro metric_evidence_table(join_use_nulls=none, query_settings_overrides=none) %}
+    {{ metric_serving_table(
+        true,
+        join_use_nulls=join_use_nulls,
+        query_settings_overrides=query_settings_overrides
+    ) }}
 {% endmacro %}
 
 {% macro metric_observations_table() %}
