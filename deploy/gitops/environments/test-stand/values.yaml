@@ -420,6 +420,8 @@ airbyte:
 
 analytics:
   replicaCount: 1 # chart default is 2; one is enough for a test stand
+  metricCatalog:
+    tenantMetricsEnabled: true
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}
