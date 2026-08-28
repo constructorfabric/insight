@@ -1653,10 +1653,14 @@ async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResul
     // The guard is a conditional UPDATE, not a read-then-write: a role somebody
     // holds must not be removable however the two calls interleave.
     let (refused, answer) = delete(app(&f, caller), &format!("/v1/roles/{held}")).await?;
-    assert_ne!(
+    assert_eq!(
         refused,
-        StatusCode::NO_CONTENT,
+        StatusCode::CONFLICT,
         "a role with a live assignment was deleted: {answer}"
+    );
+    assert_eq!(
+        answer["context"]["reason"], "role_in_use",
+        "the refusal must name itself: {answer}"
     );
     assert!(
         roles_repo::get_by_id(&f.db, held).await?.is_some(),
@@ -1678,10 +1682,14 @@ async fn the_last_admin_of_a_tenant_cannot_be_revoked() -> TestResult {
 
     let (refused, answer) = delete(app(&f, caller), &format!("/v1/person-roles/{grant}")).await?;
 
-    assert_ne!(
+    assert_eq!(
         refused,
-        StatusCode::NO_CONTENT,
+        StatusCode::CONFLICT,
         "revoking the only admin locks the tenant out of its own operator surface: {answer}"
+    );
+    assert_eq!(
+        answer["context"]["reason"], "last_admin_protected",
+        "the refusal must name itself: {answer}"
     );
     let (status, me) = get(app(&f, caller), "/v1/me").await?;
     assert_eq!(status, StatusCode::OK);
@@ -1827,5 +1835,112 @@ async fn another_tenants_visibility_grant_is_neither_listed_nor_revocable() -> T
             .is_some_and(|g| g.valid_to.is_none()),
         "the grant must still stand in the tenant that made it"
     );
+    Ok(())
+}
+
+/// Every route behind `require_admin`, as one table. Each handler calls the gate
+/// separately, so a gate removed from one of them is invisible to a case that
+/// only drives another.
+fn operator_routes(f: &Fixture, person: Uuid) -> Vec<(&'static str, String, Option<Value>)> {
+    let some = Uuid::now_v7();
+    let account = json!({"account": account_ref(f, "acct-gate")});
+    vec![
+        (
+            "POST",
+            "/v1/resolution/bind".to_owned(),
+            Some(bind_body(f, "acct-gate", person)),
+        ),
+        (
+            "POST",
+            "/v1/resolution/merge".to_owned(),
+            Some(json!({
+                "source_person_id": person.to_string(), "target_person_id": some.to_string(),
+            })),
+        ),
+        (
+            "POST",
+            "/v1/resolution/detach".to_owned(),
+            Some(account.clone()),
+        ),
+        ("POST", "/v1/resolution/exclude".to_owned(), Some(account)),
+        ("GET", "/v1/resolution/attention".to_owned(), None),
+        ("GET", "/v1/persons?q=anything".to_owned(), None),
+        (
+            "POST",
+            "/v1/roles".to_owned(),
+            Some(json!({"name": "gate-probe"})),
+        ),
+        ("GET", "/v1/roles".to_owned(), None),
+        ("DELETE", format!("/v1/roles/{some}"), None),
+        (
+            "POST",
+            "/v1/person-roles".to_owned(),
+            Some(json!({
+                "person_id": person.to_string(), "role_id": roles_repo::ADMIN_ROLE_ID.to_string(),
+            })),
+        ),
+        ("GET", "/v1/person-roles".to_owned(), None),
+        ("DELETE", format!("/v1/person-roles/{some}"), None),
+        (
+            "POST",
+            "/v1/visibility".to_owned(),
+            Some(json!({"viewer_person_id": person.to_string()})),
+        ),
+        ("GET", "/v1/visibility".to_owned(), None),
+        ("DELETE", format!("/v1/visibility/{some}"), None),
+    ]
+}
+
+async fn send(
+    app: Router,
+    method: &str,
+    uri: &str,
+    body: Option<&Value>,
+) -> anyhow::Result<StatusCode> {
+    let builder = Request::builder().method(method).uri(uri);
+    let req = match body {
+        Some(b) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(b.to_string()))?,
+        None => builder.body(Body::empty())?,
+    };
+    Ok(app.oneshot(req).await?.status())
+}
+
+#[tokio::test]
+async fn every_operator_route_refuses_a_caller_without_the_admin_grant() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("gate-plain@http-live.test").await?;
+    f.bound_at("acct-gate", caller, FIXTURE_REASON, 60).await?;
+
+    for (method, uri, body) in operator_routes(&f, caller) {
+        let status = send(app(&f, caller), method, &uri, body.as_ref()).await?;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {uri} let a non-admin through"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_operator_route_refuses_a_caller_the_gateway_did_not_name() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let person = f.person("gate-anon@http-live.test").await?;
+    f.bound_at("acct-gate", person, FIXTURE_REASON, 60).await?;
+
+    for (method, uri, body) in operator_routes(&f, person) {
+        let status = send(app(&f, Uuid::nil()), method, &uri, body.as_ref()).await?;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{method} {uri} answered a caller with no identity"
+        );
+    }
     Ok(())
 }
