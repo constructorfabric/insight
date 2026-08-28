@@ -90,3 +90,4 @@ clickhouse = { workspace = true, features = ["test-util"] }
 # Paused-time `#[tokio::test]` for the semaphore acquire-timeout refusals —
 # the 2 s acquire window elapses instantly instead of being slept through.
 tokio = { workspace = true, features = ["test-util"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }

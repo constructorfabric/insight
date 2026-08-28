@@ -178,11 +178,10 @@ fn plan_person_batches(
         .checked_mul(metrics)
         .ok_or(ReportPlanningError::SizeOverflow)?;
     let query_people = METRIC_QUERY_VALUE_LIMIT / query_values_per_person;
-    let cell_people = if cells_per_person == 0 {
-        usize::MAX
-    } else {
-        limits.max_batch_cells / cells_per_person
-    };
+    let cell_people = limits
+        .max_batch_cells
+        .checked_div(cells_per_person)
+        .unwrap_or(usize::MAX);
     let people_per_batch = query_people.min(cell_people);
     if people_per_batch == 0 {
         return Err(ReportPlanningError::BatchLimitTooSmall);
