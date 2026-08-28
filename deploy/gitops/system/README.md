@@ -1,11 +1,12 @@
 # L2 — System Layer
 
 Shared infrastructure services that live in the `insight-infra`
-namespace, **one Helm release per service**. Run manually via
-`make system-<svc> ENV=<env>` — there is no top-level chain because
-each cluster picks which services it self-hosts vs. swaps for managed
-external endpoints (RDS, MSK, Confluent Cloud, S3, …) or another
-team's infra.
+namespace, **one Helm release per service**. `make system ENV=<env>`
+chains every service whose `inventory.system.<svc>` toggle is true;
+per-service `make system-<svc>` targets remain for one-offs and
+rotation. The toggles exist because each cluster picks which services
+it self-hosts vs. swaps for managed external endpoints (RDS, MSK,
+Confluent Cloud, S3, …) or another team's infra.
 
 See the top-level [`README.md`](../README.md) for the L0 / L2 / L3 layer
 model and full workflow.
@@ -21,19 +22,24 @@ model and full workflow.
 | `redpanda-console/` | `redpanda/console` | `redpanda-console` | not in baseline |
 | `airbyte/` | `airbyte/airbyte` | `airbyte` | not in baseline (uses embedded Postgres+MinIO); prod overlay needs S3 creds |
 | `argo-workflows/` | `argo/argo-workflows` | `argo-workflows` | not in baseline |
+| `victoriametrics/` | `vm/victoria-metrics-single` | `victoriametrics` | not in baseline |
 | `loki/` | `grafana/loki` | `loki` | not in baseline (single-tenant, no auth) |
 | `alloy/` | `grafana/alloy` | `alloy` | not in baseline |
 | `grafana/` | `grafana/grafana` | `grafana` | not in baseline (chart auto-gens admin pw; per-env overlay may seal `grafana-creds`) |
 
-### Observability (loki / alloy / grafana)
+### Observability (victoriametrics / loki / alloy / grafana)
 
-These three are the bundled observability stack (LGTM, logs first). Two
+These are the bundled observability stack: VictoriaMetrics stores metrics
+(PromQL-compatible, remote-write receiver at `/api/v1/write`), Loki stores
+logs, Alloy collects, Grafana serves both — provisioned as the fixed-uid
+datasources `vm` and `loki` so dashboards reference them portably. Two
 independent decisions, mirroring the managed-vs-bundled choice for the data
 stores above:
 
-1. **Install the bundled stack?** — the `inventory.system.{loki,alloy,grafana}`
-   toggles. On = self-host Loki/Alloy/Grafana in `insight-infra`. Off = don't
-   (the cluster already runs observability, or stdout is enough).
+1. **Install the bundled stack?** — the
+   `inventory.system.{victoriametrics,loki,alloy,grafana}` toggles. On =
+   self-host the stack in `insight-infra`. Off = don't (the cluster already
+   runs observability, or stdout is enough).
 2. **Where do services export?** — the umbrella's `observability.otlp.endpoint`
    (`environments/<env>/values.yaml`). Point it at this stack's Alloy when the
    toggles are on; at your own collector for an external one; leave it empty
@@ -61,6 +67,8 @@ kubectl -n insight-infra get secret grafana -o jsonpath='{.data.admin-password}'
 # Explore → Loki:
 {namespace="insight"}            # service logs
 {component="reconcile-loop"}     # reconcile ticks
+# Explore → VictoriaMetrics (PromQL; empty until a collector remote-writes):
+up
 ```
 
 Putting Grafana behind auth is a tracked follow-up: seal a `grafana-creds`
