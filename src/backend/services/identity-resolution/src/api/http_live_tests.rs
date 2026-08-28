@@ -29,8 +29,8 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
-use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, fixture_or_skip};
-use crate::infra::db::{person_roles_repo, roles_repo};
+use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, SOURCE_TYPE, fixture_or_skip};
+use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo};
 
 type TestResult = anyhow::Result<()>;
 
@@ -994,5 +994,380 @@ async fn an_over_long_roster_query_is_refused_rather_than_scanned() -> TestResul
     .await?;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+// ── POST /v1/resolution/{bind,merge,detach,exclude} ─────────
+//
+// The write surface, driven through the real router. What the domain tests
+// cannot reach from where they sit: the admin gate, the validation order, the
+// binding that is in force once the call returns, and the journal row the
+// operator is answerable by.
+//
+// Every case seeds the account's binding first. The alternative path — an
+// account no binding names, vouched for by connector evidence — is a ClickHouse
+// read, and this suite has no ClickHouse; it is the rig's case, not this one's.
+
+/// A caller who may correct: the admin grant is what every one of these needs.
+async fn operator(f: &Fixture) -> anyhow::Result<Uuid> {
+    let person = f.person("operator@http-live.test").await?;
+    grant_admin(f, person).await?;
+    Ok(person)
+}
+
+fn account_ref(f: &Fixture, account_id: &str) -> Value {
+    json!({
+        "source": SOURCE_TYPE,
+        "source_id": f.source_id.to_string(),
+        "id": account_id,
+    })
+}
+
+/// The person the account is bound to right now, by the read the review surface
+/// uses — the answer a correction has to have changed.
+async fn bound_to(f: &Fixture, account_id: &str) -> anyhow::Result<Option<Uuid>> {
+    let key = f.account(account_id);
+    Ok(
+        resolution_repo::current_bindings(&f.db, f.tenant, std::slice::from_ref(&key))
+            .await?
+            .get(&key)
+            .map(|b| b.person_id),
+    )
+}
+
+fn bind_body(f: &Fixture, account_id: &str, person: Uuid) -> Value {
+    json!({
+        "bindings": [{"account": account_ref(f, account_id), "person_id": person.to_string()}],
+        "comment": "http-live",
+    })
+}
+
+#[tokio::test]
+async fn binding_an_account_puts_the_named_person_in_force() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let automation_chose = f.person("wrong@http-live.test").await?;
+    let operator_means = f.person("right@http-live.test").await?;
+    f.bound_at("acct-bind", automation_chose, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-bind", operator_means),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], 1);
+    assert_eq!(body["items"][0]["outcome"], "applied");
+    assert_eq!(
+        bound_to(&f, "acct-bind").await?,
+        Some(operator_means),
+        "the operator's decision must be the binding in force"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn binding_a_decision_already_recorded_applies_nothing_further() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("settled@http-live.test").await?;
+    f.bound_at("acct-again", person, FIXTURE_REASON, 60).await?;
+
+    let body = bind_body(&f, "acct-again", person);
+    post(app(&f, caller), "/v1/resolution/bind", &body).await?;
+    let (status, second) = post(app(&f, caller), "/v1/resolution/bind", &body).await?;
+
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["applied"], 0);
+    assert_eq!(second["already_decided"], 1);
+    assert_eq!(second["items"][0]["outcome"], "already_decided");
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_call_naming_an_account_twice_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let one = f.person("one@http-live.test").await?;
+    let other = f.person("other@http-live.test").await?;
+    f.bound_at("acct-twice", one, FIXTURE_REASON, 60).await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &json!({"bindings": [
+            {"account": account_ref(&f, "acct-twice"), "person_id": one.to_string()},
+            {"account": account_ref(&f, "acct-twice"), "person_id": other.to_string()},
+        ]}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        bound_to(&f, "acct-twice").await?,
+        Some(one),
+        "a refused call must leave the account where it was"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_bind_naming_no_accounts_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+
+    let (status, _) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &json!({"bindings": []}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn binding_to_the_excluded_sentinel_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("sentinel-target@http-live.test").await?;
+    f.bound_at("acct-sentinel", person, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-sentinel", EXCLUDED_PERSON),
+    )
+    .await?;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "the sentinel is reachable only through the exclude verb: {body}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn binding_to_a_person_the_tenant_never_had_is_not_found() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let stranger = f
+        .in_another_tenant()
+        .person("stranger@http-live.test")
+        .await?;
+    let holder = f.person("holder@http-live.test").await?;
+    f.bound_at("acct-stranger", holder, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-stranger", stranger),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(bound_to(&f, "acct-stranger").await?, Some(holder));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_caller_without_the_admin_grant_cannot_correct() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("not-admin@http-live.test").await?;
+    let person = f.person("untouched@http-live.test").await?;
+    f.bound_at("acct-guarded", person, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-guarded", caller),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(
+        bound_to(&f, "acct-guarded").await?,
+        Some(person),
+        "a refused caller must not have moved anything"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn merge_moves_every_account_of_the_absorbed_person() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let absorbed = f.person("absorbed@http-live.test").await?;
+    let survivor = f.person("survivor@http-live.test").await?;
+    f.bound_at("acct-m1", absorbed, FIXTURE_REASON, 60).await?;
+    f.bound_at("acct-m2", absorbed, FIXTURE_REASON, 60).await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/merge",
+        &json!({
+            "source_person_id": absorbed.to_string(),
+            "target_person_id": survivor.to_string(),
+        }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], 2, "both accounts move, not just one");
+    assert_eq!(bound_to(&f, "acct-m1").await?, Some(survivor));
+    assert_eq!(bound_to(&f, "acct-m2").await?, Some(survivor));
+    Ok(())
+}
+
+#[tokio::test]
+async fn merging_a_person_with_themselves_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("alone@http-live.test").await?;
+
+    let (status, _) = post(
+        app(&f, caller),
+        "/v1/resolution/merge",
+        &json!({
+            "source_person_id": person.to_string(),
+            "target_person_id": person.to_string(),
+        }),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn detach_moves_the_account_to_the_person_the_answer_names() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let was = f.person("shared-identity@http-live.test").await?;
+    f.bound_at("acct-detach", was, FIXTURE_REASON, 60).await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/detach",
+        &json!({"account": account_ref(&f, "acct-detach")}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let minted: Uuid = body["new_person_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("detach named no person: {body}"))?
+        .parse()?;
+    assert_ne!(
+        minted, was,
+        "a detach that returns the old person moved nothing"
+    );
+    assert_eq!(
+        bound_to(&f, "acct-detach").await?,
+        Some(minted),
+        "the account must hold the person the answer named"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn excluding_an_account_binds_it_to_the_sentinel() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let looked_human = f.person("ci-bot@http-live.test").await?;
+    f.bound_at("acct-bot", looked_human, FIXTURE_REASON, 60)
+        .await?;
+
+    let (status, body) = post(
+        app(&f, caller),
+        "/v1/resolution/exclude",
+        &json!({"account": account_ref(&f, "acct-bot")}),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        bound_to(&f, "acct-bot").await?,
+        Some(EXCLUDED_PERSON),
+        "an excluded account answers with the sentinel, not its former person"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_correction_names_its_operator_in_the_journal() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("journalled@http-live.test").await?;
+    f.bound_at("acct-journal", person, FIXTURE_REASON, 60)
+        .await?;
+    let target = f.person("journal-target@http-live.test").await?;
+
+    post(
+        app(&f, caller),
+        "/v1/resolution/bind",
+        &bind_body(&f, "acct-journal", target),
+    )
+    .await?;
+
+    // The trail an operator is answerable by: who decided, and what they asked
+    // for. Nothing else records the author of a correction.
+    let trail = ops_repo::corrections_for_account(
+        &f.db,
+        f.tenant,
+        crate::api::resolution::RESOLUTION_OP,
+        SOURCE_TYPE,
+        f.source_id,
+        "acct-journal",
+        10,
+    )
+    .await?;
+
+    assert_eq!(
+        trail.len(),
+        1,
+        "the call must leave exactly one journal row"
+    );
+    assert_eq!(trail[0].author_person_id, caller);
+    let request: Value = serde_json::from_str(
+        trail[0]
+            .request_json
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("journal row carries no request"))?,
+    )?;
+    assert_eq!(request["verb"], "operator-bind");
+    assert_eq!(request["target_person_id"], target.to_string());
     Ok(())
 }
