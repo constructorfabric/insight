@@ -40,7 +40,7 @@ One collection step belongs here rather than in `drive-ui`: whenever a value on 
 
 ## Triage — before you gather
 
-Three checks that routinely change the plan.
+Four checks that routinely change the plan.
 
 **Search first.** Never file a blind duplicate:
 
@@ -54,6 +54,8 @@ gh issue list --repo constructorfabric/insight --state closed --search "<key phr
 Search more than once with different vocabulary — the metric key, the field name, the group title, the error code, the user-visible label. Same defect → add your evidence to the existing issue. A genuinely different symptom → file new and cross-link with a one-line `related to #N` (a bare link, not a "how this differs" writeup — that reads as noise).
 
 **Product bug, or environment artifact?** A metric that is empty because nothing was seeded or synced is not a product defect. File only what would still be wrong on a correctly populated instance. The cheapest check is the bottom of the medallion: no bronze rows for that connector and window means a seed or sync gap, so stop.
+
+**Can a real caller reach it?** Name the principal your reproduction used and the address it called, then confirm the deployment offers both to a user. Read how that service is exposed where it really runs — its chart or deployment manifest — rather than trusting what your local stack published: a local stack routinely opens ports a deployment keeps internal, so the surface you reproduced on is not evidence that surface exists. A path that needs a position inside the system, or a credential the product never issues to a person, is not a defect but a route nobody can take. Reproduce it the way a user would, or do not file it.
 
 **One bug or several?** One issue per distinct reproduction. Two symptoms that need different steps to trigger are two issues; the same symptom reached by two paths is one issue with both paths in Steps. Where you cannot tell, file one and say what else you saw — merging beats splitting a single defect across two threads.
 
