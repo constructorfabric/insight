@@ -11,13 +11,17 @@ use tokio::sync::OwnedSemaphorePermit;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
-use super::{AppState, authorize_tenant_subject, hydrate_profiles, report_internal};
+use super::{
+    AppState, authorize_tenant_subject, hydrate_profiles, map_planning_error, report_internal,
+    report_limit,
+};
 use crate::api::error::ReportError;
 use crate::domain::reports::dto::{ReportExportFormat, ReportExportRequest};
 use crate::domain::reports::executor::{ReportExecutionContext, execute_report};
 use crate::domain::reports::export::{ReportArtifact, ReportExportError, start_report_writer};
 use crate::domain::reports::planner::{ReportPlannerLimits, plan_report};
 use crate::domain::reports::query::ClickHouseReportQueryRunner;
+use crate::domain::reports::telemetry::{ReportCleanupOutcome, ReportTelemetry};
 use crate::domain::reports::validation::validate_export;
 
 pub(crate) async fn export_report(
@@ -26,9 +30,25 @@ pub(crate) async fn export_report(
     headers: HeaderMap,
     Json(request): Json<ReportExportRequest>,
 ) -> Result<Response<Body>, CanonicalError> {
+    let telemetry = ReportTelemetry::new(&request.recipe.subject, request.format);
+    let response = export_report_inner(&state, &ctx, &headers, request, &telemetry).await;
+    if response.is_err() {
+        telemetry.fail();
+    }
+
+    response
+}
+
+async fn export_report_inner(
+    state: &Arc<AppState>,
+    ctx: &SecurityContext,
+    headers: &HeaderMap,
+    request: ReportExportRequest,
+    telemetry: &ReportTelemetry,
+) -> Result<Response<Body>, CanonicalError> {
     let deadline = tokio::time::Instant::now()
         + Duration::from_secs(state.config.reports.request_timeout_secs);
-    authorize_tenant_subject(&state, &request.recipe)?;
+    authorize_tenant_subject(state, &request.recipe)?;
 
     let format = request.format;
     let recipe = tokio::time::timeout_at(
@@ -37,26 +57,33 @@ pub(crate) async fn export_report(
     )
     .await
     .map_err(|_| report_limit("report export timed out"))??;
+    let identity_started = std::time::Instant::now();
     let profiles =
-        tokio::time::timeout_at(deadline, hydrate_profiles(&state, &ctx, &headers, &recipe))
+        tokio::time::timeout_at(deadline, hydrate_profiles(state, ctx, headers, &recipe))
             .await
             .map_err(|_| report_limit("report export timed out"))??;
+    telemetry.record_identity_duration(identity_started.elapsed());
     let plan = plan_report(
         &recipe,
         &profiles,
         ReportPlannerLimits {
             max_batch_cells: state.config.reports.max_batch_cells,
+            max_total_cells: state.config.reports.max_total_cells,
         },
     )
-    .map_err(report_internal)?;
-    let artifact_permit = acquire_artifact(&state, deadline).await?;
-    let generation = acquire_generation(&state, deadline).await?;
+    .map_err(map_planning_error)?;
+    let admission_started = std::time::Instant::now();
+    let artifact_permit = acquire_artifact(state, deadline).await?;
+    let generation = acquire_generation(state, deadline).await?;
+    telemetry.record_admission_wait(admission_started.elapsed());
     let (sink, writer) = start_report_writer(
         format,
         &plan,
         state.config.reports.temp_dir.clone(),
         state.config.reports.max_generated_bytes,
         state.config.reports.writer_channel_batches,
+        telemetry.clone(),
+        generation,
     )
     .map_err(map_export_error)?;
     let runner = ClickHouseReportQueryRunner::new(&state.ch);
@@ -72,6 +99,7 @@ pub(crate) async fn export_report(
         sink,
     );
 
+    let query_started = std::time::Instant::now();
     match tokio::time::timeout_at(deadline, execution).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
@@ -83,20 +111,27 @@ pub(crate) async fn export_report(
             return Err(report_limit("report export timed out"));
         }
     }
+    telemetry.record_query_duration(query_started.elapsed());
     let artifact = tokio::time::timeout_at(deadline, writer)
         .await
         .map_err(|_| report_limit("report export timed out"))?
         .map_err(|_| report_internal("report writer task failed"))?
         .map_err(map_export_error)?;
-    drop(generation);
-
-    response_for_artifact(
+    let rows = plan.size.total_rows;
+    let columns = plan.size.worksheet_columns;
+    let bytes = artifact.content_length();
+    let response = response_for_artifact(
         artifact,
         artifact_permit,
         report_filename(&recipe, format),
         format,
+        telemetry,
     )
-    .await
+    .await?;
+
+    telemetry.succeed(rows, columns, bytes);
+
+    Ok(response)
 }
 
 async fn stop_writer(
@@ -111,40 +146,42 @@ async fn stop_writer(
     }
 }
 
-async fn acquire_generation(
+pub(super) async fn acquire_generation(
     state: &AppState,
     deadline: tokio::time::Instant,
 ) -> Result<OwnedSemaphorePermit, CanonicalError> {
-    tokio::time::timeout_at(
+    acquire_capacity(
+        state.report_generations.clone(),
         capacity_deadline(state, deadline),
-        state.report_generations.clone().acquire_owned(),
+        "report generations",
+        state.config.reports.capacity_wait_secs,
     )
     .await
-    .map_err(|_| {
-        report_busy(
-            "report generations",
-            state.config.reports.capacity_wait_secs,
-        )
-    })?
-    .map_err(|_| {
-        report_busy(
-            "report generations",
-            state.config.reports.capacity_wait_secs,
-        )
-    })
 }
 
 async fn acquire_artifact(
     state: &AppState,
     deadline: tokio::time::Instant,
 ) -> Result<OwnedSemaphorePermit, CanonicalError> {
-    tokio::time::timeout_at(
+    acquire_capacity(
+        state.report_artifacts.clone(),
         capacity_deadline(state, deadline),
-        state.report_artifacts.clone().acquire_owned(),
+        "report downloads",
+        state.config.reports.capacity_wait_secs,
     )
     .await
-    .map_err(|_| report_busy("report downloads", state.config.reports.capacity_wait_secs))?
-    .map_err(|_| report_busy("report downloads", state.config.reports.capacity_wait_secs))
+}
+
+async fn acquire_capacity(
+    semaphore: Arc<tokio::sync::Semaphore>,
+    deadline: tokio::time::Instant,
+    resource: &'static str,
+    retry_after_secs: u64,
+) -> Result<OwnedSemaphorePermit, CanonicalError> {
+    tokio::time::timeout_at(deadline, semaphore.acquire_owned())
+        .await
+        .map_err(|_| report_busy(resource, retry_after_secs))?
+        .map_err(|_| report_busy(resource, retry_after_secs))
 }
 
 fn capacity_deadline(state: &AppState, deadline: tokio::time::Instant) -> tokio::time::Instant {
@@ -158,6 +195,7 @@ async fn response_for_artifact(
     artifact_permit: OwnedSemaphorePermit,
     filename: String,
     format: ReportExportFormat,
+    telemetry: &ReportTelemetry,
 ) -> Result<Response<Body>, CanonicalError> {
     let artifact_path = artifact.path().map_err(map_export_error)?.to_path_buf();
     let content_length = artifact.content_length();
@@ -165,10 +203,12 @@ async fn response_for_artifact(
         .await
         .map_err(|_| report_internal("report artifact could not be opened"))?;
     if tokio::fs::remove_file(&artifact_path).await.is_err() {
+        telemetry.record_cleanup(ReportCleanupOutcome::Failed);
         drop(file);
         let _ = tokio::fs::remove_file(&artifact_path).await;
         return Err(report_internal("report artifact could not be removed"));
     }
+    telemetry.record_cleanup(ReportCleanupOutcome::Removed);
     let _ = artifact.disarm().map_err(map_export_error)?;
 
     let content_type = match format {
@@ -238,12 +278,6 @@ fn map_export_error(error: ReportExportError) -> CanonicalError {
     }
 }
 
-fn report_limit(description: &str) -> CanonicalError {
-    ReportError::resource_exhausted("Report export exceeded resource limits.")
-        .with_quota_violation("report export", description)
-        .create()
-}
-
 fn report_busy(resource: &str, retry_after_secs: u64) -> CanonicalError {
     ReportError::resource_exhausted("Report export capacity is busy.")
         .with_quota_violation(resource, "concurrency limit reached")
@@ -256,35 +290,69 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn response_unlinks_artifact_before_streaming() {
-        let path = std::env::temp_dir().join(format!("report-download-{}", uuid::Uuid::new_v4()));
-        tokio::fs::write(&path, b"report")
-            .await
-            .unwrap_or_else(|error| panic!("artifact must write: {error}"));
-        let artifact = ReportArtifact::from_completed(path.clone(), 6);
+    async fn responses_stream_complete_csv_and_xlsx_artifacts_then_release_capacity() {
+        for (format, extension, content_type) in [
+            (ReportExportFormat::Csv, "csv", "text/csv; charset=utf-8"),
+            (
+                ReportExportFormat::Xlsx,
+                "xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "report-download-{}.{}",
+                uuid::Uuid::new_v4(),
+                extension
+            ));
+            tokio::fs::write(&path, b"report")
+                .await
+                .unwrap_or_else(|error| panic!("artifact must write: {error}"));
+            let artifact = ReportArtifact::from_completed(path.clone(), 6);
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = Arc::clone(&semaphore)
+                .acquire_owned()
+                .await
+                .unwrap_or_else(|_| panic!("permit must acquire"));
+            let filename = format!("insight-report_people_day_2026-01-01_2026-01-01.{extension}");
+            let telemetry = ReportTelemetry::new(
+                &crate::domain::reports::dto::ReportSubject::People {
+                    ids: vec![uuid::Uuid::from_u128(1)],
+                },
+                format,
+            );
+
+            let response =
+                response_for_artifact(artifact, permit, filename.clone(), format, &telemetry)
+                    .await
+                    .unwrap_or_else(|error| panic!("response must build: {error}"));
+
+            assert!(!path.exists());
+            assert_eq!(response.headers()[CONTENT_LENGTH], "6");
+            assert_eq!(response.headers()[CONTENT_TYPE], content_type);
+            assert_eq!(
+                response.headers()[CONTENT_DISPOSITION],
+                format!("attachment; filename=\"{filename}\"")
+            );
+            assert_eq!(semaphore.available_permits(), 0);
+            let body = axum::body::to_bytes(response.into_body(), 6)
+                .await
+                .unwrap_or_else(|error| panic!("artifact body must stream: {error}"));
+            assert_eq!(body.as_ref(), b"report");
+            assert_eq!(semaphore.available_permits(), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn capacity_wait_returns_resource_exhausted_at_deadline() {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = Arc::clone(&semaphore)
+        let _held = Arc::clone(&semaphore)
             .acquire_owned()
             .await
-            .unwrap_or_else(|_| panic!("permit must acquire"));
+            .unwrap_or_else(|_| panic!("first permit must acquire"));
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
 
-        let response = response_for_artifact(
-            artifact,
-            permit,
-            "insight-report_people_day_2026-01-01_2026-01-01.csv".to_owned(),
-            ReportExportFormat::Csv,
-        )
-        .await
-        .unwrap_or_else(|error| panic!("response must build: {error}"));
+        let result = acquire_capacity(semaphore, deadline, "report generations", 2).await;
 
-        assert!(!path.exists());
-        assert_eq!(response.headers()[CONTENT_LENGTH], "6");
-        assert_eq!(
-            response.headers()[CONTENT_DISPOSITION],
-            "attachment; filename=\"insight-report_people_day_2026-01-01_2026-01-01.csv\""
-        );
-        assert_eq!(semaphore.available_permits(), 0);
-        drop(response);
-        assert_eq!(semaphore.available_permits(), 1);
+        assert!(result.is_err());
     }
 }

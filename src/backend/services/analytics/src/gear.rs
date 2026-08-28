@@ -276,6 +276,9 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
             anyhow::bail!("gears.analytics.config.reports.{name} must be at least 1");
         }
     }
+    if cfg.reports.max_total_cells == 0 {
+        anyhow::bail!("gears.analytics.config.reports.max_total_cells must be at least 1");
+    }
     if cfg.reports.request_timeout_secs == 0 || cfg.reports.capacity_wait_secs == 0 {
         anyhow::bail!("gears.analytics.config.reports request timeouts must be at least 1");
     }

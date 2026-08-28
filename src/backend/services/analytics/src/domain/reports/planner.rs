@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::infra::identity::IdentityProfile;
 
 use super::columns::{PlannedColumn, plan_columns};
-use super::period::{PlannedPeriod, ReportBucket, enumerate_periods};
+use super::period::{PlannedPeriod, ReportBucket, count_periods, enumerate_periods};
 use super::validation::{ReportSubjectSelection, ValidatedReportRecipe};
 
 pub(crate) const METRIC_QUERY_VALUE_LIMIT: usize = 5000;
@@ -13,6 +13,7 @@ const XLSX_MAX_COLUMNS: u64 = 16_384;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReportPlannerLimits {
     pub(crate) max_batch_cells: usize,
+    pub(crate) max_total_cells: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +66,8 @@ pub(crate) enum ReportPlanningError {
     BatchLimitTooSmall,
     #[error("report exceeds XLSX worksheet dimensions")]
     XlsxDimensionsExceeded,
+    #[error("report exceeds the configured cell limit")]
+    CellLimitExceeded,
 }
 
 impl ReportSize {
@@ -90,13 +93,18 @@ pub(crate) fn plan_report(
     validate_profiles(&recipe.subject, profiles)?;
 
     let bucket = ReportBucket::from(recipe.granularity);
-    let periods = enumerate_periods(recipe.from, recipe.to, bucket);
     let columns = plan_columns(profiles, &recipe.metrics);
     let subject_count = match &recipe.subject {
         ReportSubjectSelection::People { ids } => ids.len(),
         ReportSubjectSelection::Tenant { .. } => 1,
     };
-    let size = calculate_size(subject_count, periods.len(), columns.len())?;
+    let period_count =
+        count_periods(recipe.from, recipe.to, bucket).ok_or(ReportPlanningError::SizeOverflow)?;
+    let size = calculate_size(subject_count, period_count, columns.len())?;
+    if size.total_cells > limits.max_total_cells {
+        return Err(ReportPlanningError::CellLimitExceeded);
+    }
+    let periods = enumerate_periods(recipe.from, recipe.to, bucket);
     let subject = match &recipe.subject {
         ReportSubjectSelection::People { ids } => PlannedReportSubject::People {
             ids: ids.clone(),

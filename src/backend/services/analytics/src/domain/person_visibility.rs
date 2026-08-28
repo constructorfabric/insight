@@ -38,7 +38,7 @@ pub(crate) async fn authorize_and_hydrate_person_profiles(
     }
 
     let Some(authorization) = authorization else {
-        tracing::error!(caller = %caller, "no Authorization header to forward to identity");
+        tracing::error!("no Authorization header to forward for report profile hydration");
         return Err(unavailable());
     };
 
@@ -46,18 +46,24 @@ pub(crate) async fn authorize_and_hydrate_person_profiles(
         .profiles_batch(person_ids, Some(authorization))
         .await
         .map_err(|error| {
-            tracing::error!(error = %error, caller = %caller, "profile batch failed");
+            tracing::error!(error = %error, "report profile batch failed");
             unavailable()
         })?;
 
     if !profile_batch_contract_holds(person_ids, &profiles) {
-        tracing::error!(caller = %caller, "identity profile batch violated its ordered-subset contract");
+        tracing::error!("identity profile batch violated its ordered-subset contract");
         return Err(unavailable());
     }
 
     let unmatched = person_ids.len().saturating_sub(profiles.len());
     if unmatched > 0 {
-        return Err(denied(caller, unmatched));
+        tracing::warn!(
+            unmatched,
+            "report access denied: requested entities outside the caller's visible set"
+        );
+        return Err(MetricError::permission_denied()
+            .with_reason("entity_not_visible")
+            .create());
     }
 
     Ok(profiles)

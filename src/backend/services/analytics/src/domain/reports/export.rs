@@ -2,6 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -12,6 +13,7 @@ use super::dto::ReportExportFormat;
 use super::executor::{ReportRowSink, ReportSinkError};
 use super::planner::{ReportPlan, XlsxDimensions};
 use super::row::ReportRow;
+use super::telemetry::ReportTelemetry;
 use super::xlsx::{ReportXlsxError, ReportXlsxSerializer};
 
 const ROWS_PER_MESSAGE: usize = 512;
@@ -21,6 +23,7 @@ const FILE_CREATE_ATTEMPTS: usize = 4;
 pub(crate) struct ReportArtifact {
     path: Option<PathBuf>,
     content_length: u64,
+    telemetry: Option<ReportTelemetry>,
 }
 
 impl ReportArtifact {
@@ -29,6 +32,7 @@ impl ReportArtifact {
         Self {
             path: Some(path),
             content_length,
+            telemetry: None,
         }
     }
 
@@ -48,20 +52,31 @@ impl ReportArtifact {
 
 impl Drop for ReportArtifact {
     fn drop(&mut self) {
-        if let Some(path) = &self.path {
-            remove_artifact(path.clone());
+        if let Some(path) = self.path.take() {
+            remove_artifact(path, self.telemetry.take());
         }
     }
 }
 
-fn remove_artifact(path: PathBuf) {
+fn remove_artifact(path: PathBuf, telemetry: Option<ReportTelemetry>) {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn_blocking(move || {
-            let _ = std::fs::remove_file(path);
+            record_cleanup(std::fs::remove_file(path).is_ok(), telemetry.as_ref());
         });
     } else {
-        let _ = std::fs::remove_file(path);
+        record_cleanup(std::fs::remove_file(path).is_ok(), telemetry.as_ref());
     }
+}
+
+fn record_cleanup(removed: bool, telemetry: Option<&ReportTelemetry>) {
+    let Some(telemetry) = telemetry else {
+        return;
+    };
+    telemetry.record_cleanup(if removed {
+        super::telemetry::ReportCleanupOutcome::Removed
+    } else {
+        super::telemetry::ReportCleanupOutcome::Failed
+    });
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +108,8 @@ pub(crate) fn start_report_writer(
     temp_dir: PathBuf,
     max_generated_bytes: usize,
     channel_batches: usize,
+    telemetry: ReportTelemetry,
+    generation_permit: OwnedSemaphorePermit,
 ) -> Result<
     (
         ReportExportSink,
@@ -114,11 +131,23 @@ pub(crate) fn start_report_writer(
         dimensions,
         temp_dir,
         max_generated_bytes,
+        telemetry,
     };
     let (sender, receiver) = mpsc::channel(channel_batches);
-    let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
+    let task = spawn_report_writer(specification, receiver, generation_permit);
 
     Ok((ReportExportSink { sender }, task))
+}
+
+fn spawn_report_writer(
+    specification: WriterSpecification,
+    receiver: mpsc::Receiver<WriterMessage>,
+    generation_permit: OwnedSemaphorePermit,
+) -> JoinHandle<Result<ReportArtifact, ReportExportError>> {
+    tokio::task::spawn_blocking(move || {
+        let _generation_permit = generation_permit;
+        write_report(&specification, receiver)
+    })
 }
 
 #[async_trait]
@@ -157,6 +186,7 @@ struct WriterSpecification {
     dimensions: Option<XlsxDimensions>,
     temp_dir: PathBuf,
     max_generated_bytes: usize,
+    telemetry: ReportTelemetry,
 }
 
 fn write_report(
@@ -167,13 +197,23 @@ fn write_report(
         .map_err(ReportExportError::TemporaryDirectory)?;
 
     let (file, path) = create_file(&specification.temp_dir, specification.format)?;
-    let artifact = TemporaryArtifact { path: Some(path) };
+    let artifact = TemporaryArtifact {
+        path: Some(path),
+        telemetry: specification.telemetry.clone(),
+    };
     let mut writer = FileWriter::new(file, specification)?;
     let mut completed = false;
 
     while let Some(message) = receiver.blocking_recv() {
         match message {
-            WriterMessage::Rows(rows) => writer.write_rows(&rows)?,
+            WriterMessage::Rows(rows) => {
+                let started_at = std::time::Instant::now();
+                let result = writer.write_rows(&rows);
+                specification
+                    .telemetry
+                    .record_serialization_duration(started_at.elapsed());
+                result?;
+            }
             WriterMessage::Finish => {
                 completed = true;
                 break;
@@ -184,7 +224,12 @@ fn write_report(
         return Err(ReportExportError::WriterStopped);
     }
 
-    writer.finish()?;
+    let started_at = std::time::Instant::now();
+    let result = writer.finish();
+    specification
+        .telemetry
+        .record_serialization_duration(started_at.elapsed());
+    result?;
     let path = artifact
         .path
         .as_ref()
@@ -197,6 +242,7 @@ fn write_report(
     Ok(ReportArtifact {
         path: Some(path),
         content_length,
+        telemetry: Some(specification.telemetry.clone()),
     })
 }
 
@@ -226,6 +272,7 @@ fn create_file(
 #[derive(Debug)]
 struct TemporaryArtifact {
     path: Option<PathBuf>,
+    telemetry: ReportTelemetry,
 }
 
 impl TemporaryArtifact {
@@ -237,7 +284,7 @@ impl TemporaryArtifact {
 impl Drop for TemporaryArtifact {
     fn drop(&mut self) {
         if let Some(path) = &self.path {
-            let _ = std::fs::remove_file(path);
+            record_cleanup(std::fs::remove_file(path).is_ok(), Some(&self.telemetry));
         }
     }
 }
@@ -304,118 +351,5 @@ impl FileWriter {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::reports::columns::{
-        PlannedColumnSource, ReportColumnDataType, ReportColumnMetadata,
-    };
-
-    #[tokio::test]
-    async fn writer_removes_incomplete_artifact() {
-        let temp_dir = temporary_directory();
-        let specification = specification(ReportExportFormat::Csv, temp_dir.clone());
-        let (sender, receiver) = mpsc::channel(1);
-        let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
-
-        drop(sender);
-        let result = task
-            .await
-            .unwrap_or_else(|error| panic!("writer task must join: {error}"));
-
-        assert!(matches!(result, Err(ReportExportError::WriterStopped)));
-        assert!(
-            std::fs::read_dir(&temp_dir)
-                .unwrap_or_else(|error| panic!("temporary directory must remain readable: {error}"))
-                .next()
-                .is_none()
-        );
-        std::fs::remove_dir(&temp_dir)
-            .unwrap_or_else(|error| panic!("temporary directory must remove: {error}"));
-    }
-
-    #[tokio::test]
-    async fn writer_completes_csv_before_exposing_artifact() {
-        let temp_dir = temporary_directory();
-        let specification = specification(ReportExportFormat::Csv, temp_dir.clone());
-        let (sender, receiver) = mpsc::channel(1);
-        let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
-
-        sender
-            .send(WriterMessage::Rows(vec![vec![Some(
-                super::super::row::ReportCell::Text("example".to_owned()),
-            )]]))
-            .await
-            .unwrap_or_else(|_| panic!("writer must accept rows"));
-        sender
-            .send(WriterMessage::Finish)
-            .await
-            .unwrap_or_else(|_| panic!("writer must accept completion"));
-        drop(sender);
-
-        let artifact = task
-            .await
-            .unwrap_or_else(|error| panic!("writer task must join: {error}"))
-            .unwrap_or_else(|error| panic!("writer must finish: {error}"));
-        let output = std::fs::read(
-            artifact
-                .path()
-                .unwrap_or_else(|error| panic!("artifact path must exist: {error}")),
-        )
-        .unwrap_or_else(|error| panic!("artifact must be readable: {error}"));
-
-        assert_eq!(
-            artifact.content_length(),
-            u64::try_from(output.len()).unwrap_or(u64::MAX)
-        );
-        assert!(output.ends_with(b"example\r\n"));
-        std::fs::remove_file(
-            artifact
-                .path()
-                .unwrap_or_else(|error| panic!("artifact path must exist: {error}")),
-        )
-        .unwrap_or_else(|error| panic!("artifact must remove: {error}"));
-        std::fs::remove_dir(&temp_dir)
-            .unwrap_or_else(|error| panic!("temporary directory must remove: {error}"));
-    }
-
-    #[test]
-    fn artifact_drop_removes_unclaimed_file() {
-        let path = std::env::temp_dir().join(format!("report-orphan-{}", Uuid::new_v4()));
-        std::fs::write(&path, b"report")
-            .unwrap_or_else(|error| panic!("artifact must write: {error}"));
-
-        let artifact = ReportArtifact::from_completed(path.clone(), 6);
-        drop(artifact);
-
-        assert!(!path.exists());
-    }
-
-    fn specification(format: ReportExportFormat, temp_dir: PathBuf) -> WriterSpecification {
-        WriterSpecification {
-            format,
-            columns: vec![PlannedColumn {
-                metadata: ReportColumnMetadata {
-                    key: "name".to_owned(),
-                    label: "Name".to_owned(),
-                    data_type: ReportColumnDataType::Text,
-                    format: None,
-                    unit: None,
-                },
-                source: PlannedColumnSource::PersonDisplay,
-            }],
-            dimensions: Some(XlsxDimensions {
-                rows: 2,
-                columns: 1,
-            }),
-            temp_dir,
-            max_generated_bytes: 1024,
-        }
-    }
-
-    fn temporary_directory() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("reports-export-test-{}", Uuid::new_v4()));
-        std::fs::create_dir(&path)
-            .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
-        path
-    }
-}
+#[path = "export_tests.rs"]
+mod tests;

@@ -152,17 +152,17 @@ fn assemble_row(
 ) -> ReportRow {
     columns
         .iter()
-        .map(|column| match column.source {
+        .map(|column| match &column.source {
             PlannedColumnSource::PersonDisplay
             | PlannedColumnSource::PersonAttribute(_)
             | PlannedColumnSource::SupervisorDisplay
             | PlannedColumnSource::SupervisorAttribute(_) => profile
-                .and_then(|profile| profile_text(column.source, profile))
+                .and_then(|profile| profile_text(&column.source, profile))
                 .map(text),
             PlannedColumnSource::PeriodLabel => Some(text(&period.label)),
             PlannedColumnSource::PeriodFrom => Some(text(&period.from.to_string())),
             PlannedColumnSource::PeriodTo => Some(text(&period.to.to_string())),
-            PlannedColumnSource::Metric(index) => metrics[index]
+            PlannedColumnSource::Metric(index) => metrics[*index]
                 .get(&(entity_id, period.bucket_start))
                 .copied()
                 .flatten()

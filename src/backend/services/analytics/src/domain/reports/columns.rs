@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -23,12 +25,12 @@ pub struct ReportColumnMetadata {
     pub unit: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlannedColumnSource {
     PersonDisplay,
-    PersonAttribute(&'static str),
+    PersonAttribute(String),
     SupervisorDisplay,
-    SupervisorAttribute(&'static str),
+    SupervisorAttribute(String),
     PeriodLabel,
     PeriodFrom,
     PeriodTo,
@@ -53,45 +55,33 @@ pub(crate) fn plan_columns(
             PlannedColumnSource::PersonDisplay,
         ));
 
-        let optional_columns = [
-            (
-                "email",
-                "Email",
-                PlannedColumnSource::PersonAttribute("email"),
-            ),
-            (
-                "division",
-                "Division",
-                PlannedColumnSource::PersonAttribute("division"),
-            ),
-            (
-                "department",
-                "Department",
-                PlannedColumnSource::PersonAttribute("department"),
-            ),
-            (
-                "job_title",
-                "Job title",
-                PlannedColumnSource::PersonAttribute("job_title"),
-            ),
-            ("manager", "Manager", PlannedColumnSource::SupervisorDisplay),
-            (
-                "manager_email",
-                "Manager email",
-                PlannedColumnSource::SupervisorAttribute("email"),
-            ),
-            (
-                "status",
-                "Status",
-                PlannedColumnSource::PersonAttribute("status"),
-            ),
-        ];
-        for (key, label, source) in optional_columns {
-            if profiles.iter().any(|profile| {
-                profile_text(source, profile).is_some_and(|value| !value.trim().is_empty())
-            }) {
-                columns.push(text_column(key, label, source));
-            }
+        for attribute in populated_person_attributes(profiles) {
+            let label = attribute_label(&attribute);
+            columns.push(text_column(
+                &attribute,
+                &label,
+                PlannedColumnSource::PersonAttribute(attribute.clone()),
+            ));
+        }
+
+        if profiles.iter().any(|profile| profile.supervisor.is_some()) {
+            columns.push(text_column(
+                "manager",
+                "Manager",
+                PlannedColumnSource::SupervisorDisplay,
+            ));
+        }
+        for attribute in populated_supervisor_attributes(profiles) {
+            let key = format!("manager_{attribute}");
+            let label = format!(
+                "Manager {}",
+                lowercase_initial(&attribute_label(&attribute))
+            );
+            columns.push(text_column(
+                &key,
+                &label,
+                PlannedColumnSource::SupervisorAttribute(attribute),
+            ));
         }
     }
 
@@ -119,7 +109,10 @@ pub(crate) fn plan_columns(
     columns
 }
 
-pub(crate) fn profile_text(source: PlannedColumnSource, profile: &IdentityProfile) -> Option<&str> {
+pub(crate) fn profile_text<'a>(
+    source: &PlannedColumnSource,
+    profile: &'a IdentityProfile,
+) -> Option<&'a str> {
     match source {
         PlannedColumnSource::PersonDisplay => {
             first_attribute(&profile.attributes, &["display_name", "username", "email"])
@@ -141,6 +134,54 @@ pub(crate) fn profile_text(source: PlannedColumnSource, profile: &IdentityProfil
         | PlannedColumnSource::PeriodTo
         | PlannedColumnSource::Metric(_) => None,
     }
+}
+
+fn populated_person_attributes(profiles: &[IdentityProfile]) -> BTreeSet<String> {
+    populated_attributes(profiles.iter().map(|profile| &profile.attributes))
+        .into_iter()
+        .filter(|attribute| attribute != "display_name")
+        .collect()
+}
+
+fn populated_supervisor_attributes(profiles: &[IdentityProfile]) -> BTreeSet<String> {
+    populated_attributes(
+        profiles
+            .iter()
+            .filter_map(|profile| profile.supervisor.as_ref())
+            .map(|supervisor| &supervisor.attributes),
+    )
+    .into_iter()
+    .filter(|attribute| attribute != "display_name")
+    .collect()
+}
+
+fn populated_attributes<'a>(
+    attributes: impl Iterator<Item = &'a std::collections::BTreeMap<String, String>>,
+) -> BTreeSet<String> {
+    attributes
+        .flat_map(|attributes| attributes.iter())
+        .filter(|(_, value)| !value.trim().is_empty())
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
+fn attribute_label(attribute: &str) -> String {
+    let words = attribute.replace(['_', '-'], " ");
+    let mut characters = words.chars();
+    let Some(first) = characters.next() else {
+        return words;
+    };
+
+    first.to_uppercase().chain(characters).collect()
+}
+
+fn lowercase_initial(label: &str) -> String {
+    let mut characters = label.chars();
+    let Some(first) = characters.next() else {
+        return String::new();
+    };
+
+    first.to_lowercase().chain(characters).collect()
 }
 
 fn text_column(key: &str, label: &str, source: PlannedColumnSource) -> PlannedColumn {
@@ -250,7 +291,11 @@ mod tests {
         let profiles = vec![
             profile(
                 1,
-                &[("username", "example-user"), ("department", "Engineering")],
+                &[
+                    ("username", "example-user"),
+                    ("department", "Engineering"),
+                    ("cost_center", "Example 01"),
+                ],
                 None,
             ),
             profile(
@@ -262,6 +307,7 @@ mod tests {
                 Some(&[
                     ("display_name", "Example Manager"),
                     ("email", "manager@example.com"),
+                    ("job_title", "Director"),
                 ]),
             ),
         ];
@@ -280,10 +326,13 @@ mod tests {
             keys,
             [
                 "person",
-                "email",
+                "cost_center",
                 "department",
+                "email",
+                "username",
                 "manager",
                 "manager_email",
+                "manager_job_title",
                 "period",
                 "from",
                 "to",
@@ -292,15 +341,17 @@ mod tests {
             ]
         );
         assert_eq!(
-            profile_text(columns[0].source, &profiles[0]),
+            profile_text(&columns[0].source, &profiles[0]),
             Some("example-user")
         );
         assert_eq!(
-            profile_text(columns[3].source, &profiles[1]),
+            profile_text(&columns[5].source, &profiles[1]),
             Some("Example Manager")
         );
-        assert_eq!(columns[8].metadata.format, Some(MetricFormat::Integer));
-        assert_eq!(columns[9].metadata.format, Some(MetricFormat::Percent));
+        assert_eq!(columns[11].metadata.format, Some(MetricFormat::Integer));
+        assert_eq!(columns[12].metadata.format, Some(MetricFormat::Percent));
+        assert_eq!(columns[1].metadata.label, "Cost center");
+        assert_eq!(columns[7].metadata.label, "Manager job title");
     }
 
     #[test]
@@ -314,7 +365,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(keys, ["person", "period", "from", "to"]);
-        assert_eq!(profile_text(columns[0].source, &profiles[0]), None);
+        assert_eq!(profile_text(&columns[0].source, &profiles[0]), None);
     }
 
     #[test]

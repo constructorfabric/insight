@@ -484,6 +484,7 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         .error_401(openapi)
         .error_403(openapi)
         .error_415(openapi)
+        .error_429(openapi)
         .error_500(openapi)
         .handler(reports::preview_report)
         .register(router, openapi);

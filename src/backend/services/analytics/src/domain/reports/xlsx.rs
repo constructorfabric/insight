@@ -9,9 +9,12 @@ use rust_xlsxwriter::{ExcelDateTime, Format, Workbook, XlsxError};
 use super::columns::{PlannedColumn, ReportColumnDataType};
 use super::planner::XlsxDimensions;
 use super::row::{ReportCell, ReportRow};
+use crate::domain::metric_definitions::MetricFormat;
 
 pub(crate) const MAX_REPORT_XLSX_CELL_CHARACTERS: usize = 32_767;
 const BYTE_LIMIT_MARKER: &str = "report XLSX byte limit exceeded";
+const MIN_COLUMN_WIDTH: usize = 10;
+const MAX_COLUMN_WIDTH: usize = 40;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ReportXlsxError {
@@ -40,6 +43,7 @@ pub(crate) struct ReportXlsxSerializer {
     column_types: Vec<ReportColumnDataType>,
     dimensions: XlsxDimensions,
     next_row: u32,
+    column_widths: Vec<usize>,
 }
 
 impl ReportXlsxSerializer {
@@ -56,13 +60,33 @@ impl ReportXlsxSerializer {
             .set_tempdir(temp_dir)
             .map_err(ReportXlsxError::Serialization)?;
         let worksheet = workbook.add_worksheet_with_constant_memory();
+        let header_format = Format::new().set_bold().set_background_color("D9EAF7");
         for (column_index, column) in columns.iter().enumerate() {
             let column_index = u16::try_from(column_index)
                 .map_err(|_| ReportXlsxError::ColumnDimensionMismatch)?;
             worksheet
-                .write_string(0, column_index, &column.metadata.label)
+                .write_string_with_format(0, column_index, &column.metadata.label, &header_format)
                 .map_err(ReportXlsxError::Serialization)?;
+            if let Some(format) = column.metadata.format.map(metric_format) {
+                worksheet
+                    .set_column_format(column_index, &format)
+                    .map_err(ReportXlsxError::Serialization)?;
+            }
         }
+        let last_column = dimensions
+            .columns
+            .checked_sub(1)
+            .ok_or(ReportXlsxError::ColumnDimensionMismatch)?;
+        let last_row = dimensions
+            .rows
+            .checked_sub(1)
+            .ok_or(ReportXlsxError::ColumnDimensionMismatch)?;
+        worksheet
+            .set_freeze_panes(1, 0)
+            .map_err(ReportXlsxError::Serialization)?;
+        worksheet
+            .autofilter(0, 0, last_row, last_column)
+            .map_err(ReportXlsxError::Serialization)?;
 
         Ok(Self {
             workbook,
@@ -72,6 +96,10 @@ impl ReportXlsxSerializer {
                 .collect(),
             dimensions,
             next_row: 1,
+            column_widths: columns
+                .iter()
+                .map(|column| column.metadata.label.chars().count())
+                .collect(),
         })
     }
 
@@ -86,6 +114,8 @@ impl ReportXlsxSerializer {
         let blank_format = Format::new();
         for row in rows {
             for (column_index, cell) in row.iter().enumerate() {
+                self.column_widths[column_index] = self.column_widths[column_index]
+                    .max(cell_width(cell.as_ref(), self.column_types[column_index]));
                 let column_index = u16::try_from(column_index)
                     .map_err(|_| ReportXlsxError::ColumnDimensionMismatch)?;
                 write_cell(
@@ -117,6 +147,22 @@ impl ReportXlsxSerializer {
     {
         if self.next_row != self.dimensions.rows {
             return Err(ReportXlsxError::IncompleteRows);
+        }
+
+        let worksheet = self
+            .workbook
+            .worksheet_from_index(0)
+            .map_err(ReportXlsxError::Serialization)?;
+        for (column_index, width) in self.column_widths.iter().enumerate() {
+            let column_index = u16::try_from(column_index)
+                .map_err(|_| ReportXlsxError::ColumnDimensionMismatch)?;
+            let width = width
+                .saturating_add(2)
+                .clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
+            let width = u32::try_from(width).unwrap_or(40);
+            worksheet
+                .set_column_width(column_index, f64::from(width))
+                .map_err(ReportXlsxError::Serialization)?;
         }
 
         let output_limit = Arc::new(AtomicBool::new(false));
@@ -155,6 +201,27 @@ impl ReportXlsxSerializer {
             }
         }
         Ok(())
+    }
+}
+
+fn metric_format(format: MetricFormat) -> Format {
+    let code = match format {
+        MetricFormat::Integer => "#,##0",
+        MetricFormat::Decimal => "#,##0.00",
+        MetricFormat::Currency => "$#,##0",
+        MetricFormat::Percent => "#,##0\"%\"",
+    };
+
+    Format::new().set_num_format(code)
+}
+
+fn cell_width(cell: Option<&ReportCell>, column_type: ReportColumnDataType) -> usize {
+    match cell {
+        Some(ReportCell::Text(value)) => value.chars().count(),
+        Some(ReportCell::Number(value)) if column_type == ReportColumnDataType::Number => {
+            value.to_string().chars().count()
+        }
+        None | Some(ReportCell::Number(_)) => 0,
     }
 }
 
@@ -297,168 +364,5 @@ impl<W> CappedWriter<W> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::{Cursor, Read};
-
-    use super::*;
-    use crate::domain::reports::columns::{PlannedColumnSource, ReportColumnMetadata};
-
-    #[test]
-    fn writes_typed_cells_nulls_and_dates_in_row_order() {
-        let columns = vec![
-            column("=Name", ReportColumnDataType::Text),
-            column("From", ReportColumnDataType::Date),
-            column("Metric", ReportColumnDataType::Number),
-            column("Blank metric", ReportColumnDataType::Number),
-        ];
-        let bytes = write_workbook(
-            &columns,
-            XlsxDimensions {
-                rows: 2,
-                columns: 4,
-            },
-            &[vec![
-                Some(ReportCell::Text("=formula".to_owned())),
-                Some(ReportCell::Text("2026-01-02".to_owned())),
-                Some(ReportCell::Number(12.5)),
-                None,
-            ]],
-            usize::MAX,
-        )
-        .unwrap_or_else(|error| panic!("workbook must serialize: {error}"));
-
-        let xml = worksheet_xml(&bytes);
-        assert!(xml.contains("r=\"A1\" t=\"inlineStr\""));
-        assert!(xml.contains("r=\"A2\" t=\"inlineStr\""));
-        assert!(xml.contains("<t>=formula</t>"));
-        assert!(xml.contains("r=\"B2\" s=\"1\"><v>46024</v>"));
-        assert!(xml.contains("r=\"C2\"><v>12.5</v>"));
-        let blank_cell = xml.split("<c ").find(|cell| cell.starts_with("r=\"D2\""));
-        assert!(blank_cell.is_none_or(|cell| !cell.contains("<v>")));
-    }
-
-    #[test]
-    fn supports_more_than_fifty_metrics() {
-        let columns = (0..64)
-            .map(|index| column(&format!("Metric {index}"), ReportColumnDataType::Number))
-            .collect::<Vec<_>>();
-        let row = (0..64)
-            .map(|index| Some(ReportCell::Number(f64::from(index))))
-            .collect::<ReportRow>();
-        let bytes = write_workbook(
-            &columns,
-            XlsxDimensions {
-                rows: 2,
-                columns: 64,
-            },
-            &[row],
-            usize::MAX,
-        )
-        .unwrap_or_else(|error| panic!("workbook must serialize: {error}"));
-
-        let xml = worksheet_xml(&bytes);
-        assert!(xml.contains("r=\"BL1\" t=\"inlineStr\""));
-        assert!(xml.contains("r=\"BL2\"><v>63</v>"));
-    }
-
-    #[test]
-    fn caps_generated_output_bytes() {
-        let output_limit = Arc::new(AtomicBool::new(false));
-        let mut writer = CappedWriter {
-            inner: Vec::new(),
-            limit: 3,
-            written: 0,
-            output_limit: Arc::clone(&output_limit),
-        };
-
-        writer
-            .write_all(b"123")
-            .unwrap_or_else(|error| panic!("bytes within cap must write: {error}"));
-        assert!(writer.write_all(b"4").is_err());
-        assert!(output_limit.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn rejects_oversized_cells_and_incomplete_dimensions() {
-        let columns = vec![column("Metric", ReportColumnDataType::Text)];
-        let mut serializer = ReportXlsxSerializer::new(
-            &columns,
-            XlsxDimensions {
-                rows: 3,
-                columns: 1,
-            },
-            std::env::temp_dir().as_path(),
-        )
-        .unwrap_or_else(|error| panic!("writer must initialize: {error}"));
-        let oversized_row = vec![vec![Some(ReportCell::Text(
-            "x".repeat(MAX_REPORT_XLSX_CELL_CHARACTERS + 1),
-        ))]];
-        assert!(matches!(
-            serializer.write_rows(&oversized_row),
-            Err(ReportXlsxError::CellTooLarge)
-        ));
-        assert!(matches!(
-            serializer.finish_into(Vec::new(), usize::MAX),
-            Err(ReportXlsxError::IncompleteRows)
-        ));
-    }
-
-    #[test]
-    fn accepts_excel_maximum_ascii_cell_length() {
-        let columns = vec![column("Text", ReportColumnDataType::Text)];
-        let bytes = write_workbook(
-            &columns,
-            XlsxDimensions {
-                rows: 2,
-                columns: 1,
-            },
-            &[vec![Some(ReportCell::Text(
-                "x".repeat(MAX_REPORT_XLSX_CELL_CHARACTERS),
-            ))]],
-            usize::MAX,
-        )
-        .unwrap_or_else(|error| panic!("maximum Excel string must serialize: {error}"));
-
-        assert!(bytes.starts_with(b"PK"));
-    }
-
-    fn write_workbook(
-        columns: &[PlannedColumn],
-        dimensions: XlsxDimensions,
-        rows: &[ReportRow],
-        max_output_bytes: usize,
-    ) -> Result<Vec<u8>, ReportXlsxError> {
-        let mut serializer =
-            ReportXlsxSerializer::new(columns, dimensions, std::env::temp_dir().as_path())?;
-        serializer.write_rows(rows)?;
-        let mut bytes = Vec::new();
-        serializer.finish_into(&mut bytes, max_output_bytes)?;
-        Ok(bytes)
-    }
-
-    fn worksheet_xml(bytes: &[u8]) -> String {
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-            .unwrap_or_else(|error| panic!("workbook must reopen as ZIP: {error}"));
-        let mut sheet = archive
-            .by_name("xl/worksheets/sheet1.xml")
-            .unwrap_or_else(|error| panic!("workbook must contain first sheet: {error}"));
-        let mut xml = String::new();
-        sheet
-            .read_to_string(&mut xml)
-            .unwrap_or_else(|error| panic!("worksheet XML must be UTF-8: {error}"));
-        xml
-    }
-
-    fn column(label: &str, data_type: ReportColumnDataType) -> PlannedColumn {
-        PlannedColumn {
-            metadata: ReportColumnMetadata {
-                key: label.to_owned(),
-                label: label.to_owned(),
-                data_type,
-                format: None,
-                unit: None,
-            },
-            source: PlannedColumnSource::Metric(0),
-        }
-    }
-}
+#[path = "xlsx_tests.rs"]
+mod tests;
