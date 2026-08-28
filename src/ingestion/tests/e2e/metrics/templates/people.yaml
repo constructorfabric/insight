@@ -11,7 +11,9 @@
 #
 # `raw_data` is the one field NOT stated here: the fixture-loader derives it from
 # each record's own fields, so a record that overrides a column cannot end up
-# with a payload that disagrees with it. Stating it would override that.
+# with a payload that disagrees with it. A record MAY state it — a map is laid
+# over the derived keys (how to add a field no column holds), and `null` says the
+# row carries no payload at all.
 templates:
   bamboohr_employee:
     _airbyte_raw_id: "00000000-0000-0000-0000-000000000000"

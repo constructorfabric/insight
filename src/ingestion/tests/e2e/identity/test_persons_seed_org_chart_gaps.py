@@ -122,7 +122,11 @@ def _bamboohr_employee(
         "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
         "tenant_id": f"pipeline-tenant-{run_tag}",
         "source_id": f"pipeline-source-{run_tag}",
-        "raw_data": json.dumps(fields),
+        # Same shape the fixture-loader derives for YAML fixtures: keys sorted,
+        # values the source did not state left out.
+        "raw_data": json.dumps(
+            {k: v for k, v in sorted(fields.items()) if v is not None}, separators=(",", ":")
+        ),
         **fields,
     }
 
