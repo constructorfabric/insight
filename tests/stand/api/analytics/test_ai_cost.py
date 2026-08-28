@@ -294,10 +294,13 @@ def test_the_seat_tier_breakdown_adds_up_to_the_period_value(
 def test_a_seat_month_row_names_its_billing_month_and_its_ceiling(
     session_for: Callable[[str], PersonaSession], stand_manifest: Manifest
 ) -> None:
-    """The row's own date is the day it was read, so the month has to be a column.
+    """The evidence row's own shape: the month it bills for, and the ceiling beside it.
 
-    Without it a month read late is indistinguishable from the next month's, and
-    the amount has nothing to be judged against.
+    A seat-month is dated at the first day of the month it bills for, so the
+    row's date and its billing month are one fact stated twice. A row where they
+    differ has taken its date from the day it was read instead, which moves with
+    the sync schedule. The ceiling sits beside the amount because the amount has
+    nothing to be judged against without it.
     """
     session = session_for("dev_lead")
     start, end = query_window(stand_manifest)
@@ -311,8 +314,8 @@ def test_a_seat_month_row_names_its_billing_month_and_its_ceiling(
 
         billing_month = _dt.date.fromisoformat(str(row["billing_month"]))
         assert billing_month.day == 1, f"the billing month is not a month start: {billing_month}"
-        # A month is read while it runs or after it closes, never before it
-        # opens — the one ordering that holds however late the read was.
-        assert billing_month <= _dt.date.fromisoformat(str(row["date"])), (
-            f"a row dated {row['date']} bills for {billing_month}, which had not started"
+        # Equal, not merely ordered: the row is dated AT the month it bills for,
+        # so any difference means the date came from the day of the read.
+        assert billing_month == _dt.date.fromisoformat(str(row["date"])), (
+            f"a row dated {row['date']} says it bills for {billing_month}"
         )
