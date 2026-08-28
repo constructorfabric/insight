@@ -48,12 +48,12 @@ describe("WhatsNewScreen", () => {
   it("renders the release header and stamp", () => {
     renderScreen();
     expect(
-      screen.getByRole("heading", { name: "What's new · 31 July 2026" })
+      screen.getByRole("heading", { name: "What's new · 31 August 2026" })
     ).toBeInTheDocument();
-    expect(screen.getByText("0.4.69")).toBeInTheDocument();
-    expect(screen.getByText("5 improvements")).toBeInTheDocument();
+    expect(screen.getByText("26.08")).toBeInTheDocument();
+    expect(screen.getByText("13 improvements")).toBeInTheDocument();
     expect(
-      screen.getByText("the new interface, two new pages")
+      screen.getByText("more data coming in, and the new UI over it")
     ).toBeInTheDocument();
   });
 
@@ -62,15 +62,25 @@ describe("WhatsNewScreen", () => {
     // "Platform" names a section in both the release and Coming next, so scope
     // the assertions to the release card.
     const release = within(sectionFor("Improvements you'll notice"));
-    for (const title of ["New UI", "Dashboards", "Platform"]) {
+    for (const title of [
+      "New UI",
+      "Sign-in",
+      "Git",
+      "Connectors",
+      "Identity",
+      "Data health",
+      "Reports",
+    ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
     for (const title of [
-      "We've moved to the new interface for good",
-      "Activity over time, by repository",
-      "Metric catalog",
-      "“No data” instead of a misleading zero",
-      "Steadier data across your connectors",
+      "The pages the portal has now",
+      "Git data comes through our own proxy",
+      "Git output split by what reached the default branch",
+      "Jira: the whole data set, not just open issues",
+      "Data health — when each source last synced",
+      "See the records behind a number",
+      "Claude Team: seats and spend collected",
     ]) {
       expect(release.getByRole("heading", { name: title })).toBeInTheDocument();
     }
@@ -79,36 +89,17 @@ describe("WhatsNewScreen", () => {
     expect(screen.queryByText("Git output")).not.toBeInTheDocument();
   });
 
-  it("renders the connector entry under the Platform section", () => {
+  it("renders the data-health entry", () => {
     renderScreen();
     expect(
-      screen.getByText(/plus the data preparation behind them/)
+      screen.getByText(/lists each source with the state of its last sync/)
     ).toBeInTheDocument();
   });
 
-  it("states today's limitation inside each coming-next entry", () => {
+  it("carries no forward-looking section", () => {
     renderScreen();
-    const coming = within(sectionFor("Coming next"));
-    // Coming next is grouped and connected like the release above it.
-    for (const title of ["Trust", "Platform"]) {
-      expect(coming.getByRole("heading", { name: title })).toBeInTheDocument();
-    }
-    for (const title of [
-      "See the records behind a number",
-      "Better people matching",
-      "Compare like with like",
-    ]) {
-      expect(coming.getByRole("heading", { name: title })).toBeInTheDocument();
-    }
-    // The separate "still on our list" callout is gone; the limitations it
-    // listed have to survive inside the entries that address them.
+    expect(screen.queryByText("Coming next")).not.toBeInTheDocument();
     expect(screen.queryByText("Still on our list")).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/email doesn't match still isn't attributed/)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/but not the records themselves/)
-    ).toBeInTheDocument();
   });
 
   it("keeps earlier releases on the page, collapsed", async () => {
@@ -116,6 +107,9 @@ describe("WhatsNewScreen", () => {
     renderScreen();
 
     expect(screen.getByText("Earlier releases")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /What's new — 31 July 2026/ })
+    ).toHaveTextContent("0.4.69");
     const entry = screen.getByRole("button", {
       name: /What's new — 13 July 2026/,
     });
@@ -141,10 +135,12 @@ describe("WhatsNewScreen", () => {
     const user = userEvent.setup();
     renderScreen();
 
-    await user.click(
-      screen.getByRole("button", { name: /What's new — 13 July 2026/ })
-    );
+    const entry = screen.getByRole("button", {
+      name: /What's new — 13 July 2026/,
+    });
+    await user.click(entry);
 
+    const archived = within(entry.parentElement as HTMLElement);
     for (const title of [
       "Team dashboards",
       "Git & code reviews",
@@ -152,7 +148,37 @@ describe("WhatsNewScreen", () => {
       "Collaboration",
       "AI adoption",
     ]) {
-      expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("carries the July 31 release's own sections and entries", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    const entry = screen.getByRole("button", {
+      name: /What's new — 31 July 2026/,
+    });
+    await user.click(entry);
+
+    const archived = within(entry.parentElement as HTMLElement);
+    for (const title of ["New UI", "Dashboards", "Platform"]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
+    }
+    for (const title of [
+      "We've moved to the new interface for good",
+      "Activity over time, by repository",
+      "Metric catalog",
+      "“No data” instead of a misleading zero",
+      "Steadier data across your connectors",
+    ]) {
+      expect(
+        archived.getByRole("heading", { name: title })
+      ).toBeInTheDocument();
     }
   });
 });
