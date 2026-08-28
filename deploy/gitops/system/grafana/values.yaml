@@ -24,6 +24,11 @@
 #      uid-bearing provisioning on restart and crash-loops grafana.
 # Anything worth keeping lives in git, not in grafana.db. The admin
 # password is re-applied from the Secret on each start, so it stays stable.
+# An env where people also author dashboards in the UI can keep them by
+# enabling a PVC in its overlay — paired with Recreate, or problem 1 above
+# returns (problem 2 cannot: every provisioned datasource now has a uid):
+#   deploymentStrategy: { type: Recreate }
+#   persistence: { enabled: true, size: 10Gi }
 persistence:
   enabled: false
 
