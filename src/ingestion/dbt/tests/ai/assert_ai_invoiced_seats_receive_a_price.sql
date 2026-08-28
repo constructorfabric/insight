@@ -7,7 +7,7 @@
         'domain': 'ai',
         'category': 'coverage',
         'tier': 'error',
-        'remediation': 'A row here is a month whose vendor invoice priced a seat while some seat got no fee, so that money sits on the ledger and ai.seat_cost serves nothing for those people. The finding column says which of the two states it is, and they are fixed in different places. no_tiered_seats: the invoice priced seats and the month holds none that a fee can reach, so no binding can help — the seat connector has not delivered, and its last sync is what to check; unpriced_seats is 0 there because there is no seat to count. seats_unpriced: that many seats of this tier exist and took no fee, so the binding is what is missing or wrong. Add or correct a row in config.ai_seat_tier_map, which dbt does not own, naming tenant_id, the invoice connector instance in insight_source_id, the class source, the vendor catalogue identifier in tier_ref, and the seat_tier those seats carry. Where the count is short of the tier total rather than equal to it, a SECOND seat population is the one left out: the tenant runs two connector instances, and each needs its own row naming its population in seat_source_id — an unbound price reaches neither. In neither state is the transformation at fault: gold declines to price a seat it cannot attribute rather than guessing. A month whose only priced tier is unambiguous needs no binding at all, and for such an installation an empty map is the correct state.'
+        'remediation': 'A row here is a month whose vendor invoice priced a seat while some seat got no fee, so that money sits on the ledger and ai.seat_cost serves nothing for those people. The finding column says which of the two states it is, and they are fixed in different places. no_tiered_seats: the invoice priced seats and the month holds no seat a fee can reach, so no binding can help. Check whether seat rows arrived for that month at all and whether they carry ceiling and tier data: absent rows point at the seat connector and its last sync, while rows present without a ceiling point at what the vendor reported for them, since the ceiling is what makes a seat priceable. unpriced_seats is 0 there because there is no seat to count. seats_unpriced: that many seats of this tier exist and took no fee, so the binding is what is missing or wrong. Add or correct a row in config.ai_seat_tier_map, which dbt does not own, naming tenant_id, the invoice connector instance in insight_source_id, the class source, the vendor catalogue identifier in tier_ref, and the seat_tier those seats carry. Where the count is short of the tier total rather than equal to it, a SECOND seat population is the one left out: the tenant runs two connector instances, and each needs its own row naming its population in seat_source_id — an unbound price reaches neither. In neither state is the transformation at fault: gold declines to price a seat it cannot attribute rather than guessing. A month whose only priced tier is unambiguous needs no binding at all, and for such an installation an empty map is the correct state.'
     }
 ) }}
 {#- Reports two observable states and deliberately does NOT reproduce the
@@ -52,13 +52,19 @@ priced_months AS (
 -- A seat a fee can reach at all. gold gates the seat measure on the ceiling, so
 -- a seat without one is not a seat any invoice can price. `source` joins the
 -- invoice side and `tool` joins the served side, which is why both are kept.
+--
+-- INVARIANT: 'unknown' for an absent tier, matching the DIMENSION gold writes —
+-- not the '' it uses when picking a price. The same column carries two fillers
+-- there, and this side joins the dimension. A seat with no tier can still be
+-- priced, because the single-offer branch takes that price whatever tier the seat
+-- carries, so the wrong filler here reports a seat that was in fact served.
 tiered_seats AS (
     SELECT
         insight_tenant_id                       AS tenant_id,
         source,
         tool,
         period_month,
-        coalesce(seat_tier, '')                 AS seat_tier,
+        coalesce(seat_tier, 'unknown')          AS seat_tier,
         count()                                 AS seats
     FROM {{ ref('class_ai_overage') }} FINAL
     WHERE credit_limit_cents IS NOT NULL
@@ -110,8 +116,10 @@ no_tiered_seats AS (
 ),
 
 -- Seats of this tier exist, the month priced a seat, and fewer of them were
--- served a fee than exist. Zero served is the common shape; a shortfall short of
--- zero is a second seat population left out beside one that was priced.
+-- served a fee than exist. A shortfall equal to the tier's whole population is
+-- the common shape — nothing was bound. A shortfall smaller than it means some
+-- seats were served and others were not: a second seat population left out
+-- beside one that was priced.
 seats_unpriced AS (
     SELECT
         seat.tenant_id,
