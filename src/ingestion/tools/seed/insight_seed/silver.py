@@ -43,6 +43,7 @@ from . import config
 from .generators import (
     ai,
     ai_cost,
+    ci,
     collab,
     crm,
     git,
@@ -201,6 +202,7 @@ def generate_rows(
     history = git_history.build_history(roster, days)
     totals.update(git.generate(client, roster, tenant_uuid, days, history))
     totals.update(git_repos.generate(client, roster, tenant_uuid))
+    totals.update(ci.generate(client, roster, tenant_uuid, days, history))
     totals.update(crm.generate(client, roster, tenant_uuid, days))
     totals.update(collab.generate(client, roster, tenant_uuid, days))
     totals.update(hr.generate(client, roster, tenant_uuid, days))
