@@ -1580,6 +1580,15 @@ async fn a_role(f: &Fixture, caller: Uuid, name: &str) -> anyhow::Result<Uuid> {
     Ok(id.parse()?)
 }
 
+/// Remove a role this case created. `roles` has no tenant column, so one left
+/// behind is in every tenant's catalogue and in every later run's listing —
+/// the fixture's fresh tenant does not isolate it.
+async fn forget_role(f: &Fixture, role_id: Uuid) -> anyhow::Result<()> {
+    let removed = roles_repo::try_delete_if_unused(&f.db, role_id).await?;
+    anyhow::ensure!(removed == 1, "role {role_id} outlived its case");
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_created_role_is_listed_and_a_second_of_that_name_is_refused() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
@@ -1609,7 +1618,11 @@ async fn a_created_role_is_listed_and_a_second_of_that_name_is_refused() -> Test
         StatusCode::CONFLICT,
         "the catalogue holds one of a name"
     );
-    Ok(())
+
+    let role_id = body["role_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no role_id in {body}"))?;
+    forget_role(&f, role_id.parse()?).await
 }
 
 #[tokio::test]
@@ -1629,6 +1642,10 @@ async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResul
     )
     .await?;
     assert_eq!(granted, StatusCode::CREATED, "{body}");
+    let assignment: Uuid = body["person_role_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("no person_role_id in {body}"))?
+        .parse()?;
 
     let (gone, _) = delete(app(&f, caller), &format!("/v1/roles/{unused}")).await?;
     assert_eq!(gone, StatusCode::NO_CONTENT);
@@ -1645,7 +1662,10 @@ async fn a_role_nobody_holds_can_be_deleted_and_one_in_use_cannot() -> TestResul
         roles_repo::get_by_id(&f.db, held).await?.is_some(),
         "and it must still be in the catalogue"
     );
-    Ok(())
+
+    // `unused` is gone already; `held` only becomes removable once nobody has it.
+    person_roles_repo::soft_delete(&f.db, f.tenant, assignment, Some("http-live cleanup")).await?;
+    forget_role(&f, held).await
 }
 
 #[tokio::test]

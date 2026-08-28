@@ -284,7 +284,9 @@ async fn another_tenants_account_id_resolves_nobody_here() -> TestResult {
     };
     // The same source INSTANCE serving two tenants — what `in_another_tenant`
     // models by carrying the source id over. Only the tenant tells the two
-    // accounts apart, and this lookup is what a login resolves through.
+    // accounts apart. This is the `value_type='id'` arm of POST /v1/profiles;
+    // the login bootstrap resolves through `resolve_person_id_by_source_any_tenant`,
+    // which is deliberately tenant-agnostic and documents why.
     let other = f.in_another_tenant();
     let account = format!("acct-tenant-{}", f.tenant.simple());
     let theirs = other
