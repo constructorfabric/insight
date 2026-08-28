@@ -62,6 +62,17 @@
       },
       "BreakdownValueDto": {
         "properties": {
+          "compare_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BreakdownWindowValueDto",
+                "description": "This group's reading over `compare_to`; absent when no comparison window\nwas asked for."
+              }
+            ]
+          },
           "dimensions": {
             "items": {
               "$ref": "#/components/schemas/MetricDimensionDto"
@@ -84,13 +95,6 @@
               "number",
               "null"
             ]
-          },
-          "windows": {
-            "description": "One entry per requested extra window, in request order; empty when the\nrequest asked for none.",
-            "items": {
-              "$ref": "#/components/schemas/BreakdownWindowValueDto"
-            },
-            "type": "array"
           }
         },
         "required": [
@@ -100,7 +104,7 @@
         "type": "object"
       },
       "BreakdownWindowValueDto": {
-        "description": "One group's reading over one extra window.\n\n`value` and `present` are independent: a ratio over a group that IS in the\nwindow reads NULL whenever its denominator is zero, so absence cannot be\ninferred from the value. A reader that wants what a standalone request over\nthis window would have returned keeps the rows with `present` and renders\ntheir `value` as it stands, NULL included.",
+        "description": "One group's reading over the comparison window.\n\n`value` and `present` are independent: a ratio over a group that IS in the\nwindow reads NULL whenever its denominator is zero, so absence cannot be\ninferred from the value. A reader that wants what a standalone request over\nthat window would have returned keeps the rows with `present` and renders\ntheir `value` as it stands, NULL included.",
         "properties": {
           "present": {
             "type": "boolean"
@@ -1781,6 +1785,17 @@
       },
       "MetricResultsRequest": {
         "properties": {
+          "compare_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricResultsPeriod",
+                "description": "A second window answered alongside `period` in the same response — the\nrange a delta or a half-against-half comparison is measured against.\nCarried by the `period` and `breakdown` views only; every other view\nkind answers over `period` alone."
+              }
+            ]
+          },
           "entity": {
             "$ref": "#/components/schemas/MetricResultsEntity"
           },
@@ -1792,13 +1807,6 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricResultsPeriod"
-          },
-          "windows": {
-            "description": "Extra windows served alongside `period` in the same response, in request\norder. Carried by the `period` and `breakdown` views only; every other\nview kind answers over `period` alone.",
-            "items": {
-              "$ref": "#/components/schemas/MetricResultsPeriod"
-            },
-            "type": "array"
           }
         },
         "required": [
@@ -2132,6 +2140,14 @@
       },
       "PeriodValueDto": {
         "properties": {
+          "compare_to": {
+            "description": "The same reading over `compare_to`; absent when the request asked for no\ncomparison window, and null when it asked but the entity has no value\nthere.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "entity_id": {
             "type": "string"
           },
@@ -2141,17 +2157,6 @@
               "number",
               "null"
             ]
-          },
-          "windows": {
-            "description": "One entry per requested extra window, in request order; empty when the\nrequest asked for none, keeping the single-window wire form unchanged.",
-            "items": {
-              "format": "double",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "type": "array"
           }
         },
         "required": [

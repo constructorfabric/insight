@@ -232,7 +232,7 @@ async fn execute_planned(
         PlannedQuery::PeriodBatch { items, query } => {
             let comment = batch_log_comment("period", &items);
             let outcome = match fetch_rows::<PeriodWideRow>(state, query, &comment).await {
-                Ok(rows) => demux_period_rows(&items, rows, req.windows.len())
+                Ok(rows) => demux_period_rows(&items, rows, req.compare_to.is_some())
                     .map_err(|e| assembly_failure(&e, &comment)),
                 Err(failure) => Err(failure),
             };

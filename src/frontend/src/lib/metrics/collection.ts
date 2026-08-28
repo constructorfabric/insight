@@ -147,7 +147,7 @@ export function buildMetricCollectionRequest(
   collection: MetricCollectionConfig,
   entity: MetricCollectionEntity,
   period: DateRange,
-  windows: readonly DateRange[] = []
+  compareTo?: DateRange
 ): MetricResultsRequest {
   return {
     entity:
@@ -155,7 +155,7 @@ export function buildMetricCollectionRequest(
         ? { type: "person", ids: entity.ids }
         : { type: "tenant" },
     period,
-    ...(windows.length ? { windows: windows.map((w) => ({ ...w })) } : {}),
+    ...(compareTo ? { compare_to: { ...compareTo } } : {}),
     metrics: collection.metrics.map((metric) => ({
       metric_key: metric.key,
       ...(metric.filters?.length ? { filters: metric.filters } : {}),
@@ -246,21 +246,20 @@ export function normalizeMetricResult(
 }
 
 /**
- * One extra window read as if it had been its own request: the window's value
- * takes the place of `value`, and the views that never carry a window
- * (`peer`, `timeseries`, `histogram`, `rollup`) are dropped rather than
- * repeated — reading them here would silently answer over the primary period.
- * This is what lets a window feed the same selectors a separate request did.
+ * The comparison window read as if it had been its own request: its value takes
+ * the place of `value`, and the views that never carry a window (`peer`,
+ * `timeseries`, `histogram`, `rollup`) are dropped rather than repeated —
+ * reading them here would silently answer over the primary period. This is what
+ * lets the window feed the same selectors a separate request did.
  *
- * A windowed breakdown groups over every window at once, so its row set is the
- * union of them; `present` says which rows each window actually had, and a row
- * the window never had is dropped here. Presence cannot be read off the value:
- * a ratio over a group that IS in the window is null whenever its denominator
- * is zero, and dropping that row would lose one a standalone request returns.
+ * A compared breakdown groups over both windows at once, so its row set is the
+ * union of them; `present` says which rows the window actually had, and a row
+ * it never had is dropped here. Presence cannot be read off the value: a ratio
+ * over a group that IS in the window is null whenever its denominator is zero,
+ * and dropping that row would lose one a standalone request returns.
  */
-export function projectWindow(
-  results: Map<string, NormalizedMetricResult>,
-  windowIndex: number
+export function projectComparison(
+  results: Map<string, NormalizedMetricResult>
 ): Map<string, NormalizedMetricResult> {
   const out = new Map<string, NormalizedMetricResult>();
   for (const [key, result] of results) {
@@ -278,7 +277,7 @@ export function projectWindow(
         ...result.period,
         values: result.period.values.map((value) => ({
           entity_id: value.entity_id,
-          value: value.windows?.[windowIndex] ?? null,
+          value: value.compare_to ?? null,
         })),
       };
     }
@@ -286,9 +285,11 @@ export function projectWindow(
       projected.breakdown = {
         ...result.breakdown,
         values: result.breakdown.values.flatMap((row) => {
-          const window = row.windows?.[windowIndex];
+          const window = row.compare_to;
           if (!window?.present) return [];
-          return [{ ...row, value: window.value, present: undefined, windows: undefined }];
+          return [
+            { ...row, value: window.value, present: undefined, compare_to: undefined },
+          ];
         }),
       };
     }
@@ -298,9 +299,9 @@ export function projectWindow(
 }
 
 /**
- * The primary period of a windowed response, read the same way: its breakdown
- * row set is the union across windows too, so the groups the primary period
- * never had are dropped. A response without windows is returned untouched.
+ * The primary period of a compared response, read the same way: its breakdown
+ * row set is the union of both windows too, so the groups the primary period
+ * never had are dropped. An uncompared response is returned untouched.
  */
 export function projectPrimary(
   results: Map<string, NormalizedMetricResult>
@@ -318,7 +319,7 @@ export function projectPrimary(
         values: result.breakdown.values.flatMap((row) =>
           row.present === false
             ? []
-            : [{ ...row, present: undefined, windows: undefined }]
+            : [{ ...row, present: undefined, compare_to: undefined }]
         ),
       },
     });

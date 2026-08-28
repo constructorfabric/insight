@@ -131,7 +131,7 @@ fn request() -> ValidatedMetricResultsRequest {
         entity: ValidatedEntitySelection::Person { ids: vec![PERSON] },
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default(),
-        windows: Vec::new(),
+        compare_to: None,
         metrics: Vec::new(),
         enforce_tenant_scope: true,
     }
@@ -168,10 +168,10 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
     let mut req = request();
     req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
     req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
-    req.windows = vec![DateWindow {
+    req.compare_to = Some(DateWindow {
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
-    }];
+    });
 
     // The second pass adds a transform, so the batch's projection stage has to
     // re-select every window's column and not just the primary one.
@@ -194,7 +194,7 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
             view_index: 0,
             def: def.clone(),
         }];
-        let per_item = demux_period_rows(&items, rows, req.windows.len())?;
+        let per_item = demux_period_rows(&items, rows, req.compare_to.is_some())?;
 
         let MetricResultViewDto::Period { values } =
             build_period_view(&def, &req, per_item.into_iter().next().unwrap_or_default())
@@ -213,9 +213,9 @@ async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::
             one.value
         );
         anyhow::ensure!(
-            one.windows == vec![Some(3.0 * scale)],
-            "multiplier {multiplier:?}: the extra window must sum 1 + 2, got {:?}",
-            one.windows
+            one.compare_to == Some(3.0 * scale),
+            "multiplier {multiplier:?}: the comparison window must sum 1 + 2, got {:?}",
+            one.compare_to
         );
     }
     Ok(())
@@ -275,10 +275,10 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
     let mut req = request();
     req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
     req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
-    req.windows = vec![DateWindow {
+    req.compare_to = Some(DateWindow {
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
-    }];
+    });
     let dimensions = vec!["repository".to_owned()];
 
     let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
@@ -311,19 +311,19 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
         "org/a must be present in the primary window with a NULL value, got {:?}",
         (a.present, a.value)
     );
-    let [ref a_window] = a.windows[..] else {
-        anyhow::bail!("expected one extra window for org/a");
+    let Some(ref a_window) = a.compare_to else {
+        anyhow::bail!("expected a comparison window for org/a");
     };
     anyhow::ensure!(
         !a_window.present,
-        "org/a has no rows in the extra window, got present={}",
+        "org/a has no rows in the comparison window, got present={}",
         a_window.present
     );
 
     // org/b is the mirror image: absent from the primary window, present in
     // the extra one with a real value.
-    let [ref b_window] = b.windows[..] else {
-        anyhow::bail!("expected one extra window for org/b");
+    let Some(ref b_window) = b.compare_to else {
+        anyhow::bail!("expected a comparison window for org/b");
     };
     anyhow::ensure!(
         b.present == Some(false),
@@ -332,7 +332,7 @@ async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Res
     );
     anyhow::ensure!(
         b_window.present && b_window.value == Some(500.0),
-        "org/b must read 100 * 20 / 4 in the extra window, got {:?}",
+        "org/b must read 100 * 20 / 4 in the comparison window, got {:?}",
         (b_window.present, b_window.value)
     );
     Ok(())
@@ -357,10 +357,10 @@ async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result
     let mut req = request();
     req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
     req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
-    req.windows = vec![DateWindow {
+    req.compare_to = Some(DateWindow {
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
-    }];
+    });
     let dimensions = vec!["tool".to_owned()];
 
     let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
@@ -378,12 +378,12 @@ async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result
         "the primary window must be the transformed 3 + 4, got {:?}",
         one.value
     );
-    let [ref window] = one.windows[..] else {
-        anyhow::bail!("expected one extra window, got {}", one.windows.len());
+    let Some(ref window) = one.compare_to else {
+        anyhow::bail!("expected a comparison window");
     };
     anyhow::ensure!(
         window.value == Some(30.0) && window.present,
-        "the extra window must be present and transformed, got {:?}",
+        "the comparison window must be present and transformed, got {:?}",
         (window.value, window.present)
     );
     anyhow::ensure!(

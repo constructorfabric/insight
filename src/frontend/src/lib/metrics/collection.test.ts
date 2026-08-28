@@ -17,9 +17,9 @@ import {
   mergeNormalizedResults,
   normalizeMetricResult,
   normalizeMetricResults,
+  projectComparison,
   projectPrimary,
   projectViews,
-  projectWindow,
   resolveBucket,
   type MetricCollectionConfig,
 } from "@/lib/metrics/collection";
@@ -82,31 +82,25 @@ describe("buildMetricCollectionRequest", () => {
     ]);
   });
 
-  it("omits windows entirely when none were asked for", () => {
-    // The field is absent, not `[]`: an unwindowed request keeps the exact
-    // wire form it had before windows existed.
+  it("omits the comparison window entirely when none was asked for", () => {
+    // The field is absent, not null: an uncompared request keeps the exact
+    // wire form it had before comparison windows existed.
     const request = buildMetricCollectionRequest(
       COLLECTION,
       { type: "person", ids: ["alice@example.com"] },
       RANGE
     );
-    expect("windows" in request).toBe(false);
+    expect("compare_to" in request).toBe(false);
   });
 
-  it("carries extra windows in request order", () => {
+  it("carries the comparison window", () => {
     const request = buildMetricCollectionRequest(
       COLLECTION,
       { type: "person", ids: ["alice@example.com"] },
       RANGE,
-      [
-        { from: "2026-05-01", to: "2026-05-31" },
-        { from: "2026-04-01", to: "2026-04-30" },
-      ]
+      { from: "2026-05-01", to: "2026-05-31" }
     );
-    expect(request.windows).toEqual([
-      { from: "2026-05-01", to: "2026-05-31" },
-      { from: "2026-04-01", to: "2026-04-30" },
-    ]);
+    expect(request.compare_to).toEqual({ from: "2026-05-01", to: "2026-05-31" });
   });
 });
 
@@ -116,7 +110,7 @@ describe("buildMetricCollectionRequest", () => {
  * to the standalone request it replaced: rows are chosen by `present`, never by
  * whether the value happens to be null.
  */
-describe("a windowed breakdown's row set", () => {
+describe("a compared breakdown's row set", () => {
   /** `org/a` only in the primary period (ratio null there), `org/b` only in the window. */
   const disjoint = (): Map<string, NormalizedMetricResult> =>
     new Map([
@@ -138,14 +132,14 @@ describe("a windowed breakdown's row set", () => {
                 dimensions: [{ key: "repository", value: "org/a" }],
                 value: null,
                 present: true,
-                windows: [{ value: null, present: false }],
+                compare_to: { value: null, present: false },
               },
               {
                 entity_id: "t",
                 dimensions: [{ key: "repository", value: "org/b" }],
                 value: null,
                 present: false,
-                windows: [{ value: 20, present: true }],
+                compare_to: { value: 20, present: true },
               },
             ],
           },
@@ -156,9 +150,9 @@ describe("a windowed breakdown's row set", () => {
   const repositories = (result: NormalizedMetricResult | undefined) =>
     result?.breakdown?.values.map((row) => row.dimensions[0]?.value);
 
-  it("gives a window only the groups that window had", () => {
+  it("gives the comparison window only the groups it had", () => {
     // A standalone request over the window would have returned org/b alone.
-    const projected = projectWindow(disjoint(), 0).get("ci.gate_pass_rate");
+    const projected = projectComparison(disjoint()).get("ci.gate_pass_rate");
     expect(repositories(projected)).toEqual(["org/b"]);
     expect(projected?.breakdown?.values[0]?.value).toBe(20);
   });
@@ -172,7 +166,7 @@ describe("a windowed breakdown's row set", () => {
     expect(primary?.breakdown?.values[0]?.value).toBeNull();
   });
 
-  it("leaves an unwindowed response untouched", () => {
+  it("leaves an uncompared response untouched", () => {
     const plain = new Map([
       [
         "git.commits",
@@ -201,7 +195,7 @@ describe("a windowed breakdown's row set", () => {
   });
 });
 
-describe("projectWindow", () => {
+describe("projectComparison", () => {
   const windowed = (): Map<string, NormalizedMetricResult> =>
     new Map([
       [
@@ -215,7 +209,7 @@ describe("projectWindow", () => {
           direction: "higher_is_better",
           period: {
             view: "period",
-            values: [{ entity_id: "a", value: 9, windows: [4, 2] }],
+            values: [{ entity_id: "a", value: 9, compare_to: 2 }],
           },
           peer: {
             view: "peer",
@@ -236,27 +230,21 @@ describe("projectWindow", () => {
       ],
     ]);
 
-  it("reads the window at its own index as the value", () => {
+  it("reads the comparison window as the value", () => {
     expect(
-      projectWindow(windowed(), 1).get("git.commits")?.period?.values[0]?.value
+      projectComparison(windowed()).get("git.commits")?.period?.values[0]?.value
     ).toBe(2);
   });
 
-  it("answers null for a window the row never carried", () => {
-    expect(
-      projectWindow(windowed(), 5).get("git.commits")?.period?.values[0]?.value
-    ).toBeNull();
-  });
-
-  it("drops the views a window does not carry", () => {
+  it("drops the views the comparison window does not carry", () => {
     // Keeping `peer` would answer the primary period's standing under a
     // previous-period label — a mispairing no consumer could detect.
-    expect(projectWindow(windowed(), 0).get("git.commits")?.peer).toBeUndefined();
+    expect(projectComparison(windowed()).get("git.commits")?.peer).toBeUndefined();
   });
 
   it("leaves the source map untouched", () => {
     const source = windowed();
-    projectWindow(source, 0);
+    projectComparison(source);
     expect(source.get("git.commits")?.period?.values[0]?.value).toBe(9);
   });
 });

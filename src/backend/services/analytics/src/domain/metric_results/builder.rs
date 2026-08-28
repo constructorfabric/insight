@@ -7,9 +7,9 @@ use crate::domain::metric_definitions::{ComputationSpec, MetricDefinition};
 
 use super::batch::{RankedDimension, RankedGroup};
 use super::compiler::{
-    BreakdownQueryRow, HistogramQueryRow, PeerQueryRow, PeriodQueryRow, PooledHistogramQueryRow,
-    RankingQueryRow, RollupQueryRow, TimeseriesQueryRow, UNKNOWN_DIMENSION_LABEL,
-    UNKNOWN_DIMENSION_VALUE, breakdown_presence_alias, breakdown_window_alias, dimension_aliases,
+    BreakdownQueryRow, HistogramQueryRow, PRESENT, PRESENT_COMPARE, PeerQueryRow, PeriodQueryRow,
+    PooledHistogramQueryRow, RankingQueryRow, RollupQueryRow, TimeseriesQueryRow,
+    UNKNOWN_DIMENSION_LABEL, UNKNOWN_DIMENSION_VALUE, VALUE_COMPARE, dimension_aliases,
 };
 use super::dto::{
     BreakdownValueDto, BreakdownWindowValueDto, ComputationDto, HistogramBinDto, HistogramValueDto,
@@ -51,12 +51,12 @@ pub fn build_period_view(
     req: &ValidatedMetricResultsRequest,
     rows: Vec<PeriodQueryRow>,
 ) -> MetricResultViewDto {
-    let values_by_entity: HashMap<String, (Option<f64>, Vec<Option<f64>>)> = rows
+    let values_by_entity: HashMap<String, (Option<f64>, Option<f64>)> = rows
         .into_iter()
         .map(|row| {
             (
                 req.entity.canonicalize_entity_id(row.entity_id),
-                (row.value, row.windows),
+                (row.value, row.compare_to),
             )
         })
         .collect();
@@ -69,16 +69,14 @@ pub fn build_period_view(
         .into_iter()
         .map(|entity_id| {
             let observed = values_by_entity.get(&entity_id);
-            // An entity the scan never saw still reports one slot per requested
-            // window, so the wire array's length always answers the request.
-            let windows = observed.map_or_else(
-                || vec![None; req.windows.len()],
-                |(_, windows)| windows.clone(),
-            );
             PeriodValueDto {
                 entity_id,
                 value: observed.and_then(|(value, _)| *value),
-                windows,
+                // An entity the scan never saw still reports the slot, so the
+                // wire always answers the request it was given.
+                compare_to: req
+                    .compare_to
+                    .and(observed.and_then(|(_, compare_to)| *compare_to)),
             }
         })
         .collect();
@@ -230,21 +228,23 @@ pub fn build_breakdown_view(
                     repository.label.as_deref(),
                 );
             }
-            let windowed = !req.windows.is_empty();
-            let windows = (0..req.windows.len())
-                .map(|window_index| {
-                    Ok(BreakdownWindowValueDto {
-                        value: window_value(&row.extra, window_index)?,
-                        present: presence_flag(&row.extra, window_index + 1)?,
+            let compared = req.compare_to.is_some();
+            let compare_to = compared
+                .then(|| {
+                    Ok::<_, CanonicalError>(BreakdownWindowValueDto {
+                        value: window_value(&row.extra)?,
+                        present: presence_flag(&row.extra, PRESENT_COMPARE)?,
                     })
                 })
-                .collect::<Result<Vec<_>, CanonicalError>>()?;
+                .transpose()?;
             Ok(BreakdownValueDto {
                 entity_id: req.entity.canonicalize_entity_id(row.entity_id),
                 dimensions,
                 value: row.value,
-                present: windowed.then(|| presence_flag(&row.extra, 0)).transpose()?,
-                windows,
+                present: compared
+                    .then(|| presence_flag(&row.extra, PRESENT))
+                    .transpose()?,
+                compare_to,
             })
         })
         .collect::<Result<Vec<_>, CanonicalError>>()?;
@@ -480,14 +480,11 @@ fn view_size(view: &MetricResultViewDto) -> usize {
     }
 }
 
-/// One extra window's value off a breakdown row. The aliases ride in `extra`
-/// like every other non-fixed column of that row shape.
-fn window_value(
-    extra: &HashMap<String, serde_json::Value>,
-    window_index: usize,
-) -> Result<Option<f64>, CanonicalError> {
-    let alias = breakdown_window_alias(window_index);
-    let raw = extra.get(&alias).ok_or_else(|| {
+/// The comparison window's value off a breakdown row. The alias rides in
+/// `extra` like every other non-fixed column of that row shape.
+fn window_value(extra: &HashMap<String, serde_json::Value>) -> Result<Option<f64>, CanonicalError> {
+    let alias = VALUE_COMPARE;
+    let raw = extra.get(alias).ok_or_else(|| {
         tracing::error!(alias = %alias, "breakdown row missing window alias");
         CanonicalError::internal("metric result shape mismatch").create()
     })?;
@@ -504,19 +501,17 @@ fn window_value(
 /// as 0/1, which is what the wire's boolean is built from.
 fn presence_flag(
     extra: &HashMap<String, serde_json::Value>,
-    column_index: usize,
+    alias: &str,
 ) -> Result<bool, CanonicalError> {
-    let alias = breakdown_presence_alias(column_index);
-    let raw = extra.get(&alias).ok_or_else(|| {
+    let raw = extra.get(alias).ok_or_else(|| {
         tracing::error!(alias = %alias, "breakdown row missing presence alias");
         CanonicalError::internal("metric result shape mismatch").create()
     })?;
-    match raw.as_u64() {
-        Some(flag) => Ok(flag != 0),
-        None => {
-            tracing::error!(alias = %alias, "breakdown presence flag is not a number");
-            Err(CanonicalError::internal("metric result shape mismatch").create())
-        }
+    if let Some(flag) = raw.as_u64() {
+        Ok(flag != 0)
+    } else {
+        tracing::error!(alias = %alias, "breakdown presence flag is not a number");
+        Err(CanonicalError::internal("metric result shape mismatch").create())
     }
 }
 
@@ -691,7 +686,7 @@ mod tests {
                 Ok(date) => date,
                 Err(error) => panic!("bad test date {to}: {error}"),
             },
-            windows: Vec::new(),
+            compare_to: None,
             metrics: Vec::new(),
             enforce_tenant_scope: true,
         }
@@ -710,7 +705,7 @@ mod tests {
         let rows = vec![PeriodQueryRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             value: Some(5.0),
-            windows: Vec::new(),
+            compare_to: None,
         }];
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
         else {
@@ -723,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn period_view_reports_a_window_slot_even_for_an_unobserved_entity() {
+    fn period_view_reports_the_comparison_slot_even_for_an_unobserved_entity() {
         let mut req = request(
             vec![
                 "00000000-0000-0000-0000-00000000000b",
@@ -732,14 +727,14 @@ mod tests {
             "2026-02-01",
             "2026-02-28",
         );
-        req.windows = vec![super::super::validation::DateWindow {
+        req.compare_to = Some(super::super::validation::DateWindow {
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
-        }];
+        });
         let rows = vec![PeriodQueryRow {
             entity_id: "00000000-0000-0000-0000-00000000000a".to_owned(),
             value: Some(5.0),
-            windows: vec![Some(3.0)],
+            compare_to: Some(3.0),
         }];
 
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
@@ -747,8 +742,8 @@ mod tests {
             panic!("expected period view");
         };
 
-        assert_eq!(values[0].windows, vec![None]);
-        assert_eq!(values[1].windows, vec![Some(3.0)]);
+        assert_eq!(values[0].compare_to, None);
+        assert_eq!(values[1].compare_to, Some(3.0));
     }
 
     #[test]
@@ -759,7 +754,7 @@ mod tests {
         let rows = vec![PeriodQueryRow {
             entity_id: "default".to_owned(),
             value: Some(5.0),
-            windows: Vec::new(),
+            compare_to: None,
         }];
 
         let MetricResultViewDto::Period { values } = build_period_view(&sum_metric(), &req, rows)
@@ -1383,7 +1378,7 @@ mod tests {
             .map(|index| PeriodValueDto {
                 entity_id: Uuid::from_u128(index as u128 + 1).to_string(),
                 value: Some(1.0),
-                windows: Vec::new(),
+                compare_to: None,
             })
             .collect();
         let view = MetricResultViewDto::Period { values };

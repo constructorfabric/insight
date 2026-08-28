@@ -17,8 +17,8 @@ import {
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
+  projectComparison,
   projectPrimary,
-  projectWindow,
   type MetricCollectionConfig,
   type MetricCollectionEntity,
   type NormalizedMetricResult,
@@ -56,18 +56,18 @@ export interface MetricCollectionOptions {
    */
   previousPeriod?: PeriodValue;
   /**
-   * Extra windows served in the same request, in order; read them back through
-   * `windowsByKey` at the same index. Ignored when `previousPeriod` is set.
+   * The window to compare against, served in the same request and read back
+   * through `previousByKey`. Ignored when `previousPeriod` is set, which is
+   * sugar for it.
    */
-  windows?: readonly DateRange[];
+  compareTo?: DateRange;
   keepPreviousData?: boolean;
 }
 
 export interface MetricCollectionResult {
   byKey: Map<string, NormalizedMetricResult>;
+  /** The comparison window's values, or null when none was requested. */
   previousByKey: Map<string, NormalizedMetricResult> | null;
-  /** One entry per requested extra window, in request order. */
-  windowsByKey: Array<Map<string, NormalizedMetricResult>>;
   isPending: boolean;
   isFetching: boolean;
   isError: boolean;
@@ -95,7 +95,7 @@ function queryKeyFor(
   ids: string[],
   range: DateRange,
   metrics: MetricRequest[],
-  windows: readonly DateRange[] = []
+  compareTo?: DateRange
 ) {
   // The derived `metrics` array rides in the key, so key and payload are
   // provably coherent — no hand-maintained collection identity to forget to
@@ -107,7 +107,7 @@ function queryKeyFor(
     range.from,
     range.to,
     metrics,
-    windows,
+    compareTo ?? null,
   ] as const;
 }
 
@@ -129,18 +129,18 @@ export function useMetricCollection(
   );
   const canonicalEntity: MetricCollectionEntity =
     entity.type === "person" ? { type: "person", ids } : { type: "tenant" };
-  // The previous period rides along as an extra window instead of a twin
-  // request: it reads the same rows the primary aggregate already scans, so a
-  // delta arrow no longer costs a second round trip, a second authorization and
-  // a second query slot (#2651).
-  const windows = options?.previousPeriod
-    ? [previousPeriodRange(range, options.previousPeriod)]
-    : (options?.windows ?? []);
+  // The comparison window rides along inside the request instead of a twin
+  // one: it reads the same rows the primary aggregate already scans, so a delta
+  // arrow no longer costs a second round trip, a second authorization and a
+  // second query slot (#2651).
+  const compareTo = options?.previousPeriod
+    ? previousPeriodRange(range, options.previousPeriod)
+    : options?.compareTo;
   const request = buildMetricCollectionRequest(
     asked,
     canonicalEntity,
     range,
-    windows
+    compareTo
   );
   // Neither an empty entity list nor an empty metric list is a request the
   // backend can answer — it rejects both with 400 invalid_argument. So the
@@ -153,35 +153,29 @@ export function useMetricCollection(
     Boolean(range.from && range.to);
 
   const current = useQuery({
-    queryKey: queryKeyFor(entity, ids, range, request.metrics, windows),
+    queryKey: queryKeyFor(entity, ids, range, request.metrics, compareTo),
     queryFn: () => queryMetricResults(request),
     enabled,
     placeholderData: options?.keepPreviousData ? keepPreviousData : undefined,
   });
 
-  // INVARIANT: both projections read the RAW response. A windowed breakdown
-  // groups over every window at once, so filtering the primary first would hide
-  // the groups that belong only to a comparison window — the very rows those
-  // windows exist to carry.
+  // INVARIANT: both projections read the RAW response. A compared breakdown
+  // groups over both windows at once, so filtering the primary first would hide
+  // the groups that belong only to the comparison window — the very rows it
+  // exists to carry.
   const served = useMemo(
     () => normalizeMetricResults(current.data?.metrics),
     [current.data]
   );
   const byKey = useMemo(() => projectPrimary(served), [served]);
-  // One window's values, read as if they had been their own request — a period
-  // and its comparison window now stand or fall together, so there is no
-  // mispairing to guard against. Left for the compiler to memoize: `windows` is
-  // built in this render, so a hand-written dependency on it cannot be
-  // preserved (`react-hooks/preserve-manual-memoization`).
-  const windowsByKey = windows.map((_, index) => projectWindow(served, index));
-  const previousByKey = options?.previousPeriod
-    ? (windowsByKey[0] ?? null)
-    : null;
+  // The comparison window's values, read as if they had been their own request
+  // — a period and its comparison now stand or fall together, so there is no
+  // mispairing to guard against.
+  const previousByKey = compareTo ? projectComparison(served) : null;
 
   return {
     byKey,
     previousByKey,
-    windowsByKey,
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
     // a moment later.
@@ -220,14 +214,14 @@ export function collectionSetPending(
 /**
  * One query per collection for a dynamic list (e.g. every metrics-backed
  * group in the registry) — `useQueries`, so the list length can change
- * without violating hook rules. `windows` rides every request in the set and
- * reads back per collection through `windowsByKey`.
+ * without violating hook rules. `compareTo` rides every request in the set and
+ * reads back per collection through `previousByKey`.
  */
 export function useMetricCollectionSet(
   collections: readonly KeyedCollection[],
   entity: MetricCollectionEntity,
   range: DateRange,
-  windows: readonly DateRange[] = []
+  compareTo?: DateRange
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
@@ -259,7 +253,7 @@ export function useMetricCollectionSet(
           ? { type: "person", ids: chunkIds }
           : { type: "tenant" },
         range,
-        windows
+        compareTo
       );
       return {
         key,
@@ -276,7 +270,7 @@ export function useMetricCollectionSet(
 
   const results = useQueries({
     queries: requests.map(({ request, chunkIds, active }) => ({
-      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics, windows),
+      queryKey: queryKeyFor(entity, chunkIds, range, request.metrics, compareTo),
       queryFn: () => queryMetricResults(request),
       enabled: active,
     })),
@@ -302,7 +296,6 @@ export function useMetricCollectionSet(
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
-      windowsByKey: [],
       // Pending covers the catalog wait too — otherwise a screen reads "no
       // data" for the moment before its requests are even allowed to fire.
       isPending:
@@ -325,7 +318,7 @@ export function useMetricCollectionSet(
     if (!entry) continue;
     const served = mergeNormalizedResults(maps);
     entry.byKey = projectPrimary(served);
-    entry.windowsByKey = windows.map((_, index) => projectWindow(served, index));
+    entry.previousByKey = compareTo ? projectComparison(served) : null;
   }
   return out;
 }

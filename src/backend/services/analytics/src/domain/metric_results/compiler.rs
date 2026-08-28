@@ -4,7 +4,7 @@ use std::fmt::Write;
 use serde::Deserialize;
 
 use super::batch::{
-    PeerPopulation, ResolvedGroupLimit, peer_aliases, period_alias, period_column_alias,
+    PeerPopulation, ResolvedGroupLimit, peer_aliases, period_alias, period_compare_alias,
 };
 use super::validation::{
     DateWindow, HISTOGRAM_BINS, ValidatedDimensionFilter, ValidatedEntitySelection,
@@ -56,10 +56,10 @@ pub struct CompiledQuery {
 pub struct PeriodQueryRow {
     pub entity_id: String,
     pub value: Option<f64>,
-    /// One value per extra window, in request order; empty when none were
-    /// requested.
+    /// The same reading over the comparison window; `None` when none was asked
+    /// for.
     #[serde(default)]
-    pub windows: Vec<Option<f64>>,
+    pub compare_to: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,17 +152,16 @@ pub(crate) fn compile_period_batch_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    // With extra windows the outer WHERE spans all of them, so every aggregate
-    // — the primary one included — carries its own window term. Without them
-    // the outer WHERE alone scopes the dates and the SQL is unchanged.
-    let columns = column_windows(req);
-    let mut selects = String::new();
-    for (column_index, window) in columns.iter().enumerate() {
+    // With a comparison window the outer WHERE spans both, so each aggregate —
+    // the primary one included — carries its own window term. Without one the
+    // outer WHERE alone scopes the dates and the SQL is unchanged.
+    let mut selects = item_value_selects(defs, &mut params, period_alias, primary_window(req));
+    if let Some(compare_to) = req.compare_to {
         selects.push_str(&item_value_selects(
             defs,
             &mut params,
-            |item_index| period_column_alias(item_index, column_index),
-            *window,
+            period_compare_alias,
+            Some(compare_to),
         ));
     }
     let read = batch_resolved_observation_from(defs, req, &mut params);
@@ -180,25 +179,17 @@ pub(crate) fn compile_period_batch_query(
         LIMIT {limit}
         "
     );
-    let sql = transformed_batch(defs, inner, columns.len());
+    let sql = transformed_batch(defs, inner, req.compare_to.is_some());
     CompiledQuery { sql, params }
 }
 
-/// The window each value column of a batched query answers, primary first and
-/// then the extra windows in request order. A request with no extra windows
-/// yields one `None` column, which is what keeps its compiled SQL identical to
-/// the pre-windows form.
-fn column_windows(req: &ValidatedMetricResultsRequest) -> Vec<Option<DateWindow>> {
-    if req.windows.is_empty() {
-        return vec![None];
-    }
-    let mut windows = Vec::with_capacity(req.windows.len() + 1);
-    windows.push(Some(DateWindow {
+/// The window the primary value column answers: `None` — and so no window term
+/// at all — until a comparison window makes the outer WHERE span two ranges.
+fn primary_window(req: &ValidatedMetricResultsRequest) -> Option<DateWindow> {
+    req.compare_to.map(|_| DateWindow {
         from: req.from,
         to: req.to,
-    }));
-    windows.extend(req.windows.iter().copied().map(Some));
-    windows
+    })
 }
 
 /// The date predicate a windowed read scans: the primary period, then every
@@ -215,7 +206,7 @@ fn scan_window_predicate(
     separator: &str,
     params: &mut Vec<String>,
 ) -> String {
-    let mut terms = Vec::with_capacity(req.windows.len() + 1);
+    let mut terms = Vec::with_capacity(2);
     for window in scanned_windows(req) {
         params.push(window.from.to_string());
         params.push(window.to.to_string());
@@ -236,16 +227,17 @@ fn scan_window_predicate(
     }
 }
 
-/// Every range a request's rows can come from: the primary period first, then
-/// the extra windows in request order.
+/// Every range a request's rows can come from: the primary period, and the
+/// comparison window when one was asked for.
 fn scanned_windows(req: &ValidatedMetricResultsRequest) -> Vec<DateWindow> {
-    let mut windows = Vec::with_capacity(req.windows.len() + 1);
-    windows.push(DateWindow {
+    let primary = DateWindow {
         from: req.from,
         to: req.to,
-    });
-    windows.extend(req.windows.iter().copied());
-    windows
+    };
+    match req.compare_to {
+        None => vec![primary],
+        Some(compare_to) => vec![primary, compare_to],
+    }
 }
 
 /// The SQL term scoping one conditional aggregate to a window, with its bounds
@@ -526,27 +518,27 @@ pub(crate) fn compile_breakdown_query(
     filters: &[ValidatedDimensionFilter],
 ) -> CompiledQuery {
     let mut params = Vec::new();
-    let aliases = breakdown_aliases(req);
     let mut value_selects = String::new();
-    for (column_index, (alias, window)) in aliases.iter().enumerate() {
-        let expr = grouped_value_expr_within(def, *window, &mut params);
+    for (staged, presence_alias, window) in breakdown_columns(req) {
+        let expr = grouped_value_expr_within(def, window, &mut params);
         let _ = write!(
             value_selects,
             ",
-            {expr} AS {alias}"
+            {expr} AS {staged}"
         );
         // Presence is its own column because the value cannot carry it: a
         // ratio over a group that IS in the window reads NULL whenever its
         // denominator is zero, which is indistinguishable from a group the
         // window never had. A standalone request over that window returns the
         // first and omits the second, so the projection needs both facts.
-        let Some(window) = *window else { continue };
+        let (Some(window), Some(presence_alias)) = (window, presence_alias) else {
+            continue;
+        };
         let presence = window_presence_expr(window, &mut params);
-        let alias = breakdown_presence_alias(column_index);
         let _ = write!(
             value_selects,
             ",
-            {presence} AS {alias}"
+            {presence} AS {presence_alias}"
         );
     }
     let read = single_resolved_observation_from(def, req, &mut params);
@@ -575,56 +567,43 @@ pub(crate) fn compile_breakdown_query(
         LIMIT {limit}
         "
     );
-    let sql = if req.windows.is_empty() {
+    let sql = if req.compare_to.is_none() {
         transformed_single(def, inner)
     } else {
-        projected_breakdown_windows(def, &inner, aliases.len())
+        projected_breakdown_columns(def, &inner)
     };
     CompiledQuery { sql, params }
 }
 
-/// The value column per window a breakdown computes, innermost names first.
+/// The value column per window a breakdown computes, with the staged name it
+/// is aliased to inside the query and the presence flag beside it.
 ///
 /// INVARIANT: a windowed breakdown must NOT alias any aggregate `value`. The
 /// aggregates read a column of that name, and a sibling's argument resolves to
 /// the alias instead of the column — which ClickHouse rejects outright as an
 /// aggregate inside an aggregate. The wire names are put back by
-/// `projected_breakdown_windows`.
-fn breakdown_aliases(req: &ValidatedMetricResultsRequest) -> Vec<(String, Option<DateWindow>)> {
-    if req.windows.is_empty() {
-        return vec![("value".to_owned(), None)];
-    }
-    let mut aliases = vec![(
-        staged_window_alias(0),
-        Some(DateWindow {
-            from: req.from,
-            to: req.to,
-        }),
-    )];
-    for (window_index, window) in req.windows.iter().enumerate() {
-        aliases.push((staged_window_alias(window_index + 1), Some(*window)));
-    }
-    aliases
+/// `projected_breakdown_columns`.
+type BreakdownColumn = (&'static str, Option<&'static str>, Option<DateWindow>);
+
+fn breakdown_columns(req: &ValidatedMetricResultsRequest) -> Vec<BreakdownColumn> {
+    let Some(compare_to) = req.compare_to else {
+        return vec![("value", None, None)];
+    };
+    let primary = DateWindow {
+        from: req.from,
+        to: req.to,
+    };
+    vec![
+        (STAGED_VALUE, Some(PRESENT), Some(primary)),
+        (STAGED_COMPARE, Some(PRESENT_COMPARE), Some(compare_to)),
+    ]
 }
 
-fn staged_window_alias(column_index: usize) -> String {
-    format!("staged_w{column_index}")
-}
-
-pub(crate) fn breakdown_window_alias(window_index: usize) -> String {
-    format!("value_w{window_index}")
-}
-
-/// The wire name of one column's presence flag: `present` for the primary
-/// window, `present_w{n}` for each extra one. Emitted by the inner query and
-/// carried through the projection stage untouched — unlike the value columns,
-/// these names cannot collide with an observation column.
-pub(crate) fn breakdown_presence_alias(column_index: usize) -> String {
-    match column_index.checked_sub(1) {
-        None => "present".to_owned(),
-        Some(window_index) => format!("present_w{window_index}"),
-    }
-}
+const STAGED_VALUE: &str = "staged_value";
+const STAGED_COMPARE: &str = "staged_compare";
+pub(crate) const PRESENT: &str = "present";
+pub(crate) const PRESENT_COMPARE: &str = "present_compare";
+pub(crate) const VALUE_COMPARE: &str = "value_compare";
 
 /// Whether a group has any row inside one window — the fact a standalone
 /// request over that window expresses by emitting the group or not.
@@ -677,28 +656,20 @@ fn metric_where_scanned(
     format!("{tenant} AND source_key = ? AND entity_type = ? AND {scan} AND {measure_predicate}")
 }
 
-/// Rename the staged window columns to their wire names, applying the value
-/// transform on the way — the projection stage `transformed_single` performs
-/// for a single-window breakdown, over every window.
-fn projected_breakdown_windows(def: &MetricDefinition, inner: &str, column_count: usize) -> String {
-    let staged = (0..column_count)
-        .map(staged_window_alias)
-        .collect::<Vec<_>>();
+/// Rename the staged columns to their wire names, applying the value transform
+/// on the way — the projection stage `transformed_single` performs for an
+/// uncompared breakdown, over both columns.
+fn projected_breakdown_columns(def: &MetricDefinition, inner: &str) -> String {
     let mut selects = String::new();
-    for (column_index, alias) in staged.iter().enumerate() {
-        let wire = if column_index == 0 {
-            "value".to_owned()
-        } else {
-            breakdown_window_alias(column_index - 1)
-        };
-        let expr = transformed(def, alias.clone());
+    for (staged, wire) in [(STAGED_VALUE, "value"), (STAGED_COMPARE, VALUE_COMPARE)] {
+        let expr = transformed(def, staged.to_owned());
         let _ = write!(
             selects,
             ",
             {expr} AS {wire}"
         );
     }
-    let excluded = staged.join(", ");
+    let excluded = format!("{STAGED_VALUE}, {STAGED_COMPARE}");
     format!(
         r"
         SELECT
@@ -1494,16 +1465,21 @@ fn transformed_single(def: &MetricDefinition, inner: String) -> String {
     )
 }
 
-// Batch variant: re-projects each transformed item column by alias, over every
-// window's column and not just the primary one.
-fn transformed_batch(defs: &[&MetricDefinition], inner: String, column_count: usize) -> String {
+// Batch variant: re-projects each transformed item column by alias, the
+// comparison window's column included.
+fn transformed_batch(defs: &[&MetricDefinition], inner: String, compared: bool) -> String {
     if defs.iter().all(|def| def.transform.is_none()) {
         return inner;
     }
     let mut selects = String::new();
-    for column_index in 0..column_count {
-        for (item_index, def) in defs.iter().enumerate() {
-            let value = period_column_alias(item_index, column_index);
+    for (item_index, def) in defs.iter().enumerate() {
+        for value in [
+            Some(period_alias(item_index)),
+            compared.then(|| period_compare_alias(item_index)),
+        ]
+        .into_iter()
+        .flatten()
+        {
             let expr = transformed(def, value.clone());
             let _ = write!(selects, ", {expr} AS {value}");
         }
@@ -2304,7 +2280,7 @@ mod tests {
             },
             from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).unwrap_or_default(),
-            windows: Vec::new(),
+            compare_to: None,
             metrics: Vec::new(),
             enforce_tenant_scope: true,
         }
@@ -2372,20 +2348,20 @@ mod tests {
 
     fn windowed_request() -> ValidatedMetricResultsRequest {
         let mut req = request();
-        req.windows = vec![DateWindow {
+        req.compare_to = Some(DateWindow {
             from: NaiveDate::from_ymd_opt(2025, 12, 1).unwrap_or_default(),
             to: NaiveDate::from_ymd_opt(2025, 12, 31).unwrap_or_default(),
-        }];
+        });
         req
     }
 
     #[test]
-    fn period_batch_over_windows_scans_each_range_and_scopes_every_column() {
+    fn a_compared_period_batch_scans_each_range_and_scopes_both_columns() {
         let sum = sum_metric();
         let query = compile_period_batch_query(&[&sum], &windowed_request(), &[]);
 
         assert!(query.sql.contains("AS m0"));
-        assert!(query.sql.contains("AS m0_w0"));
+        assert!(query.sql.contains("AS m0_compare"));
         // The scan is a disjunction of the requested ranges. The envelope form
         // — one range from the earliest `from` to the latest `to` — would read
         // every day between two far-apart windows.
@@ -2431,7 +2407,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unwindowed_batch_keeps_the_single_range_form() {
+    fn an_uncompared_batch_keeps_the_single_range_form() {
         // The whole change rests on this: a request that asks for no extra
         // window compiles the SQL it always did.
         let sum = sum_metric();
@@ -2443,7 +2419,7 @@ mod tests {
                 .contains("AND metric_date >= toDate(?) AND metric_date <= toDate(?) AND")
         );
         assert!(!query.sql.contains(" OR ("));
-        assert!(!query.sql.contains("AS m0_w0"));
+        assert!(!query.sql.contains("AS m0_compare"));
     }
 
     #[test]
@@ -2494,7 +2470,7 @@ mod tests {
     }
 
     #[test]
-    fn breakdown_over_windows_emits_a_value_and_a_presence_column_per_window() {
+    fn a_compared_breakdown_emits_a_value_and_a_presence_column_per_window() {
         let sum = sum_metric();
         let query = compile_breakdown_query(
             &sum,
@@ -2504,12 +2480,12 @@ mod tests {
         );
 
         assert!(query.sql.contains("AS value"));
-        assert!(query.sql.contains("AS value_w0"));
+        assert!(query.sql.contains("AS value_compare"));
         // Presence rides its own column: a group's value cannot express it,
         // because a ratio over a group that IS in the window reads NULL when
         // its denominator is zero.
         assert!(query.sql.contains("AS present"));
-        assert!(query.sql.contains("AS present_w0"));
+        assert!(query.sql.contains("AS present_compare"));
         assert_eq!(
             query
                 .sql
@@ -2520,7 +2496,7 @@ mod tests {
         );
         // The aggregates stage under names that cannot collide with the
         // observation's own `value` column — see `breakdown_aliases`.
-        assert!(query.sql.contains("AS staged_w0"));
+        assert!(query.sql.contains("AS staged_value"));
         assert_eq!(query.sql.matches('?').count(), query.params.len());
         assert_eq!(
             query.params,
@@ -2558,7 +2534,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unwindowed_breakdown_carries_no_presence_column() {
+    fn an_uncompared_breakdown_carries_no_presence_column() {
         let sum = sum_metric();
         let query = compile_breakdown_query(
             &sum,
@@ -2568,7 +2544,7 @@ mod tests {
         );
 
         assert!(!query.sql.contains("present"));
-        assert!(!query.sql.contains("staged_w"));
+        assert!(!query.sql.contains("staged_"));
         assert!(!query.sql.contains(" OR ("));
     }
 

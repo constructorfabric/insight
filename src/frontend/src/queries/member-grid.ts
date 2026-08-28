@@ -53,17 +53,17 @@ export function useMemberGridData(
     ],
     [collection],
   );
-  const windows = useMemo(
-    () => [previousPeriodRange(range, period)],
+  const compareTo = useMemo(
+    () => previousPeriodRange(range, period),
     [range, period],
   );
 
-  const set = useMetricCollectionSet(collections, entity, range, windows);
+  const set = useMetricCollectionSet(collections, entity, range, compareTo);
   const grid = set.get(GRID_KEY);
 
   return {
     byKey: grid?.byKey ?? EMPTY,
-    previousByKey: grid?.windowsByKey[0] ?? EMPTY,
+    previousByKey: grid?.previousByKey ?? EMPTY,
     isPending: grid?.isPending ?? false,
     isFetching: grid?.isFetching ?? false,
     isError: grid?.isError ?? false,

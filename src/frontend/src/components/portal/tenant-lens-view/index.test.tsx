@@ -21,7 +21,6 @@ import type {
 type HookResult = {
   byKey: Map<string, NormalizedMetricResult>;
   previousByKey: Map<string, NormalizedMetricResult> | null;
-  windowsByKey: Array<Map<string, NormalizedMetricResult>>;
   isPending: boolean;
   isFetching: boolean;
   isError: boolean;
@@ -32,7 +31,6 @@ function emptyResult(): HookResult {
   return {
     byKey: new Map(),
     previousByKey: null,
-    windowsByKey: [],
     isPending: false,
     isFetching: false,
     isError: false,
@@ -47,7 +45,7 @@ const mocks = vi.hoisted(() => ({
     collection: MetricCollectionConfig;
     entity: MetricCollectionEntity;
     range: DateRange;
-    windows: readonly DateRange[];
+    compareTo: DateRange | undefined;
   }>,
   setCalls: [] as Array<{
     collections: ReadonlyArray<{ key: string; collection: MetricCollectionConfig }>;
@@ -73,21 +71,19 @@ vi.mock("@/queries/metric-results", () => ({
     collection: MetricCollectionConfig,
     entity: MetricCollectionEntity,
     range: DateRange,
-    options?: { windows?: readonly DateRange[] }
+    options?: { compareTo?: DateRange }
   ) => {
-    const windows = options?.windows ?? [];
-    mocks.calls.push({ collection, entity, range, windows });
-    // The half windows ride the primary range now, so a windowed call answers
-    // with one `windowsByKey` entry per window from the same fixtures.
-    if (windows.length > 0) {
+    const compareTo = options?.compareTo;
+    mocks.calls.push({ collection, entity, range, compareTo });
+    // Both halves come from one call now: the range is the second half and the
+    // comparison window the first, each answered from the same fixtures.
+    if (compareTo) {
       const result = emptyResult();
       result.byKey =
         mocks.rangeResults.get(`${range.from}..${range.to}`)?.byKey ?? new Map();
-      result.windowsByKey = windows.map(
-        (window) =>
-          mocks.rangeResults.get(`${window.from}..${window.to}`)?.byKey ??
-          new Map()
-      );
+      result.previousByKey =
+        mocks.rangeResults.get(`${compareTo.from}..${compareTo.to}`)?.byKey ??
+        new Map();
       return result;
     }
     return range.from === PORTAL_RANGE.from && range.to === PORTAL_RANGE.to
@@ -921,14 +917,12 @@ describe("TenantLensView", () => {
     mocks.rangeResults.set(SECOND_HALF, secondHalf);
 
     render(<TenantLensView config={config} />);
-    // Both halves come from ONE request: the first half is its period and the
-    // second its only extra window, so nothing computes a third aggregate over
+    // Both halves come from ONE request: the second half is its period and the
+    // first its comparison window, so nothing computes a third aggregate over
     // the whole range that no section reads.
     expect(mocks.calls).toHaveLength(2);
-    expect(mocks.calls[1].range).toEqual({ from: "2026-03-01", to: "2026-03-15" });
-    expect(mocks.calls[1].windows).toEqual([
-      { from: "2026-03-16", to: "2026-03-31" },
-    ]);
+    expect(mocks.calls[1].range).toEqual({ from: "2026-03-16", to: "2026-03-31" });
+    expect(mocks.calls[1].compareTo).toEqual({ from: "2026-03-01", to: "2026-03-15" });
     expect(mocks.calls[1].collection.metrics).toEqual([
       {
         key: "ci.gate_pass_rate",

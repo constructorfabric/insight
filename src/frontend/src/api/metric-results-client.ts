@@ -33,10 +33,11 @@ export interface MetricResultsRequest {
   entity: MetricResultsEntity;
   period: { from: string; to: string };
   /**
-   * Extra windows served in the same response, in request order. The `period`
-   * and `breakdown` views carry them; every other view answers over `period`.
+   * A second window answered in the same response — what a delta is measured
+   * against. The `period` and `breakdown` views carry it; every other view
+   * answers over `period`.
    */
-  windows?: Array<{ from: string; to: string }>;
+  compare_to?: { from: string; to: string };
   metrics: MetricRequest[];
 }
 
@@ -159,8 +160,8 @@ export interface PeriodView {
   values: Array<{
     entity_id: string;
     value: number | null;
-    /** One entry per requested extra window, in request order. */
-    windows?: Array<number | null>;
+    /** The same reading over `compare_to`; absent when none was asked for. */
+    compare_to?: number | null;
   }>;
 }
 
@@ -192,12 +193,12 @@ export interface PeerView {
   }>;
 }
 
-export interface BreakdownWindowValue {
+export interface BreakdownComparisonValue {
   value: number | null;
   /**
-   * Whether a standalone request over that window would have returned this
-   * group at all. Independent of `value`: a ratio over a group that IS in the
-   * window reads null whenever its denominator is zero.
+   * Whether a standalone request over the comparison window would have
+   * returned this group at all. Independent of `value`: a ratio over a group
+   * that IS in the window reads null whenever its denominator is zero.
    */
   present: boolean;
 }
@@ -211,8 +212,8 @@ export interface BreakdownView {
     value: number | null;
     /** Whether the group has observations inside the primary period. */
     present?: boolean;
-    /** One entry per requested extra window, in request order. */
-    windows?: BreakdownWindowValue[];
+    /** This group's reading over `compare_to`. */
+    compare_to?: BreakdownComparisonValue;
   }>;
 }
 

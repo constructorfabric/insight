@@ -8,11 +8,11 @@ use crate::domain::metric_drilldown::MetricDrilldownCapability;
 pub struct MetricResultsRequest {
     pub entity: MetricResultsEntity,
     pub period: MetricResultsPeriod,
-    /// Extra windows served alongside `period` in the same response, in request
-    /// order. Carried by the `period` and `breakdown` views only; every other
-    /// view kind answers over `period` alone.
-    #[serde(default)]
-    pub windows: Vec<MetricResultsPeriod>,
+    /// A second window answered alongside `period` in the same response — the
+    /// range a delta or a half-against-half comparison is measured against.
+    /// Carried by the `period` and `breakdown` views only; every other view
+    /// kind answers over `period` alone.
+    pub compare_to: Option<MetricResultsPeriod>,
     pub metrics: Vec<MetricRequest>,
 }
 
@@ -255,10 +255,11 @@ pub struct MetricDimensionDto {
 pub struct PeriodValueDto {
     pub entity_id: String,
     pub value: Option<f64>,
-    /// One entry per requested extra window, in request order; empty when the
-    /// request asked for none, keeping the single-window wire form unchanged.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub windows: Vec<Option<f64>>,
+    /// The same reading over `compare_to`; absent when the request asked for no
+    /// comparison window, and null when it asked but the entity has no value
+    /// there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare_to: Option<f64>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -304,18 +305,18 @@ pub struct BreakdownValueDto {
     /// window and a reader has to know which of them each group belongs to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub present: Option<bool>,
-    /// One entry per requested extra window, in request order; empty when the
-    /// request asked for none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub windows: Vec<BreakdownWindowValueDto>,
+    /// This group's reading over `compare_to`; absent when no comparison window
+    /// was asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare_to: Option<BreakdownWindowValueDto>,
 }
 
-/// One group's reading over one extra window.
+/// One group's reading over the comparison window.
 ///
 /// `value` and `present` are independent: a ratio over a group that IS in the
 /// window reads NULL whenever its denominator is zero, so absence cannot be
 /// inferred from the value. A reader that wants what a standalone request over
-/// this window would have returned keeps the rows with `present` and renders
+/// that window would have returned keeps the rows with `present` and renders
 /// their `value` as it stands, NULL included.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BreakdownWindowValueDto {
