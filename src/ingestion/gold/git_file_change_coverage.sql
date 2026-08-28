@@ -43,17 +43,23 @@
 -- collected. tenant_id and source_id are Nullable on the class, so they join
 -- null-safe — a plain `=` never matches NULL to NULL and would report a whole
 -- instance as uncollected.
+--
+-- INVARIANT: the membership key carries data_source. source_id is Nullable, so
+-- two providers whose rows both leave it NULL join null-safe to each other on
+-- shared repository coordinates, and one provider's file change would answer
+-- for another provider's commit — the hiding this model is grouped to prevent.
 
 WITH collected AS (
     SELECT
         tenant_id,
+        data_source,
         source_id,
         project_key,
         repo_slug,
         commit_hash,
         count() AS file_change_rows
     FROM {{ ref('class_git_file_changes') }} FINAL
-    GROUP BY tenant_id, source_id, project_key, repo_slug, commit_hash
+    GROUP BY tenant_id, data_source, source_id, project_key, repo_slug, commit_hash
 ),
 classified AS (
     SELECT
@@ -73,6 +79,7 @@ classified AS (
     FROM {{ ref('class_git_commits') }} AS commits FINAL
     LEFT JOIN collected
         ON collected.tenant_id IS NOT DISTINCT FROM commits.tenant_id
+        AND collected.data_source = commits.data_source
         AND collected.source_id IS NOT DISTINCT FROM commits.source_id
         AND collected.project_key = commits.project_key
         AND collected.repo_slug = commits.repo_slug
