@@ -32,7 +32,10 @@ if TYPE_CHECKING:
 #: than quietly widening what a seed run destroys.
 RESET_TARGETS: tuple[tuple[str, str], ...] = (
     ("bronze_bamboohr", "employees"),
+    ("bronze_bitbucket_cloud", "repositories"),
     ("bronze_claude_team_invoices", "claude_team_invoice_lines"),
+    ("bronze_github", "repositories"),
+    ("bronze_gitlab", "projects"),
     ("silver", "class_ai_assistant_usage"),
     ("silver", "class_ai_dev_usage"),
     ("silver", "class_ai_invoice"),
