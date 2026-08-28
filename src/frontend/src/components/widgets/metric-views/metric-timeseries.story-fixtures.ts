@@ -258,6 +258,13 @@ export function buildStoryMetricResults(
         format: "integer",
         direction: "higher_is_better",
         computation: "sum",
+        drilldown: { granularity: ["event"] },
+        selection: {
+          metric_key: key,
+          entity: { type: "person", ids: [ENTITY_ID] },
+          period: RANGE,
+          filters: metricRequest.filters ?? [],
+        },
         views: resultViews(key, metricRequest),
       },
     ];

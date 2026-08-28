@@ -358,21 +358,29 @@ export function MetricTimeseriesView({
       : selectedMetric
         ? [selectedMetric]
         : [];
-  const evidenceTargets = evidenceMetrics.flatMap<EvidenceDialogTarget>(
-    (metric) => {
+  /**
+   * Every metric the dialog can offer, over one period. Switching metric in the
+   * dialog must not switch period with it, so the caller's period reaches all
+   * of them rather than only the one that was opened.
+   */
+  const evidenceTargetsOver = (
+    period: DateRange,
+    exactFilters: typeof filters
+  ): EvidenceDialogTarget[] =>
+    evidenceMetrics.flatMap<EvidenceDialogTarget>((metric) => {
       if (!metric.drilldown) return [];
       const selection = evidenceSelection(
         metric.selection,
         entityId,
-        range,
-        filters,
+        period,
+        exactFilters,
         metric.computation !== "ratio" && selectedGroupBy
           ? [selectedGroupBy]
           : []
       );
       return selection ? [{ selection, label: metric.label }] : [];
-    }
-  );
+    });
+  const evidenceTargets = evidenceTargetsOver(range, filters);
   const filterModels = dimensionOptions
     .filter((dimension) => dimension !== selectedGroupBy)
     .map((dimension) => {
@@ -432,20 +440,21 @@ export function MetricTimeseriesView({
 
   function openTimeseriesEvidence(
     metricKey: string,
-    columnKey: string,
+    columnKey: string | null,
     bucketStart: string | null
   ): void {
     const metric = model.metrics.find(
       (candidate) => candidate.metric_key === metricKey
     );
+    if (!metric?.drilldown) return;
     const column = model.columns.find(
       (candidate) => candidate.key === columnKey
     );
-    if (!metric?.drilldown || !column || column.remainder) return;
+    if (columnKey !== null && (!column || column.remainder)) return;
     const exactFilters = new Map(
       filters.map((filter) => [filter.dimension, filter])
     );
-    for (const dimension of column.dimensions ?? []) {
+    for (const dimension of column?.dimensions ?? []) {
       exactFilters.set(dimension.key, {
         dimension: dimension.key,
         values: [dimension.value],
@@ -466,18 +475,22 @@ export function MetricTimeseriesView({
           : range.to,
       };
     }
+    const narrowed = [...exactFilters.values()].sort((left, right) =>
+      left.dimension.localeCompare(right.dimension)
+    );
     const selection = evidenceSelection(
       metric.selection,
       entityId,
       period,
-      [...exactFilters.values()].sort((left, right) =>
-        left.dimension.localeCompare(right.dimension)
-      ),
+      narrowed,
       metric.computation !== "ratio" && selectedGroupBy ? [selectedGroupBy] : []
     );
     if (selection) {
       evidenceContext?.openEvidenceTargets(
-        withOwnTarget(evidenceTargets, { selection, label: metric.label }),
+        withOwnTarget(evidenceTargetsOver(period, narrowed), {
+          selection,
+          label: metric.label,
+        }),
         { activeMetricKey: selection.metric_key }
       );
     }
