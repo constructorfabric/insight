@@ -111,6 +111,7 @@ extend-exclude = [
     "stand/api/schemas/analytics.py",
     "stand/api/schemas/authenticator.py",
     "stand/api/schemas/identity.py",
+    "stand/api/schemas/previews.py",
 ]
 
 [tool.ruff.lint]

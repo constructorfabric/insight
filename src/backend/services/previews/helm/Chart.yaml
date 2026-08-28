@@ -1,0 +1,8 @@
+apiVersion: v2
+name: insight-previews
+description: Insight Previews — preview-experiment provisioning (epic #1981)
+version: 0.1.0
+# appVersion is managed by the release pipeline (build-images.yml): it is
+# bumped to the freshly built image tag on merges that change this service.
+appVersion: "0.1.0"
+type: application

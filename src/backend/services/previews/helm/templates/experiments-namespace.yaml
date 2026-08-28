@@ -1,0 +1,10 @@
+{{- if .Values.experiments.manageNamespace }}
+# The ONE namespace experiments live in. Same single-source value as the gear
+# config and the RBAC below (`experiments.namespace`).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.experiments.namespace }}
+  labels:
+    {{- include "insight-previews.labels" . | nindent 4 }}
+{{- end }}

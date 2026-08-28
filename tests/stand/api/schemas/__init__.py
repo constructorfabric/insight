@@ -7,7 +7,8 @@ Two halves, and a reader should be able to tell which one they are in:
 * `identity_internal.py` — hand-written from the Rust DTO, because the two
   `/internal/persons/*` S2S routes are registered raw and stay out of the
   generated document by design.
-* `analytics.py`, `authenticator.py`, `identity.py` — GENERATED from documents
+* `analytics.py`, `authenticator.py`, `identity.py`, `previews.py` — GENERATED
+  from documents
   the services emit themselves (`cargo run -p <service> -- openapi`) and CI
   drift-gates in `.github/workflows/openapi-specs.yml`, so the models describe
   the very structs that serialize the wire. `authenticator.py` is currently just

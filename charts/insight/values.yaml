@@ -709,6 +709,39 @@ identityResolution:
     caCertSecret: "insight-authenticator-authn-tls-cert"
     caCertPaths:
       - /etc/insight/authn-ca/ca.crt
+# ─── Previews (preview-experiment provisioning, epic #1981) ──────────────
+# Manages preview experiments: one FE build per experiment, served under
+# /exp/<name> as a Deployment/Service/HTTPRoute trio in a dedicated namespace
+# — Kubernetes is the only store, and the subchart's Role/RoleBinding confine
+# the service to that namespace. Reached through the gateway at /api/previews.
+# Structurally inert until the stand sets `experiments.routeHost` (creates
+# fail closed without it) and the shared Gateway's `allowedRoutes` admits the
+# experiments namespace (bootstrap/<env>/gateway.yaml in gitops).
+previews:
+  deploy: true
+  replicaCount: 1 # the subchart refuses more: the TTL sweep has no leader election
+  image:
+    repository: ghcr.io/constructorfabric/insight-previews
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  experiments:
+    # Single source for every place the experiments namespace appears (gear
+    # config, Namespace object, Role/RoleBinding) — see the subchart values.
+    namespace: insight-previews
+    # The single preview host experiments serve under (e.g.
+    # preview.example.com). Per-stand; empty refuses every create.
+    routeHost: ""
+  # Gateway-JWT verification (NGINX_BFF R1) — same wiring as
+  # identityResolution.gateway above.
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: "internal-services"
+    caCertSecret: "insight-authenticator-authn-tls-cert"
+    caCertPaths:
+      - /etc/insight/authn-ca/ca.crt
 # ─── Frontend (SPA) ──────────────────────────────────────────────────────
 frontend:
   # Served through the gateway edge at "/". Set deploy=false for a backend-only

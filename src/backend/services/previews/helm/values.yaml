@@ -1,0 +1,96 @@
+# INVARIANT: single replica — the TTL sweep is a plain interval task with no
+# leader election, and the live-count cap is checked per pod. The deployment
+# template refuses to render more.
+replicaCount: 1
+
+podAnnotations: {}
+
+image:
+  repository: ghcr.io/constructorfabric/insight-previews
+  tag: "" # MUST be set by the operator. No `:latest` default.
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  # Consumers reach previews at <host>:8085.
+  port: 8085
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# The experiment surface this service manages. `namespace` is the SINGLE
+# source for everywhere the experiments namespace appears — the gear config
+# the service creates objects with, the Namespace object, and the
+# Role/RoleBinding that authorize it. Set independently they drift and every
+# create 403s.
+experiments:
+  namespace: insight-previews
+  # Emit the Namespace object. Disable when the namespace is owned by
+  # bootstrap/gitops; the Role/RoleBinding are emitted either way.
+  manageNamespace: true
+  # The single preview host every experiment serves under. EMPTY by default:
+  # creates fail closed (failed_precondition) until the stand sets it.
+  routeHost: ""
+  # Prefix experiments serve under; /exp/<name> is prefix-stripped to /.
+  basePath: /exp
+  # Guardrails: cap on live experiments and the TTL window. The service
+  # validates them at boot (default <= max <= 3650, cap > 0) and refuses to
+  # start on a bad combination.
+  maxExperiments: 10
+  defaultTtlDays: 7
+  maxTtlDays: 30
+  sweepIntervalSecs: 300
+
+# The shared Gateway an experiment's HTTPRoute attaches to. The Gateway's
+# `allowedRoutes` namespace selector must admit `experiments.namespace`
+# (bootstrap/<env>/gateway.yaml in gitops) or every route stays unattached.
+sharedGateway:
+  name: insight
+  namespace: insight-infra
+  # Target listener on the Gateway (e.g. "https"). Empty = all listeners.
+  sectionName: ""
+
+# Gateway-JWT verification (cf-gears-oidc-authn-plugin, NGINX_BFF R1). These
+# render into the plugin's `jwt.trusted_issuers` / `expected_audience` in the
+# ConfigMap (nested/list-shaped, so not env-injectable). The plugin resolves the
+# JWKS via OIDC discovery on the issuer over https ONLY.
+gateway:
+  # `iss` the token carries = the authenticator's gateway_issuer (gateway
+  # origin). The plugin fetches `{issuer}/.well-known/openid-configuration`.
+  issuer: ""
+  # Optional discovery override: where to fetch the discovery document, when the
+  # public `issuer` is not reachable from in-cluster. `{issuer}` is substituted
+  # with the matched `iss`. Leave empty to use the issuer directly.
+  discoveryUrl: ""
+  # Expected `aud`. Fixed by the authenticator's claim contract.
+  audience: "internal-services"
+  # Optional extra TLS trust roots (PEM paths inside the pod) for the discovery/
+  # JWKS fetch — e.g. an internal CA. Empty for a publicly-trusted issuer cert.
+  caCertPaths: []
+  # Secret holding the discovery issuer's CA under key `ca.crt` (the
+  # authenticator's authn-tls cert Secret). When set, it is mounted read-only at
+  # /etc/insight/authn-ca and `caCertPaths` should include
+  # `/etc/insight/authn-ca/ca.crt`. The umbrella wires both automatically.
+  caCertSecret: ""
+
+# Health probes: /healthz is the cheap process-liveness ping, /health the
+# deeper status endpoint — readiness gets the deeper one so an unhealthy pod
+# leaves rotation instead of waiting for a liveness restart.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5

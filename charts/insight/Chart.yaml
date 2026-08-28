@@ -6,7 +6,7 @@
 ##
 ## What is INCLUDED here:
 ##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
-##   - Application: analytics, identity-resolution, frontend
+##   - Application: analytics, identity-resolution, previews, frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -92,6 +92,15 @@ dependencies:
     version: "0.2.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
+  # Previews — preview-experiment provisioning (epic #1981). Manages the
+  # per-experiment FE Deployment/Service/HTTPRoute trio in a dedicated
+  # namespace via the Kubernetes API; the objects ARE the experiments (no
+  # database). Reached through the gateway at /api/previews.
+  - name: insight-previews
+    alias: previews
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/previews/helm"
+    condition: previews.deploy
   # Clone-based git extraction for the nocode git connectors. Consumed ONLY by
   # Airbyte connector pods — no gateway route, absent from platform-config, and
   # its own NetworkPolicy closes ingress to everything else.

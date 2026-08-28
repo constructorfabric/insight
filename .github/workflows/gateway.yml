@@ -124,6 +124,7 @@ jobs:
           cat rendered-routes.yaml
           docker run --rm \
             --add-host insight-analytics:127.0.0.1 --add-host insight-identity-resolution:127.0.0.1 \
+            --add-host insight-previews:127.0.0.1 \
             --add-host insight-authenticator:127.0.0.1 --add-host insight-frontend:127.0.0.1 \
             -e GATEWAY_VALIDATE_ONLY=1 \
             -e GATEWAY_AUTHENTICATOR_URL=http://insight-authenticator:8083 \
