@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Json;
 use axum::extract::Extension;
 use axum::http::HeaderMap;
 use futures::stream::{self, StreamExt};
-use serde::de::DeserializeOwned;
 use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
@@ -26,13 +24,9 @@ use crate::domain::metric_results::{
     plan_queries, plan_rankings, validate_request,
 };
 use crate::domain::person_visibility::authorize_person_ids;
+use crate::infra::query::{QueryFetchError, fetch_json_rows};
 
 const QUERY_CONCURRENCY: usize = 4;
-// Client-side bound on one view query, network stalls included. The
-// insight-clickhouse client already caps server-side execution at 30s
-// (`max_execution_time`); this covers the transport path that setting
-// cannot reach (dead peer, half-open connection).
-const QUERY_FETCH_TIMEOUT: Duration = Duration::from_mins(1);
 
 pub async fn query_metric_results(
     Extension(state): Extension<Arc<AppState>>,
@@ -384,44 +378,16 @@ async fn fetch_rows<T>(
     log_comment: &str,
 ) -> Result<Vec<T>, ViewFailure>
 where
-    T: DeserializeOwned,
+    T: serde::de::DeserializeOwned,
 {
-    let mut ch_query = state
-        .ch
-        .query(&query.sql)
-        .with_setting("log_comment", log_comment);
-    for param in &query.params {
-        ch_query = ch_query.bind(param.as_str());
-    }
-
-    let mut cursor = ch_query.fetch_bytes("JSONEachRow").map_err(|e| {
-        tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "ClickHouse metric-results query failed");
-        ViewFailure::from_query_error(&e.to_string())
-    })?;
-
-    let raw_bytes = tokio::time::timeout(QUERY_FETCH_TIMEOUT, cursor.collect())
+    fetch_json_rows(&state.ch, &query.sql, &query.params, log_comment)
         .await
-        .map_err(|_| {
-            tracing::error!(comment = log_comment, sql = %query.sql, "ClickHouse metric-results fetch timed out");
-            ViewFailure::timeout()
-        })?
-        .map_err(|e| {
-            tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "ClickHouse metric-results fetch failed");
-            ViewFailure::from_query_error(&e.to_string())
-        })?;
-
-    if raw_bytes.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    raw_bytes
-        .split(|&b| b == b'\n')
-        .filter(|line| !line.is_empty())
-        .map(serde_json::from_slice)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| {
-            tracing::error!(error = %e, comment = log_comment, sql = %query.sql, "failed to parse metric-results rows");
-            ViewFailure::from_parse_error(&e.to_string())
+        .map_err(|error| match error {
+            QueryFetchError::Submit(message) | QueryFetchError::Fetch(message) => {
+                ViewFailure::from_query_error(&message)
+            }
+            QueryFetchError::Timeout => ViewFailure::timeout(),
+            QueryFetchError::Parse(message) => ViewFailure::from_parse_error(&message),
         })
 }
 
