@@ -389,44 +389,153 @@ mod tests {
         );
     }
 
+    /// The complete statement the published views render, as it reads.
+    fn published_mapping_statement() -> String {
+        [
+            "SELECT",
+            "    person_id,",
+            "    arraySort(groupUniqArrayIf(value, kind = 'email')) AS emails,",
+            "    arraySort(groupUniqArrayIf(value, kind = 'account_id')) AS account_ids",
+            "FROM (",
+            "    SELECT",
+            "        person_id,",
+            "        'email' AS kind,",
+            "        coalesce(email, '') AS value",
+            "    FROM (",
+            "        SELECT",
+            "            email,",
+            "            person_id",
+            "        FROM identity.person_map",
+            "    ) AS email_map",
+            "    WHERE person_id IN ?",
+            "    UNION ALL",
+            "    SELECT",
+            "        person_id,",
+            "        'account_id' AS kind,",
+            "        coalesce(account_id, '') AS value",
+            "    FROM (",
+            "        SELECT",
+            "            account_id,",
+            "            person_id",
+            "        FROM identity.account_assignment",
+            "    ) AS account_map",
+            "    WHERE person_id IN ?",
+            ") AS claimed",
+            "GROUP BY person_id",
+            "ORDER BY person_id",
+        ]
+        .join("\n")
+    }
+
+    /// The complete statement the inline identity tables render, as it reads.
+    fn inline_mapping_statement() -> String {
+        [
+            "SELECT",
+            "    person_id,",
+            "    arraySort(groupUniqArrayIf(value, kind = 'email')) AS emails,",
+            "    arraySort(groupUniqArrayIf(value, kind = 'account_id')) AS account_ids",
+            "FROM (",
+            "    SELECT",
+            "        person_id,",
+            "        'email' AS kind,",
+            "        coalesce(email, '') AS value",
+            "    FROM (",
+            "        SELECT",
+            "            ae.email AS email,",
+            "            any(cb.person_id) AS person_id",
+            "        FROM (",
+            "            SELECT DISTINCT",
+            "                insight_source_type AS source_type,",
+            "                insight_source_id AS source_id,",
+            "                source_account_id AS account_id,",
+            "                lower(trimBoth(value)) AS email",
+            "            FROM identity.identity_inputs",
+            "            WHERE value_type = 'email'",
+            "              AND operation_type = 'UPSERT'",
+            "              AND coalesce(value, '') != ''",
+            "              AND coalesce(source_account_id, '') != ''",
+            "        ) AS ae",
+            "        INNER JOIN (",
+            "            SELECT",
+            "                insight_source_type AS source_type,",
+            "                insight_source_id AS source_id,",
+            "                trimBoth(value_effective) AS account_id,",
+            "                person_id",
+            "            FROM identity.identity_persons",
+            "            WHERE value_type = 'id'",
+            "              AND insight_tenant_id = toUUID(?)",
+            "              AND value_effective IS NOT NULL",
+            "              AND trimBoth(value_effective) != ''",
+            "            ORDER BY source_type, source_id, account_id, created_at DESC, id DESC",
+            "            LIMIT 1 BY source_type, source_id, account_id",
+            "        ) AS cb",
+            "            ON cb.source_type = ae.source_type",
+            "           AND cb.source_id = ae.source_id",
+            "           AND cb.account_id = ae.account_id",
+            "        WHERE ae.email != ''",
+            "          AND cb.person_id != toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff')",
+            "        GROUP BY ae.email",
+            "        HAVING uniqExact(cb.person_id) = 1",
+            "    ) AS email_map",
+            "    WHERE person_id IN ?",
+            "    UNION ALL",
+            "    SELECT",
+            "        person_id,",
+            "        'account_id' AS kind,",
+            "        coalesce(account_id, '') AS value",
+            "    FROM (",
+            "        SELECT",
+            "            insight_source_type AS source_type,",
+            "            insight_source_id AS source_id,",
+            "            lower(trimBoth(value_effective)) AS account_id,",
+            "            person_id",
+            "        FROM identity.identity_persons",
+            "        WHERE value_type = 'id'",
+            "          AND insight_tenant_id = toUUID(?)",
+            "          AND value_effective IS NOT NULL",
+            "          AND trimBoth(value_effective) != ''",
+            "        ORDER BY source_type, source_id, account_id, created_at DESC, id DESC",
+            "        LIMIT 1 BY source_type, source_id, account_id",
+            "    ) AS account_map",
+            "    WHERE person_id IN ?",
+            ") AS claimed",
+            "GROUP BY person_id",
+            "ORDER BY person_id",
+        ]
+        .join("\n")
+    }
+
     #[test]
     fn the_mapping_statement_reads_as_written() {
-        assert_eq!(
-            mapping_sql(MappingScope::RequestedPeople),
-            [
-                "SELECT",
-                "    person_id,",
-                "    arraySort(groupUniqArrayIf(value, kind = 'email')) AS emails,",
-                "    arraySort(groupUniqArrayIf(value, kind = 'account_id')) AS account_ids",
-                "FROM (",
-                "    SELECT",
-                "        person_id,",
-                "        'email' AS kind,",
-                "        coalesce(email, '') AS value",
-                "    FROM (",
-                "        SELECT",
-                "            email,",
-                "            person_id",
-                "        FROM identity.person_map",
-                "    ) AS email_map",
-                "    WHERE person_id IN ?",
-                "    UNION ALL",
-                "    SELECT",
-                "        person_id,",
-                "        'account_id' AS kind,",
-                "        coalesce(account_id, '') AS value",
-                "    FROM (",
-                "        SELECT",
-                "            account_id,",
-                "            person_id",
-                "        FROM identity.account_assignment",
-                "    ) AS account_map",
-                "    WHERE person_id IN ?",
-                ") AS claimed",
-                "GROUP BY person_id",
-                "ORDER BY person_id",
-            ]
-            .join("\n")
-        );
+        let expected = match MAPPING {
+            MappingRelations::InlineIdentityTables => inline_mapping_statement(),
+            MappingRelations::PublishedViews => published_mapping_statement(),
+        };
+
+        assert_eq!(mapping_sql(MappingScope::RequestedPeople), expected);
+    }
+
+    #[test]
+    fn each_pinned_statement_carries_the_relations_its_own_variant_renders() {
+        for (relations, statement) in [
+            (
+                MappingRelations::InlineIdentityTables,
+                inline_mapping_statement(),
+            ),
+            (
+                MappingRelations::PublishedViews,
+                published_mapping_statement(),
+            ),
+        ] {
+            for (question, sql) in [
+                ("email claims", relations.email_claims()),
+                ("account bindings", relations.account_bindings()),
+            ] {
+                assert!(
+                    statement.contains(&indent(&sql, 8).join("\n")),
+                    "should read as written: {relations:?} {question}"
+                );
+            }
+        }
     }
 }
