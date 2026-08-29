@@ -29,7 +29,17 @@ pub(super) struct ScopedRead {
     pub entity: String,
     pub value: String,
     pub predicates: Vec<String>,
+    /// Absent when every row the scan admits already matched an input.
+    pub matched_group: Option<String>,
     pub params: Vec<QueryParam>,
+}
+
+impl ScopedRead {
+    /// The clause the read filters its groups by, written after the grouping
+    /// it applies to.
+    pub fn having(&self) -> Option<&str> {
+        self.matched_group.as_deref()
+    }
 }
 
 pub(super) struct Fold<'a> {
@@ -165,7 +175,8 @@ impl<'a> Fold<'a> {
     }
 
     // INVARIANT: placeholders bind by position, so parameters are pushed in the
-    // order the statement writes them: pool head, fold values, scope predicates.
+    // order the statement writes them: pool head, fold values, scope
+    // predicates, group filter.
     pub fn scoped_read(
         &self,
         dataset: &CatalogDataset,
@@ -178,6 +189,7 @@ impl<'a> Fold<'a> {
         let value = self.value_expr(metric, &mut params)?;
         let predicates =
             read_predicates(dataset, self.grain, self.where_filter, scope, &mut params)?;
+        let matched_group = self.matched_group(&mut params)?;
 
         Ok(ScopedRead {
             head,
@@ -185,8 +197,49 @@ impl<'a> Fold<'a> {
             entity: joined_entity(pool, &self.grain.entity).to_owned(),
             value,
             predicates,
+            matched_group,
             params,
         })
+    }
+
+    /// Which groups the read reports: the ones at least one input matched a
+    /// row in. A group the dataset has rows for but no input matched is one
+    /// the cache — which stores matched rows only — has nothing to serve for,
+    /// so no read reports it.
+    ///
+    /// The count is over matched rows and never over the folded value, so a
+    /// group an input matched keeps its point even when the fold reads NULL.
+    ///
+    /// A single-measure fold needs no clause — the measure's own filter is the
+    /// read's `WHERE` — and neither does a composed fold with an unfiltered
+    /// input, which matches every row the scan admits.
+    pub fn matched_group(
+        &self,
+        params: &mut Vec<QueryParam>,
+    ) -> Result<Option<String>, CompileError> {
+        let inputs: Vec<&MeasureDefinition> = match &self.kind {
+            FoldKind::Aggregate(_) | FoldKind::Quantile { .. } | FoldKind::Deviation { .. } => {
+                return Ok(None);
+            }
+            FoldKind::Ratio {
+                numerator,
+                denominator,
+            } => vec![numerator, denominator],
+            FoldKind::Derived { inputs, .. } => {
+                inputs.iter().map(|(_, measure)| *measure).collect()
+            }
+        };
+
+        if inputs.iter().any(|measure| measure.filter.is_none()) {
+            return Ok(None);
+        }
+
+        let mut conditions = Vec::with_capacity(inputs.len());
+        for measure in inputs {
+            conditions.push(fold_condition(measure, params)?);
+        }
+
+        Ok(Some(format!("countIf({}) > 0", conditions.join(" OR "))))
     }
 
     /// The computation this fold renders, with the measures it resolved.

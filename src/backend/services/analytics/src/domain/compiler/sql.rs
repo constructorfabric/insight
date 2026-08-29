@@ -185,7 +185,54 @@ fn require_operand<'a>(
     })
 }
 
-pub(super) fn bucket_expr(event_time: &str, bucket: Bucket) -> String {
+/// The time bucket a read groups by, with what its rows must satisfy to fall
+/// in one.
+#[derive(Debug)]
+pub(super) struct TimeBucket {
+    expr: String,
+    timeless: Option<String>,
+}
+
+impl TimeBucket {
+    /// INVARIANT: the bucket column is never nullable — a grouping set that
+    /// rolls it up reports the column's default, and NULL is no date.
+    ///
+    /// SAFETY: `assumeNotNull` holds because [`Self::exclude_timeless`] keeps
+    /// the rows it would otherwise place at the epoch out of the read.
+    pub fn over_event_time(dataset: &CatalogDataset, event_time: &str, bucket: Bucket) -> Self {
+        let nullable = dataset
+            .field(event_time)
+            .is_some_and(|field| field.field_type.nullable);
+        if !nullable {
+            return Self::over_column(event_time, bucket);
+        }
+
+        Self {
+            expr: bucket_of(&format!("assumeNotNull({event_time})"), bucket),
+            timeless: Some(format!("isNotNull({event_time})")),
+        }
+    }
+
+    /// A bucket over a column the relation declares non-nullable.
+    pub fn over_column(column: &str, bucket: Bucket) -> Self {
+        Self {
+            expr: bucket_of(column, bucket),
+            timeless: None,
+        }
+    }
+
+    pub fn expr(&self) -> &str {
+        &self.expr
+    }
+
+    /// A row carrying no event time falls in no bucket, so a bucketed read
+    /// does not read one.
+    pub fn exclude_timeless(&self, predicates: &mut Vec<String>) {
+        predicates.extend(self.timeless.clone());
+    }
+}
+
+fn bucket_of(event_time: &str, bucket: Bucket) -> String {
     match bucket {
         Bucket::Day => format!("toDate({event_time})"),
         Bucket::Week => format!("toStartOfWeek(toDate({event_time}), 1)"),

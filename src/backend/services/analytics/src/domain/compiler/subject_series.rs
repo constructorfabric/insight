@@ -18,7 +18,7 @@ use super::group_cap::{
 use super::pool::{Pool, carried_entity, first_cte, scan_clause};
 use super::request::{MetricQuery, SubjectSeriesView};
 use super::sql::{
-    CompiledMeasureQuery, QueryParam, ReadScope, bucket_expr, from_clause, read_predicates,
+    CompiledMeasureQuery, QueryParam, ReadScope, TimeBucket, from_clause, read_predicates,
 };
 
 pub(super) fn compile(
@@ -52,9 +52,12 @@ fn compile_uncapped(
     pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let (select, group) = dimension_select_group(&DimensionSource::Row(fold.grain), dimensions)?;
-    let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
-    let bucket = bucket_expr(&fold.grain.event_time, query.bucket);
-    let inner = uncapped_sql(&read, &bucket, (&select, &group));
+    let bucket = TimeBucket::over_event_time(dataset, &fold.grain.event_time, query.bucket);
+
+    let mut read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
+    bucket.exclude_timeless(&mut read.predicates);
+
+    let inner = uncapped_sql(&read, bucket.expr(), (&select, &group));
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -90,6 +93,9 @@ pub(super) fn uncapped_sql(read: &ScopedRead, bucket: &str, dimensions: (&str, &
         sql,
         "GROUP BY GROUPING SETS (({bucket_set}), ({total_set}))"
     );
+    if let Some(having) = read.having() {
+        let _ = writeln!(sql, "HAVING {having}");
+    }
     let _ = writeln!(sql, "ORDER BY entity_id, is_total, bucket_start");
     let _ = write!(sql, "LIMIT ?");
     sql
@@ -106,21 +112,26 @@ fn compile_capped(
     cap: &GroupCap<'_>,
     pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let bucket = bucket_expr(&fold.grain.event_time, query.bucket);
+    let bucket = TimeBucket::over_event_time(dataset, &fold.grain.event_time, query.bucket);
     let raw_dimensions = raw_dimension_select(fold.grain, dimensions)?;
-    let projections = format!("        {bucket} AS bucket_start,\n{raw_dimensions}");
+    let projections = format!(
+        "        {} AS bucket_start,\n{raw_dimensions}",
+        bucket.expr()
+    );
 
     let mut params = Vec::new();
     let head = first_cte(pool, &mut params)?;
-    let predicates = read_predicates(
+    let mut predicates = read_predicates(
         dataset,
         fold.grain,
         fold.where_filter,
         &ReadScope::of_metric(query),
         &mut params,
     )?;
+    bucket.exclude_timeless(&mut predicates);
     let rank = cap.rank_expr(&mut params);
     let value = fold.value_expr(metric, &mut params)?;
+    let matched_group = fold.matched_group(&mut params)?;
     let dimension_select = cap.dimension_select(&mut params);
     params.push(QueryParam::UInt(query.row_limit));
 
@@ -148,6 +159,9 @@ fn compile_capped(
     let _ = writeln!(sql, "        (entity_id, bucket_start, group_rank),");
     let _ = writeln!(sql, "        (entity_id, group_rank)");
     let _ = writeln!(sql, "    )");
+    if let Some(having) = &matched_group {
+        let _ = writeln!(sql, "    HAVING {having}");
+    }
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
     let _ = writeln!(sql, "    entity_id,");
@@ -175,13 +189,14 @@ fn compile_capped(
 mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, labelled_measure, lines, metric, percent_of_total,
+        compile, compile_err, direct, labelled_measure, lines, measure, metric, percent_of_total,
         plain_subject_series, query, text,
     };
     use crate::domain::compiler::request::{
         DimensionFilter, GroupLimit, RankedDimension, RankedGroup, SubjectSeriesView, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
+    use crate::domain::definitions::definition::MeasureDefinition;
 
     fn view(dimensions: &[&str], group_limit: Option<GroupLimit>) -> ViewKind {
         ViewKind::SubjectSeries(SubjectSeriesView {
@@ -225,9 +240,9 @@ mod tests {
             lines(&[
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    toString(toDate(closed_on)) AS bucket_start,",
+                "    toString(toDate(assumeNotNull(closed_on))) AS bucket_start,",
                 "    toFloat64(count()) AS value,",
-                "    toUInt8(grouping(toDate(closed_on))) AS is_total,",
+                "    toUInt8(grouping(toDate(assumeNotNull(closed_on)))) AS is_total,",
                 "    CAST(NULL AS Nullable(UInt32)) AS rank,",
                 "    toUInt8(0) AS remainder,",
                 "    CAST(NULL AS Nullable(String)) AS group_label",
@@ -235,7 +250,8 @@ mod tests {
                 "WHERE tenant_id = ?",
                 "  AND toDate(closed_on) >= toDate(?)",
                 "  AND toDate(closed_on) <= toDate(?)",
-                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
+                "  AND isNotNull(closed_on)",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(assumeNotNull(closed_on))), (entity_id))",
                 "ORDER BY entity_id, is_total, bucket_start",
                 "LIMIT ?",
             ])
@@ -270,13 +286,13 @@ mod tests {
             lines(&[
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    toString(toDate(closed_on)) AS bucket_start,",
+                "    toString(toDate(assumeNotNull(closed_on))) AS bucket_start,",
                 "    coalesce(toString(repo_slug), '__unknown__') AS dim_0_value,",
                 "    coalesce(toString(repo_slug), 'Unknown') AS dim_0_label,",
                 "    coalesce(toString(data_source), '__unknown__') AS dim_1_value,",
                 "    coalesce(toString(data_source_label), 'Unknown') AS dim_1_label,",
                 "    toFloat64(count()) AS value,",
-                "    toUInt8(grouping(toDate(closed_on))) AS is_total,",
+                "    toUInt8(grouping(toDate(assumeNotNull(closed_on)))) AS is_total,",
                 "    CAST(NULL AS Nullable(UInt32)) AS rank,",
                 "    toUInt8(0) AS remainder,",
                 "    CAST(NULL AS Nullable(String)) AS group_label",
@@ -285,7 +301,8 @@ mod tests {
                 "  AND toDate(closed_on) >= toDate(?)",
                 "  AND toDate(closed_on) <= toDate(?)",
                 "  AND data_source IN (?)",
-                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on), dim_0_value, dim_0_label, dim_1_value, dim_1_label), (entity_id, dim_0_value, dim_0_label, dim_1_value, dim_1_label))",
+                "  AND isNotNull(closed_on)",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(assumeNotNull(closed_on)), dim_0_value, dim_0_label, dim_1_value, dim_1_label), (entity_id, dim_0_value, dim_0_label, dim_1_value, dim_1_label))",
                 "ORDER BY entity_id, is_total, bucket_start",
                 "LIMIT ?",
             ])
@@ -303,6 +320,54 @@ mod tests {
     }
 
     #[test]
+    fn a_bucketed_read_excludes_the_events_that_carry_no_time() {
+        let compiled = compile(
+            &metric(direct("prs_merged")),
+            &[measure("prs_merged", None)],
+            &query(plain_subject_series()),
+        );
+
+        assert!(
+            compiled.sql.contains("  AND isNotNull(closed_on)"),
+            "{}",
+            compiled.sql
+        );
+        assert!(
+            compiled
+                .sql
+                .contains("toString(toDate(assumeNotNull(closed_on))) AS bucket_start,"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn an_event_time_that_admits_no_null_is_bucketed_as_the_column_stands() {
+        let commits = MeasureDefinition {
+            dataset: "git_commits".to_owned(),
+            event_time: "committed_on".to_owned(),
+            dimensions: Vec::new(),
+            ..measure("commits", None)
+        };
+
+        let compiled = compile(
+            &metric(direct("commits")),
+            &[commits],
+            &query(plain_subject_series()),
+        );
+
+        assert!(
+            compiled
+                .sql
+                .contains("toString(toDate(committed_on)) AS bucket_start,"),
+            "{}",
+            compiled.sql
+        );
+        assert!(!compiled.sql.contains("assumeNotNull"), "{}", compiled.sql);
+        assert!(!compiled.sql.contains("isNotNull"), "{}", compiled.sql);
+    }
+
+    #[test]
     fn a_capped_subject_series_ranks_each_scanned_row_before_it_folds_any_bucket() {
         let compiled = compile(
             &metric(direct("prs_merged")),
@@ -316,12 +381,13 @@ mod tests {
                 "WITH scoped AS (",
                 "    SELECT",
                 "        *,",
-                "        toDate(closed_on) AS bucket_start,",
+                "        toDate(assumeNotNull(closed_on)) AS bucket_start,",
                 "        coalesce(toString(repo_slug), '__unknown__') AS raw_dim_0",
                 "    FROM silver.class_git_pull_requests FINAL",
                 "    WHERE tenant_id = ?",
                 "      AND toDate(closed_on) >= toDate(?)",
                 "      AND toDate(closed_on) <= toDate(?)",
+                "      AND isNotNull(closed_on)",
                 "),",
                 "ranked AS (",
                 "    SELECT",

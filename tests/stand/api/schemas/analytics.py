@@ -483,7 +483,7 @@ class Format(StrEnum):
 class Grain(StrEnum):
     """
     How finely the window is cut. `total` folds it whole; the rest report a
-    point per bucket beside the window total.
+    point per bucket the metric observed an event in, beside the window total.
     """
     total = 'total'
     day = 'day'

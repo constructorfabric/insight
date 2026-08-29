@@ -11,7 +11,7 @@ use super::error::CompileError;
 use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::request::MeasureQuery;
 use super::sql::{
-    ReadScope, aggregate_expr, bucket_expr, dimension_binding, from_clause, label_field,
+    ReadScope, TimeBucket, aggregate_expr, dimension_binding, from_clause, label_field,
     read_predicates,
 };
 
@@ -29,16 +29,18 @@ pub fn compile_measure_query(
         .transpose()?;
     let aggregate = aggregate_expr(measure)?;
     let pool = Pool::of_scope(&query.entity_scope);
+    let bucket = TimeBucket::over_event_time(dataset, &measure.event_time, query.bucket);
 
     let mut params = Vec::new();
     let head = only_cte(pool.as_ref(), &mut params)?;
-    let predicates = read_predicates(
+    let mut predicates = read_predicates(
         dataset,
         measure,
         measure.filter.as_ref(),
         &ReadScope::of_measure(query),
         &mut params,
     )?;
+    bucket.exclude_timeless(&mut predicates);
     params.push(QueryParam::UInt(query.row_limit));
 
     let mut sql = head;
@@ -48,11 +50,7 @@ pub fn compile_measure_query(
         "    {} AS entity_id,",
         joined_entity(pool.as_ref(), &measure.entity)
     );
-    let _ = writeln!(
-        sql,
-        "    {} AS metric_date,",
-        bucket_expr(&measure.event_time, query.bucket)
-    );
+    let _ = writeln!(sql, "    {} AS metric_date,", bucket.expr());
     if let Some(binding) = group_by {
         let _ = writeln!(sql, "    {} AS dimension_value,", binding.value_field);
         let _ = writeln!(sql, "    {} AS dimension_label,", label_field(binding));
@@ -176,7 +174,7 @@ all:
             lines(&[
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    toStartOfWeek(toDate(closed_on), 1) AS metric_date,",
+                "    toStartOfWeek(toDate(assumeNotNull(closed_on)), 1) AS metric_date,",
                 "    toFloat64(count()) AS value",
                 "FROM silver.class_git_pull_requests FINAL",
                 "WHERE tenant_id = ?",
@@ -185,6 +183,7 @@ all:
                 "  AND toDate(closed_on) <= toDate(?)",
                 "  AND (state = ? AND lines_added >= ?)",
                 "  AND repo_slug IN (?)",
+                "  AND isNotNull(closed_on)",
                 "GROUP BY entity_id, metric_date",
                 "LIMIT ?",
             ])
@@ -312,14 +311,17 @@ all:
     #[test]
     fn each_bucket_renders_its_own_start_function() {
         let cases = [
-            (Bucket::Day, "    toDate(closed_on) AS metric_date,"),
+            (
+                Bucket::Day,
+                "    toDate(assumeNotNull(closed_on)) AS metric_date,",
+            ),
             (
                 Bucket::Week,
-                "    toStartOfWeek(toDate(closed_on), 1) AS metric_date,",
+                "    toStartOfWeek(toDate(assumeNotNull(closed_on)), 1) AS metric_date,",
             ),
             (
                 Bucket::Month,
-                "    toStartOfMonth(toDate(closed_on)) AS metric_date,",
+                "    toStartOfMonth(toDate(assumeNotNull(closed_on))) AS metric_date,",
             ),
         ];
 

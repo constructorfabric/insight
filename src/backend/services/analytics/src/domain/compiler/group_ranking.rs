@@ -49,6 +49,9 @@ pub fn compile_group_ranking_query(
     let _ = writeln!(inner, "FROM {}", read.scan);
     let _ = writeln!(inner, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = write!(inner, "GROUP BY {group}");
+    if let Some(having) = read.having() {
+        let _ = write!(inner, "\nHAVING {having}");
+    }
 
     let ranked = transformed(metric.transform.as_ref(), inner);
     let mut params = read.params;

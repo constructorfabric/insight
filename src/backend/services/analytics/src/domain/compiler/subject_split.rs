@@ -48,6 +48,9 @@ pub(super) fn subject_split_sql(read: &ScopedRead, select: &str, group: &str) ->
     let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id, {group}");
+    if let Some(having) = read.having() {
+        let _ = writeln!(sql, "HAVING {having}");
+    }
     let _ = writeln!(sql, "ORDER BY entity_id");
     let _ = write!(sql, "LIMIT ?");
     sql
