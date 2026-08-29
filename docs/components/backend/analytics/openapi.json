@@ -962,7 +962,7 @@
         "type": "string"
       },
       "Grain": {
-        "description": "How finely the window is cut. `total` folds it whole; the rest report a\npoint per bucket beside the window total.",
+        "description": "How finely the window is cut. `total` folds it whole; the rest report a\npoint per bucket the metric observed an event in, beside the window total.",
         "enum": [
           "total",
           "day",

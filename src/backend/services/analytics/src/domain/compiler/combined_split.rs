@@ -77,6 +77,9 @@ pub(super) fn uncapped_sql(read: &ScopedRead, select: &str, group: &str) -> Stri
     let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY {group}");
+    if let Some(having) = read.having() {
+        let _ = writeln!(sql, "HAVING {having}");
+    }
     let _ = writeln!(sql, "ORDER BY {group}");
     let _ = write!(sql, "LIMIT ?");
     sql
@@ -106,6 +109,7 @@ fn compile_capped(
     )?;
     let rank = cap.rank_expr(&mut params);
     let value = fold.value_expr(metric, &mut params)?;
+    let matched_group = fold.matched_group(&mut params)?;
     let dimension_select = cap.dimension_select(&mut params);
     params.push(QueryParam::UInt(query.row_limit));
 
@@ -128,6 +132,9 @@ fn compile_capped(
     );
     let _ = writeln!(sql, "    FROM filtered");
     let _ = writeln!(sql, "    GROUP BY group_rank");
+    if let Some(having) = &matched_group {
+        let _ = writeln!(sql, "    HAVING {having}");
+    }
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
     let _ = writeln!(sql, "    group_rank,");

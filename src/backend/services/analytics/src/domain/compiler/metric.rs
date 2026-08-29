@@ -81,6 +81,9 @@ pub(super) fn subject_total_sql(read: &ScopedRead) -> String {
     let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id");
+    if let Some(having) = read.having() {
+        let _ = writeln!(sql, "HAVING {having}");
+    }
     let _ = write!(sql, "LIMIT ?");
     sql
 }
@@ -170,9 +173,9 @@ mod tests {
                 "FROM (",
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    toString(toStartOfWeek(toDate(closed_on), 1)) AS bucket_start,",
+                "    toString(toStartOfWeek(toDate(assumeNotNull(closed_on)), 1)) AS bucket_start,",
                 "    toFloat64(countIfOrNull(state = ?) / nullIf(countIf(state IN (?, ?)), 0)) AS value,",
-                "    toUInt8(grouping(toStartOfWeek(toDate(closed_on), 1))) AS is_total,",
+                "    toUInt8(grouping(toStartOfWeek(toDate(assumeNotNull(closed_on)), 1))) AS is_total,",
                 "    CAST(NULL AS Nullable(UInt32)) AS rank,",
                 "    toUInt8(0) AS remainder,",
                 "    CAST(NULL AS Nullable(String)) AS group_label",
@@ -180,7 +183,9 @@ mod tests {
                 "WHERE tenant_id = ?",
                 "  AND toDate(closed_on) >= toDate(?)",
                 "  AND toDate(closed_on) <= toDate(?)",
-                "GROUP BY GROUPING SETS ((entity_id, toStartOfWeek(toDate(closed_on), 1)), (entity_id))",
+                "  AND isNotNull(closed_on)",
+                "GROUP BY GROUPING SETS ((entity_id, toStartOfWeek(toDate(assumeNotNull(closed_on)), 1)), (entity_id))",
+                "HAVING countIf(state = ? OR state IN (?, ?)) > 0",
                 "ORDER BY entity_id, is_total, bucket_start",
                 "LIMIT ?",
                 ")",
@@ -195,6 +200,9 @@ mod tests {
                 text("acme-tenant"),
                 text("2026-01-01"),
                 text("2026-01-31"),
+                text("merged"),
+                text("merged"),
+                text("closed"),
                 QueryParam::UInt(10_001),
             ]
         );
@@ -266,7 +274,7 @@ mod tests {
             (ViewKind::SubjectTotal, "GROUP BY entity_id"),
             (
                 plain_subject_series(),
-                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(assumeNotNull(closed_on))), (entity_id))",
             ),
         ];
 
@@ -296,7 +304,7 @@ mod tests {
             (ViewKind::SubjectTotal, "GROUP BY entity_id"),
             (
                 plain_subject_series(),
-                "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
+                "GROUP BY GROUPING SETS ((entity_id, toDate(assumeNotNull(closed_on))), (entity_id))",
             ),
         ];
 
@@ -465,7 +473,7 @@ mod tests {
         assert!(
             subject_series
                 .sql
-                .contains("toUInt8(grouping(toDate(closed_on))) AS is_total,")
+                .contains("toUInt8(grouping(toDate(assumeNotNull(closed_on)))) AS is_total,")
         );
         assert_eq!(subject_total.params, subject_series.params);
     }
@@ -569,6 +577,76 @@ mod tests {
                 measure: "prs_merged".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn a_group_the_dataset_has_rows_for_but_no_input_matched_is_not_reported() {
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+        let closed = measure(
+            "prs_closed",
+            Some("{ field: state, op: in, value: [merged, closed] }"),
+        );
+
+        let compiled = compile(
+            &metric(ratio("prs_merged", "prs_closed")),
+            &[merged, closed],
+            &query(ViewKind::SubjectTotal),
+        );
+
+        assert!(
+            compiled
+                .sql
+                .contains("HAVING countIf(state = ? OR state IN (?, ?)) > 0"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_group_an_input_matched_keeps_its_point_however_the_fold_reads_it() {
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+        let closed = measure(
+            "prs_closed",
+            Some("{ field: state, op: in, value: [merged, closed] }"),
+        );
+
+        let compiled = compile(
+            &metric(ratio("prs_merged", "prs_closed")),
+            &[merged, closed],
+            &query(plain_subject_series()),
+        );
+
+        assert!(
+            compiled.sql.contains("nullIf(countIf(state IN (?, ?)), 0)"),
+            "{}",
+            compiled.sql
+        );
+        assert!(!compiled.sql.contains("HAVING value"), "{}", compiled.sql);
+        assert!(
+            !compiled.sql.contains("value IS NOT NULL"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_metric_reading_one_measure_needs_no_group_filter_because_its_where_is_the_filter() {
+        let compiled = compile(
+            &metric(direct("prs_merged")),
+            &[measure(
+                "prs_merged",
+                Some("{ field: state, op: eq, value: merged }"),
+            )],
+            &query(plain_subject_series()),
+        );
+
+        assert!(!compiled.sql.contains("HAVING"), "{}", compiled.sql);
     }
 
     #[test]

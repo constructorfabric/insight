@@ -1,6 +1,7 @@
 //! The catalogued datasets the compiler tests read: one collapsing relation
-//! carrying every field role a measure binds, and one direct relation. Both
-//! load through the real snapshot and role loader.
+//! carrying every field role a measure binds and a nullable event time, and
+//! one direct relation whose event time no row leaves empty. Both load through
+//! the real snapshot and role loader.
 
 #![allow(clippy::expect_used)]
 
@@ -38,7 +39,7 @@ const SNAPSHOT: &str = r#"[
       {"name": "tenant_id", "type": "Nullable(String)"},
       {"name": "unique_key", "type": "String"},
       {"name": "author_email", "type": "String"},
-      {"name": "committed_on", "type": "Nullable(DateTime)"},
+      {"name": "committed_on", "type": "DateTime"},
       {"name": "repo_slug", "type": "String"}
     ]
   }
