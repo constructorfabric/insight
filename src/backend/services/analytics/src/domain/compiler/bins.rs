@@ -48,7 +48,12 @@ pub(super) fn compile(
         "        {} AS entity_id,",
         joined_entity(pool, &fold.grain.entity)
     );
-    let _ = writeln!(sql, "        assumeNotNull({binned}) AS event_value");
+    // INVARIANT: the per-row value enters the read as a float, because the
+    // bounds it carries to the wire decode as `f64` and JSON quotes an integer.
+    let _ = writeln!(
+        sql,
+        "        toFloat64(assumeNotNull({binned})) AS event_value"
+    );
     let _ = writeln!(
         sql,
         "    FROM {}",
@@ -122,7 +127,7 @@ mod tests {
                 "WITH raw_events AS (",
                 "    SELECT",
                 "        author_email AS entity_id,",
-                "        assumeNotNull(lines_added) AS event_value",
+                "        toFloat64(assumeNotNull(lines_added)) AS event_value",
                 "    FROM silver.class_git_pull_requests FINAL",
                 "    WHERE tenant_id = ?",
                 "      AND toDate(closed_on) >= toDate(?)",
@@ -167,6 +172,32 @@ mod tests {
     }
 
     #[test]
+    fn every_bound_the_wire_carries_is_a_float_whatever_the_measure_is_typed_as() {
+        let compiled = compile(
+            &metric(percentile("pr_size", 0.5)),
+            &[sized_measure("pr_size")],
+            &query(bins_view(10)),
+        );
+
+        assert!(
+            compiled
+                .sql
+                .contains("        toFloat64(assumeNotNull(lines_added)) AS event_value"),
+            "an integer per-row value reaches the wire quoted: {}",
+            compiled.sql
+        );
+        for bound in [
+            "        min(event_value) OVER (PARTITION BY entity_id) AS entity_lo,",
+            "        max(event_value) OVER (PARTITION BY entity_id) AS entity_hi",
+        ] {
+            assert!(
+                compiled.sql.contains(bound),
+                "a bound taken off anything but the cast value undoes the cast: {bound}"
+            );
+        }
+    }
+
+    #[test]
     fn the_range_is_cut_into_as_many_bins_as_the_read_asks_for_and_the_last_one_closes_on_it() {
         for bins in [1_u32, 4, 100] {
             let compiled = compile(
@@ -201,7 +232,7 @@ mod tests {
         let compiled = compile(&metric, &[sized_measure("pr_size")], &query(bins_view(10)));
 
         assert!(compiled.sql.contains(
-            "        assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added))))) AS event_value"
+            "        toFloat64(assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added)))))) AS event_value"
         ));
         assert!(compiled.sql.contains("      AND lines_added IS NOT NULL"));
     }
