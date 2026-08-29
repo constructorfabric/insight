@@ -16,8 +16,9 @@ pub(super) enum MappingRelations {
 }
 
 /// INVARIANT: whichever relations are in force, each projects `person_id` plus
-/// one identity value column and carries exactly one `?` for the tenant.
-pub(super) const MAPPING: MappingRelations = MappingRelations::InlineIdentityTables;
+/// one identity value column; the journal tables carry one `?` for the tenant
+/// each, the published views carry none.
+pub(super) const MAPPING: MappingRelations = MappingRelations::PublishedViews;
 
 impl MappingRelations {
     /// `(email, person_id)` — one row per email that resolves to somebody.
@@ -87,7 +88,7 @@ pub(super) fn mapping_sql(scope: MappingScope) -> String {
 pub(super) enum MappingScope {
     /// The people the caller named; their count is the caller's own bound.
     RequestedPeople,
-    /// Everyone the mapping resolves in the tenant, up to a bound row ceiling.
+    /// Everyone the mapping resolves, up to a bound row ceiling.
     EveryPerson,
 }
 
@@ -125,7 +126,6 @@ fn published_view(value_column: &str, view: &str) -> String {
         format!("    {value_column},"),
         "    person_id".to_owned(),
         format!("FROM {view}"),
-        "WHERE insight_tenant_id = toUUID(?)".to_owned(),
     ]
     .join("\n")
 }
@@ -237,19 +237,32 @@ mod tests {
         sql.split('\'').skip(1).step_by(2).collect()
     }
 
+    /// What one mapping relation contributes to that bind order under the
+    /// relations in force.
+    fn relation_binds() -> Vec<&'static str> {
+        match MAPPING {
+            MappingRelations::InlineIdentityTables => vec!["tenant"],
+            MappingRelations::PublishedViews => Vec::new(),
+        }
+    }
+
     #[test]
-    fn the_mapping_binds_the_tenant_and_the_person_set_once_per_relation() {
+    fn each_relation_binds_its_own_placeholders_then_the_person_set() {
+        let expected = [relation_binds(), vec!["people"]].concat().repeat(2);
+
         assert_eq!(
             placeholders(&mapping_sql(MappingScope::RequestedPeople)),
-            vec!["tenant", "people", "tenant", "people"]
+            expected
         );
     }
 
     #[test]
-    fn enumerating_the_tenant_drops_the_person_narrowing_and_binds_a_row_ceiling() {
+    fn enumerating_every_person_drops_the_person_narrowing_and_binds_a_row_ceiling() {
+        let expected = [relation_binds().repeat(2), vec!["row ceiling"]].concat();
+
         assert_eq!(
             placeholders(&mapping_sql(MappingScope::EveryPerson)),
-            vec!["tenant", "tenant", "row ceiling"]
+            expected
         );
     }
 
@@ -269,14 +282,14 @@ mod tests {
 
         assert_eq!(dropped, BTreeSet::from(["    WHERE person_id IN ?"]));
         assert_eq!(added, BTreeSet::from(["LIMIT ?"]));
-        assert!(every.contains("HAVING uniqExact(cb.person_id) = 1"));
+        assert!(every.contains(&indent(&MAPPING.email_claims(), 8).join("\n")));
     }
 
     #[test]
-    fn every_relation_the_mapping_can_read_takes_the_tenant_and_nothing_else() {
-        for relations in [
-            MappingRelations::InlineIdentityTables,
-            MappingRelations::PublishedViews,
+    fn the_journal_relations_take_the_tenant_alone_and_the_published_views_take_nothing() {
+        for (relations, expected) in [
+            (MappingRelations::InlineIdentityTables, &["tenant"][..]),
+            (MappingRelations::PublishedViews, &[][..]),
         ] {
             for (question, sql) in [
                 ("email claims", relations.email_claims()),
@@ -284,8 +297,8 @@ mod tests {
             ] {
                 assert_eq!(
                     placeholders(&sql),
-                    vec!["tenant"],
-                    "should bind the tenant alone: {relations:?} {question}"
+                    expected,
+                    "should bind its own placeholders only: {relations:?} {question}"
                 );
                 assert!(
                     sql.contains("person_id"),
@@ -316,13 +329,17 @@ mod tests {
     }
 
     #[test]
-    fn the_statement_carries_no_value_of_its_own_beyond_the_reserved_person() {
+    fn the_statement_carries_no_value_of_its_own_beyond_the_claim_kinds() {
         let sql = mapping_sql(MappingScope::RequestedPeople);
 
-        assert_eq!(
-            quoted_literals(&sql),
-            BTreeSet::from(["", "UPSERT", "account_id", "email", "id", EXCLUDED_PERSON])
-        );
+        let email_claims = MAPPING.email_claims();
+        let account_bindings = MAPPING.account_bindings();
+
+        let mut expected = BTreeSet::from(["", "account_id", "email"]);
+        expected.extend(quoted_literals(&email_claims));
+        expected.extend(quoted_literals(&account_bindings));
+
+        assert_eq!(quoted_literals(&sql), expected);
     }
 
     #[test]
@@ -388,41 +405,9 @@ mod tests {
                 "        coalesce(email, '') AS value",
                 "    FROM (",
                 "        SELECT",
-                "            ae.email AS email,",
-                "            any(cb.person_id) AS person_id",
-                "        FROM (",
-                "            SELECT DISTINCT",
-                "                insight_source_type AS source_type,",
-                "                insight_source_id AS source_id,",
-                "                source_account_id AS account_id,",
-                "                lower(trimBoth(value)) AS email",
-                "            FROM identity.identity_inputs",
-                "            WHERE value_type = 'email'",
-                "              AND operation_type = 'UPSERT'",
-                "              AND coalesce(value, '') != ''",
-                "              AND coalesce(source_account_id, '') != ''",
-                "        ) AS ae",
-                "        INNER JOIN (",
-                "            SELECT",
-                "                insight_source_type AS source_type,",
-                "                insight_source_id AS source_id,",
-                "                trimBoth(value_effective) AS account_id,",
-                "                person_id",
-                "            FROM identity.identity_persons",
-                "            WHERE value_type = 'id'",
-                "              AND insight_tenant_id = toUUID(?)",
-                "              AND value_effective IS NOT NULL",
-                "              AND trimBoth(value_effective) != ''",
-                "            ORDER BY source_type, source_id, account_id, created_at DESC, id DESC",
-                "            LIMIT 1 BY source_type, source_id, account_id",
-                "        ) AS cb",
-                "            ON cb.source_type = ae.source_type",
-                "           AND cb.source_id = ae.source_id",
-                "           AND cb.account_id = ae.account_id",
-                "        WHERE ae.email != ''",
-                "          AND cb.person_id != toUUID('ffffffff-ffff-ffff-ffff-ffffffffffff')",
-                "        GROUP BY ae.email",
-                "        HAVING uniqExact(cb.person_id) = 1",
+                "            email,",
+                "            person_id",
+                "        FROM identity.person_map",
                 "    ) AS email_map",
                 "    WHERE person_id IN ?",
                 "    UNION ALL",
@@ -432,17 +417,9 @@ mod tests {
                 "        coalesce(account_id, '') AS value",
                 "    FROM (",
                 "        SELECT",
-                "            insight_source_type AS source_type,",
-                "            insight_source_id AS source_id,",
-                "            lower(trimBoth(value_effective)) AS account_id,",
+                "            account_id,",
                 "            person_id",
-                "        FROM identity.identity_persons",
-                "        WHERE value_type = 'id'",
-                "          AND insight_tenant_id = toUUID(?)",
-                "          AND value_effective IS NOT NULL",
-                "          AND trimBoth(value_effective) != ''",
-                "        ORDER BY source_type, source_id, account_id, created_at DESC, id DESC",
-                "        LIMIT 1 BY source_type, source_id, account_id",
+                "        FROM identity.account_assignment",
                 "    ) AS account_map",
                 "    WHERE person_id IN ?",
                 ") AS claimed",

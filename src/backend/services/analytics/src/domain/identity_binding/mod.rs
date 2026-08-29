@@ -55,12 +55,11 @@ pub async fn resolve_identities(
     }
 
     let tenant = tenant_id.to_string();
-    let rows = clickhouse
-        .query(&sql::mapping_sql(sql::MappingScope::RequestedPeople))
-        .bind(tenant.as_str())
-        .bind(person_ids)
-        .bind(tenant.as_str())
-        .bind(person_ids)
+    let statement = clickhouse.query(&sql::mapping_sql(sql::MappingScope::RequestedPeople));
+    let email_relation = bind_tenant(statement, &tenant).bind(person_ids);
+    let account_relation = bind_tenant(email_relation, &tenant).bind(person_ids);
+
+    let rows = account_relation
         .fetch_all::<IdentityRow>()
         .await
         .map_err(|error| {
@@ -76,7 +75,7 @@ pub async fn resolve_identities(
     Ok(by_person(rows))
 }
 
-/// Every person the mapping resolves in this tenant, under exactly the rules
+/// Every person the mapping resolves, under exactly the rules
 /// [`resolve_identities`] applies to a named list. `row_limit` is the caller's
 /// served ceiling plus one, so an over-large population is detected rather than
 /// silently truncated.
@@ -86,10 +85,11 @@ pub async fn resolve_all_identities(
     row_limit: u64,
 ) -> Result<BTreeMap<Uuid, IdentitySet>, IdentityBindingError> {
     let tenant = tenant_id.to_string();
-    let rows = clickhouse
-        .query(&sql::mapping_sql(sql::MappingScope::EveryPerson))
-        .bind(tenant.as_str())
-        .bind(tenant.as_str())
+    let statement = clickhouse.query(&sql::mapping_sql(sql::MappingScope::EveryPerson));
+    let email_relation = bind_tenant(statement, &tenant);
+    let account_relation = bind_tenant(email_relation, &tenant);
+
+    let rows = account_relation
         .bind(row_limit)
         .fetch_all::<IdentityRow>()
         .await
@@ -130,6 +130,16 @@ pub async fn identity_epoch(
             );
             IdentityBindingError::EpochUnreadable
         })
+}
+
+/// INVARIANT: the mapping statement takes one tenant bind per relation only
+/// while the journal tables are the relations in force; the published views
+/// carry no tenant placeholder to bind.
+fn bind_tenant(query: clickhouse::query::Query, tenant: &str) -> clickhouse::query::Query {
+    match sql::MAPPING {
+        sql::MappingRelations::InlineIdentityTables => query.bind(tenant),
+        sql::MappingRelations::PublishedViews => query,
+    }
 }
 
 fn by_person(rows: Vec<IdentityRow>) -> BTreeMap<Uuid, IdentitySet> {
