@@ -90,3 +90,18 @@ fn openapi_document_covers_the_route_table() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn report_export_request_is_strict_and_caps_metric_keys() -> anyhow::Result<()> {
+    let json = serde_json::to_value(openapi_document()?)?;
+    let request = &json["components"]["schemas"]["ReportExportRequest"];
+
+    assert_eq!(request["type"], "object");
+    assert_eq!(request["additionalProperties"], false);
+    assert_eq!(request["properties"]["metric_keys"]["maxItems"], 100);
+    assert_eq!(
+        request["required"],
+        serde_json::json!(["subject", "period", "granularity", "metric_keys", "format"])
+    );
+    Ok(())
+}

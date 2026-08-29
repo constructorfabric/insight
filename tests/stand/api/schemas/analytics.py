@@ -1314,6 +1314,17 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class ReportExportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    format: ReportExportFormat
+    granularity: ReportGranularity
+    metric_keys: list[str] = Field(..., max_length=100)
+    period: ReportPeriod
+    subject: ReportSubject
+
+
 class ReportPreviewResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1328,7 +1339,7 @@ class ReportRecipe(BaseModel):
         extra='forbid',
     )
     granularity: ReportGranularity
-    metric_keys: list[str]
+    metric_keys: list[str] = Field(..., max_length=100)
     period: ReportPeriod
     subject: ReportSubject
 
@@ -1461,13 +1472,6 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
-
-
-class ReportExportRequest(ReportRecipe):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    format: ReportExportFormat
 
 
 class MetricResultDto7(BaseModel):

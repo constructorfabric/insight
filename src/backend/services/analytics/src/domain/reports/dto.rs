@@ -11,6 +11,7 @@ pub struct ReportRecipe {
     pub subject: ReportSubject,
     pub period: ReportPeriod,
     pub granularity: ReportGranularity,
+    #[schema(max_items = 100)]
     pub metric_keys: Vec<String>,
 }
 
@@ -30,9 +31,23 @@ impl toolkit::api::api_dto::ResponseApiDto for ReportPreviewResponse {}
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReportExportRequest {
-    #[serde(flatten)]
-    pub recipe: ReportRecipe,
+    pub subject: ReportSubject,
+    pub period: ReportPeriod,
+    pub granularity: ReportGranularity,
+    #[schema(max_items = 100)]
+    pub metric_keys: Vec<String>,
     pub format: ReportExportFormat,
+}
+
+impl ReportExportRequest {
+    pub(crate) fn into_recipe(self) -> ReportRecipe {
+        ReportRecipe {
+            subject: self.subject,
+            period: self.period,
+            granularity: self.granularity,
+            metric_keys: self.metric_keys,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
