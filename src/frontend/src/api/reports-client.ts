@@ -6,6 +6,8 @@ import { downloadBlob } from "@/lib/download";
 const BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/analytics/v1";
 
+export const MAX_REPORT_PEOPLE = 1000;
+
 export type ReportSubject =
   { type: "people"; ids: string[] } | { type: "tenant" };
 export type ReportGranularity = "day" | "week" | "month" | "quarter" | "year";

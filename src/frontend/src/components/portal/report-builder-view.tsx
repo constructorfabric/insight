@@ -6,6 +6,7 @@ import type {
   ReportPreviewResponse,
   ReportRecipe,
 } from "@/api/reports-client";
+import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
@@ -367,6 +368,9 @@ function reportBlocker(
   }
   if (subject === "people" && peopleCount === 0)
     return "This scope has no people";
+  if (subject === "people" && peopleCount > MAX_REPORT_PEOPLE) {
+    return `This scope has ${peopleCount.toLocaleString()} people; reports support up to ${MAX_REPORT_PEOPLE.toLocaleString()}. Narrow the scope`;
+  }
   return null;
 }
 
