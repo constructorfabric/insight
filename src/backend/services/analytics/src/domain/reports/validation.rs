@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use sea_orm::DatabaseConnection;
 use toolkit_canonical_errors::CanonicalError;
 use uuid::Uuid;
@@ -10,10 +10,12 @@ use crate::domain::metric_definitions::{MetricDefinition, load_definitions};
 use crate::domain::metric_results::normalize_metric_key;
 
 use super::dto::{
-    ReportExportRequest, ReportGranularity, ReportPreviewRequest, ReportRecipe, ReportSubject,
+    ReportExportFormat, ReportExportRequest, ReportGranularity, ReportPreviewRequest, ReportRecipe,
+    ReportSubject,
 };
 
 const MAX_REPORT_PEOPLE: usize = 1000;
+const MAX_REPORT_METRICS: usize = 100;
 
 #[derive(Debug)]
 pub struct ValidatedReportRecipe {
@@ -60,7 +62,8 @@ pub async fn validate_export(
     tenant_id: Uuid,
     request: ReportExportRequest,
 ) -> Result<ValidatedReportRecipe, CanonicalError> {
-    validate_recipe(db, tenant_id, request.recipe).await
+    let shape = validate_export_shape(request, tenant_id)?;
+    validate_recipe_definitions(db, tenant_id, shape).await
 }
 
 async fn validate_recipe(
@@ -69,6 +72,14 @@ async fn validate_recipe(
     request: ReportRecipe,
 ) -> Result<ValidatedReportRecipe, CanonicalError> {
     let shape = validate_recipe_shape(request, tenant_id)?;
+    validate_recipe_definitions(db, tenant_id, shape).await
+}
+
+async fn validate_recipe_definitions(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    shape: RecipeShape,
+) -> Result<ValidatedReportRecipe, CanonicalError> {
     let definitions = load_definitions(db, tenant_id, &shape.metric_keys).await?;
     let metrics = validate_loaded_definitions(&shape, &definitions)?;
 
@@ -79,6 +90,22 @@ async fn validate_recipe(
         granularity: shape.granularity,
         metrics,
     })
+}
+
+fn validate_export_shape(
+    request: ReportExportRequest,
+    tenant_id: Uuid,
+) -> Result<RecipeShape, CanonicalError> {
+    let format = request.format;
+    let shape = validate_recipe_shape(request.into_recipe(), tenant_id)?;
+    if matches!(format, ReportExportFormat::Xlsx) && shape.from.year() < 1900 {
+        return invalid(
+            "period.from",
+            "XLSX exports require period.from on or after 1900-01-01",
+        );
+    }
+
+    Ok(shape)
 }
 
 fn validate_recipe_shape(
@@ -132,6 +159,12 @@ fn validate_people(ids: Vec<Uuid>) -> Result<Vec<Uuid>, CanonicalError> {
 fn validate_metric_keys(metric_keys: Vec<String>) -> Result<Vec<String>, CanonicalError> {
     if metric_keys.is_empty() {
         return invalid("metric_keys", "metric_keys must not be empty");
+    }
+    if metric_keys.len() > MAX_REPORT_METRICS {
+        return invalid(
+            "metric_keys",
+            format!("metric_keys must contain at most {MAX_REPORT_METRICS} metrics"),
+        );
     }
 
     let mut seen = BTreeSet::new();
@@ -199,7 +232,7 @@ mod tests {
         AliasCollapse, ComputationSpec, MetricDirection, MetricFormat, MetricInput,
         ObservationSource,
     };
-    use crate::domain::reports::dto::{ReportPeriod, ReportSubject};
+    use crate::domain::reports::dto::{ReportExportFormat, ReportPeriod, ReportSubject};
 
     const FIRST_PERSON: Uuid = Uuid::from_u128(0x019e_27bc_dec0_7626_81a9_c552_4662_a6a9);
     const SECOND_PERSON: Uuid = Uuid::from_u128(0x019e_27bc_dec0_7626_81a9_c552_4662_a6aa);
@@ -307,6 +340,43 @@ mod tests {
             assert!(
                 validate_recipe_shape(recipe(ReportSubject::Tenant {}, &keys), Uuid::nil(),)
                     .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_more_than_one_hundred_metric_keys() {
+        let mut accepted = recipe(ReportSubject::Tenant {}, &["git.commits"]);
+        accepted.metric_keys = (0..MAX_REPORT_METRICS)
+            .map(|index| format!("metric.key{index}"))
+            .collect();
+        assert!(validate_recipe_shape(accepted, Uuid::nil()).is_ok());
+
+        let mut rejected = recipe(ReportSubject::Tenant {}, &["git.commits"]);
+        rejected.metric_keys = (0..=MAX_REPORT_METRICS)
+            .map(|index| format!("metric.key{index}"))
+            .collect();
+        assert!(validate_recipe_shape(rejected, Uuid::nil()).is_err());
+    }
+
+    #[test]
+    fn accepts_pre_excel_periods_except_for_xlsx_exports() {
+        let mut recipe = recipe(ReportSubject::Tenant {}, &["git.commits"]);
+        recipe.period.from = "1899-12-31".to_owned();
+        assert!(validate_recipe_shape(recipe.clone(), Uuid::nil()).is_ok());
+
+        for format in [ReportExportFormat::Csv, ReportExportFormat::Xlsx] {
+            let request = ReportExportRequest {
+                subject: recipe.subject.clone(),
+                period: recipe.period.clone(),
+                granularity: recipe.granularity,
+                metric_keys: recipe.metric_keys.clone(),
+                format,
+            };
+            assert_eq!(
+                validate_export_shape(request, Uuid::nil()).is_ok(),
+                matches!(format, ReportExportFormat::Csv),
+                "should accept {format:?}"
             );
         }
     }

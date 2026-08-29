@@ -54,11 +54,11 @@ async fn build_preview(
     request: ReportPreviewRequest,
     deadline: tokio::time::Instant,
 ) -> Result<ReportPreviewResponse, CanonicalError> {
-    authorize_tenant_subject(state, &request)?;
+    authorize_tenant_subject(state, &request.subject)?;
 
     let recipe = validate_preview(&state.db, ctx.subject_tenant_id(), request).await?;
-    let profiles = hydrate_profiles(state, ctx, headers, &recipe).await?;
     let _generation = export::acquire_generation(state, deadline).await?;
+    let profiles = hydrate_profiles(state, ctx, headers, &recipe).await?;
     let limits = planner_limits(state);
     let full_plan = plan_report(&recipe, &profiles, limits).map_err(map_planning_error)?;
     let (preview_recipe, preview_profiles) = preview_inputs(&recipe, &full_plan, profiles)
@@ -94,10 +94,10 @@ async fn build_preview(
 
 pub(super) fn authorize_tenant_subject(
     state: &AppState,
-    request: &crate::domain::reports::dto::ReportRecipe,
+    subject: &crate::domain::reports::dto::ReportSubject,
 ) -> Result<(), CanonicalError> {
     if matches!(
-        &request.subject,
+        subject,
         crate::domain::reports::dto::ReportSubject::Tenant {}
     ) {
         authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)?;

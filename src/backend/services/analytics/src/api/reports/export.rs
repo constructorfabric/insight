@@ -17,7 +17,9 @@ use super::{
 };
 use crate::api::error::ReportError;
 use crate::domain::reports::dto::{ReportExportFormat, ReportExportRequest};
-use crate::domain::reports::executor::{ReportExecutionContext, execute_report};
+use crate::domain::reports::executor::{
+    ReportExecutionContext, ReportExecutionError, execute_report,
+};
 use crate::domain::reports::export::{
     ReportArtifact, ReportExportError, ReportWriterLimits, start_report_writer,
 };
@@ -32,7 +34,7 @@ pub(crate) async fn export_report(
     headers: HeaderMap,
     Json(request): Json<ReportExportRequest>,
 ) -> Result<Response<Body>, CanonicalError> {
-    let telemetry = ReportTelemetry::new(&request.recipe.subject, request.format);
+    let telemetry = ReportTelemetry::new(&request.subject, request.format);
     let response = export_report_inner(&state, &ctx, &headers, request, &telemetry).await;
     if response.is_err() {
         telemetry.fail();
@@ -50,7 +52,7 @@ async fn export_report_inner(
 ) -> Result<Response<Body>, CanonicalError> {
     let deadline = tokio::time::Instant::now()
         + Duration::from_secs(state.config.reports.request_timeout_secs);
-    authorize_tenant_subject(state, &request.recipe)?;
+    authorize_tenant_subject(state, &request.subject)?;
 
     let format = request.format;
     let recipe = tokio::time::timeout_at(
@@ -59,16 +61,16 @@ async fn export_report_inner(
     )
     .await
     .map_err(|_| report_limit("report export timed out"))??;
+    let admission_started = std::time::Instant::now();
+    let artifact_permit = acquire_artifact(state, deadline).await?;
+    let generation = acquire_generation(state, deadline).await?;
+    telemetry.record_admission_wait(admission_started.elapsed());
     let identity_started = std::time::Instant::now();
     let profiles =
         tokio::time::timeout_at(deadline, hydrate_profiles(state, ctx, headers, &recipe))
             .await
             .map_err(|_| report_limit("report export timed out"))??;
     telemetry.record_identity_duration(identity_started.elapsed());
-    let admission_started = std::time::Instant::now();
-    let artifact_permit = acquire_artifact(state, deadline).await?;
-    let generation = acquire_generation(state, deadline).await?;
-    telemetry.record_admission_wait(admission_started.elapsed());
     let plan = plan_report(
         &recipe,
         &profiles,
@@ -108,8 +110,7 @@ async fn export_report_inner(
     match tokio::time::timeout_at(deadline, execution).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
-            stop_writer(writer, deadline).await;
-            return Err(report_internal(error));
+            return Err(map_execution_failure(error, writer, deadline).await);
         }
         Err(_) => {
             stop_writer(writer, deadline).await;
@@ -144,6 +145,27 @@ async fn stop_writer(
     deadline: tokio::time::Instant,
 ) {
     let _ = tokio::time::timeout_at(deadline, writer).await;
+}
+
+async fn map_execution_failure(
+    error: ReportExecutionError,
+    writer: tokio::task::JoinHandle<Result<ReportArtifact, ReportExportError>>,
+    deadline: tokio::time::Instant,
+) -> CanonicalError {
+    if !matches!(&error, ReportExecutionError::Sink(_)) {
+        stop_writer(writer, deadline).await;
+        return report_internal(error);
+    }
+
+    match tokio::time::timeout_at(deadline, writer).await {
+        Err(_) => report_limit("report export timed out"),
+        Ok(Err(_)) => report_internal("report writer task failed"),
+        Ok(Ok(Ok(artifact))) => {
+            drop(artifact);
+            report_internal(error)
+        }
+        Ok(Ok(Err(error))) => map_export_error(error),
+    }
 }
 
 pub(super) async fn acquire_generation(
@@ -299,6 +321,9 @@ fn report_busy(resource: &str, retry_after_secs: u64) -> CanonicalError {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     use super::*;
 
     #[tokio::test]
@@ -366,5 +391,29 @@ mod tests {
         let result = acquire_capacity(semaphore, deadline, "report generations", 2).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn sink_failure_returns_the_writer_limit_error() {
+        let writer = tokio::spawn(async {
+            Err(ReportExportError::Csv(
+                crate::domain::reports::csv::ReportCsvError::GeneratedByteLimit { limit: 1 },
+            ))
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+
+        let error = map_execution_failure(
+            ReportExecutionError::Sink(crate::domain::reports::executor::ReportSinkError::new(
+                "report writer stopped",
+            )),
+            writer,
+            deadline,
+        )
+        .await;
+
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }

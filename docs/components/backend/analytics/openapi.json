@@ -2227,22 +2227,36 @@
         "type": "string"
       },
       "ReportExportRequest": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/ReportRecipe"
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ReportExportFormat"
           },
-          {
-            "properties": {
-              "format": {
-                "$ref": "#/components/schemas/ReportExportFormat"
-              }
+          "granularity": {
+            "$ref": "#/components/schemas/ReportGranularity"
+          },
+          "metric_keys": {
+            "items": {
+              "type": "string"
             },
-            "required": [
-              "format"
-            ],
-            "type": "object"
+            "maxItems": 100,
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReportSubject"
           }
-        ]
+        },
+        "required": [
+          "subject",
+          "period",
+          "granularity",
+          "metric_keys",
+          "format"
+        ],
+        "type": "object"
       },
       "ReportGranularity": {
         "enum": [
@@ -2307,6 +2321,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 100,
             "type": "array"
           },
           "period": {
