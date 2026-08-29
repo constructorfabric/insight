@@ -114,10 +114,13 @@ impl MappingScope {
 ///
 /// SAFETY: the observation log is unfiltered on purpose — it carries a
 /// producer-side tenant that never equals the journal's.
+///
+/// INVARIANT: a store with no marker of its own contributes 0, so the epoch
+/// stays a plain `UInt64` the row decode accepts.
 pub(super) const EPOCH_SQL: &str = "SELECT toUInt64(greatest(\n    \
-     (SELECT max(toUnixTimestamp64Milli(_synced_at)) FROM identity.identity_persons \
-     WHERE insight_tenant_id = toUUID(?)),\n    \
-     (SELECT max(_version) FROM identity.identity_inputs)\n\
+     coalesce((SELECT max(toUnixTimestamp64Milli(_synced_at)) FROM identity.identity_persons \
+     WHERE insight_tenant_id = toUUID(?)), 0),\n    \
+     coalesce((SELECT max(_version) FROM identity.identity_inputs), 0)\n\
      )) AS epoch";
 
 fn published_view(value_column: &str, view: &str) -> String {
@@ -387,6 +390,35 @@ mod tests {
             EPOCH_SQL.contains("identity.identity_inputs"),
             "{EPOCH_SQL}"
         );
+    }
+
+    /// The complete epoch statement, as it reads.
+    fn epoch_statement() -> String {
+        [
+            "SELECT toUInt64(greatest(",
+            "    coalesce((SELECT max(toUnixTimestamp64Milli(_synced_at)) FROM identity.identity_persons WHERE insight_tenant_id = toUUID(?)), 0),",
+            "    coalesce((SELECT max(_version) FROM identity.identity_inputs), 0)",
+            ")) AS epoch",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn the_epoch_statement_reads_as_written() {
+        assert_eq!(EPOCH_SQL, epoch_statement());
+    }
+
+    #[test]
+    fn a_store_with_no_marker_reads_zero_so_the_epoch_stays_a_plain_integer() {
+        for store in [
+            "(SELECT max(toUnixTimestamp64Milli(_synced_at)) FROM identity.identity_persons WHERE insight_tenant_id = toUUID(?)), 0)",
+            "(SELECT max(_version) FROM identity.identity_inputs), 0)",
+        ] {
+            assert!(
+                EPOCH_SQL.contains(&format!("coalesce({store}")),
+                "an unread store leaves the epoch nullable, which no row decodes: {store}"
+            );
+        }
     }
 
     /// The complete statement the published views render, as it reads.
