@@ -38,7 +38,10 @@ pub struct ReportExportRequest {
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReportSubject {
-    People { ids: Vec<Uuid> },
+    People {
+        #[schema(max_items = 1000)]
+        ids: Vec<Uuid>,
+    },
     Tenant {},
 }
 

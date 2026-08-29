@@ -85,6 +85,7 @@ where
                 let values = execute_metric_queries(
                     recipe,
                     plan,
+                    &plan.periods,
                     context,
                     ReportQuerySubject::People(batch_ids.to_vec()),
                     runner,
@@ -99,24 +100,31 @@ where
                     .map_err(ReportExecutionError::Sink)?;
             }
         }
-        PlannedReportSubject::Tenant { id } => {
+        PlannedReportSubject::Tenant { id, batches } => {
             if !profiles.is_empty() || *id != context.tenant_id {
                 return Err(ReportExecutionError::PlanMismatch);
             }
-            let values = execute_metric_queries(
-                recipe,
-                plan,
-                context,
-                ReportQuerySubject::Tenant(*id),
-                runner,
-            )
-            .await?;
-            let rows = assemble_tenant_rows(&plan.columns, &plan.periods, *id, &values)
-                .map_err(ReportExecutionError::Row)?;
+            for batch in batches {
+                let periods = plan
+                    .periods
+                    .get(batch.period_start..batch.period_end)
+                    .ok_or(ReportExecutionError::PlanMismatch)?;
+                let values = execute_metric_queries(
+                    recipe,
+                    plan,
+                    periods,
+                    context,
+                    ReportQuerySubject::Tenant(*id),
+                    runner,
+                )
+                .await?;
+                let rows = assemble_tenant_rows(&plan.columns, periods, *id, &values)
+                    .map_err(ReportExecutionError::Row)?;
 
-            sink.write_rows(&rows)
-                .await
-                .map_err(ReportExecutionError::Sink)?;
+                sink.write_rows(&rows)
+                    .await
+                    .map_err(ReportExecutionError::Sink)?;
+            }
         }
     }
 
@@ -126,10 +134,16 @@ where
 async fn execute_metric_queries<R: ReportQueryRunner>(
     recipe: &ValidatedReportRecipe,
     plan: &ReportPlan,
+    periods: &[super::period::PlannedPeriod],
     context: ReportExecutionContext,
     subject: ReportQuerySubject,
     runner: &R,
 ) -> Result<Vec<ReportMetricValues>, ReportExecutionError> {
+    let from = periods
+        .first()
+        .ok_or(ReportExecutionError::PlanMismatch)?
+        .from;
+    let to = periods.last().ok_or(ReportExecutionError::PlanMismatch)?.to;
     let queries = recipe
         .metrics
         .iter()
@@ -140,8 +154,8 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
                 metric,
                 context.tenant_id,
                 subject.clone(),
-                recipe.from,
-                recipe.to,
+                from,
+                to,
                 plan.bucket,
                 context.enforce_tenant_scope,
             )

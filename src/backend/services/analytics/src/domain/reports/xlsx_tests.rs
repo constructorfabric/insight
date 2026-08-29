@@ -29,7 +29,8 @@ fn writes_typed_cells_nulls_and_dates_in_row_order() {
             Some(ReportCell::Text("2026-01-02".to_owned())),
             Some(ReportCell::Number(12.5)),
             None,
-        ]],
+        ]
+        .into()],
         usize::MAX,
     )
     .unwrap_or_else(|error| panic!("workbook must serialize: {error}"));
@@ -96,7 +97,8 @@ fn applies_metric_number_formats_without_rounding_stored_values() {
             Some(ReportCell::Number(2.5)),
             Some(ReportCell::Number(3.75)),
             Some(ReportCell::Number(42.4)),
-        ]],
+        ]
+        .into()],
         usize::MAX,
     )
     .unwrap_or_else(|error| panic!("workbook must serialize: {error}"));
@@ -136,11 +138,15 @@ fn rejects_oversized_cells_and_incomplete_dimensions() {
             columns: 1,
         },
         std::env::temp_dir().as_path(),
+        usize::MAX,
     )
     .unwrap_or_else(|error| panic!("writer must initialize: {error}"));
-    let oversized_row = vec![vec![Some(ReportCell::Text(
-        "x".repeat(MAX_REPORT_XLSX_CELL_CHARACTERS + 1),
-    ))]];
+    let oversized_row = vec![
+        vec![Some(ReportCell::Text(
+            "x".repeat(MAX_REPORT_XLSX_CELL_CHARACTERS + 1),
+        ))]
+        .into(),
+    ];
     assert!(matches!(
         serializer.write_rows(&oversized_row),
         Err(ReportXlsxError::CellTooLarge)
@@ -148,6 +154,34 @@ fn rejects_oversized_cells_and_incomplete_dimensions() {
     assert!(matches!(
         serializer.finish_into(Vec::new(), usize::MAX),
         Err(ReportXlsxError::IncompleteRows)
+    ));
+}
+
+#[test]
+fn rejects_rows_before_their_estimated_spool_exceeds_the_budget() {
+    let columns = vec![column("Text", ReportColumnDataType::Text)];
+    let header_budget = estimated_text_row_spool_bytes(["Text"].into_iter())
+        .unwrap_or_else(|| panic!("header estimate must fit"));
+    let row = ReportRow::from(vec![Some(ReportCell::Text("compressible".repeat(32)))]);
+    let row_budget =
+        estimated_row_spool_bytes(&row).unwrap_or_else(|| panic!("row estimate must fit"));
+    let mut serializer = ReportXlsxSerializer::new(
+        &columns,
+        XlsxDimensions {
+            rows: 3,
+            columns: 1,
+        },
+        std::env::temp_dir().as_path(),
+        XLSX_SPOOL_FIXED_BYTES + header_budget + row_budget,
+    )
+    .unwrap_or_else(|error| panic!("writer must initialize: {error}"));
+
+    serializer
+        .write_rows(std::slice::from_ref(&row))
+        .unwrap_or_else(|error| panic!("first row must fit: {error}"));
+    assert!(matches!(
+        serializer.write_rows(&[row]),
+        Err(ReportXlsxError::SpoolLimitExceeded)
     ));
 }
 
@@ -162,7 +196,8 @@ fn accepts_excel_maximum_ascii_cell_length() {
         },
         &[vec![Some(ReportCell::Text(
             "x".repeat(MAX_REPORT_XLSX_CELL_CHARACTERS),
-        ))]],
+        ))]
+        .into()],
         usize::MAX,
     )
     .unwrap_or_else(|error| panic!("maximum Excel string must serialize: {error}"));
@@ -176,8 +211,12 @@ fn write_workbook(
     rows: &[ReportRow],
     max_output_bytes: usize,
 ) -> Result<Vec<u8>, ReportXlsxError> {
-    let mut serializer =
-        ReportXlsxSerializer::new(columns, dimensions, std::env::temp_dir().as_path())?;
+    let mut serializer = ReportXlsxSerializer::new(
+        columns,
+        dimensions,
+        std::env::temp_dir().as_path(),
+        usize::MAX,
+    )?;
     serializer.write_rows(rows)?;
     let mut bytes = Vec::new();
     serializer.finish_into(&mut bytes, max_output_bytes)?;

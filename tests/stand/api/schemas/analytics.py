@@ -710,6 +710,10 @@ class PutSettingsRequest(BaseModel):
     system_prompt: str
 
 
+class ReportCell(RootModel[str | float]):
+    root: str | float
+
+
 class ReportColumnDataType(StrEnum):
     text = 'text'
     date = 'date'
@@ -748,6 +752,10 @@ class ReportPeriod(BaseModel):
     to: str
 
 
+class ReportRow(RootModel[list[ReportCell | None]]):
+    root: list[ReportCell | None]
+
+
 class Type7(StrEnum):
     people = 'people'
 
@@ -756,7 +764,7 @@ class ReportSubject1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    ids: list[UUID]
+    ids: list[UUID] = Field(..., max_length=1000)
     type: Type7
 
 
@@ -1021,10 +1029,6 @@ class ValueTransform(BaseModel):
     clamp_min: float | None = None
     multiplier: float | None = None
     offset: float | None = None
-
-
-class Vec(RootModel[list[str | float | None]]):
-    root: list[str | float | None]
 
 
 class BreakdownValueDto(BaseModel):
@@ -1294,7 +1298,7 @@ class ReportPreviewResponse(BaseModel):
         extra='forbid',
     )
     columns: list[ReportColumnMetadata]
-    rows: list[Vec]
+    rows: list[ReportRow]
     total_rows: int = Field(..., ge=0)
 
 

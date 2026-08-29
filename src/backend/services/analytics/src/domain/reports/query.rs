@@ -7,9 +7,12 @@ use crate::domain::metric_results::ValidatedEntitySelection;
 use crate::domain::metric_results::compiler::{
     CompiledQuery, QueryBucket, TimeseriesQueryRow, compile_report_timeseries_query,
 };
+use crate::domain::metric_results::query_row_limit;
 use crate::infra::query::{QueryFetchError, fetch_json_rows};
 
 use super::period::ReportBucket;
+#[cfg(test)]
+use super::period::containing_bucket_start;
 use super::row::{ReportMetricValue, ReportMetricValues};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +33,10 @@ pub(crate) struct ReportMetricQuery {
         )
     )]
     pub(crate) subject: ReportQuerySubject,
+    #[cfg(test)]
+    pub(crate) first_bucket_start: NaiveDate,
+    #[cfg(test)]
+    pub(crate) last_bucket_start: NaiveDate,
     pub(crate) compiled: CompiledQuery,
 }
 
@@ -68,6 +75,9 @@ impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
         )
         .await
         .map_err(ReportQueryError::Fetch)?;
+        if rows.len() >= query_row_limit() {
+            return Err(ReportQueryError::InvalidResultShape);
+        }
         let mut values = Vec::new();
         for row in rows {
             if row.is_total == 1 {
@@ -120,6 +130,10 @@ pub(crate) fn compile_report_metric_query(
         ReportQuerySubject::People(ids) => ValidatedEntitySelection::Person { ids: ids.clone() },
         ReportQuerySubject::Tenant(id) => ValidatedEntitySelection::Tenant { id: *id },
     };
+    #[cfg(test)]
+    let first_bucket_start = containing_bucket_start(from, bucket);
+    #[cfg(test)]
+    let last_bucket_start = containing_bucket_start(to, bucket);
     let bucket = match bucket {
         ReportBucket::Day => QueryBucket::Day,
         ReportBucket::Week => QueryBucket::Week,
@@ -141,6 +155,10 @@ pub(crate) fn compile_report_metric_query(
         metric_index,
         metric_key: metric.key().to_owned(),
         subject,
+        #[cfg(test)]
+        first_bucket_start,
+        #[cfg(test)]
+        last_bucket_start,
         compiled,
     }
 }

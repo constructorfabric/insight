@@ -17,7 +17,38 @@ pub enum ReportCell {
     Number(f64),
 }
 
-pub type ReportRow = Vec<Option<ReportCell>>;
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(transparent)]
+pub struct ReportRow(Vec<Option<ReportCell>>);
+
+impl std::ops::Deref for ReportRow {
+    type Target = [Option<ReportCell>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Vec<Option<ReportCell>>> for ReportRow {
+    fn from(cells: Vec<Option<ReportCell>>) -> Self {
+        Self(cells)
+    }
+}
+
+impl FromIterator<Option<ReportCell>> for ReportRow {
+    fn from_iter<T: IntoIterator<Item = Option<ReportCell>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl<'a> IntoIterator for &'a ReportRow {
+    type Item = &'a Option<ReportCell>;
+    type IntoIter = std::slice::Iter<'a, Option<ReportCell>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReportMetricValue {
@@ -212,10 +243,10 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                vec![text("Second"), text("2026-01"), number(2.0)],
-                vec![text("Second"), text("2026-02"), None],
-                vec![text("First"), text("2026-01"), None],
-                vec![text("First"), text("2026-02"), number(1.0)],
+                vec![text("Second"), text("2026-01"), number(2.0)].into(),
+                vec![text("Second"), text("2026-02"), None].into(),
+                vec![text("First"), text("2026-01"), None].into(),
+                vec![text("First"), text("2026-02"), number(1.0)].into(),
             ]
         );
     }

@@ -192,7 +192,89 @@ fn tenant_plan_supports_more_than_fifty_metrics_without_profile_columns() {
     assert_eq!(plan.columns.len(), 67);
     assert_eq!(plan.size.total_rows, 2);
     assert_eq!(plan.size.total_cells, 134);
-    assert_eq!(plan.subject, PlannedReportSubject::Tenant { id: tenant_id });
+    assert_eq!(
+        plan.subject,
+        PlannedReportSubject::Tenant {
+            id: tenant_id,
+            batches: vec![PeriodQueryBatch {
+                period_start: 0,
+                period_end: 2,
+            }],
+        }
+    );
+}
+
+#[test]
+fn tenant_batches_are_bounded_by_resident_metric_cells() {
+    let tenant_id = Uuid::from_u128(9);
+    let recipe = ValidatedReportRecipe {
+        subject: ReportSubjectSelection::Tenant { id: tenant_id },
+        from: date("2026-01-01"),
+        to: date("2026-01-10"),
+        granularity: ReportGranularity::Day,
+        metrics: (0..2).map(|index| metric(index, "tenant")).collect(),
+    };
+
+    let plan = plan_report(
+        &recipe,
+        &[],
+        ReportPlannerLimits {
+            max_batch_cells: 6,
+            max_total_cells: u64::MAX,
+        },
+    )
+    .unwrap_or_else(|error| panic!("report should plan: {error}"));
+    let PlannedReportSubject::Tenant { batches, .. } = &plan.subject else {
+        panic!("expected tenant plan");
+    };
+
+    assert_eq!(
+        batches,
+        &[
+            PeriodQueryBatch {
+                period_start: 0,
+                period_end: 3,
+            },
+            PeriodQueryBatch {
+                period_start: 3,
+                period_end: 6,
+            },
+            PeriodQueryBatch {
+                period_start: 6,
+                period_end: 9,
+            },
+            PeriodQueryBatch {
+                period_start: 9,
+                period_end: 10,
+            },
+        ]
+    );
+}
+
+#[test]
+fn rejects_more_periods_than_one_metric_query_can_return() {
+    let tenant_id = Uuid::from_u128(9);
+    let recipe = ValidatedReportRecipe {
+        subject: ReportSubjectSelection::Tenant { id: tenant_id },
+        from: date("2000-01-01"),
+        to: date("2013-09-08"),
+        granularity: ReportGranularity::Day,
+        metrics: vec![metric(0, "tenant")],
+    };
+
+    let result = plan_report(
+        &recipe,
+        &[],
+        ReportPlannerLimits {
+            max_batch_cells: usize::MAX,
+            max_total_cells: u64::MAX,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(ReportPlanningError::PeriodLimitExceeded)
+    ));
 }
 
 #[test]

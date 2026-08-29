@@ -58,6 +58,7 @@ async fn build_preview(
 
     let recipe = validate_preview(&state.db, ctx.subject_tenant_id(), request).await?;
     let profiles = hydrate_profiles(state, ctx, headers, &recipe).await?;
+    let _generation = export::acquire_generation(state, deadline).await?;
     let limits = planner_limits(state);
     let full_plan = plan_report(&recipe, &profiles, limits).map_err(map_planning_error)?;
     let (preview_recipe, preview_profiles) = preview_inputs(&recipe, &full_plan, profiles)
@@ -65,8 +66,6 @@ async fn build_preview(
     let mut preview_plan =
         plan_report(&preview_recipe, &preview_profiles, limits).map_err(map_planning_error)?;
     preview_plan.columns = full_plan.columns.clone();
-    let _generation = export::acquire_generation(state, deadline).await?;
-
     let runner = ClickHouseReportQueryRunner::new(&state.ch);
     let rows = execute_report(
         &preview_recipe,
@@ -140,9 +139,10 @@ pub(super) fn map_planning_error(
         error,
         crate::domain::reports::planner::ReportPlanningError::CellLimitExceeded
             | crate::domain::reports::planner::ReportPlanningError::BatchLimitTooSmall
+            | crate::domain::reports::planner::ReportPlanningError::PeriodLimitExceeded
     ) {
-        return ReportError::resource_exhausted("Report exceeds resource limits.")
-            .with_quota_violation("report cells", "configured cell limit exceeded")
+        return ReportError::invalid_argument()
+            .with_field_violation("report", error.to_string(), "LIMIT_EXCEEDED")
             .create();
     }
 
@@ -275,10 +275,10 @@ mod tests {
         );
 
         let mut sink = PreviewSink::default();
-        sink.write_rows(&vec![Vec::new(); 12])
+        sink.write_rows(&vec![ReportRow::from(Vec::new()); 12])
             .await
             .unwrap_or_else(|error| panic!("first preview batch should write: {error}"));
-        sink.write_rows(&vec![Vec::new(); 12])
+        sink.write_rows(&vec![ReportRow::from(Vec::new()); 12])
             .await
             .unwrap_or_else(|error| panic!("second preview batch should write: {error}"));
         let rows = sink
@@ -290,14 +290,15 @@ mod tests {
     }
 
     #[test]
-    fn planner_capacity_failures_are_resource_exhausted() {
+    fn deterministic_planner_limits_are_invalid_arguments() {
         for error in [
             crate::domain::reports::planner::ReportPlanningError::CellLimitExceeded,
             crate::domain::reports::planner::ReportPlanningError::BatchLimitTooSmall,
+            crate::domain::reports::planner::ReportPlanningError::PeriodLimitExceeded,
         ] {
             assert_eq!(
                 map_planning_error(error).into_response().status(),
-                StatusCode::TOO_MANY_REQUESTS
+                StatusCode::BAD_REQUEST
             );
         }
     }

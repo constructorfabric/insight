@@ -20,5 +20,6 @@ mod planner_tests;
 pub(crate) mod query;
 pub(crate) mod row;
 pub(crate) mod telemetry;
+pub(crate) mod temp;
 pub mod validation;
 pub(crate) mod xlsx;

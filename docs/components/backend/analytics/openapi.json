@@ -2165,6 +2165,17 @@
         ],
         "type": "object"
       },
+      "ReportCell": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "double",
+            "type": "number"
+          }
+        ]
+      },
       "ReportColumnDataType": {
         "enum": [
           "text",
@@ -2269,7 +2280,7 @@
           },
           "rows": {
             "items": {
-              "$ref": "#/components/schemas/Vec"
+              "$ref": "#/components/schemas/ReportRow"
             },
             "type": "array"
           },
@@ -2313,6 +2324,19 @@
         ],
         "type": "object"
       },
+      "ReportRow": {
+        "items": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/ReportCell"
+            }
+          ]
+        },
+        "type": "array"
+      },
       "ReportSubject": {
         "oneOf": [
           {
@@ -2322,6 +2346,7 @@
                   "format": "uuid",
                   "type": "string"
                 },
+                "maxItems": 1000,
                 "type": "array"
               },
               "type": {
@@ -3026,27 +3051,6 @@
           }
         },
         "type": "object"
-      },
-      "Vec": {
-        "items": {
-          "oneOf": [
-            {
-              "type": "null"
-            },
-            {
-              "oneOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "format": "double",
-                  "type": "number"
-                }
-              ]
-            }
-          ]
-        },
-        "type": "array"
       }
     },
     "securitySchemes": {
