@@ -29,6 +29,7 @@ reports:
   maxBatchCells: 100000
   maxTotalCells: 6000000
   maxGeneratedBytes: 26214400
+  maxXlsxSpoolBytes: 94371840
   requestTimeoutSeconds: 120
   capacityWaitSeconds: 2
   maxConcurrentGenerations: 2

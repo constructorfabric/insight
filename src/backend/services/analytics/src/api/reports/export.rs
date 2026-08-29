@@ -18,7 +18,9 @@ use super::{
 use crate::api::error::ReportError;
 use crate::domain::reports::dto::{ReportExportFormat, ReportExportRequest};
 use crate::domain::reports::executor::{ReportExecutionContext, execute_report};
-use crate::domain::reports::export::{ReportArtifact, ReportExportError, start_report_writer};
+use crate::domain::reports::export::{
+    ReportArtifact, ReportExportError, ReportWriterLimits, start_report_writer,
+};
 use crate::domain::reports::planner::{ReportPlannerLimits, plan_report};
 use crate::domain::reports::query::ClickHouseReportQueryRunner;
 use crate::domain::reports::telemetry::{ReportCleanupOutcome, ReportTelemetry};
@@ -63,6 +65,10 @@ async fn export_report_inner(
             .await
             .map_err(|_| report_limit("report export timed out"))??;
     telemetry.record_identity_duration(identity_started.elapsed());
+    let admission_started = std::time::Instant::now();
+    let artifact_permit = acquire_artifact(state, deadline).await?;
+    let generation = acquire_generation(state, deadline).await?;
+    telemetry.record_admission_wait(admission_started.elapsed());
     let plan = plan_report(
         &recipe,
         &profiles,
@@ -72,16 +78,15 @@ async fn export_report_inner(
         },
     )
     .map_err(map_planning_error)?;
-    let admission_started = std::time::Instant::now();
-    let artifact_permit = acquire_artifact(state, deadline).await?;
-    let generation = acquire_generation(state, deadline).await?;
-    telemetry.record_admission_wait(admission_started.elapsed());
     let (sink, writer) = start_report_writer(
         format,
         &plan,
         state.config.reports.temp_dir.clone(),
-        state.config.reports.max_generated_bytes,
-        state.config.reports.writer_channel_batches,
+        ReportWriterLimits {
+            max_generated_bytes: state.config.reports.max_generated_bytes,
+            max_xlsx_spool_bytes: state.config.reports.max_xlsx_spool_bytes,
+            channel_batches: state.config.reports.writer_channel_batches,
+        },
         telemetry.clone(),
         generation,
     )
@@ -135,15 +140,10 @@ async fn export_report_inner(
 }
 
 async fn stop_writer(
-    mut writer: tokio::task::JoinHandle<Result<ReportArtifact, ReportExportError>>,
+    writer: tokio::task::JoinHandle<Result<ReportArtifact, ReportExportError>>,
     deadline: tokio::time::Instant,
 ) {
-    if tokio::time::timeout_at(deadline, &mut writer)
-        .await
-        .is_err()
-    {
-        writer.abort();
-    }
+    let _ = tokio::time::timeout_at(deadline, writer).await;
 }
 
 pub(super) async fn acquire_generation(
@@ -198,18 +198,21 @@ async fn response_for_artifact(
     telemetry: &ReportTelemetry,
 ) -> Result<Response<Body>, CanonicalError> {
     let artifact_path = artifact.path().map_err(map_export_error)?.to_path_buf();
-    let content_length = artifact.content_length();
     let file = tokio::fs::File::open(&artifact_path)
         .await
         .map_err(|_| report_internal("report artifact could not be opened"))?;
+    let (_, content_length) = artifact.disarm().map_err(map_export_error)?;
     if tokio::fs::remove_file(&artifact_path).await.is_err() {
-        telemetry.record_cleanup(ReportCleanupOutcome::Failed);
         drop(file);
-        let _ = tokio::fs::remove_file(&artifact_path).await;
+        let removed = tokio::fs::remove_file(&artifact_path).await.is_ok();
+        telemetry.record_cleanup(if removed {
+            ReportCleanupOutcome::Removed
+        } else {
+            ReportCleanupOutcome::Failed
+        });
         return Err(report_internal("report artifact could not be removed"));
     }
     telemetry.record_cleanup(ReportCleanupOutcome::Removed);
-    let _ = artifact.disarm().map_err(map_export_error)?;
 
     let content_type = match format {
         ReportExportFormat::Csv => "text/csv; charset=utf-8",
@@ -271,6 +274,15 @@ fn map_export_error(error: ReportExportError) -> CanonicalError {
             crate::domain::reports::xlsx::ReportXlsxError::OutputLimitExceeded,
         ) => report_limit("report output exceeds the configured size limit"),
         ReportExportError::XlsxDimensions => report_limit("report exceeds XLSX dimensions"),
+        ReportExportError::Xlsx(
+            crate::domain::reports::xlsx::ReportXlsxError::SpoolLimitExceeded,
+        ) => ReportError::invalid_argument()
+            .with_field_violation(
+                "format",
+                "report exceeds the XLSX temporary serialization limit",
+                "LIMIT_EXCEEDED",
+            )
+            .create(),
         error => {
             tracing::error!(?error, "report export failed");
             report_internal("report export failed")

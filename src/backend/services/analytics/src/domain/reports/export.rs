@@ -102,12 +102,18 @@ pub(crate) struct ReportExportSink {
     sender: mpsc::Sender<WriterMessage>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ReportWriterLimits {
+    pub(crate) max_generated_bytes: usize,
+    pub(crate) max_xlsx_spool_bytes: usize,
+    pub(crate) channel_batches: usize,
+}
+
 pub(crate) fn start_report_writer(
     format: ReportExportFormat,
     plan: &ReportPlan,
     temp_dir: PathBuf,
-    max_generated_bytes: usize,
-    channel_batches: usize,
+    limits: ReportWriterLimits,
     telemetry: ReportTelemetry,
     generation_permit: OwnedSemaphorePermit,
 ) -> Result<
@@ -130,10 +136,11 @@ pub(crate) fn start_report_writer(
         columns: plan.columns.clone(),
         dimensions,
         temp_dir,
-        max_generated_bytes,
+        max_generated_bytes: limits.max_generated_bytes,
+        max_xlsx_spool_bytes: limits.max_xlsx_spool_bytes,
         telemetry,
     };
-    let (sender, receiver) = mpsc::channel(channel_batches);
+    let (sender, receiver) = mpsc::channel(limits.channel_batches);
     let task = spawn_report_writer(specification, receiver, generation_permit);
 
     Ok((ReportExportSink { sender }, task))
@@ -186,6 +193,7 @@ struct WriterSpecification {
     dimensions: Option<XlsxDimensions>,
     temp_dir: PathBuf,
     max_generated_bytes: usize,
+    max_xlsx_spool_bytes: usize,
     telemetry: ReportTelemetry,
 }
 
@@ -314,6 +322,7 @@ impl FileWriter {
                     .dimensions
                     .ok_or(ReportExportError::WriterStopped)?,
                 &specification.temp_dir,
+                specification.max_xlsx_spool_bytes,
             )
             .map(|serializer| Self::Xlsx {
                 serializer: Box::new(serializer),

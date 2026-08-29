@@ -7,6 +7,7 @@ use super::period::{PlannedPeriod, ReportBucket, count_periods, enumerate_period
 use super::validation::{ReportSubjectSelection, ValidatedReportRecipe};
 
 pub(crate) const METRIC_QUERY_VALUE_LIMIT: usize = 5000;
+pub(crate) const MAX_REPORT_PERIODS: usize = METRIC_QUERY_VALUE_LIMIT - 1;
 const XLSX_MAX_ROWS: u64 = 1_048_576;
 const XLSX_MAX_COLUMNS: u64 = 16_384;
 
@@ -37,6 +38,12 @@ pub(crate) struct PersonQueryBatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PeriodQueryBatch {
+    pub(crate) period_start: usize,
+    pub(crate) period_end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PlannedReportSubject {
     People {
         ids: Vec<Uuid>,
@@ -44,6 +51,7 @@ pub(crate) enum PlannedReportSubject {
     },
     Tenant {
         id: Uuid,
+        batches: Vec<PeriodQueryBatch>,
     },
 }
 
@@ -68,6 +76,8 @@ pub(crate) enum ReportPlanningError {
     XlsxDimensionsExceeded,
     #[error("report exceeds the configured cell limit")]
     CellLimitExceeded,
+    #[error("report exceeds the supported period limit")]
+    PeriodLimitExceeded,
 }
 
 impl ReportSize {
@@ -100,6 +110,9 @@ pub(crate) fn plan_report(
     };
     let period_count =
         count_periods(recipe.from, recipe.to, bucket).ok_or(ReportPlanningError::SizeOverflow)?;
+    if period_count > MAX_REPORT_PERIODS {
+        return Err(ReportPlanningError::PeriodLimitExceeded);
+    }
     let size = calculate_size(subject_count, period_count, columns.len())?;
     if size.total_cells > limits.max_total_cells {
         return Err(ReportPlanningError::CellLimitExceeded);
@@ -110,7 +123,10 @@ pub(crate) fn plan_report(
             ids: ids.clone(),
             batches: plan_person_batches(ids.len(), periods.len(), recipe.metrics.len(), limits)?,
         },
-        ReportSubjectSelection::Tenant { id } => PlannedReportSubject::Tenant { id: *id },
+        ReportSubjectSelection::Tenant { id } => PlannedReportSubject::Tenant {
+            id: *id,
+            batches: plan_period_batches(periods.len(), recipe.metrics.len(), limits)?,
+        },
     };
 
     Ok(ReportPlan {
@@ -120,6 +136,29 @@ pub(crate) fn plan_report(
         subject,
         size,
     })
+}
+
+fn plan_period_batches(
+    periods: usize,
+    metrics: usize,
+    limits: ReportPlannerLimits,
+) -> Result<Vec<PeriodQueryBatch>, ReportPlanningError> {
+    let cell_periods = limits
+        .max_batch_cells
+        .checked_div(metrics)
+        .unwrap_or(usize::MAX);
+    let periods_per_batch = MAX_REPORT_PERIODS.min(cell_periods);
+    if periods_per_batch == 0 {
+        return Err(ReportPlanningError::BatchLimitTooSmall);
+    }
+
+    Ok((0..periods)
+        .step_by(periods_per_batch)
+        .map(|period_start| PeriodQueryBatch {
+            period_start,
+            period_end: periods.min(period_start + periods_per_batch),
+        })
+        .collect())
 }
 
 fn validate_profiles(

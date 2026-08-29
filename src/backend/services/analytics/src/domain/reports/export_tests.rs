@@ -67,9 +67,9 @@ async fn writer_completes_csv_before_exposing_artifact() {
     let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
 
     sender
-        .send(WriterMessage::Rows(vec![vec![Some(ReportCell::Text(
-            "example".to_owned(),
-        ))]]))
+        .send(WriterMessage::Rows(vec![
+            vec![Some(ReportCell::Text("example".to_owned()))].into(),
+        ]))
         .await
         .unwrap_or_else(|_| panic!("writer must accept rows"));
     sender
@@ -151,6 +151,7 @@ fn specification(format: ReportExportFormat, temp_dir: PathBuf) -> WriterSpecifi
         }),
         temp_dir,
         max_generated_bytes: 1024,
+        max_xlsx_spool_bytes: usize::MAX,
         telemetry: ReportTelemetry::new(&ReportSubject::Tenant {}, ReportExportFormat::Csv),
     }
 }

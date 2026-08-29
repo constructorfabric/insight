@@ -75,7 +75,7 @@ async fn tenant_execution_has_no_profile_columns_and_orders_periods_chronologica
         &recipe,
         &[],
         ReportPlannerLimits {
-            max_batch_cells: 100,
+            max_batch_cells: 1,
             max_total_cells: u64::MAX,
         },
     )
@@ -110,6 +110,7 @@ async fn tenant_execution_has_no_profile_columns_and_orders_periods_chronologica
             text("2026-01-31"),
             None
         ]
+        .into()
     );
     assert_eq!(
         rows[1],
@@ -119,8 +120,9 @@ async fn tenant_execution_has_no_profile_columns_and_orders_periods_chronologica
             text("2026-02-28"),
             number(4.0)
         ]
+        .into()
     );
-    assert_eq!(runner.tenant_queries(), 1);
+    assert_eq!(runner.tenant_queries(), 2);
 }
 
 #[tokio::test]
@@ -267,6 +269,10 @@ impl ReportQueryRunner for FakeRunner {
             .into_iter()
             .flatten()
             .filter(|value| selected_ids.contains(&value.entity_id))
+            .filter(|value| {
+                value.bucket_start >= query.first_bucket_start
+                    && value.bucket_start <= query.last_bucket_start
+            })
             .cloned()
             .collect();
         Ok(ReportMetricValues {

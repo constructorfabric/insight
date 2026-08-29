@@ -13,6 +13,10 @@ use crate::domain::metric_definitions::MetricFormat;
 
 pub(crate) const MAX_REPORT_XLSX_CELL_CHARACTERS: usize = 32_767;
 const BYTE_LIMIT_MARKER: &str = "report XLSX byte limit exceeded";
+const XLSX_SPOOL_FIXED_BYTES: usize = 4096;
+const XLSX_SPOOL_ROW_BYTES: usize = 64;
+const XLSX_SPOOL_CELL_BYTES: usize = 256;
+const XLSX_SPOOL_TEXT_BYTE_EXPANSION: usize = 8;
 const MIN_COLUMN_WIDTH: usize = 10;
 const MAX_COLUMN_WIDTH: usize = 40;
 
@@ -34,6 +38,8 @@ pub(crate) enum ReportXlsxError {
     NonFiniteNumber,
     #[error("report XLSX serialization exceeds byte limit")]
     OutputLimitExceeded,
+    #[error("report XLSX temporary serialization exceeds byte limit")]
+    SpoolLimitExceeded,
     #[error("report XLSX serialization failed")]
     Serialization(#[source] XlsxError),
 }
@@ -44,6 +50,8 @@ pub(crate) struct ReportXlsxSerializer {
     dimensions: XlsxDimensions,
     next_row: u32,
     column_widths: Vec<usize>,
+    estimated_spool_bytes: usize,
+    max_spool_bytes: usize,
 }
 
 impl ReportXlsxSerializer {
@@ -51,9 +59,21 @@ impl ReportXlsxSerializer {
         columns: &[PlannedColumn],
         dimensions: XlsxDimensions,
         temp_dir: &Path,
+        max_spool_bytes: usize,
     ) -> Result<Self, ReportXlsxError> {
         validate_dimensions(columns, dimensions)?;
         validate_headers(columns)?;
+        let estimated_spool_bytes = XLSX_SPOOL_FIXED_BYTES
+            .checked_add(
+                estimated_text_row_spool_bytes(
+                    columns.iter().map(|column| column.metadata.label.as_str()),
+                )
+                .ok_or(ReportXlsxError::SpoolLimitExceeded)?,
+            )
+            .ok_or(ReportXlsxError::SpoolLimitExceeded)?;
+        if estimated_spool_bytes > max_spool_bytes {
+            return Err(ReportXlsxError::SpoolLimitExceeded);
+        }
 
         let mut workbook = Workbook::new();
         workbook
@@ -100,11 +120,24 @@ impl ReportXlsxSerializer {
                 .iter()
                 .map(|column| column.metadata.label.chars().count())
                 .collect(),
+            estimated_spool_bytes,
+            max_spool_bytes,
         })
     }
 
     pub(crate) fn write_rows(&mut self, rows: &[ReportRow]) -> Result<(), ReportXlsxError> {
         self.validate_rows(rows)?;
+        let batch_spool_bytes = rows.iter().try_fold(0usize, |total, row| {
+            total.checked_add(estimated_row_spool_bytes(row)?)
+        });
+        let estimated_spool_bytes = self
+            .estimated_spool_bytes
+            .checked_add(batch_spool_bytes.ok_or(ReportXlsxError::SpoolLimitExceeded)?)
+            .ok_or(ReportXlsxError::SpoolLimitExceeded)?;
+        if estimated_spool_bytes > self.max_spool_bytes {
+            return Err(ReportXlsxError::SpoolLimitExceeded);
+        }
+        self.estimated_spool_bytes = estimated_spool_bytes;
 
         let worksheet = self
             .workbook
@@ -202,6 +235,30 @@ impl ReportXlsxSerializer {
         }
         Ok(())
     }
+}
+
+fn estimated_row_spool_bytes(row: &[Option<ReportCell>]) -> Option<usize> {
+    row.iter().try_fold(XLSX_SPOOL_ROW_BYTES, |total, cell| {
+        let text_bytes = match cell {
+            Some(ReportCell::Text(value)) => value.len(),
+            None | Some(ReportCell::Number(_)) => 0,
+        };
+        add_estimated_cell_spool_bytes(total, text_bytes)
+    })
+}
+
+fn estimated_text_row_spool_bytes<'a>(mut texts: impl Iterator<Item = &'a str>) -> Option<usize> {
+    texts.try_fold(XLSX_SPOOL_ROW_BYTES, |total, text| {
+        add_estimated_cell_spool_bytes(total, text.len())
+    })
+}
+
+fn add_estimated_cell_spool_bytes(total: usize, text_bytes: usize) -> Option<usize> {
+    let cell_bytes = text_bytes
+        .checked_mul(XLSX_SPOOL_TEXT_BYTE_EXPANSION)?
+        .checked_add(XLSX_SPOOL_CELL_BYTES)?;
+
+    total.checked_add(cell_bytes)
 }
 
 fn metric_format(format: MetricFormat) -> Format {

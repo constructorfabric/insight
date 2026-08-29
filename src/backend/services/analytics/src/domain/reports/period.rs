@@ -97,7 +97,7 @@ fn calendar_index(date: NaiveDate, periods_per_year: i64) -> Option<i64> {
         .checked_add(period)
 }
 
-fn containing_bucket_start(date: NaiveDate, bucket: ReportBucket) -> NaiveDate {
+pub(crate) fn containing_bucket_start(date: NaiveDate, bucket: ReportBucket) -> NaiveDate {
     match bucket {
         ReportBucket::Day => date,
         ReportBucket::Week => date

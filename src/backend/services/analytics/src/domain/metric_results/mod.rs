@@ -26,5 +26,7 @@ pub use dto::{
     MetricResultsEntityDto, MetricResultsPeriodDto, MetricResultsRequest, MetricResultsResponse,
 };
 pub use failure::ViewFailure;
-pub(crate) use validation::{ValidatedEntitySelection, normalize_key, normalize_metric_key};
+pub(crate) use validation::{
+    ValidatedEntitySelection, normalize_key, normalize_metric_key, query_row_limit,
+};
 pub use validation::{ValidatedMetricResultsRequest, validate_request};

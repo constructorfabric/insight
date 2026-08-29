@@ -12,7 +12,7 @@ use super::benchmark_support::{RssSampler, TempSampler, current_rss_bytes};
 use super::dto::{ReportExportFormat, ReportGranularity, ReportSubject};
 use super::executor::{ReportExecutionContext, execute_report};
 use super::executor_test_fixtures::{date, people_recipe, profile};
-use super::export::start_report_writer;
+use super::export::{ReportWriterLimits, start_report_writer};
 use super::planner::{ReportPlannerLimits, plan_report};
 use super::query::{ReportMetricQuery, ReportQueryError, ReportQueryRunner, ReportQuerySubject};
 use super::row::{ReportMetricValue, ReportMetricValues};
@@ -23,12 +23,13 @@ use super::telemetry::ReportTelemetry;
 async fn synthetic_report_generation_benchmark() {
     let settings = BenchmarkSettings {
         people: setting("REPORT_BENCH_PEOPLE", 1_000),
-        periods: setting("REPORT_BENCH_PERIODS", 12),
+        periods: setting("REPORT_BENCH_PERIODS", 5),
         metrics: setting("REPORT_BENCH_METRICS", 64),
         concurrency: setting("REPORT_BENCH_CONCURRENCY", 1),
         max_batch_cells: setting("REPORT_BENCH_BATCH_CELLS", 100_000),
         max_total_cells: setting_u64("REPORT_BENCH_MAX_TOTAL_CELLS", 6_000_000),
         max_output_bytes: setting("REPORT_BENCH_MAX_BYTES", usize::MAX),
+        max_xlsx_spool_bytes: setting("REPORT_BENCH_MAX_XLSX_SPOOL_BYTES", 90 * 1024 * 1024),
     };
     let formats = formats();
 
@@ -117,6 +118,7 @@ struct BenchmarkSettings {
     max_batch_cells: usize,
     max_total_cells: u64,
     max_output_bytes: usize,
+    max_xlsx_spool_bytes: usize,
 }
 
 async fn run_case(
@@ -163,8 +165,11 @@ async fn run_case(
         format,
         &plan,
         temp_dir.clone(),
-        settings.max_output_bytes,
-        1,
+        ReportWriterLimits {
+            max_generated_bytes: settings.max_output_bytes,
+            max_xlsx_spool_bytes: settings.max_xlsx_spool_bytes,
+            channel_batches: 1,
+        },
         telemetry,
         generation_permit,
     )

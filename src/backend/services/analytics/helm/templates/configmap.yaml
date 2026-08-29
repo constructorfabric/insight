@@ -129,6 +129,7 @@ data:
             max_batch_cells: {{ .Values.reports.maxBatchCells }}
             max_total_cells: {{ .Values.reports.maxTotalCells | int64 }}
             max_generated_bytes: {{ .Values.reports.maxGeneratedBytes | int64 }}
+            max_xlsx_spool_bytes: {{ .Values.reports.maxXlsxSpoolBytes | int64 }}
             request_timeout_secs: {{ .Values.reports.requestTimeoutSeconds }}
             capacity_wait_secs: {{ .Values.reports.capacityWaitSeconds }}
             max_concurrent_generations: {{ .Values.reports.maxConcurrentGenerations }}
