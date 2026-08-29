@@ -291,4 +291,23 @@ describe("ReportBuilderView", () => {
 
     expect(input?.signal?.aborted).toBe(true);
   });
+  it("requires a narrower people scope when the API roster limit is exceeded", async () => {
+    mocks.scope = {
+      ...mocks.scope,
+      roster: Array.from({ length: 1001 }, () => ({ person_id: personId })),
+    };
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+
+    expect(
+      screen.getByText(
+        "This scope has 1,001 people; reports support up to 1,000. Narrow the scope"
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Preview report" })
+    ).toBeDisabled();
+  });
 });
