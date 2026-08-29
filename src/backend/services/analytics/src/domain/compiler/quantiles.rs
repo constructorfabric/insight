@@ -61,9 +61,11 @@ pub(super) fn compile(
         "    {} AS entity_id,",
         joined_entity(pool, &fold.grain.entity)
     );
+    // INVARIANT: the per-row value enters the read as a float, because the
+    // positions it answers decode as `f64` and JSON quotes an integer.
     let _ = writeln!(
         sql,
-        "    quantilesExact({positions})(assumeNotNull({ranked})) AS quantile_values"
+        "    quantilesExact({positions})(toFloat64(assumeNotNull({ranked}))) AS quantile_values"
     );
     let _ = writeln!(
         sql,
@@ -101,7 +103,7 @@ mod tests {
             lines(&[
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    quantilesExact(0.5, 0.9)(assumeNotNull(lines_added)) AS quantile_values",
+                "    quantilesExact(0.5, 0.9)(toFloat64(assumeNotNull(lines_added))) AS quantile_values",
                 "FROM silver.class_git_pull_requests FINAL",
                 "WHERE tenant_id = ?",
                 "  AND toDate(closed_on) >= toDate(?)",
@@ -120,6 +122,23 @@ mod tests {
                 text("2026-01-31"),
                 QueryParam::UInt(10_001),
             ]
+        );
+    }
+
+    #[test]
+    fn every_position_the_wire_carries_is_a_float_whatever_the_measure_is_typed_as() {
+        let compiled = compile(
+            &metric(percentile("pr_size", 0.5)),
+            &[sized_measure("pr_size")],
+            &query(quantiles(&[0.5, 0.9])),
+        );
+
+        assert!(
+            compiled.sql.contains(
+                "    quantilesExact(0.5, 0.9)(toFloat64(assumeNotNull(lines_added))) AS quantile_values"
+            ),
+            "an exact position over an integer value reaches the wire quoted: {}",
+            compiled.sql
         );
     }
 
@@ -155,7 +174,7 @@ mod tests {
         );
 
         assert!(compiled.sql.contains(
-            "    quantilesExact(0.5)(assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added)))))) AS quantile_values"
+            "    quantilesExact(0.5)(toFloat64(assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added))))))) AS quantile_values"
         ));
         assert!(compiled.sql.contains("  AND lines_added IS NOT NULL"));
     }
