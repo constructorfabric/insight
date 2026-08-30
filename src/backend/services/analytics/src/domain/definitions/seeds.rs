@@ -19,6 +19,7 @@ const ACTOR: &str = "product-seed";
 
 const FAMILIES: &[(&str, &str)] = &[
     ("git", include_str!("seeds/git.yaml")),
+    ("tasks", include_str!("seeds/tasks.yaml")),
     ("wiki", include_str!("seeds/wiki.yaml")),
 ];
 

@@ -1087,6 +1087,201 @@ models:
         tests:
           - not_null
 
+  - name: task_closed_issues
+    description: >
+      Closed issues: one row per issue that reached a close, with the outcome
+      the assignee delivered and the durations the work took. A semantic-layer
+      dataset — measures count and fold it and drilldown projects it. An issue
+      reopened after its close keeps its durations and loses its outcome flags.
+      Accepted measure keys: tasks_closed, bugs_fixed, closed_non_bug,
+      due_date_on_time, due_date_with_due, late_count, slip_days_total,
+      dev_hours, resolution_days, pickup_days, flow_dev_seconds,
+      flow_lead_seconds.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector source that tracks the issue; an issue id is unique only within it"
+      - name: issue_id
+        description: "Issue identifier within its source"
+        tests:
+          - not_null
+      - name: id_readable
+        description: "The key the tracker shows a human; the handle an issue's own page is addressed by"
+      - name: title
+        description: "Issue title as the tracker records it"
+      - name: assignee_email
+        description: "Lowercased assignee email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: closed_at
+        description: "Last transition into a done status; the dataset's event time"
+        tests:
+          - not_null
+      - name: closed_date
+        description: "Closing day, the partition key"
+      - name: issue_type
+        description: "Type breakdown value; '__unknown__' where the tracker's type carries no key"
+      - name: issue_type_label
+        description: "Human label for issue_type"
+      - name: source
+        description: "Tracker breakdown value, so two trackers do not blend into one figure"
+      - name: source_label
+        description: "Human label for source"
+      - name: is_closed
+        description: "1 where the issue rests in a done status now; every outcome flag is conjoined with it"
+      - name: is_bug
+        description: "1 where a closed issue is of a bug type"
+      - name: is_non_bug
+        description: "1 where a closed issue is of a known non-bug type; an unclassifiable type is neither"
+      - name: has_due_date
+        description: "1 where a closed issue carried a due date"
+      - name: on_time
+        description: "1 where a closed issue had a due date and closed on or before it"
+      - name: is_late
+        description: "1 where a closed issue had a due date and closed after it"
+      - name: slip_days
+        description: "Days past the due date for a late close; NULL otherwise"
+      - name: dev_seconds
+        description: "Seconds spent in in-progress statuses entered before the close; 0 where none were"
+      - name: dev_hours
+        description: "dev_seconds in hours, the unit the development-time distribution is read in"
+      - name: lead_seconds
+        description: "Seconds from creation to close, floored at zero"
+      - name: resolution_days
+        description: "lead_seconds in days, the unit the resolution-time distribution is read in"
+      - name: pickup_days
+        description: >
+          Days from creation to the first in-progress status entered before the
+          close; NULL where the issue never entered one.
+      - name: estimate_seconds
+        description: "Original estimate in seconds, where the tracker states one in a time unit"
+      - name: spent_seconds
+        description: "Time spent in seconds, where the tracker states one in a time unit"
+
+  - name: task_close_events
+    description: >
+      Close transitions: one row per time an issue entered a done status, and
+      whether it came back out within a fortnight. A semantic-layer dataset —
+      an issue closed, reopened and closed again contributes one row per close,
+      so a rate over these rows is a rate over closing acts, not over issues.
+      Accepted measure keys: close_events, reopened_within_14d.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector source that tracks the issue"
+      - name: issue_id
+        description: "Issue identifier within its source"
+        tests:
+          - not_null
+      - name: id_readable
+        description: "The key the tracker shows a human"
+      - name: title
+        description: "Issue title as the tracker records it"
+      - name: assignee_email
+        description: "Lowercased assignee email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: close_at
+        description: "When the issue entered a done status; the dataset's event time"
+        tests:
+          - not_null
+      - name: close_date
+        description: "Closing day, the partition key"
+      - name: reopened_within_14d
+        description: "1 where the issue left the done status again within 14 days of this close"
+
+  - name: task_estimation_days
+    description: >
+      Estimation against reality, per person and closing day: the day's average
+      estimate as a percentage of the day's average time spent. A semantic-layer
+      dataset. The ratio is taken between two daily averages, never between per
+      issue pairs, so one long-running issue cannot dominate it. Accepted
+      measure keys: estimation_error_pct, estimation_samples.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: assignee_email
+        description: "Lowercased assignee email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: closed_date
+        description: "Day whose closes the ratio was taken over; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: estimation_pct
+        description: >
+          The day's average estimate as a percentage of its average time spent.
+          100 means estimates matched reality; below 100 is under-estimation.
+      - name: estimation_error_pct
+        description: "Distance of estimation_pct from 100, so over- and under-estimation weigh equally"
+
+  - name: task_open_issues
+    description: >
+      Issues still open: one row per issue that rests outside a done status,
+      dated by the last time its status moved. A semantic-layer dataset.
+      idle_days is measured against the moment the table is built and is
+      rewritten on every run; the event time is the status event, which never
+      moves. Accepted measure keys: stale_open_issues.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: insight_source_id
+        description: "Connector source that tracks the issue"
+      - name: issue_id
+        description: "Issue identifier within its source"
+        tests:
+          - not_null
+      - name: id_readable
+        description: "The key the tracker shows a human"
+      - name: title
+        description: "Issue title as the tracker records it"
+      - name: assignee_email
+        description: "Lowercased assignee email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: last_status_event_at
+        description: "Last status transition on the issue; the dataset's event time"
+        tests:
+          - not_null
+      - name: last_status_event_date
+        description: "Day of the last status transition, the partition key"
+      - name: idle_days
+        description: "Days between the last status transition and the build"
+
+  - name: task_worklog_flow
+    description: >
+      Task work per person and day: seconds issues spent in in-progress
+      statuses that day, and seconds the person logged against them. Feeds the
+      worklog-accuracy observation and serves as a semantic-layer dataset.
+      Accepted measure keys: worklog_seconds, in_progress_seconds.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: entity_id
+        description: "Lowercased person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Day the work fell on; the dataset's event time"
+        tests:
+          - not_null
+      - name: in_progress_seconds
+        description: "Seconds the person's issues spent in in-progress statuses that day"
+      - name: worklog_seconds
+        description: "Seconds the person logged against issues on that day"
+
   - name: ci_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, CI family —

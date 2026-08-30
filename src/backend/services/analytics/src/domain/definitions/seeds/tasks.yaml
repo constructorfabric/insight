@@ -1,0 +1,390 @@
+# Task measures and metrics. Datasets are not authored here — they are a
+# projection of the field catalog.
+measures:
+  - key: tasks_closed
+    dataset: task_closed_issues
+    description: >-
+      Issues a person closed, counted once per issue on the day it entered a
+      done status. An issue that has since been reopened is not one of them.
+    filter: { field: is_closed, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+    dimensions:
+      - { key: type, value_field: issue_type, label_field: issue_type_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: bugs_fixed
+    dataset: task_closed_issues
+    description: Closed issues of a bug type.
+    filter: { field: is_bug, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: closed_non_bug
+    dataset: task_closed_issues
+    description: >-
+      Closed issues of a known non-bug type. An issue whose type the tracker
+      does not let us classify is neither a bug nor one of these.
+    filter: { field: is_non_bug, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: due_date_on_time
+    dataset: task_closed_issues
+    description: Closed issues that carried a due date and closed on or before it.
+    filter: { field: on_time, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: due_date_with_due
+    dataset: task_closed_issues
+    description: Closed issues that carried a due date at all.
+    filter: { field: has_due_date, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: late_count
+    dataset: task_closed_issues
+    description: Closed issues that carried a due date and closed after it.
+    filter: { field: is_late, op: eq, value: 1 }
+    aggregation: count
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: slip_days_total
+    dataset: task_closed_issues
+    description: Days past the due date, summed over the issues that closed late.
+    filter: { field: is_late, op: eq, value: 1 }
+    aggregation: sum
+    value_expr: slip_days
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: dev_hours
+    dataset: task_closed_issues
+    description: >-
+      Hours one closed issue spent in in-progress statuses entered before its
+      close. Issues that never entered one fold no value.
+    filter: { field: dev_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: dev_hours
+    event_time: closed_at
+    entity: assignee_email
+    dimensions:
+      - { key: type, value_field: issue_type, label_field: issue_type_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: resolution_days
+    dataset: task_closed_issues
+    description: >-
+      Days from creating one issue to closing it. An issue created and closed
+      inside the same second folds no value.
+    filter: { field: lead_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: resolution_days
+    event_time: closed_at
+    entity: assignee_email
+    dimensions:
+      - { key: type, value_field: issue_type, label_field: issue_type_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: pickup_days
+    dataset: task_closed_issues
+    description: >-
+      Days from creating one issue to the first in-progress status it entered
+      before its close. An issue that never entered one folds no value.
+    filter: { field: pickup_days, op: not_null }
+    aggregation: sum
+    value_expr: pickup_days
+    event_time: closed_at
+    entity: assignee_email
+    dimensions:
+      - { key: type, value_field: issue_type, label_field: issue_type_label }
+      - { key: source, value_field: source, label_field: source_label }
+
+  - key: flow_dev_seconds
+    dataset: task_closed_issues
+    description: >-
+      Seconds of active development, over the closed issues that have both a
+      development time and a lifetime to compare it against.
+    filter:
+      all:
+        - { field: dev_seconds, op: gt, value: 0 }
+        - { field: lead_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: dev_seconds
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: flow_lead_seconds
+    dataset: task_closed_issues
+    description: >-
+      Seconds of issue lifetime, over the same closed issues the development
+      seconds are taken from, so the two are a share of one another.
+    filter:
+      all:
+        - { field: dev_seconds, op: gt, value: 0 }
+        - { field: lead_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: lead_seconds
+    event_time: closed_at
+    entity: assignee_email
+
+  - key: close_events
+    dataset: task_close_events
+    description: >-
+      Times an issue entered a done status. An issue closed, reopened and
+      closed again is counted once per close.
+    aggregation: count
+    event_time: close_at
+    entity: assignee_email
+
+  - key: reopened_within_14d
+    dataset: task_close_events
+    description: Closes the issue came back out of within 14 days.
+    filter: { field: reopened_within_14d, op: eq, value: 1 }
+    aggregation: count
+    event_time: close_at
+    entity: assignee_email
+
+  - key: estimation_error_pct
+    dataset: task_estimation_days
+    description: >-
+      How far one person-day's estimates landed from the time that day's work
+      actually took, in percentage points, over- and under-estimation alike.
+      Days whose estimates missed by more than the estimate itself are not
+      read as estimation error and fold no value.
+    filter:
+      all:
+        - { field: estimation_pct, op: gt, value: 0 }
+        - { field: estimation_pct, op: lte, value: 200 }
+    aggregation: sum
+    value_expr: estimation_error_pct
+    event_time: closed_date
+    entity: assignee_email
+
+  - key: estimation_samples
+    dataset: task_estimation_days
+    description: Person-days whose estimates are close enough to time spent to read as error.
+    filter:
+      all:
+        - { field: estimation_pct, op: gt, value: 0 }
+        - { field: estimation_pct, op: lte, value: 200 }
+    aggregation: count
+    event_time: closed_date
+    entity: assignee_email
+
+  - key: worklog_seconds
+    dataset: task_person_days
+    description: >-
+      Seconds a person logged against issues on a day their issues were also
+      being worked, so logged time always has tracked time to compare against.
+    filter: { field: in_progress_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: worklog_seconds
+    event_time: metric_date
+    entity: entity_id
+
+  - key: in_progress_seconds
+    dataset: task_person_days
+    description: Seconds a person's issues spent in in-progress statuses on a day.
+    filter: { field: in_progress_seconds, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: in_progress_seconds
+    event_time: metric_date
+    entity: entity_id
+
+  - key: stale_open_issues
+    dataset: task_open_issues
+    description: >-
+      Open issues whose status has not moved in more than 14 days, counted
+      against the day their status last moved.
+    filter: { field: idle_days, op: gt, value: 14 }
+    aggregation: count
+    event_time: last_status_event_at
+    entity: assignee_email
+
+metrics:
+  - key: tasks.closed
+    computation: { type: direct, measure: tasks_closed }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Issues closed
+    description: >-
+      Issues the person moved into a closed status during the period. Bugs are
+      part of this number and are listed separately by type.
+
+  - key: tasks.bugs_fixed
+    computation: { type: direct, measure: bugs_fixed }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Bugs closed
+    description: >-
+      Issues of a bug type the person closed during the period. Part of issues
+      closed, not a separate total.
+
+  - key: tasks.closed_non_bug
+    computation: { type: direct, measure: closed_non_bug }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Non-bug issues closed
+    description: >-
+      Issues of a known non-bug type the person closed during the period.
+      Issues whose type cannot be determined are excluded rather than counted
+      here.
+
+  - key: tasks.dev_time
+    computation: { type: percentile, measure: dev_hours, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Development time
+    description: >-
+      Median hours closed issues spent in in-progress statuses, from first
+      pickup to close. An issue that never entered one contributes no value.
+
+  - key: tasks.resolution_time
+    computation: { type: percentile, measure: resolution_days, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Time to resolution
+    description: >-
+      Median days from creating an issue to closing it, over the issues closed
+      in the period.
+
+  - key: tasks.pickup_time
+    computation: { type: percentile, measure: pickup_days, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pickup time
+    description: >-
+      Median days from creating an issue to first entering an in-progress
+      status, over the issues closed in the period. An issue that never entered
+      one contributes no value.
+
+  - key: tasks.flow_efficiency
+    computation: { type: ratio, numerator: flow_dev_seconds, denominator: flow_lead_seconds }
+    transform: { multiplier: 100.0, clamp_max: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Flow efficiency
+    description: >-
+      Time in active development as a share of total issue lifetime, across the
+      issues closed in the period. Only issues carrying both a development time
+      and a lifetime take part.
+
+  - key: tasks.reopen_rate
+    computation: { type: ratio, numerator: reopened_within_14d, denominator: close_events }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Reopen rate
+    description: >-
+      Of the issue closes in the period, the share followed by a reopen within
+      14 days. A close near the period end may still be reopened afterwards.
+
+  - key: tasks.due_date_compliance
+    computation: { type: ratio, numerator: due_date_on_time, denominator: due_date_with_due }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Due date compliance
+    description: >-
+      Of the issues closed in the period that carried a due date, the share
+      closed on or before it. Issues with no due date do not affect it.
+
+  - key: tasks.on_time_delivery
+    computation: { type: ratio, numerator: due_date_on_time, denominator: tasks_closed }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: On-time delivery
+    description: >-
+      Of all issues closed in the period, the share closed on or before a due
+      date. Issues closed without a due date lower it, which is what separates
+      it from due date compliance.
+
+  - key: tasks.avg_slip
+    computation: { type: ratio, numerator: slip_days_total, denominator: late_count }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Average slip
+    description: >-
+      Average days past the due date, over the issues closed late in the
+      period. Issues closed on time do not affect it.
+
+  - key: tasks.estimation_accuracy
+    computation: { type: ratio, numerator: estimation_error_pct, denominator: estimation_samples }
+    transform: { multiplier: -1.0, offset: 100.0, clamp_min: 0.0, clamp_max: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Estimation accuracy
+    description: >-
+      100 minus the average deviation between original estimates and time
+      spent, over days whose estimated work stayed within twice the estimate.
+      100 means estimates matched reality; over- and under-estimation count
+      equally.
+
+  - key: tasks.worklog_accuracy
+    computation: { type: ratio, numerator: worklog_seconds, denominator: in_progress_seconds }
+    transform: { multiplier: 100.0, clamp_max: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Worklog accuracy
+    description: >-
+      Logged work time as a share of the time issues spent in in-progress
+      statuses. Days on which nothing was in progress take no part.
+
+  - key: tasks.bugs_ratio
+    computation: { type: ratio, numerator: bugs_fixed, denominator: tasks_closed }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Bugs share of closed issues
+    description: >-
+      Bug-type issues as a share of all issues closed in the period, issues of
+      an undetermined type included in the denominator. A share, so it cannot
+      exceed 100%.
+
+  - key: tasks.stale_in_progress
+    computation: { type: direct, measure: stale_open_issues }
+    format: integer
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Stale in progress
+    description: >-
+      Open issues whose status has not moved in more than 14 days, counted
+      against the day their status last moved.

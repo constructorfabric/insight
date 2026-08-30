@@ -521,6 +521,73 @@ ORDER BY (tenant_id, entity_id, metric_date)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.task_close_events
+(
+    `tenant_id` String,
+    `insight_source_id` String,
+    `issue_id` String,
+    `id_readable` String,
+    `title` Nullable(String),
+    `assignee_email` String,
+    `close_at` DateTime64(3),
+    `close_date` Date,
+    `reopened_within_14d` UInt8
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(close_date)
+ORDER BY (tenant_id, assignee_email, close_at)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.task_closed_issues
+(
+    `tenant_id` String,
+    `insight_source_id` String,
+    `issue_id` String,
+    `id_readable` String,
+    `title` Nullable(String),
+    `assignee_email` String,
+    `closed_at` DateTime64(3),
+    `closed_date` Date,
+    `issue_type` String,
+    `issue_type_label` String,
+    `source` String,
+    `source_label` String,
+    `is_closed` UInt8,
+    `is_bug` UInt8,
+    `is_non_bug` UInt8,
+    `has_due_date` UInt8,
+    `on_time` UInt8,
+    `is_late` UInt8,
+    `slip_days` Nullable(Float64),
+    `dev_seconds` Float64,
+    `dev_hours` Float64,
+    `lead_seconds` Float64,
+    `resolution_days` Float64,
+    `pickup_days` Nullable(Float64),
+    `estimate_seconds` Nullable(Float64),
+    `spent_seconds` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(closed_date)
+ORDER BY (tenant_id, assignee_email, closed_at)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.task_estimation_days
+(
+    `tenant_id` String,
+    `assignee_email` String,
+    `closed_date` Date,
+    `estimation_pct` Nullable(Float64),
+    `estimation_error_pct` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(closed_date)
+ORDER BY (tenant_id, assignee_email, closed_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.task_issue_state
 (
     `tenant_id` Nullable(String),
@@ -599,6 +666,24 @@ CREATE TABLE IF NOT EXISTS insight.task_metric_observations
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(metric_date)
 ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.task_open_issues
+(
+    `tenant_id` String,
+    `insight_source_id` String,
+    `issue_id` String,
+    `id_readable` String,
+    `title` Nullable(String),
+    `assignee_email` String,
+    `last_status_event_at` DateTime64(3),
+    `last_status_event_date` Date,
+    `idle_days` Int64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(last_status_event_date)
+ORDER BY (tenant_id, assignee_email, last_status_event_at)
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 

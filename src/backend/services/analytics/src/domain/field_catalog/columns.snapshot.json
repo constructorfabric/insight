@@ -1491,6 +1491,190 @@
     "columns": [
       {
         "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "insight_source_id",
+        "type": "String"
+      },
+      {
+        "name": "issue_id",
+        "type": "String"
+      },
+      {
+        "name": "id_readable",
+        "type": "String"
+      },
+      {
+        "name": "title",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "assignee_email",
+        "type": "String"
+      },
+      {
+        "name": "close_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "close_date",
+        "type": "Date"
+      },
+      {
+        "name": "reopened_within_14d",
+        "type": "UInt8"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "task_close_events",
+    "sorting_key": "tenant_id, assignee_email, close_at"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "insight_source_id",
+        "type": "String"
+      },
+      {
+        "name": "issue_id",
+        "type": "String"
+      },
+      {
+        "name": "id_readable",
+        "type": "String"
+      },
+      {
+        "name": "title",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "assignee_email",
+        "type": "String"
+      },
+      {
+        "name": "closed_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "closed_date",
+        "type": "Date"
+      },
+      {
+        "name": "issue_type",
+        "type": "String"
+      },
+      {
+        "name": "issue_type_label",
+        "type": "String"
+      },
+      {
+        "name": "source",
+        "type": "String"
+      },
+      {
+        "name": "source_label",
+        "type": "String"
+      },
+      {
+        "name": "is_closed",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_bug",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_non_bug",
+        "type": "UInt8"
+      },
+      {
+        "name": "has_due_date",
+        "type": "UInt8"
+      },
+      {
+        "name": "on_time",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_late",
+        "type": "UInt8"
+      },
+      {
+        "name": "slip_days",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "dev_seconds",
+        "type": "Float64"
+      },
+      {
+        "name": "dev_hours",
+        "type": "Float64"
+      },
+      {
+        "name": "lead_seconds",
+        "type": "Float64"
+      },
+      {
+        "name": "resolution_days",
+        "type": "Float64"
+      },
+      {
+        "name": "pickup_days",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "estimate_seconds",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "spent_seconds",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "task_closed_issues",
+    "sorting_key": "tenant_id, assignee_email, closed_at"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "assignee_email",
+        "type": "String"
+      },
+      {
+        "name": "closed_date",
+        "type": "Date"
+      },
+      {
+        "name": "estimation_pct",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "estimation_error_pct",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "task_estimation_days",
+    "sorting_key": "tenant_id, assignee_email, closed_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
         "type": "Nullable(String)"
       },
       {
@@ -1706,6 +1890,50 @@
     "engine": "MergeTree",
     "relation": "task_metric_observations",
     "sorting_key": "tenant_id, source_key, entity_type, entity_id, measure_key, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "insight_source_id",
+        "type": "String"
+      },
+      {
+        "name": "issue_id",
+        "type": "String"
+      },
+      {
+        "name": "id_readable",
+        "type": "String"
+      },
+      {
+        "name": "title",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "assignee_email",
+        "type": "String"
+      },
+      {
+        "name": "last_status_event_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "last_status_event_date",
+        "type": "Date"
+      },
+      {
+        "name": "idle_days",
+        "type": "Int64"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "task_open_issues",
+    "sorting_key": "tenant_id, assignee_email, last_status_event_at"
   },
   {
     "columns": [

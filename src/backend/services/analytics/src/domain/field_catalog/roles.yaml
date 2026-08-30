@@ -170,3 +170,77 @@ datasets:
       edits: measurable
       pages_edited: measurable
       comments_received: measurable
+
+  - key: task_closed_issues
+    database: insight
+    relation: task_closed_issues
+    row_identity: [insight_source_id, issue_id]
+    fields:
+      tenant_id: tenant
+      assignee_email: entity
+      closed_at: event_time
+      dev_seconds: measurable
+      dev_hours: measurable
+      lead_seconds: measurable
+      resolution_days: measurable
+      pickup_days: measurable
+      slip_days: measurable
+      issue_type:
+        role: dimension
+        label_field: issue_type_label
+      source:
+        role: dimension
+        label_field: source_label
+      id_readable:
+        display: [reference]
+      title:
+        display: [title]
+
+  - key: task_close_events
+    database: insight
+    relation: task_close_events
+    row_identity: [insight_source_id, issue_id, close_at]
+    fields:
+      tenant_id: tenant
+      assignee_email: entity
+      close_at: event_time
+      id_readable:
+        display: [reference]
+      title:
+        display: [title]
+
+  - key: task_estimation_days
+    database: insight
+    relation: task_estimation_days
+    row_identity: [tenant_id, assignee_email, closed_date]
+    fields:
+      tenant_id: tenant
+      assignee_email: entity
+      closed_date: event_time
+      estimation_pct: measurable
+      estimation_error_pct: measurable
+
+  - key: task_person_days
+    database: insight
+    relation: task_worklog_flow
+    row_identity: [tenant_id, entity_id, metric_date]
+    fields:
+      tenant_id: tenant
+      entity_id: entity
+      metric_date: event_time
+      in_progress_seconds: measurable
+      worklog_seconds: measurable
+
+  - key: task_open_issues
+    database: insight
+    relation: task_open_issues
+    row_identity: [insight_source_id, issue_id]
+    fields:
+      tenant_id: tenant
+      assignee_email: entity
+      last_status_event_at: event_time
+      idle_days: measurable
+      id_readable:
+        display: [reference]
+      title:
+        display: [title]
