@@ -174,7 +174,7 @@ mod tests {
                 "SELECT",
                 "    author_email AS entity_id,",
                 "    toString(toStartOfWeek(toDate(assumeNotNull(closed_on)), 1)) AS bucket_start,",
-                "    toFloat64(countIfOrNull(state = ?) / nullIf(countIf(state IN (?, ?)), 0)) AS value,",
+                "    toFloat64(countIfOrNull(coalesce(state = ?, 0)) / nullIf(countIf(coalesce(state IN (?, ?), 0)), 0)) AS value,",
                 "    toUInt8(grouping(toStartOfWeek(toDate(assumeNotNull(closed_on)), 1))) AS is_total,",
                 "    CAST(NULL AS Nullable(UInt32)) AS rank,",
                 "    toUInt8(0) AS remainder,",
@@ -185,7 +185,7 @@ mod tests {
                 "  AND toDate(closed_on) <= toDate(?)",
                 "  AND isNotNull(closed_on)",
                 "GROUP BY GROUPING SETS ((entity_id, toStartOfWeek(toDate(assumeNotNull(closed_on)), 1)), (entity_id))",
-                "HAVING countIf(state = ? OR state IN (?, ?)) > 0",
+                "HAVING countIf(coalesce(state = ?, 0) OR coalesce(state IN (?, ?), 0)) > 0",
                 "ORDER BY entity_id, is_total, bucket_start",
                 "LIMIT ?",
                 ")",
@@ -223,9 +223,9 @@ mod tests {
         );
 
         assert!(
-            compiled
-                .sql
-                .contains("toFloat64(countIfOrNull(state = ?) / nullIf(countIf(1), 0)) AS value"),
+            compiled.sql.contains(
+                "toFloat64(countIfOrNull(coalesce(state = ?, 0)) / nullIf(countIf(1), 0)) AS value"
+            ),
             "{}",
             compiled.sql
         );
@@ -258,13 +258,46 @@ mod tests {
 
         assert!(
             compiled.sql.contains(
-                "toFloat64(sumIfOrNull(lines_added, state = ?) / nullIf(uniqExactIf(pull_request_id, is_draft = ?), 0)) AS value"
+                "toFloat64(sumIfOrNull(lines_added, coalesce(state = ?, 0)) / nullIf(uniqExactIf(pull_request_id, coalesce(is_draft = ?, 0)), 0)) AS value"
             ),
             "{}",
             compiled.sql
         );
         assert_eq!(compiled.params[0], text("merged"));
         assert_eq!(compiled.params[1], QueryParam::Bool(0));
+    }
+
+    #[test]
+    fn a_fold_condition_over_a_nullable_column_is_false_where_the_column_is_null() {
+        let sized = measure(
+            "prs_sized",
+            Some("{ field: lines_added, op: gt, value: 0 }"),
+        );
+        let merged = measure(
+            "prs_merged",
+            Some("{ field: state, op: eq, value: merged }"),
+        );
+
+        let compiled = compile(
+            &metric(ratio("prs_sized", "prs_merged")),
+            &[sized, merged],
+            &query(ViewKind::SubjectTotal),
+        );
+
+        assert!(
+            compiled.sql.contains(
+                "toFloat64(countIfOrNull(coalesce(lines_added > ?, 0)) / nullIf(countIf(coalesce(state = ?, 0)), 0)) AS value"
+            ),
+            "a row the filter is unknown of folds as a non-match, so the fold reports zero without a definite-false row beside it: {}",
+            compiled.sql
+        );
+        assert!(
+            compiled.sql.contains(
+                "HAVING countIf(coalesce(lines_added > ?, 0) OR coalesce(state = ?, 0)) > 0"
+            ),
+            "{}",
+            compiled.sql
+        );
     }
 
     #[test]
@@ -361,7 +394,7 @@ mod tests {
             lines(&[
                 "SELECT",
                 "    author_email AS entity_id,",
-                "    toFloat64(((countIfOrNull(1)) - (countIfOrNull(state = ?))) / (countIfOrNull(1))) AS value",
+                "    toFloat64(((countIfOrNull(1)) - (countIfOrNull(coalesce(state = ?, 0)))) / (countIfOrNull(1))) AS value",
                 "FROM silver.class_git_pull_requests FINAL",
                 "WHERE tenant_id = ?",
                 "  AND toDate(closed_on) >= toDate(?)",
@@ -402,7 +435,7 @@ mod tests {
             assert!(
                 compiled
                     .sql
-                    .contains("(countIfOrNull(state = ?)) - (countIfOrNull(1))"),
+                    .contains("(countIfOrNull(coalesce(state = ?, 0))) - (countIfOrNull(1))"),
                 "{name}: {}",
                 compiled.sql
             );
@@ -597,9 +630,9 @@ mod tests {
         );
 
         assert!(
-            compiled
-                .sql
-                .contains("HAVING countIf(state = ? OR state IN (?, ?)) > 0"),
+            compiled.sql.contains(
+                "HAVING countIf(coalesce(state = ?, 0) OR coalesce(state IN (?, ?), 0)) > 0"
+            ),
             "{}",
             compiled.sql
         );
@@ -623,7 +656,9 @@ mod tests {
         );
 
         assert!(
-            compiled.sql.contains("nullIf(countIf(state IN (?, ?)), 0)"),
+            compiled
+                .sql
+                .contains("nullIf(countIf(coalesce(state IN (?, ?), 0)), 0)"),
             "{}",
             compiled.sql
         );

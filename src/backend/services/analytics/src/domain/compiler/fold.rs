@@ -277,8 +277,9 @@ impl<'a> Fold<'a> {
                 numerator,
                 denominator,
             } => {
-                // INVARIANT: an empty numerator is an unknown split and a zero
-                // denominator an undefined ratio; both read NULL, never zero.
+                // INVARIANT: a zero denominator is an undefined ratio and reads
+                // NULL; `-OrNull` leaves an unmatched numerator NULL only for a
+                // value fold, since a count reports 0 over any group scanned.
                 let numerator = conditional_aggregate_expr(
                     numerator,
                     &fold_condition(numerator, params)?,
@@ -304,8 +305,8 @@ impl<'a> Fold<'a> {
                 format!("stddevSampIfOrNull({value}, {value} IS NOT NULL)")
             }
             FoldKind::Derived { inputs, expr } => {
-                // INVARIANT: an input that matched no row folds to NULL and
-                // arithmetic propagates it, so the value stays unknown.
+                // INVARIANT: a count-shaped input reports zero for a group it
+                // matched nothing in; the other folds read NULL and propagate.
                 let mut folded = Vec::with_capacity(expr.references.len());
                 for alias in &expr.references {
                     let (_, measure) =
@@ -374,12 +375,18 @@ fn row_value<'a>(
 }
 
 /// The rows one input folds over, as an aggregate-function condition.
+///
+/// SAFETY: an aggregate combinator admits no row on a NULL condition, so the
+/// collapse makes a row the filter is unknown of a definite non-match.
 fn fold_condition(
     measure: &MeasureDefinition,
     params: &mut Vec<QueryParam>,
 ) -> Result<String, CompileError> {
     match &measure.filter {
-        Some(filter) => render_filter(measure, filter, params),
+        Some(filter) => Ok(format!(
+            "coalesce({}, 0)",
+            render_filter(measure, filter, params)?
+        )),
         None => Ok("1".to_owned()),
     }
 }

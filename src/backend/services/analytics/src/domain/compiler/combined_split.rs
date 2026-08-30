@@ -466,7 +466,7 @@ mod tests {
         );
 
         assert!(compiled.sql.contains(
-            "        toFloat64(countIfOrNull(state = ?) / nullIf(countIf(1), 0)) AS value,"
+            "        toFloat64(countIfOrNull(coalesce(state = ?, 0)) / nullIf(countIf(1), 0)) AS value,"
         ));
         assert_eq!(compiled.params[0], text("acme-tenant"));
         assert_eq!(compiled.params[3], text("example/app"));
