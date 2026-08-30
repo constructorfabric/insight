@@ -18,6 +18,7 @@ use crate::domain::field_catalog::{
 const ACTOR: &str = "product-seed";
 
 const FAMILIES: &[(&str, &str)] = &[
+    ("ai", include_str!("seeds/ai.yaml")),
     ("git", include_str!("seeds/git.yaml")),
     ("tasks", include_str!("seeds/tasks.yaml")),
     ("wiki", include_str!("seeds/wiki.yaml")),

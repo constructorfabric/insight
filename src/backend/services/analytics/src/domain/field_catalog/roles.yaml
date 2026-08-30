@@ -244,3 +244,59 @@ datasets:
         display: [reference]
       title:
         display: [title]
+  - key: ai_usage
+    database: insight
+    relation: ai_usage
+    row_identity: [email, usage_date, tool, surface, seat_status]
+    fields:
+      tenant_id: tenant
+      email: entity
+      usage_date: event_time
+      lines_added: measurable
+      lines_removed: measurable
+      tool_use_offered: measurable
+      tool_use_accepted: measurable
+      dev_conversations: measurable
+      assistant_messages: measurable
+      assistant_actions: measurable
+      chat_conversations: measurable
+      prs_with_assistant: measurable
+      prs_total: measurable
+      cost_usd: measurable
+      tool:
+        role: dimension
+        label_field: tool_label
+      surface:
+        role: dimension
+        label_field: surface_label
+      seat_status: dimension
+
+  - key: ai_seat_months
+    database: insight
+    relation: ai_seat_months
+    row_identity: [source_id, account_id, period_month]
+    fields:
+      tenant_id: tenant
+      email: entity
+      period_month: event_time
+      extra_usage_usd: measurable
+      extra_usage_limit_usd: measurable
+      seat_cost_usd: measurable
+      tool:
+        role: dimension
+        label_field: tool_label
+      seat_tier: dimension
+
+  - key: ai_seat_days
+    database: insight
+    relation: ai_seat_days
+    row_identity: [source_id, account_id, snapshot_date]
+    fields:
+      tenant_id: tenant
+      email: entity
+      snapshot_date: event_time
+      daily_extra_usage_usd: measurable
+      tool:
+        role: dimension
+        label_field: tool_label
+      seat_tier: dimension

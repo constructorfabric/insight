@@ -1,0 +1,393 @@
+# AI measures and metrics. Datasets are not authored here — they are a
+# projection of the field catalog.
+measures:
+  - key: accepted_lines
+    dataset: ai_usage
+    description: Lines a person accepted from a coding AI tool.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: lines_added
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: removed_lines
+    dataset: ai_usage
+    description: Lines a person accepted a coding AI tool's deletion of.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: lines_removed
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: ai_active_days
+    dataset: ai_usage
+    description: >-
+      Calendar days on which a person used any AI tool, coding and assistant
+      alike.
+    aggregation: count_distinct
+    subject_expr: usage_date
+    event_time: usage_date
+    entity: email
+
+  - key: cost_usd
+    dataset: ai_usage
+    description: >-
+      What a person's AI usage would cost at the vendor's token rates, across
+      coding and assistant tools.
+    aggregation: sum
+    value_expr: cost_usd
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: accepted_edit_actions
+    dataset: ai_usage
+    description: Edit or tool suggestions a person accepted from a coding AI tool.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: tool_use_accepted
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: tool_use_offered
+    dataset: ai_usage
+    description: Edit or tool suggestions a coding AI tool offered a person.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: tool_use_offered
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: dev_conversations
+    dataset: ai_usage
+    description: >-
+      Conversations a person held with a coding AI tool, counted as that tool
+      counts them.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: dev_conversations
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: assistant_messages
+    dataset: ai_usage
+    description: Messages a person exchanged with an AI assistant.
+    filter: { field: surface, op: neq, value: dev }
+    aggregation: sum
+    value_expr: assistant_messages
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: surface, value_field: surface, label_field: surface_label }
+
+  - key: assistant_actions
+    dataset: ai_usage
+    description: Actions an AI assistant took for a person.
+    filter: { field: surface, op: neq, value: dev }
+    aggregation: sum
+    value_expr: assistant_actions
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: surface, value_field: surface, label_field: surface_label }
+
+  - key: chat_assistant_conversations
+    dataset: ai_usage
+    description: Conversations a person held with an AI assistant on its chat surface.
+    filter: { field: surface, op: eq, value: chat }
+    aggregation: sum
+    value_expr: chat_conversations
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: surface, value_field: surface, label_field: surface_label }
+
+  - key: prs_with_assistant
+    dataset: ai_usage
+    description: >-
+      Pull requests a coding AI tool reported itself active in, as that tool
+      attributes them.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: prs_with_assistant
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_status, value_field: seat_status }
+
+  - key: prs_total
+    dataset: ai_usage
+    description: Pull requests a coding AI tool observed for a person over its own window.
+    filter: { field: surface, op: eq, value: dev }
+    aggregation: sum
+    value_expr: prs_total
+    event_time: usage_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_status, value_field: seat_status }
+
+  - key: seat_cost_usd
+    dataset: ai_seat_months
+    description: >-
+      The invoiced price of a person's AI seat for a billing month. A seat whose
+      tier the invoice does not price carries no value.
+    aggregation: sum
+    value_expr: seat_cost_usd
+    event_time: period_month
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_tier, value_field: seat_tier }
+
+  - key: extra_usage_usd
+    dataset: ai_seat_months
+    description: >-
+      What the vendor billed a person's seat for a billing month once the usage
+      included in its fee ran out.
+    aggregation: sum
+    value_expr: extra_usage_usd
+    event_time: period_month
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_tier, value_field: seat_tier }
+
+  - key: extra_usage_limit_usd
+    dataset: ai_seat_months
+    description: >-
+      The ceiling the vendor stops a seat's extra usage at. A seat with no
+      ceiling carries no value.
+    aggregation: sum
+    value_expr: extra_usage_limit_usd
+    event_time: period_month
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_tier, value_field: seat_tier }
+
+  - key: daily_extra_usage_usd
+    dataset: ai_seat_days
+    description: >-
+      A day's share of the billed extra usage, the step between two of the
+      vendor's month-to-date readings.
+    aggregation: sum
+    value_expr: daily_extra_usage_usd
+    event_time: snapshot_date
+    entity: email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+      - { key: seat_tier, value_field: seat_tier }
+
+metrics:
+  - key: ai.accepted_lines
+    computation: { type: direct, measure: accepted_lines }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI-added lines
+    description: >-
+      Added lines the person accepted from coding AI tools during the period.
+
+  - key: ai.removed_lines
+    computation: { type: direct, measure: removed_lines }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI-removed lines
+    description: >-
+      Deleted lines the person accepted from coding AI tools during the period.
+
+  - key: ai.active_days
+    computation: { type: direct, measure: ai_active_days }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI active days
+    description: >-
+      Distinct days in the period with AI activity attributed to the person,
+      across coding and assistant tools alike.
+
+  - key: ai.cost
+    computation: { type: direct, measure: cost_usd }
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI potential usage cost
+    description: >-
+      The person's AI usage priced at the vendor's token rates — what the
+      consumption would cost if billed purely by usage. It includes usage a seat
+      already covered and excludes seat fees, so it is not the invoiced amount,
+      and only tools that price usage per person contribute. Never add it to
+      actual usage cost, which is the billed part of this same consumption.
+
+  - key: ai.accepted_edit_actions
+    computation: { type: direct, measure: accepted_edit_actions }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Accepted AI edits
+    description: >-
+      Edit or tool suggestions the person accepted from coding AI tools during
+      the period.
+
+  - key: ai.tool_acceptance_rate
+    computation: { type: ratio, numerator: accepted_edit_actions, denominator: tool_use_offered }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI tool acceptance
+    description: >-
+      Accepted AI edit or tool suggestions divided by the suggestions offered.
+
+  - key: ai.assistant_messages
+    computation: { type: direct, measure: assistant_messages }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI assistant messages
+    description: >-
+      Assistant messages attributed to the person during the period.
+
+  - key: ai.assistant_actions
+    computation: { type: direct, measure: assistant_actions }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI assistant actions
+    description: >-
+      Assistant actions attributed to the person during the period.
+
+  - key: ai.dev_conversations
+    computation: { type: direct, measure: dev_conversations }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI dev conversations
+    description: >-
+      Conversations the person held with coding AI tools, counted as the vendor
+      counts them. For the agent tools that is the session or thread count — a
+      session is the unit of conversation there, and no vendor publishes a
+      separate conversation counter — so the number reads as "times the person
+      started working with the assistant", not as messages exchanged. Tools that
+      report no such unit, inline-completion tools among them, return no value
+      rather than a zero.
+
+  - key: ai.chat_assistant_conversations
+    computation: { type: direct, measure: chat_assistant_conversations }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI chat conversations
+    description: >-
+      Chat assistant conversations attributed to the person during the period.
+
+  - key: ai.prs_with_assistant
+    computation: { type: direct, measure: prs_with_assistant }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PRs with AI assistance
+    description: >-
+      Pull requests where the coding assistant was active at least once, as the
+      vendor attributes them. Reported only by sources that connect to the code
+      host themselves, so a person working without that connection returns no
+      value rather than a zero. Counts pull requests, not commits or lines, and
+      says nothing about how much of the change the assistant wrote.
+
+  - key: ai.prs_total
+    computation: { type: direct, measure: prs_total }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: PRs seen by the AI vendor
+    description: >-
+      Pull requests the AI vendor observed for the person, served as the context
+      for PRs with AI assistance rather than as a goal of its own. It is the
+      vendor's count over the vendor's own window, which need not be the day it
+      is reported against and need not agree with the git sources — read it next
+      to that metric, not next to git pull-request metrics.
+
+  - key: ai.seat_cost
+    computation: { type: direct, measure: seat_cost_usd }
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI seat cost
+    description: >-
+      The invoiced price of one seat for a billing month, from the invoice's
+      per-seat amount. Dated at that month's first day, so a window must hold it
+      to return the fee. The month comes from the read, not from the vendor. A
+      seat whose tier the invoice does not price returns no value.
+
+  - key: ai.extra_usage_cost
+    computation: { type: direct, measure: extra_usage_usd }
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI actual usage cost
+    description: >-
+      What the vendor billed on top of the seat fee, once included usage ran
+      out. Exact as of that month's last reading, dated at its first day, so a
+      window missing that day returns nothing — read the per-day distribution.
+      The month comes from the read, not the vendor. Never added to potential
+      usage cost.
+
+  - key: ai.daily_approximate_extra_usage_cost
+    computation: { type: direct, measure: daily_extra_usage_usd }
+    format: currency
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: AI actual usage cost — approximate distribution
+    description: >-
+      The billed extra-usage cost placed on the days spent. Only a month-to-date
+      total is reported, so a day is the step between readings — exact in sum
+      against it, approximate in placement. The month comes from the read, so
+      the 1st can cover several days. No reading means no point, and none is
+      negative.
+
+  - key: ai.extra_usage_utilisation
+    computation: { type: ratio, numerator: extra_usage_usd, denominator: extra_usage_limit_usd }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Extra-usage ceiling used
+    description: >-
+      Extra usage measured against the seat's ceiling. At 100% the vendor stops
+      the seat, so this reads as proximity to being blocked, not waste. A seat
+      with no ceiling returns no value, not zero. Above 100%, the ceiling was
+      lowered below what the seat had spent. Its month comes from the read, not
+      the vendor.

@@ -334,6 +334,186 @@
         "type": "String"
       },
       {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "account_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "email",
+        "type": "String"
+      },
+      {
+        "name": "snapshot_date",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "tool_label",
+        "type": "String"
+      },
+      {
+        "name": "seat_tier",
+        "type": "String"
+      },
+      {
+        "name": "daily_extra_usage_usd",
+        "type": "Float64"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ai_seat_days",
+    "sorting_key": "tenant_id, email, snapshot_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "source_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "account_id",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "email",
+        "type": "String"
+      },
+      {
+        "name": "period_month",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "tool_label",
+        "type": "String"
+      },
+      {
+        "name": "seat_tier",
+        "type": "String"
+      },
+      {
+        "name": "extra_usage_usd",
+        "type": "Float64"
+      },
+      {
+        "name": "extra_usage_limit_usd",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "seat_cost_usd",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ai_seat_months",
+    "sorting_key": "tenant_id, email, period_month"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "email",
+        "type": "String"
+      },
+      {
+        "name": "usage_date",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "tool_label",
+        "type": "String"
+      },
+      {
+        "name": "surface",
+        "type": "String"
+      },
+      {
+        "name": "surface_label",
+        "type": "String"
+      },
+      {
+        "name": "seat_status",
+        "type": "String"
+      },
+      {
+        "name": "lines_added",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "lines_removed",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "tool_use_offered",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "tool_use_accepted",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "dev_conversations",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "assistant_messages",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "assistant_actions",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "chat_conversations",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "prs_with_assistant",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "prs_total",
+        "type": "Nullable(UInt64)"
+      },
+      {
+        "name": "cost_usd",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ai_usage",
+    "sorting_key": "tenant_id, email, usage_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
         "name": "source_key",
         "type": "String"
       },

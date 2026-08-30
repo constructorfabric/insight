@@ -128,6 +128,72 @@ ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_dat
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.ai_seat_days
+(
+    `tenant_id` String,
+    `source_id` Nullable(String),
+    `account_id` Nullable(String),
+    `email` String,
+    `snapshot_date` Date,
+    `tool` String,
+    `tool_label` String,
+    `seat_tier` String,
+    `daily_extra_usage_usd` Float64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(snapshot_date)
+ORDER BY (tenant_id, email, snapshot_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.ai_seat_months
+(
+    `tenant_id` String,
+    `source_id` Nullable(String),
+    `account_id` Nullable(String),
+    `email` String,
+    `period_month` Date,
+    `tool` String,
+    `tool_label` String,
+    `seat_tier` String,
+    `extra_usage_usd` Float64,
+    `extra_usage_limit_usd` Nullable(Float64),
+    `seat_cost_usd` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(period_month)
+ORDER BY (tenant_id, email, period_month)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.ai_usage
+(
+    `tenant_id` String,
+    `email` String,
+    `usage_date` Date,
+    `tool` String,
+    `tool_label` String,
+    `surface` String,
+    `surface_label` String,
+    `seat_status` String,
+    `lines_added` Nullable(UInt64),
+    `lines_removed` Nullable(UInt64),
+    `tool_use_offered` Nullable(UInt64),
+    `tool_use_accepted` Nullable(UInt64),
+    `dev_conversations` Nullable(UInt64),
+    `assistant_messages` Nullable(UInt64),
+    `assistant_actions` Nullable(UInt64),
+    `chat_conversations` Nullable(UInt64),
+    `prs_with_assistant` Nullable(UInt64),
+    `prs_total` Nullable(UInt64),
+    `cost_usd` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(usage_date)
+ORDER BY (tenant_id, email, usage_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.ci_metric_evidence
 (
     `tenant_id` String,

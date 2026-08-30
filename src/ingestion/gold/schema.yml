@@ -1513,6 +1513,161 @@ models:
       - name: comments_received
         description: "Comments left that day on pages the person authored"
 
+  - name: ai_usage
+    description: >
+      AI usage per person and day: what coding assistants and chat assistants
+      each reported, in one relation told apart by `surface`. A semantic-layer
+      dataset — measures sum it and count distinct days over it. Cost and active
+      days span both kinds of usage and a measure reads one dataset, so the two
+      class relations meet here rather than at query time. A counter the source
+      did not report stays NULL rather than becoming zero. Identity stays as the
+      source gave it; the person is bound when a query runs.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: email
+        description: "Normalized person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: usage_date
+        description: "Day the usage was reported on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: "Vendor tool code the usage came from; a breakdown dimension"
+        tests:
+          - not_null
+      - name: tool_label
+        description: "Display label for `tool`; an unmapped code falls through as itself"
+      - name: surface
+        description: >
+          Where the usage happened. 'dev' marks a coding assistant; every other
+          value is the assistant surface the source named. A breakdown dimension.
+        tests:
+          - not_null
+      - name: surface_label
+        description: "Display label for `surface`; an unmapped code falls through as itself"
+      - name: seat_status
+        description: >
+          Seat state as of the last read, not as of the usage day: the sources
+          restate it for every day they re-read. 'unknown' where the source has
+          no seat lifecycle concept. A breakdown dimension.
+        tests:
+          - not_null
+      - name: lines_added
+        description: "Lines the person accepted from a coding assistant; NULL where none were reported"
+      - name: lines_removed
+        description: "Lines the person accepted a coding assistant's deletion of; NULL where none were reported"
+      - name: tool_use_offered
+        description: "Edit or tool suggestions a coding assistant offered; NULL where none were reported"
+      - name: tool_use_accepted
+        description: "Edit or tool suggestions the person accepted; NULL where none were reported"
+      - name: dev_conversations
+        description: >
+          Conversations with a coding assistant, counted as that vendor counts
+          them. NULL for tools that publish no such unit.
+      - name: assistant_messages
+        description: "Messages exchanged with an AI assistant; NULL where none were reported"
+      - name: assistant_actions
+        description: "Actions an AI assistant took; NULL where none were reported"
+      - name: chat_conversations
+        description: "Conversations held with an AI assistant; NULL where none were reported"
+      - name: prs_with_assistant
+        description: "Pull requests a coding assistant reported itself active in; NULL where the source does not reach the code host"
+      - name: prs_total
+        description: "Pull requests a coding assistant observed over its own window; NULL where the source does not reach the code host"
+      - name: cost_usd
+        description: >
+          What the usage would cost at the vendor's token rates, in dollars.
+          NULL where the vendor prices no per-person usage.
+
+  - name: ai_seat_months
+    description: >
+      What one AI seat cost in one billing month: the fee the invoice priced it
+      at, the usage billed on top of that fee, and the ceiling that usage runs
+      against. A semantic-layer dataset — measures sum it and a ratio reads the
+      ceiling. A seat the invoice does not price, and a seat with no ceiling,
+      carry NULL rather than a share of the invoice total or a fabricated
+      denominator.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance the seat was reported by; a seat id is unique only within it"
+      - name: account_id
+        description: "The vendor's own stable seat identifier"
+      - name: email
+        description: "Normalized person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: period_month
+        description: "First day of the billing month; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: "Vendor tool code the seat belongs to; a breakdown dimension"
+        tests:
+          - not_null
+      - name: tool_label
+        description: "Display label for `tool`; an unmapped code falls through as itself"
+      - name: seat_tier
+        description: "Plan tier the seat carries, 'unknown' where the source names none; a breakdown dimension"
+        tests:
+          - not_null
+      - name: extra_usage_usd
+        description: >
+          What the vendor billed once the seat exhausted the usage included in
+          its fee. Not the excess over the ceiling — that difference is where
+          spending stopped, not what it cost.
+      - name: extra_usage_limit_usd
+        description: "The ceiling the vendor stops extra usage at; NULL for a seat with no ceiling"
+      - name: seat_cost_usd
+        description: "The invoiced price of the seat for the month; NULL for a seat whose tier the invoice does not price"
+
+  - name: ai_seat_days
+    description: >
+      One AI seat's billed extra usage placed on the day it was spent. The
+      vendor reports a cumulative month-to-date figure, so a day's spend is the
+      step between two readings and nothing else — exact in sum over the month,
+      approximate in placement within it. A semantic-layer dataset — a measure
+      sums it.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance the seat was reported by; a seat id is unique only within it"
+      - name: account_id
+        description: "The vendor's own stable seat identifier"
+      - name: email
+        description: "Normalized person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: snapshot_date
+        description: "Day the seat was read on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: "Vendor tool code the seat belongs to; a breakdown dimension"
+        tests:
+          - not_null
+      - name: tool_label
+        description: "Display label for `tool`; an unmapped code falls through as itself"
+      - name: seat_tier
+        description: "Plan tier the seat carries, 'unknown' where the source names none; a breakdown dimension"
+        tests:
+          - not_null
+      - name: daily_extra_usage_usd
+        description: >
+          The day's share of the month's billed extra usage. Never negative: a
+          reading that drops is held at the preceding one, and the suffix
+          minimum keeps the steps summing to the month's final reading.
+
   - name: account_attribute_values
     description: >
       Effective-dated person-attribute values per stable source account, built
