@@ -658,6 +658,186 @@
         "type": "String"
       },
       {
+        "name": "person_email",
+        "type": "String"
+      },
+      {
+        "name": "activity_date",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "modality",
+        "type": "String"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "collab_active_modalities",
+    "sorting_key": "tenant_id, person_email, activity_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "person_email",
+        "type": "String"
+      },
+      {
+        "name": "activity_date",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "tool_label",
+        "type": "String"
+      },
+      {
+        "name": "total_chat_messages",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "channel_posts_total",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "direct_and_group_messages",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "emails_sent",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "emails_received",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "emails_read",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "files_engaged",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "files_shared_internal",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "files_shared_external",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "meeting_seconds",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "meeting_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "meetings_attended",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "meetings_organized",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "adhoc_meetings_attended",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "scheduled_meetings_attended",
+        "type": "Nullable(Int64)"
+      },
+      {
+        "name": "focus_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "working_hours",
+        "type": "Nullable(Float64)"
+      },
+      {
+        "name": "is_chat_active",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_email_active",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_documents_active",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_meetings_active",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_deliberately_active",
+        "type": "UInt8"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "collab_activity",
+    "sorting_key": "tenant_id, person_email, activity_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "person_email",
+        "type": "String"
+      },
+      {
+        "name": "activity_date",
+        "type": "Date"
+      },
+      {
+        "name": "tool",
+        "type": "String"
+      },
+      {
+        "name": "scope",
+        "type": "String"
+      },
+      {
+        "name": "scope_label",
+        "type": "String"
+      },
+      {
+        "name": "files_shared",
+        "type": "Nullable(Float64)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "collab_file_shares",
+    "sorting_key": "tenant_id, person_email, activity_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
         "name": "source_key",
         "type": "String"
       },

@@ -300,3 +300,53 @@ datasets:
         role: dimension
         label_field: tool_label
       seat_tier: dimension
+  - key: collab_activity
+    database: insight
+    relation: collab_activity
+    row_identity: [person_email, activity_date, tool]
+    fields:
+      tenant_id: tenant
+      person_email: entity
+      activity_date: event_time
+      total_chat_messages: measurable
+      channel_posts_total: measurable
+      direct_and_group_messages: measurable
+      emails_sent: measurable
+      emails_received: measurable
+      emails_read: measurable
+      files_engaged: measurable
+      files_shared_internal: measurable
+      files_shared_external: measurable
+      meeting_seconds: measurable
+      meeting_hours: measurable
+      meetings_attended: measurable
+      meetings_organized: measurable
+      adhoc_meetings_attended: measurable
+      scheduled_meetings_attended: measurable
+      focus_hours: measurable
+      working_hours: measurable
+      tool:
+        role: dimension
+        label_field: tool_label
+
+  - key: collab_active_modalities
+    database: insight
+    relation: collab_active_modalities
+    row_identity: [person_email, activity_date, tool, modality]
+    fields:
+      tenant_id: tenant
+      person_email: entity
+      activity_date: event_time
+
+  - key: collab_file_shares
+    database: insight
+    relation: collab_file_shares
+    row_identity: [person_email, activity_date, tool, scope]
+    fields:
+      tenant_id: tenant
+      person_email: entity
+      activity_date: event_time
+      files_shared: measurable
+      scope:
+        role: dimension
+        label_field: scope_label

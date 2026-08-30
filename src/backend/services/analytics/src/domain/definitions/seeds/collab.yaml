@@ -1,0 +1,454 @@
+# Collaboration measures and metrics. Datasets are not authored here — they are
+# a projection of the field catalog.
+measures:
+  - key: total_chat_messages
+    dataset: collab_activity
+    description: Chat messages a person sent, across every conversation type a tool reports.
+    aggregation: sum
+    value_expr: total_chat_messages
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: channel_posts
+    dataset: collab_activity
+    description: >-
+      Messages a person posted to shared channels, thread replies included, so
+      tools that report posts and replies separately stay comparable.
+    aggregation: sum
+    value_expr: channel_posts_total
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: direct_and_group_messages
+    dataset: collab_activity
+    description: >-
+      Chat messages a person sent in direct and group conversations. A tool that
+      does not distinguish conversation types reports none.
+    aggregation: sum
+    value_expr: direct_and_group_messages
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: chat_active_tool_days
+    dataset: collab_activity
+    description: >-
+      Tool-days on which a person sent at least one chat message — one per tool
+      per day, so a day spent messaging on two tools counts twice.
+    filter: { field: total_chat_messages, op: gt, value: 0 }
+    aggregation: count
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: collab_active_days
+    dataset: collab_activity
+    description: >-
+      Calendar days on which a person took a deliberate collaboration action —
+      sending a message, sending email, engaging or sharing a file, attending a
+      meeting. Receiving and reading email are passive and do not count.
+    filter: { field: is_deliberately_active, op: eq, value: 1 }
+    aggregation: count_distinct
+    subject_expr: activity_date
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: days_with_meetings
+    dataset: collab_activity
+    description: >-
+      Deliberately active days on which a person spent time in at least one
+      meeting.
+    filter:
+      all:
+        - { field: is_deliberately_active, op: eq, value: 1 }
+        - { field: meeting_seconds, op: gt, value: 0 }
+    aggregation: count_distinct
+    subject_expr: activity_date
+    event_time: activity_date
+    entity: person_email
+
+  - key: emails_sent
+    dataset: collab_activity
+    description: Emails a person sent.
+    aggregation: sum
+    value_expr: emails_sent
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: emails_received
+    dataset: collab_activity
+    description: Emails a person received.
+    aggregation: sum
+    value_expr: emails_received
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: emails_read
+    dataset: collab_activity
+    description: Emails a person read.
+    aggregation: sum
+    value_expr: emails_read
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: files_engaged
+    dataset: collab_activity
+    description: Files a person viewed or edited.
+    aggregation: sum
+    value_expr: files_engaged
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: files_shared_internal
+    dataset: collab_activity
+    description: Files a person shared with people inside the organization.
+    aggregation: sum
+    value_expr: files_shared_internal
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: files_shared_external
+    dataset: collab_activity
+    description: Files a person shared with people outside the organization.
+    aggregation: sum
+    value_expr: files_shared_external
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: files_shared
+    dataset: collab_file_shares
+    description: >-
+      Files a person shared with any recipient, splittable by whether the
+      recipients were inside or outside the organization.
+    aggregation: sum
+    value_expr: files_shared
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: scope, value_field: scope, label_field: scope_label }
+
+  - key: meeting_hours
+    dataset: collab_activity
+    description: >-
+      Hours a person spent in meetings, taking the longest active modality —
+      audio, video or screen share — of each meeting.
+    aggregation: sum
+    value_expr: meeting_hours
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: meetings_attended
+    dataset: collab_activity
+    description: Meetings a person attended.
+    aggregation: sum
+    value_expr: meetings_attended
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: meetings_organized
+    dataset: collab_activity
+    description: >-
+      Meetings a person organized. A tool that does not report an organizer
+      reports none.
+    aggregation: sum
+    value_expr: meetings_organized
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: adhoc_meetings_attended
+    dataset: collab_activity
+    description: >-
+      Unscheduled meetings a person attended. A tool that does not classify
+      meetings reports none.
+    aggregation: sum
+    value_expr: adhoc_meetings_attended
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: scheduled_meetings_attended
+    dataset: collab_activity
+    description: >-
+      Scheduled meetings a person attended. A tool that does not classify
+      meetings reports none.
+    aggregation: sum
+    value_expr: scheduled_meetings_attended
+    event_time: activity_date
+    entity: person_email
+    dimensions:
+      - { key: tool, value_field: tool, label_field: tool_label }
+
+  - key: focus_hours
+    dataset: collab_activity
+    description: >-
+      Working hours a person spent outside meetings. A property of the day, so
+      one row per person and day carries it.
+    aggregation: sum
+    value_expr: focus_hours
+    event_time: activity_date
+    entity: person_email
+
+  - key: working_hours
+    dataset: collab_activity
+    description: >-
+      Scheduled working hours in a person's day, defaulting to a nominal
+      eight-hour day where no HR source provides them.
+    aggregation: sum
+    value_expr: working_hours
+    event_time: activity_date
+    entity: person_email
+
+  - key: active_modalities
+    dataset: collab_active_modalities
+    description: >-
+      Collaboration modalities — chat, meetings, email, documents — a person was
+      deliberately active in.
+    aggregation: count_distinct
+    subject_expr: modality
+    event_time: activity_date
+    entity: person_email
+
+metrics:
+  - key: collab.messages_sent
+    computation: { type: direct, measure: total_chat_messages }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Messages sent
+    description: >-
+      Chat messages the person sent across messaging tools. Counts are not
+      directly comparable between tools: some fold thread replies into the
+      total, and a suite may combine private-chat and channel messages.
+
+  - key: collab.channel_posts
+    computation: { type: direct, measure: channel_posts }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Channel posts
+    description: >-
+      Channel posts plus thread replies across messaging tools. Tools that
+      report posts and replies separately are folded so counts stay comparable.
+
+  - key: collab.dm_ratio
+    computation: { type: ratio, numerator: direct_and_group_messages, denominator: total_chat_messages }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: DM ratio
+    description: >-
+      Direct and group-chat messages divided by all chat messages. A lower ratio
+      means more communication happens in open channels. Tools that do not
+      distinguish message types report no value.
+
+  - key: collab.msgs_per_active_day
+    computation: { type: ratio, numerator: total_chat_messages, denominator: chat_active_tool_days }
+    format: decimal
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Messages per active day
+    description: >-
+      Chat messages sent divided by the tool-days the person sent any. Broken
+      down by tool, each tool's own active days divide its own messages; across
+      tools, a day counts once per tool the person messaged on.
+
+  - key: collab.active_days
+    computation: { type: direct, measure: collab_active_days }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Active days
+    description: >-
+      Distinct days on which the person took a deliberate collaboration action —
+      sending a message, sending email, engaging or sharing a file, or attending
+      a meeting. Passive activity such as receiving or reading email is excluded.
+
+  - key: collab.emails_sent
+    computation: { type: direct, measure: emails_sent }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Emails sent
+    description: Emails the person sent during the period.
+
+  - key: collab.emails_received
+    computation: { type: direct, measure: emails_received }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Emails received
+    description: Emails the person received during the period.
+
+  - key: collab.emails_read
+    computation: { type: direct, measure: emails_read }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Emails read
+    description: Emails the person read during the period.
+
+  - key: collab.files_engaged
+    computation: { type: direct, measure: files_engaged }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Files engaged
+    description: Files the person viewed or edited during the period.
+
+  - key: collab.files_shared_internal
+    computation: { type: direct, measure: files_shared_internal }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Files shared (internal)
+    description: Files the person shared with people inside the organization.
+
+  - key: collab.files_shared_external
+    computation: { type: direct, measure: files_shared_external }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Files shared (external)
+    description: Files the person shared with people outside the organization.
+
+  - key: collab.files_shared
+    computation: { type: direct, measure: files_shared }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Files shared
+    description: >-
+      Files the person shared with recipients inside or outside the
+      organization, splittable by which of the two.
+
+  - key: collab.meeting_hours
+    computation: { type: direct, measure: meeting_hours }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Meeting hours
+    description: >-
+      Hours spent in meetings, taking the longest active modality — audio, video
+      or screen share — per meeting. A tool that reports modality durations as
+      full-session estimates runs higher than one that reports actual time.
+
+  - key: collab.meetings_count
+    computation: { type: direct, measure: meetings_attended }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Meetings attended
+    description: Distinct meetings the person attended across meeting tools.
+
+  - key: collab.meeting_free_days
+    computation:
+      type: derived
+      inputs: { active: collab_active_days, with_meetings: days_with_meetings }
+      expr: active - with_meetings
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Meeting-free days
+    description: >-
+      Days on which the person was actively collaborating but spent no time in
+      meetings — a proxy for uninterrupted working days.
+
+  - key: collab.focus_time_pct
+    computation: { type: ratio, numerator: focus_hours, denominator: working_hours }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Focus time
+    description: >-
+      Share of the workday not spent in meetings: meeting-free hours divided by
+      scheduled working hours. Scheduled hours default to a nominal eight-hour
+      day where an HR source does not provide them.
+
+  - key: collab.breadth
+    computation: { type: direct, measure: active_modalities }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Collaboration breadth
+    description: >-
+      Distinct collaboration modalities — chat, meetings, email, documents — the
+      person was deliberately active in during the period.
+
+  - key: collab.meetings_organized
+    computation: { type: direct, measure: meetings_organized }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Meetings organized
+    description: >-
+      Meetings the person organized. Reported only by tools that expose
+      organizer counts.
+
+  - key: collab.adhoc_meetings
+    computation: { type: direct, measure: adhoc_meetings_attended }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Ad-hoc meetings
+    description: >-
+      Unscheduled meetings the person attended. Reported only by tools that
+      distinguish ad-hoc from scheduled meetings.
+
+  - key: collab.scheduled_meetings
+    computation: { type: direct, measure: scheduled_meetings_attended }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Scheduled meetings
+    description: >-
+      Scheduled meetings the person attended. Reported only by tools that
+      distinguish ad-hoc from scheduled meetings.

@@ -250,6 +250,72 @@ ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_dat
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.collab_active_modalities
+(
+    `tenant_id` String,
+    `person_email` String,
+    `activity_date` Date,
+    `tool` String,
+    `modality` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(activity_date)
+ORDER BY (tenant_id, person_email, activity_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.collab_activity
+(
+    `tenant_id` String,
+    `person_email` String,
+    `activity_date` Date,
+    `tool` String,
+    `tool_label` String,
+    `total_chat_messages` Nullable(Int64),
+    `channel_posts_total` Nullable(Int64),
+    `direct_and_group_messages` Nullable(Int64),
+    `emails_sent` Nullable(Float64),
+    `emails_received` Nullable(Float64),
+    `emails_read` Nullable(Float64),
+    `files_engaged` Nullable(Float64),
+    `files_shared_internal` Nullable(Float64),
+    `files_shared_external` Nullable(Float64),
+    `meeting_seconds` Nullable(Int64),
+    `meeting_hours` Nullable(Float64),
+    `meetings_attended` Nullable(Int64),
+    `meetings_organized` Nullable(Int64),
+    `adhoc_meetings_attended` Nullable(Int64),
+    `scheduled_meetings_attended` Nullable(Int64),
+    `focus_hours` Nullable(Float64),
+    `working_hours` Nullable(Float64),
+    `is_chat_active` UInt8,
+    `is_email_active` UInt8,
+    `is_documents_active` UInt8,
+    `is_meetings_active` UInt8,
+    `is_deliberately_active` UInt8
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(activity_date)
+ORDER BY (tenant_id, person_email, activity_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.collab_file_shares
+(
+    `tenant_id` String,
+    `person_email` String,
+    `activity_date` Date,
+    `tool` String,
+    `scope` String,
+    `scope_label` String,
+    `files_shared` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(activity_date)
+ORDER BY (tenant_id, person_email, activity_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.collab_metric_evidence
 (
     `tenant_id` String,

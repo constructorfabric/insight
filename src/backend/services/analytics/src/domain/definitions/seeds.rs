@@ -22,6 +22,7 @@ const FAMILIES: &[(&str, &str)] = &[
     ("git", include_str!("seeds/git.yaml")),
     ("tasks", include_str!("seeds/tasks.yaml")),
     ("wiki", include_str!("seeds/wiki.yaml")),
+    ("collab", include_str!("seeds/collab.yaml")),
 ];
 
 #[derive(Debug, Deserialize)]

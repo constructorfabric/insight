@@ -1522,6 +1522,13 @@ models:
       class relations meet here rather than at query time. A counter the source
       did not report stays NULL rather than becoming zero. Identity stays as the
       source gave it; the person is bound when a query runs.
+  - name: collab_activity
+    description: >
+      Collaboration work per person, day and tool: the chat, meeting, email and
+      document facts each tool reported, folded into one row. A semantic-layer
+      dataset — measures sum it, count distinct days over it, and filter it by
+      the deliberate-activity flags. Identity stays as the source gave it; the
+      person is bound when a query runs.
     columns:
       - name: tenant_id
         description: "Owning tenant"
@@ -1591,6 +1598,91 @@ models:
       ceiling. A seat the invoice does not price, and a seat with no ceiling,
       carry NULL rather than a share of the invoice total or a fabricated
       denominator.
+      - name: person_email
+        description: "Lowercased person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: activity_date
+        description: "Day the work was reported on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: >
+          Collaboration tool the facts on this row came from, as the value half
+          of the `tool` dimension.
+      - name: tool_label
+        description: >
+          Display label for the tool. The row spans every modality one tool
+          reported, so a multi-surface suite carries its suite-level name rather
+          than the name of any one surface.
+      - name: total_chat_messages
+        description: "Chat messages the person sent through this tool that day"
+      - name: channel_posts_total
+        description: >
+          Channel posts plus thread replies, folded so tools that report the two
+          separately stay comparable with tools that do not.
+      - name: direct_and_group_messages
+        description: >
+          Chat messages sent in direct and group conversations; unknown for a
+          tool that does not distinguish conversation types.
+      - name: emails_sent
+        description: "Emails the person sent"
+      - name: emails_received
+        description: "Emails the person received"
+      - name: emails_read
+        description: "Emails the person read"
+      - name: files_engaged
+        description: "Files the person viewed or edited"
+      - name: files_shared_internal
+        description: "Files the person shared with people inside the organization"
+      - name: files_shared_external
+        description: "Files the person shared with people outside the organization"
+      - name: meeting_seconds
+        description: >
+          Audio, video and screen-share seconds added together — the presence
+          test a meeting-free day is the absence of, not a duration to report.
+      - name: meeting_hours
+        description: >
+          Hours in meetings, taking the longest active modality per meeting so
+          audio, video and screen share of one meeting count once.
+      - name: meetings_attended
+        description: "Meetings the person attended"
+      - name: meetings_organized
+        description: "Meetings the person organized; unknown for a tool that reports no organizer"
+      - name: adhoc_meetings_attended
+        description: "Unscheduled meetings attended; unknown for a tool that does not classify meetings"
+      - name: scheduled_meetings_attended
+        description: "Scheduled meetings attended; unknown for a tool that does not classify meetings"
+      - name: focus_hours
+        description: >
+          Working hours the person spent outside meetings. A property of the day
+          rather than of any tool, so it is carried by exactly one row per person
+          and day — the one whose tool sorts first — and is unknown on every
+          other row of that day. Fanning it across the day's tools would multiply
+          it by the tool count.
+      - name: working_hours
+        description: >
+          Scheduled working hours for that day, carried by the same single row
+          per person and day as focus_hours and for the same reason.
+      - name: is_chat_active
+        description: "1 when the person sent at least one chat message through this tool that day"
+      - name: is_email_active
+        description: "1 when the person sent at least one email through this tool that day"
+      - name: is_documents_active
+        description: "1 when the person viewed, edited or shared at least one file through this tool that day"
+      - name: is_meetings_active
+        description: "1 when the person attended at least one meeting through this tool that day"
+      - name: is_deliberately_active
+        description: >
+          1 when any of the four modality flags is set — the person took a
+          deliberate collaboration action. Receiving and reading email are
+          passive and do not set it.
+
+  - name: collab_active_modalities
+    description: >
+      The collaboration modalities a person was deliberately active in: one row
+      per modality per person, day and tool. A semantic-layer dataset —
+      collaboration breadth is a distinct count of its modality column.
     columns:
       - name: tenant_id
         description: "Owning tenant"
@@ -1635,6 +1727,28 @@ models:
       step between two readings and nothing else — exact in sum over the month,
       approximate in placement within it. A semantic-layer dataset — a measure
       sums it.
+      - name: person_email
+        description: "Lowercased person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: activity_date
+        description: "Day the activity was reported on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: "Collaboration tool the activity came from; part of the grain, not a reported breakdown"
+      - name: modality
+        description: "One of chat, email, documents, meetings — the subject breadth counts distinctly"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [chat, email, documents, meetings]
+
+  - name: collab_file_shares
+    description: >
+      Files a person shared, split by who the recipients were: one row per share
+      scope per person, day and tool. A semantic-layer dataset — the combined
+      count sums it and the internal/external split is a breakdown of it.
     columns:
       - name: tenant_id
         description: "Owning tenant"
@@ -1667,6 +1781,28 @@ models:
           The day's share of the month's billed extra usage. Never negative: a
           reading that drops is held at the preceding one, and the suffix
           minimum keeps the steps summing to the month's final reading.
+      - name: person_email
+        description: "Lowercased person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: activity_date
+        description: "Day the share was reported on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: tool
+        description: "Collaboration tool the share came from; part of the grain, not a reported breakdown"
+      - name: scope
+        description: "Who the file reached: internal or external"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [internal, external]
+      - name: scope_label
+        description: "Display label for the scope dimension"
+      - name: files_shared
+        description: >
+          Files shared into that scope. A scope the source did not report leaves
+          no row, so it stays unknown rather than reading zero.
 
   - name: account_attribute_values
     description: >
