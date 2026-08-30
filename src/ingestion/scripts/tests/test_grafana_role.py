@@ -18,9 +18,12 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+
+QueryFn = Callable[[str], tuple[bool, str]]
 
 CH_URL = os.environ.get("PRESENTATION_ROLE_TEST_CH_URL")
 CH_USER = os.environ.get("PRESENTATION_ROLE_TEST_CH_USER", "default")
@@ -64,18 +67,9 @@ def _admin(sql: str) -> tuple[bool, str]:
     return _query(sql, user=CH_USER, password=CH_PASSWORD)
 
 
-@pytest.fixture(scope="module")
-def grafana_user():
-    """Run provision-grafana-access.sh against the live server and yield a
-    query fn bound to the `grafana` user it creates. Torn down afterwards."""
-    if not (shutil.which("bash") and shutil.which("curl")):
-        pytest.skip("provision-grafana-access.sh needs bash + curl")
-
-    for db in GRANTED_DBS:
-        assert _admin(f"CREATE DATABASE IF NOT EXISTS {db}")[0]
-        assert _admin(f"CREATE TABLE IF NOT EXISTS {db}.probe (x UInt8) ENGINE=MergeTree ORDER BY x")[0]
-
-    # The script talks to CH over curl (lib/ch-exec.sh) using these env names.
+def _run_provisioning() -> None:
+    """Run provision-grafana-access.sh against the live server. The script
+    talks to CH over curl (lib/ch-exec.sh) using these env names."""
     env = {
         **os.environ,
         "CLICKHOUSE_URL": CH_URL,
@@ -86,6 +80,20 @@ def grafana_user():
     result = subprocess.run(["bash", str(PROVISION_SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, f"provisioning failed: {result.stdout}\n{result.stderr}"
     assert "grafana user ready" in result.stdout, result.stdout
+
+
+@pytest.fixture(scope="module")
+def grafana_user() -> Iterator[QueryFn]:
+    """Run provision-grafana-access.sh against the live server and yield a
+    query fn bound to the `grafana` user it creates. Torn down afterwards."""
+    if not (shutil.which("bash") and shutil.which("curl")):
+        pytest.skip("provision-grafana-access.sh needs bash + curl")
+
+    for db in GRANTED_DBS:
+        assert _admin(f"CREATE DATABASE IF NOT EXISTS {db}")[0]
+        assert _admin(f"CREATE TABLE IF NOT EXISTS {db}.probe (x UInt8) ENGINE=MergeTree ORDER BY x")[0]
+
+    _run_provisioning()
 
     def _query_as_grafana(sql: str) -> tuple[bool, str]:
         return _query(sql, user=GRAFANA_USER, password=GRAFANA_PASSWORD)
@@ -99,7 +107,7 @@ def grafana_user():
 
 
 @pytest.mark.parametrize("db", GRANTED_DBS)
-def test_grafana_user_is_select_only_everywhere(grafana_user, db: str) -> None:
+def test_grafana_user_is_select_only_everywhere(grafana_user: QueryFn, db: str) -> None:
     """The `grafana` user reads every granted DB but cannot write or DDL anywhere."""
     assert grafana_user(f"SELECT count() FROM {db}.probe")[0], f"{db} SELECT must be allowed"
     for sql in (
@@ -112,3 +120,21 @@ def test_grafana_user_is_select_only_everywhere(grafana_user, db: str) -> None:
         ok, resp = grafana_user(sql)
         assert not ok, f"{db} must reject: {sql!r}"
         assert "ACCESS_DENIED" in resp, resp
+
+
+def test_provisioning_converges_a_warm_user(grafana_user: QueryFn) -> None:
+    """Re-running provisioning strips privileges the user gained out-of-band.
+
+    `ALTER USER ... DEFAULT ROLE` would only change role activation — a direct
+    grant would survive it. The script drops and recreates the user, so an
+    INSERT granted behind its back must be gone after the next deploy hook.
+    """
+    assert _admin(f"GRANT INSERT ON silver.probe TO {GRAFANA_USER}")[0]
+    assert grafana_user("INSERT INTO silver.probe VALUES (1)")[0], "out-of-band INSERT should work pre-converge"
+
+    _run_provisioning()
+
+    ok, resp = grafana_user("INSERT INTO silver.probe VALUES (1)")
+    assert not ok, "re-provisioning must strip the out-of-band INSERT grant"
+    assert "ACCESS_DENIED" in resp, resp
+    assert grafana_user("SELECT count() FROM silver.probe")[0], "SELECT must survive re-provisioning"

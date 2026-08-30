@@ -34,11 +34,15 @@ case "${CLICKHOUSE_GRAFANA_PASSWORD}" in
     ;;
 esac
 
-# Grant-less user: every privilege comes via grafana_ro. ALTER converges
-# the password on warm clusters (rotation-safe).
+# Grant-less user: every privilege comes via grafana_ro. Drop-and-recreate
+# converges a warm user — ALTER would leave direct grants or extra roles
+# handed out out-of-band effective, voiding the SELECT-only guarantee.
+# SAFETY: unlike `presentation` (a live service connection pool), Grafana
+# reconnects per query, so the sub-second no-user window during a deploy
+# hook is harmless.
 run_ch <<SQL
-CREATE USER IF NOT EXISTS grafana IDENTIFIED BY '${CLICKHOUSE_GRAFANA_PASSWORD}';
-ALTER USER grafana IDENTIFIED BY '${CLICKHOUSE_GRAFANA_PASSWORD}';
+DROP USER IF EXISTS grafana;
+CREATE USER grafana IDENTIFIED BY '${CLICKHOUSE_GRAFANA_PASSWORD}';
 GRANT grafana_ro TO grafana;
 ALTER USER grafana DEFAULT ROLE grafana_ro;
 SQL
