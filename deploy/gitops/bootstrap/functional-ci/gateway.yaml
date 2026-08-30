@@ -29,4 +29,6 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                values: [insight, insight-infra]
+                # insight-previews: the previews service's per-experiment
+                # HTTPRoutes attach from there (#1981).
+                values: [insight, insight-infra, insight-previews]

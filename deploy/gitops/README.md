@@ -404,7 +404,8 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                values: [insight, insight-infra]
+                # insight-previews: preview-experiment HTTPRoutes attach from there
+                values: [insight, insight-infra, insight-previews]
 ```
 
 cert-manager (installed with `config.enableGatewayAPI=true`) watches
