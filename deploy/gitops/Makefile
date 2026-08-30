@@ -52,6 +52,19 @@ NS_INFRA         ?= $(shell yq -r '.namespaces.infra    // "insight-infra"'  $(I
 NS_PREVIEWS      ?= $(shell yq -r '.namespaces.previews // "insight-previews"' $(INVENTORY) 2>/dev/null)
 RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(INVENTORY) 2>/dev/null)
 
+# Producer namespaces for the cross-service hostnames in system/*/values.yaml
+# (`loki.${NS_LOKI}.svc.cluster.local` and friends). One variable per producer
+# that another release addresses; every system-* target here installs into
+# NS_INFRA, so they all default to it. Override per invocation (env var / CLI)
+# if an environment hosts a producer elsewhere. render-system-values.sh
+# substitutes them before helm reads the values — see _system_values_args.
+NS_LOKI               ?= $(NS_INFRA)
+NS_TEMPO              ?= $(NS_INFRA)
+NS_VICTORIAMETRICS    ?= $(NS_INFRA)
+NS_KUBE_STATE_METRICS ?= $(NS_INFRA)
+NS_CLICKHOUSE         ?= $(NS_INFRA)
+NS_REDPANDA           ?= $(NS_INFRA)
+
 # Back-compat alias for older targets still referencing NAMESPACE.
 NAMESPACE        ?= $(NS_APP)
 CHART            ?= oci://ghcr.io/constructorfabric/charts/insight
@@ -661,9 +674,17 @@ define _helm_repo_add
 	helm repo add $(1) $(2) >/dev/null 2>&1 || true; helm repo update $(1) >/dev/null
 endef
 
-# Helper: render `-f system/<svc>/values.yaml [-f environments/<env>/<svc>-values.yaml]`
+# Helper: render `-f <base> [-f <overlay>]` for system/<svc>/values.yaml and
+# environments/<env>/<svc>-values.yaml. Values are NOT passed to helm verbatim:
+# render-system-values.sh resolves the ${NS_*} producer-namespace placeholders
+# (envsubst with an explicit allowlist — Grafana `$VAR`/`$$VAR` provisioning
+# escapes and any other `$` syntax pass through untouched) into
+# $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
-_system_values_args = -f system/$(1)/values.yaml $(shell test -s environments/$(ENV)/$(1)-values.yaml && echo -f environments/$(ENV)/$(1)-values.yaml)
+_system_ns_env = NS_INFRA=$(NS_INFRA) NS_LOKI=$(NS_LOKI) NS_TEMPO=$(NS_TEMPO) \
+	NS_VICTORIAMETRICS=$(NS_VICTORIAMETRICS) NS_KUBE_STATE_METRICS=$(NS_KUBE_STATE_METRICS) \
+	NS_CLICKHOUSE=$(NS_CLICKHOUSE) NS_REDPANDA=$(NS_REDPANDA)
+_system_values_args = $(or $(shell $(_system_ns_env) bash scripts/render-system-values.sh $(1) $(ENV) $(RENDER_DIR)/system-values),$(error render-system-values.sh failed for '$(1)' — see the message above))
 
 # Helper: require a sealed-secret named `<svc>-creds` to be present in
 # the repo for this env. Apply it to $(NS_INFRA). If missing, print

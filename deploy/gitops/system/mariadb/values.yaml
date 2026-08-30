@@ -3,12 +3,13 @@
 ##
 ## Chart: oci://registry-1.docker.io/bitnamicharts/mariadb
 ## Pin in Makefile: MARIADB_VERSION (default 20.0.x)
-## Release: `mariadb` in namespace `insight-infra`.
+## Release: `mariadb` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/mariadb-values.yaml.
 ##
 ## App layer (umbrella in the `insight` namespace) reaches this release
-## as `mariadb.insight-infra.svc.cluster.local:3306`. The umbrella's
+## as `mariadb.<infra-ns>.svc.cluster.local:3306`. The umbrella's
 ## `mariadb.host` value should be left empty so the chart helper
 ## resolves to that DNS name automatically.
 ##

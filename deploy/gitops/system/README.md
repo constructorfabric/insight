@@ -1,7 +1,8 @@
 # L2 — System Layer
 
-Shared infrastructure services that live in the `insight-infra`
-namespace, **one Helm release per service**. `make system ENV=<env>`
+Shared infrastructure services that live in the infra namespace
+(inventory `namespaces.infra`, `insight-infra` by default), **one Helm
+release per service**. `make system ENV=<env>`
 chains every service whose `inventory.system.<svc>` toggle is true;
 per-service `make system-<svc>` targets remain for one-offs and
 rotation. The toggles exist because each cluster picks which services
@@ -13,7 +14,7 @@ model and full workflow.
 
 ## Services
 
-| Directory | Chart | Helm release in `insight-infra` | Needs a Secret? |
+| Directory | Chart | Helm release (in the infra namespace) | Needs a Secret? |
 |-----------|-------|---------------------------------|-----------------|
 | `mariadb/` | `oci://registry-1.docker.io/bitnamicharts/mariadb` | `mariadb` | yes → [SECRETS.md](mariadb/SECRETS.md) |
 | `clickhouse/` | `oci://registry-1.docker.io/bitnamicharts/clickhouse` | `clickhouse` | yes → [SECRETS.md](clickhouse/SECRETS.md) |
@@ -120,6 +121,33 @@ environments/<env>/<svc>-values.yaml                # per-env overlay — create
 
 Both are passed to `helm upgrade --install` in that order. Missing
 overlay file = base values used as-is.
+
+### Cross-service hostnames — `${NS_*}` placeholders
+
+Neither file reaches helm verbatim: `scripts/render-system-values.sh`
+first resolves the `${NS_*}` placeholders that cross-service references
+use (`http://loki.${NS_LOKI}.svc.cluster.local:3100`, …), writing the
+rendered copies to `.deploy/system-values/` — inspect them there after a
+run. There is one variable per producer another release addresses, each
+defaulting to the inventory's `namespaces.infra`:
+
+| Variable | Producer it locates | Consumers |
+|----------|--------------------|-----------|
+| `NS_LOKI` | `loki` | alloy, grafana |
+| `NS_TEMPO` | `tempo` | alloy, grafana |
+| `NS_VICTORIAMETRICS` | `victoriametrics` | alloy, alloy-metrics, grafana |
+| `NS_KUBE_STATE_METRICS` | `kube-state-metrics` | alloy-metrics |
+| `NS_CLICKHOUSE` | `clickhouse` | alloy-metrics, grafana |
+| `NS_REDPANDA` | `redpanda` | redpanda-console |
+
+Service *names* stay literal on purpose — `fullnameOverride` in each
+producer's values pins them, so the name is the contract and only the
+namespace moves. Substitution is `envsubst` with exactly this allowlist
+(plus `NS_INFRA`): every other `$` construct — Grafana provisioning
+`$VAR` / `$$VAR` escapes, `$__auto` in dashboards, `${…}`-shaped strings
+in Alloy configs — passes through byte-identical, so overlays that carry
+full Alloy configs or restated datasource lists can keep using the
+placeholders too.
 
 ## Secret layout
 

@@ -6,7 +6,8 @@
 ##
 ## Chart: prometheus-community/kube-state-metrics
 ## Pin in Makefile: KUBE_STATE_METRICS_VERSION
-## Release: `kube-state-metrics` in namespace `insight-infra`.
+## Release: `kube-state-metrics` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/kube-state-metrics-values.yaml
 ## — custom-resource metrics (e.g. Argo Workflow phase) belong there, since
@@ -42,8 +43,8 @@ collectors:
   - replicasets
   - statefulsets
 
-# Cluster-wide: the workloads live in `insight`, the data stores in
-# `insight-infra`.
+# Cluster-wide: the workloads live in the services namespace, the data
+# stores in the infra namespace.
 namespaces: ""
 
 selfMonitor:

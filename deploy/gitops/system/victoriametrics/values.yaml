@@ -3,11 +3,12 @@
 ##
 ## Chart: vm/victoria-metrics-single
 ## Pin in Makefile: VICTORIAMETRICS_VERSION
-## Release: `victoriametrics` in namespace `insight-infra`.
+## Release: `victoriametrics` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Write/query endpoint other components use (PromQL queries, and the
 ## remote-write receiver at /api/v1/write — always on, no flag needed):
-##   http://victoriametrics-server.insight-infra.svc.cluster.local:8428
+##   http://victoriametrics-server.<infra-ns>.svc.cluster.local:8428
 ##
 ## Per-env overrides go in environments/<env>/victoriametrics-values.yaml.
 ##
