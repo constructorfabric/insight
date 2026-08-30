@@ -1,0 +1,83 @@
+# Wiki measures and metrics. Datasets are not authored here — they are a
+# projection of the field catalog.
+measures:
+  - key: pages_created
+    dataset: wiki_pages
+    description: Wiki pages a person authored, counted once per page on its creation date.
+    aggregation: count
+    event_time: created_at
+    entity: author_email
+
+  - key: wiki_edits
+    dataset: wiki_person_days
+    description: >-
+      Edit sessions a person recorded. Consecutive saves of one page inside a
+      short window arrive as a single edit, so autosaves do not inflate it.
+    aggregation: sum
+    value_expr: edits
+    event_time: activity_date
+    entity: author_email
+
+  - key: wiki_pages_edited
+    dataset: wiki_person_days
+    description: Distinct wiki pages a person edited, counted per day the page was touched.
+    aggregation: sum
+    value_expr: pages_edited
+    event_time: activity_date
+    entity: author_email
+
+  - key: wiki_comments_received
+    dataset: wiki_person_days
+    description: >-
+      Comments and replies other people left on wiki pages a person authored,
+      attributed through authorship of the commented page.
+    aggregation: sum
+    value_expr: comments_received
+    event_time: activity_date
+    entity: author_email
+
+metrics:
+  - key: wiki.pages_created
+    computation: { type: direct, measure: pages_created }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pages created
+    description: >-
+      Wiki pages the person created during the period, counted on the page's
+      creation date.
+
+  - key: wiki.edits
+    computation: { type: direct, measure: wiki_edits }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Page edits
+    description: >-
+      Logical wiki edits the person made during the period. Consecutive saves
+      of the same page within a short window count as one edit, so autosaves do
+      not inflate the number.
+
+  - key: wiki.pages_edited
+    computation: { type: direct, measure: wiki_pages_edited }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Pages edited
+    description: >-
+      Distinct wiki pages the person edited during the period, counted per day
+      the page was touched.
+
+  - key: wiki.comments
+    computation: { type: direct, measure: wiki_comments_received }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Comments received
+    description: >-
+      Comments and replies other people left on wiki pages the person authored
+      — a signal of how much their documentation is read and discussed.

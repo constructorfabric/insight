@@ -115,3 +115,30 @@ datasets:
         display: [actor]
       repository_label:
         display: [location]
+
+  - key: wiki_pages
+    database: insight
+    relation: wiki_pages
+    row_identity: [source_id, page_id]
+    fields:
+      tenant_id: tenant
+      author_email: entity
+      created_at: event_time
+      title:
+        display: [title]
+      page_id:
+        display: [reference]
+      space_name:
+        display: [location]
+
+  - key: wiki_person_days
+    database: insight
+    relation: wiki_person_days
+    row_identity: [source_id, author_email, activity_date]
+    fields:
+      tenant_id: tenant
+      author_email: entity
+      activity_date: event_time
+      edits: measurable
+      pages_edited: measurable
+      comments_received: measurable

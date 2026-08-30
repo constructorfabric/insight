@@ -1196,6 +1196,68 @@ models:
           Array(Tuple(key, value, label)). Empty for every wiki measure — the
           family carries no breakdown dimension.
 
+  - name: wiki_pages
+    description: >
+      Authored wiki pages: one row per page a person created, with the space it
+      lives in and the day the source dated its creation. A semantic-layer
+      dataset — measures count it and drilldown projects it. Identity stays as
+      the source gave it; the person is bound when a query runs.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector source the page was published by; a page id is unique only within it"
+      - name: page_id
+        description: "Page identifier within its source"
+        tests:
+          - not_null
+      - name: title
+        description: "Page title as the source records it"
+      - name: space_name
+        description: "Name of the space the page lives in"
+      - name: author_email
+        description: "Lowercased author email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: created_at
+        description: >
+          When the page was created; the dataset's event time. Nullable — a
+          source that dates no creation still described a page, and that row
+          falls outside every period until the source dates it.
+      - name: created_date
+        description: "Creation day, the partition key; nullable with created_at"
+
+  - name: wiki_person_days
+    description: >
+      Wiki work per person and day: the edits a person made, the pages those
+      edits touched, and the comments other people left on pages that person
+      authored. A semantic-layer dataset — measures sum it. Wiki engagement
+      carries no person of its own, so authorship of the commented page
+      attributes it.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector source the activity was reported by"
+      - name: author_email
+        description: "Lowercased person email exactly as the source reports it"
+        tests:
+          - not_null
+      - name: activity_date
+        description: "Day the work was reported on; the dataset's event time and the partition key"
+        tests:
+          - not_null
+      - name: edits
+        description: "Edit sessions the person recorded on that day"
+      - name: pages_edited
+        description: "Distinct pages the person's edits touched on that day"
+      - name: comments_received
+        description: "Comments left that day on pages the person authored"
+
   - name: account_attribute_values
     description: >
       Effective-dated person-attribute values per stable source account, built

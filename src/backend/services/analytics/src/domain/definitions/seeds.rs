@@ -17,7 +17,10 @@ use crate::domain::field_catalog::{
 
 const ACTOR: &str = "product-seed";
 
-const FAMILIES: &[(&str, &str)] = &[("git", include_str!("seeds/git.yaml"))];
+const FAMILIES: &[(&str, &str)] = &[
+    ("git", include_str!("seeds/git.yaml")),
+    ("wiki", include_str!("seeds/wiki.yaml")),
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

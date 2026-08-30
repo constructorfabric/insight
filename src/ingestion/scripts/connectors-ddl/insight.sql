@@ -294,6 +294,35 @@ ORDER BY (tenant_id, data_source, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.git_commits
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `author_email` String,
+    `author_name` String,
+    `message` String,
+    `authored_at` DateTime,
+    `authored_date` Date,
+    `branch_scope` String,
+    `branch_scope_label` String,
+    `repository` String,
+    `repository_label` String,
+    `project` String,
+    `project_label` String,
+    `source` String,
+    `source_label` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(authored_date)
+ORDER BY (tenant_id, author_email, authored_at)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.git_default_branch_commits
 (
     `tenant_id` Nullable(String),
@@ -316,6 +345,41 @@ CREATE TABLE IF NOT EXISTS insight.git_derived_commits
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, data_source, commit_hash)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_file_changes
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `file_path` String,
+    `author_email` String,
+    `author_name` String,
+    `authored_at` DateTime,
+    `authored_date` Date,
+    `category` String,
+    `category_label` String,
+    `file_extension` String,
+    `file_extension_label` String,
+    `change_type` String,
+    `change_type_label` String,
+    `branch_scope` String,
+    `branch_scope_label` String,
+    `repository` String,
+    `repository_label` String,
+    `project` String,
+    `project_label` String,
+    `source` String,
+    `source_label` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(authored_date)
+ORDER BY (tenant_id, author_email, authored_at)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
@@ -372,6 +436,52 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(metric_date)
 ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_pull_requests
+(
+    `tenant_id` Nullable(String),
+    `source_id` Nullable(String),
+    `project_key` String,
+    `repo_slug` String,
+    `pr_id` Int64,
+    `pr_number` Int64,
+    `title` String,
+    `author_email` String,
+    `author_account_id` String,
+    `author_name` String,
+    `created_at` DateTime,
+    `created_date` Date,
+    `closed_at` Nullable(DateTime),
+    `merged` UInt8,
+    `abandoned` UInt8,
+    `merged_without_approval` UInt8,
+    `reviewer_count` UInt64,
+    `first_reviewed_at` Nullable(DateTime),
+    `approved_at` Nullable(DateTime),
+    `branch_scope` String,
+    `branch_scope_label` String,
+    `destination_branch` String,
+    `destination_branch_label` String,
+    `repository` String,
+    `repository_label` String,
+    `project` String,
+    `project_label` String,
+    `source` String,
+    `source_label` String,
+    `lines_added` Nullable(Int64),
+    `lines_removed` Nullable(Int64),
+    `files_changed` Nullable(Int64),
+    `cycle_hours` Nullable(Float64),
+    `first_review_hours` Nullable(Float64),
+    `review_to_merge_hours` Nullable(Float64),
+    `approval_to_merge_hours` Nullable(Float64),
+    `review_wait_share` Nullable(Float64)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(created_date)
+ORDER BY (tenant_id, author_email, created_at)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS insight.git_review_events
@@ -571,6 +681,39 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(metric_date)
 ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.wiki_pages
+(
+    `tenant_id` String,
+    `source_id` Nullable(String),
+    `page_id` String,
+    `title` Nullable(String),
+    `space_name` Nullable(String),
+    `author_email` String,
+    `created_at` Nullable(DateTime64(3)),
+    `created_date` Nullable(Date)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(created_date)
+ORDER BY (tenant_id, author_email, created_at)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.wiki_person_days
+(
+    `tenant_id` String,
+    `source_id` Nullable(String),
+    `author_email` String,
+    `activity_date` Date,
+    `edits` UInt64,
+    `pages_edited` UInt64,
+    `comments_received` UInt64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(activity_date)
+ORDER BY (tenant_id, author_email, activity_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
 CREATE OR REPLACE VIEW insight.identity_resolution_coverage
