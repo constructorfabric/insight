@@ -126,15 +126,22 @@ def test_provisioning_converges_a_warm_user(grafana_user: QueryFn) -> None:
     """Re-running provisioning strips privileges the user gained out-of-band.
 
     `ALTER USER ... DEFAULT ROLE` would only change role activation — a direct
-    grant would survive it. The script drops and recreates the user, so an
-    INSERT granted behind its back must be gone after the next deploy hook.
+    grant or a stray role would survive it. The script converges in place
+    (REVOKE ALL for direct grants, an explicit revoke per extra role), so both
+    must be gone after the next deploy hook while SELECT keeps working.
     """
     assert _admin(f"GRANT INSERT ON silver.probe TO {GRAFANA_USER}")[0]
+    assert _admin("CREATE ROLE IF NOT EXISTS stray_ro")[0]
+    assert _admin("GRANT CREATE ON presentation.* TO stray_ro")[0]
+    assert _admin(f"GRANT stray_ro TO {GRAFANA_USER}")[0]
     assert grafana_user("INSERT INTO silver.probe VALUES (1)")[0], "out-of-band INSERT should work pre-converge"
 
-    _run_provisioning()
+    try:
+        _run_provisioning()
 
-    ok, resp = grafana_user("INSERT INTO silver.probe VALUES (1)")
-    assert not ok, "re-provisioning must strip the out-of-band INSERT grant"
-    assert "ACCESS_DENIED" in resp, resp
-    assert grafana_user("SELECT count() FROM silver.probe")[0], "SELECT must survive re-provisioning"
+        for sql in ("INSERT INTO silver.probe VALUES (1)", "SET ROLE stray_ro"):
+            ok, resp = grafana_user(sql)
+            assert not ok, f"re-provisioning must strip the out-of-band access: {sql!r}"
+        assert grafana_user("SELECT count() FROM silver.probe")[0], "SELECT must survive re-provisioning"
+    finally:
+        _admin("DROP ROLE IF EXISTS stray_ro")
