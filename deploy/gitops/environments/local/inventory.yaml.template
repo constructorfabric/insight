@@ -17,6 +17,8 @@ protected: false              # true → `make deploy` requires
 namespaces:
   services: insight           # L3 app subcharts
   infra:    insight-infra     # L2 shared stateful
+  previews: insight-previews  # preview experiments (#1981); feeds the
+                              # Gateway allowedRoutes + the previews chart
   # Controller namespaces accept upstream-chart defaults; uncomment
   # only to override.
   # envoyGateway:  envoy-gateway-system

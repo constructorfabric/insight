@@ -404,8 +404,9 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                # insight-previews: preview-experiment HTTPRoutes attach from there
-                values: [insight, insight-infra, insight-previews]
+                # Substituted from inventory.yaml `namespaces.*` at apply time;
+                # the previews namespace carries the per-experiment HTTPRoutes.
+                values: [${NS_APP}, ${NS_INFRA}, ${NS_PREVIEWS}]
 ```
 
 cert-manager (installed with `config.enableGatewayAPI=true`) watches

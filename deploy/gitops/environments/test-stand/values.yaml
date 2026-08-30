@@ -430,6 +430,15 @@ gitCliProxy:
   # skips any connector whose descriptor sets `platform_config.git_proxy`.
   deploy: false
 
+previews:
+  # Off, against the chart default: the subchart emits a Namespace and
+  # Role/RoleBinding in the experiments namespace, and this stand deploys
+  # with the namespace-scoped `ci-deployer` ServiceAccount — the upgrade
+  # dies on `namespaces is forbidden` before anything renders. Turn on only
+  # together with a ci-deployer-rbac.yaml grant for that namespace, when the
+  # stand suite starts exercising previews (#1981).
+  deploy: false
+
 frontend: # the web UI (dashboard)
   replicaCount: 1
   route:

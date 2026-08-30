@@ -29,6 +29,8 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                # insight-previews: the previews service's per-experiment
-                # HTTPRoutes attach from there (#1981).
-                values: [insight, insight-infra, insight-previews]
+                # Substituted from inventory.yaml `namespaces.*` by `make
+                # bootstrap-envoy-gateway` — never hardcode namespaces here.
+                # The previews namespace carries the per-experiment
+                # HTTPRoutes (#1981).
+                values: [${NS_APP}, ${NS_INFRA}, ${NS_PREVIEWS}]

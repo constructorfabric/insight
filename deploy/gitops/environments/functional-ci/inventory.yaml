@@ -11,6 +11,9 @@ protected: false
 namespaces:
   services: insight
   infra: insight-infra
+  # Preview experiments (#1981): substituted into gateway.yaml's
+  # allowedRoutes and set as previews.experiments.namespace on deploy.
+  previews: insight-previews
 
 release: insight
 

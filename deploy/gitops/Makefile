@@ -49,6 +49,7 @@ INVENTORY        := environments/$(ENV)/inventory.yaml
 KUBE_CTX         ?= $(shell yq -r '.kubeContext // ""' $(INVENTORY) 2>/dev/null)
 NS_APP           ?= $(shell yq -r '.namespaces.services // "insight"'        $(INVENTORY) 2>/dev/null)
 NS_INFRA         ?= $(shell yq -r '.namespaces.infra    // "insight-infra"'  $(INVENTORY) 2>/dev/null)
+NS_PREVIEWS      ?= $(shell yq -r '.namespaces.previews // "insight-previews"' $(INVENTORY) 2>/dev/null)
 RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(INVENTORY) 2>/dev/null)
 
 # Back-compat alias for older targets still referencing NAMESPACE.
@@ -264,7 +265,7 @@ help:
 	@echo
 	@echo "Resolved values (inventory + CLI/env overrides):"
 	@echo "  ENV=$(ENV)  KUBE_CTX=$(KUBE_CTX)  RELEASE=$(RELEASE)"
-	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)"
+	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)  NS_PREVIEWS=$(NS_PREVIEWS)"
 	@echo "  CHART=$(CHART)"
 	@echo "  INSIGHT_VERSION=$(INSIGHT_VERSION)"
 	@echo "  VALUES=$(VALUES)"
@@ -543,6 +544,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \
+		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
 	@# A release whose only revision is a failed install cannot be upgraded, and
@@ -588,6 +590,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) "$${SET_ARGS[@]}" \
 		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
+		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
 		2>&1 | tee $$LOG || rc=$$?; \
@@ -1191,9 +1194,16 @@ bootstrap-envoy-gateway: vpn-up kube-ctx
 		--version $(ENVOY_GATEWAY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
+	@# Namespaces come from inventory.yaml (namespaces.*), never hardcoded:
+	@# ${NS_APP} / ${NS_INFRA} / ${NS_PREVIEWS} placeholders in gateway.yaml
+	@# are substituted here. A manifest without placeholders applies as-is.
 	@if [ -f $(BOOTSTRAP_DIR)/gateway.yaml ]; then \
 		echo "applying $(BOOTSTRAP_DIR)/gateway.yaml"; \
-		kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/gateway.yaml; \
+		sed -e 's|$${NS_APP}|$(NS_APP)|g' \
+		    -e 's|$${NS_INFRA}|$(NS_INFRA)|g' \
+		    -e 's|$${NS_PREVIEWS}|$(NS_PREVIEWS)|g' \
+		    $(BOOTSTRAP_DIR)/gateway.yaml \
+		| kubectl --context $(KUBE_CTX) apply -f -; \
 	fi
 
 .PHONY: bootstrap-cert-manager
