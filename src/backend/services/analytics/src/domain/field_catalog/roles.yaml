@@ -86,6 +86,7 @@ datasets:
       lines_added: measurable
       lines_removed: measurable
       files_changed: measurable
+      linked_commit_count: measurable
       reviewer_count: measurable
       cycle_hours: measurable
       first_review_hours: measurable
@@ -113,6 +114,33 @@ datasets:
         display: [title]
       author_name:
         display: [actor]
+      repository_label:
+        display: [location]
+
+  - key: git_review_events
+    database: insight
+    relation: git_review_events
+    row_identity: [source_id, event_key]
+    fields:
+      tenant_id: tenant
+      entity_id: entity
+      observed_at: event_time
+      comment_target_value:
+        role: dimension
+        label_field: comment_target_label
+      repository_value:
+        role: dimension
+        label_field: repository_label
+      project_value:
+        role: dimension
+        label_field: project_label
+      source_value:
+        role: dimension
+        label_field: source_label
+      pr_number:
+        display: [reference]
+      title:
+        display: [title]
       repository_label:
         display: [location]
 

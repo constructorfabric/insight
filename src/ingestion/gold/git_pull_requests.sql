@@ -51,6 +51,23 @@ pull_request_review_summary AS (
         maxIfOrNull(reviewed_at, approved = 1 AND reviewed_at IS NOT NULL) AS approved_at
     FROM {{ ref('class_git_pull_requests_reviewers') }} FINAL
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
+),
+-- uniqExact, not count(): the link table is append-only per sync, so one link
+-- can arrive more than once and the count must not inflate.
+--
+-- INVARIANT: toNullable fixes the column's type whatever `join_use_nulls` is,
+-- and keeps a request the source linked nothing for NULL rather than a merge
+-- of zero commits.
+pull_request_commit_counts AS (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        pr_id,
+        toNullable(uniqExact(commit_hash)) AS linked_commit_count
+    FROM {{ ref('class_git_pull_requests_commits') }} FINAL
+    GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 )
 
 SELECT
@@ -101,6 +118,7 @@ SELECT
     prs.lines_added AS lines_added,
     prs.lines_removed AS lines_removed,
     prs.files_changed AS files_changed,
+    commit_counts.linked_commit_count AS linked_commit_count,
     -- INVARIANT: every duration is NULL unless its pair of timestamps exists and
     -- runs forwards; a negative span is a source disagreeing with its own clock.
     if(
@@ -149,6 +167,12 @@ LEFT JOIN pull_request_review_summary AS review_summary
     AND review_summary.project_key = prs.project_key
     AND review_summary.repo_slug = prs.repo_slug
     AND review_summary.pr_id = prs.pr_id
+LEFT JOIN pull_request_commit_counts AS commit_counts
+    ON commit_counts.tenant_id = prs.tenant_id
+    AND commit_counts.source_id = prs.source_id
+    AND commit_counts.project_key = prs.project_key
+    AND commit_counts.repo_slug = prs.repo_slug
+    AND commit_counts.pr_id = prs.pr_id
 LEFT JOIN repository_default_branches AS defaults
     ON defaults.tenant_id = prs.tenant_id
     AND defaults.source_id = prs.source_id

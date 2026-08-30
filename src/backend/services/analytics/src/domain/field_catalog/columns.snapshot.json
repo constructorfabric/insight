@@ -1294,6 +1294,10 @@
         "type": "Nullable(Int64)"
       },
       {
+        "name": "linked_commit_count",
+        "type": "Nullable(UInt64)"
+      },
+      {
         "name": "cycle_hours",
         "type": "Nullable(Float64)"
       },

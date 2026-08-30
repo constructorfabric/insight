@@ -452,6 +452,27 @@ measures:
       - { key: project, value_field: project, label_field: project_label }
       - { key: source, value_field: source, label_field: source_label }
 
+  - key: pr_commit_count
+    dataset: git_pull_requests
+    description: >-
+      Commits linked to one merged pull request, dated by the merge, for
+      requests whose source linked any.
+    filter:
+      all:
+        - { field: merged, op: eq, value: 1 }
+        - { field: closed_at, op: not_null }
+        - { field: linked_commit_count, op: not_null }
+    aggregation: avg
+    value_expr: linked_commit_count
+    event_time: closed_at
+    entity: author_email
+    dimensions:
+      - { key: branch_scope, value_field: branch_scope, label_field: branch_scope_label }
+      - { key: destination_branch, value_field: destination_branch, label_field: destination_branch_label }
+      - { key: repository, value_field: repository, label_field: repository_label }
+      - { key: project, value_field: project, label_field: project_label }
+      - { key: source, value_field: source, label_field: source_label }
+
   - key: pr_cycle_hours
     dataset: git_pull_requests
     description: Hours from opening one pull request to merging it, dated by the merge.
@@ -530,6 +551,35 @@ measures:
       - { key: repository, value_field: repository, label_field: repository_label }
       - { key: project, value_field: project, label_field: project_label }
       - { key: source, value_field: source, label_field: source_label }
+
+  - key: reviews_submitted
+    dataset: git_review_events
+    description: >-
+      Review verdicts a person submitted, counted once per review and dated by
+      its submission.
+    filter: { field: event_kind, op: eq, value: review }
+    aggregation: count
+    event_time: observed_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: project, value_field: project_value, label_field: project_label }
+      - { key: source, value_field: source_value, label_field: source_label }
+
+  - key: pr_comments
+    dataset: git_review_events
+    description: >-
+      Comments a person wrote on pull requests — conversation and inline review
+      comments alike — counted once per comment and dated by its posting.
+    filter: { field: event_kind, op: eq, value: comment }
+    aggregation: count
+    event_time: observed_at
+    entity: entity_id
+    dimensions:
+      - { key: comment_target, value_field: comment_target_value, label_field: comment_target_label }
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: project, value_field: project_value, label_field: project_label }
+      - { key: source, value_field: source_value, label_field: source_label }
 
 metrics:
   - key: git.commits
@@ -873,6 +923,18 @@ metrics:
       Smaller requests are easier to review. Sources that do not report line
       counts contribute no values.
 
+  - key: git.pr_commits
+    computation: { type: percentile, measure: pr_commit_count, quantile: 0.5 }
+    format: decimal
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: Commits per PR
+    description: >-
+      Median count of commits linked to authored pull requests, over requests
+      merged in the period. A merged request whose commits the source does not
+      link contributes no value.
+
   - key: git.pr_cycle_time_h
     computation: { type: percentile, measure: pr_cycle_hours, quantile: 0.5 }
     format: decimal
@@ -883,6 +945,17 @@ metrics:
     description: >-
       Median hours from opening a pull request to merging it, over requests
       merged in the period.
+
+  - key: git.pr_cycle_time_p75_h
+    computation: { type: percentile, measure: pr_cycle_hours, quantile: 0.75 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: PR cycle time (p75)
+    description: >-
+      75th percentile of hours from opening a pull request to merging it, over
+      requests merged in the period.
 
   - key: git.first_review_time_h
     computation: { type: percentile, measure: pr_first_review_hours, quantile: 0.5 }
@@ -895,6 +968,19 @@ metrics:
       Median hours from opening a pull request to its first submitted review,
       over first reviews recorded in the period. Requests without a review, and
       sources without review timestamps, contribute no duration.
+
+  - key: git.first_review_time_p75_h
+    computation: { type: percentile, measure: pr_first_review_hours, quantile: 0.75 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Time to first review (p75)
+    description: >-
+      75th percentile of hours from opening a pull request to its first
+      submitted review, over first reviews recorded in the period. Requests
+      without a review, and sources without review timestamps, contribute no
+      duration.
 
   - key: git.review_wait_share
     computation: { type: percentile, measure: pr_review_wait_share, quantile: 0.5 }
@@ -931,3 +1017,29 @@ metrics:
       Median hours from the latest reported approval with a timestamp to merge,
       over pull requests merged in the period. Sources that expose approvals
       without per-approval timestamps contribute no value.
+
+  - key: git.reviews_performed
+    computation: { type: direct, measure: reviews_submitted }
+    format: integer
+    direction: higher_is_better
+    entity_type: person
+    cohort_key: org_unit
+    label: Reviews performed
+    description: >-
+      Review verdicts the person submitted on any pull request, dated by
+      submission. This is the reviewer's side of review coverage — the reviews
+      a person performed, not the reviews their own requests received.
+
+  - key: git.pr_comments
+    computation: { type: direct, measure: pr_comments }
+    format: integer
+    direction: neutral
+    entity_type: person
+    cohort_key: org_unit
+    label: PR comments
+    description: >-
+      Comments the person wrote on pull requests — conversation and inline
+      review comments alike — dated by posting. The comment target dimension
+      splits comments on the person's own requests from comments on other
+      people's; a comment whose request author cannot be determined counts
+      under others, so the two halves add up to the total.

@@ -472,6 +472,7 @@ CREATE TABLE IF NOT EXISTS insight.git_pull_requests
     `lines_added` Nullable(Int64),
     `lines_removed` Nullable(Int64),
     `files_changed` Nullable(Int64),
+    `linked_commit_count` Nullable(UInt64),
     `cycle_hours` Nullable(Float64),
     `first_review_hours` Nullable(Float64),
     `review_to_merge_hours` Nullable(Float64),

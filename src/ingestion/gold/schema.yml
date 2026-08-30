@@ -269,6 +269,10 @@ models:
         description: "Lines the request removes, nullable when the source reports no stats"
       - name: files_changed
         description: "Files the request touches, nullable when the source reports no stats"
+      - name: linked_commit_count
+        description: >
+          Distinct commits the source links to the request; NULL when it links
+          none, which reports a silent source rather than an empty merge.
       - name: cycle_hours
         description: "Hours from opening to merge, nullable unless the request merged"
       - name: first_review_hours
@@ -296,21 +300,77 @@ models:
   - name: git_review_events
     description: >
       One row per pull-request review or comment, with the actor resolved, the
-      request it sits on joined, and its dimension tuple built. Materialized so
-      the identity map and the pull-request join run once per build in their own
-      query budget rather than competing for memory with every other git measure
-      inside the evidence query.
+      request it sits on joined, and its dimension tuple built. Keyed by the
+      person who acted, not the person whose request was acted on. A
+      semantic-layer dataset — measures count it and drilldown projects it.
+      Materialized so the identity map and the pull-request join run once per
+      build in their own query budget rather than competing for memory with
+      every other git measure inside the evidence query.
     columns:
+      - name: tenant_id
+        description: "Owning tenant"
+      - name: source_id
+        description: "Connector source the event was collected through; an event key is unique only within it"
       - name: event_key
         description: "The silver event's unique key — several events by one person on one request stay distinct"
         tests:
           - not_null
       - name: event_kind
         description: "'review' for a submitted verdict, 'comment' for a conversation or review-thread comment"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['review', 'comment']
+      - name: pr_id
+        description: "Identifier of the request the event sits on, within its repository"
+      - name: pr_number
+        description: "Number the request is quoted by in its source"
       - name: entity_id
         description: "The actor's normalized e-mail; rows without one are dropped here, not downstream"
         tests:
           - not_null
+      - name: metric_date
+        description: "Day the review was submitted or the comment posted"
+      - name: observed_at
+        description: "When the review was submitted or the comment posted; the dataset's event time"
+      - name: title
+        description: "Title of the request the event sits on, '' when the join finds none"
+      - name: author_name
+        description: "Display name of the request's author — not the actor, who is named only by e-mail here"
+      - name: author_email
+        description: "Normalized e-mail of the request's author, '' when the join finds none"
+      - name: actor_person_id
+        description: "Canonical person the actor's e-mail resolves to, '' when it resolves to none"
+      - name: author_person_id
+        description: "Canonical person the request author's e-mail resolves to, '' when it resolves to none"
+      - name: comment_target_value
+        description: "Whether the event sits on the actor's own request: own | others"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['own', 'others']
+      - name: comment_target_label
+        description: "Display label of the comment target"
+      - name: project_value
+        description: "Project dimension value, qualified by source, or __unknown__"
+      - name: project_label
+        description: "Display label of the project"
+      - name: repository_value
+        description: "Repository dimension value, qualified by source"
+      - name: repository_label
+        description: "Display label of the repository"
+      - name: destination_branch_value
+        description: "Branch the request targets, or __unknown__"
+      - name: destination_branch_label
+        description: "Display label of the destination branch"
+      - name: source_value
+        description: "Source system dimension value"
+      - name: source_label
+        description: "Display label of the source system"
+      - name: source_dimensions
+        description: >
+          The event's dimension tuple as Array(Tuple(key, value, label)), the
+          shape the evidence build carries breakdowns in.
 
   - name: git_derived_commits
     description: >
