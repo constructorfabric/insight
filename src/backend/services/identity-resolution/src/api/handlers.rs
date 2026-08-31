@@ -3,7 +3,7 @@
 //! `/health` + `/healthz` + `/docs` are provided by the api-gateway host gear,
 //! so this service defines no health handler.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,10 +22,10 @@ use super::error::ProfileError;
 use super::gate::{require_caller, require_service};
 use crate::domain::login_bootstrap;
 use crate::domain::profile::{
-    BatchProfilesRequest, BatchProfilesResponse, ParentProjection, PersonResponse,
-    ResolveProfileRequest, assemble_batch_profile, assemble_person, assemble_profile,
-    latest_values,
+    BatchProfilesRequest, ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person,
+    assemble_profile, latest_values,
 };
+use crate::domain::profile_batch::{self, BatchProfilesError};
 use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
@@ -112,83 +112,22 @@ pub async fn batch_profiles(
     let tenant = ctx.subject_tenant_id();
     let caller = require_caller(&ctx)?;
 
-    let visible = subchart_repo::visible_targets(
+    let response = profile_batch::resolve_batch_profiles(
         &state.db,
         tenant,
         caller,
-        &req.person_ids,
+        req,
         &state.config.org_chart_source_type,
         state.config.visibility_policy,
     )
     .await
-    .map_err(batch_profile_read_error)?
-    .into_iter()
-    .collect::<HashSet<_>>();
-    let existing = persons_repo::persons_in_tenant(&state.db, tenant, &req.person_ids)
-        .await
-        .map_err(batch_profile_read_error)?
-        .into_iter()
-        .collect::<HashSet<_>>();
-    let person_ids = req
-        .person_ids
-        .into_iter()
-        .filter(|person_id| visible.contains(person_id) && existing.contains(person_id))
-        .collect::<Vec<_>>();
+    .map_err(batch_profile_read_error)?;
 
-    let observations = persons_repo::current_profile_observations(&state.db, tenant, &person_ids)
-        .await
-        .map_err(batch_profile_read_error)?;
-    let parents = persons_repo::current_parents_for_children(&state.db, tenant, &person_ids)
-        .await
-        .map_err(batch_profile_read_error)?;
-    let mut supervisors = HashMap::new();
-    for edge in parents {
-        if edge.source_type == state.config.org_chart_source_type {
-            supervisors
-                .entry(edge.child_person_id)
-                .or_insert(edge.parent_person_id);
-        }
-    }
-    let supervisor_ids = supervisors.values().copied().collect::<HashSet<_>>();
-    let supervisor_ids = supervisor_ids.into_iter().collect::<Vec<_>>();
-    let existing_supervisor_ids =
-        persons_repo::persons_in_tenant(&state.db, tenant, &supervisor_ids)
-            .await
-            .map_err(batch_profile_read_error)?
-            .into_iter()
-            .collect::<HashSet<_>>();
-    supervisors.retain(|_, supervisor_id| existing_supervisor_ids.contains(supervisor_id));
-    let supervisor_ids = supervisors.values().copied().collect::<Vec<_>>();
-    let supervisor_observations =
-        persons_repo::current_profile_observations(&state.db, tenant, &supervisor_ids)
-            .await
-            .map_err(batch_profile_read_error)?;
-
-    let profiles = person_ids
-        .into_iter()
-        .map(|person_id| {
-            let supervisor = supervisors.get(&person_id).map(|supervisor_id| {
-                (
-                    *supervisor_id,
-                    supervisor_observations
-                        .get(supervisor_id)
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-            });
-            assemble_batch_profile(
-                person_id,
-                observations.get(&person_id).cloned().unwrap_or_default(),
-                supervisor,
-            )
-        })
-        .collect();
-
-    Ok(Json(BatchProfilesResponse { profiles }))
+    Ok(Json(response))
 }
 
 #[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
-fn batch_profile_read_error(error: anyhow::Error) -> CanonicalError {
+fn batch_profile_read_error(error: BatchProfilesError) -> CanonicalError {
     tracing::error!(%error, "batch profile read failed");
     CanonicalError::internal("profile assembly failed").create()
 }

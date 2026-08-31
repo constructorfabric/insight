@@ -4,13 +4,14 @@
 ##
 ## Chart: grafana-community/tempo   (https://grafana-community.github.io/helm-charts)
 ## Pin in Makefile: TEMPO_VERSION
-## Release: `tempo` in namespace `insight-infra`.
+## Release: `tempo` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/tempo-values.yaml.
 ##
 ## Endpoints other components use:
-##   OTLP push:  tempo.insight-infra.svc.cluster.local:4317 (gRPC) / 4318 (HTTP)
-##   Query API:  http://tempo.insight-infra.svc.cluster.local:3200 (Grafana datasource)
+##   OTLP push:  tempo.<infra-ns>.svc.cluster.local:4317 (gRPC) / 4318 (HTTP)
+##   Query API:  http://tempo.<infra-ns>.svc.cluster.local:3200 (Grafana datasource)
 ##
 ## Receivers stay at the chart default (OTLP + Jaeger): the chart's port
 ## templates hard-require the jaeger block, and an emptied protocol map

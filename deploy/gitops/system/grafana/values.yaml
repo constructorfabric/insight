@@ -4,7 +4,12 @@
 ##
 ## Chart: grafana/grafana   (https://grafana.github.io/helm-charts)
 ## Pin in Makefile: GRAFANA_VERSION
-## Release: `grafana` in namespace `insight-infra`.
+## Release: `grafana` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
+##
+## The `${NS_*}` placeholders below are the namespaces of the datasource
+## releases, resolved by scripts/render-system-values.sh before helm reads
+## the file (see system/README.md § Values layout).
 ##
 ## Per-env overrides go in environments/<env>/grafana-values.yaml
 ## (ingress host, OIDC, admin secret).
@@ -67,7 +72,9 @@ envFromSecrets:
 # INVARIANT: helm REPLACES lists — a per-env overlay that touches
 # `datasources` must restate every entry below, and the uids (`loki`, `vm`,
 # `tempo`, `clickhouse`) must stay what they are or every provisioned
-# dashboard panel goes dark.
+# dashboard panel goes dark. Overlays go through the same ${NS_*}
+# substitution as this file, so restated entries keep the placeholders
+# instead of hardcoding a namespace.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -76,7 +83,7 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://loki.insight-infra.svc.cluster.local:3100
+        url: http://loki.${NS_MONITORING}.svc.cluster.local:3100
         isDefault: true
         jsonData:
           maxLines: 1000
@@ -93,14 +100,14 @@ datasources:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://tempo.insight-infra.svc.cluster.local:3200
+        url: http://tempo.${NS_MONITORING}.svc.cluster.local:3200
         isDefault: false
 
       - name: VictoriaMetrics
         uid: vm
         type: prometheus
         access: proxy
-        url: http://victoriametrics-server.insight-infra.svc.cluster.local:8428
+        url: http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428
         isDefault: false
         jsonData:
           timeInterval: "30s"
@@ -115,7 +122,7 @@ datasources:
         access: proxy
         isDefault: false
         jsonData:
-          host: clickhouse.insight-infra.svc.cluster.local
+          host: clickhouse.${NS_INFRA}.svc.cluster.local
           port: 9000
           protocol: native
           secure: false

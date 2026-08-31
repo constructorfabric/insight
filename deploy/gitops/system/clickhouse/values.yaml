@@ -3,12 +3,13 @@
 ##
 ## Chart: oci://registry-1.docker.io/bitnamicharts/clickhouse
 ## Pin in Makefile: CLICKHOUSE_VERSION
-## Release: `clickhouse` in namespace `insight-infra`.
+## Release: `clickhouse` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/clickhouse-values.yaml.
 ##
 ## App layer reaches this release as
-## `clickhouse.insight-infra.svc.cluster.local:8123` (HTTP) or `:9000` (native).
+## `clickhouse.<infra-ns>.svc.cluster.local:8123` (HTTP) or `:9000` (native).
 ##
 
 fullnameOverride: clickhouse

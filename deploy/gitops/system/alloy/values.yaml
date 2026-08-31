@@ -9,7 +9,12 @@
 ##
 ## Chart: grafana/alloy   (https://grafana.github.io/helm-charts)
 ## Pin in Makefile: ALLOY_VERSION
-## Release: `alloy` in namespace `insight-infra`.
+## Release: `alloy` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
+##
+## The `${NS_*}` placeholders below are the namespaces of the releases this
+## config pushes to, resolved by scripts/render-system-values.sh before helm
+## reads the file (see system/README.md § Values layout).
 ##
 ## Per-env overrides go in environments/<env>/alloy-values.yaml.
 ##
@@ -32,7 +37,7 @@ alloy:
   mounts:
     varlog: true
   # OTLP listeners, added to both the container and the chart's ClusterIP
-  # Service — `alloy.insight-infra.svc.cluster.local:4317/4318` is the
+  # Service — `alloy.<infra-ns>.svc.cluster.local:4317/4318` is the
   # stable endpoint services export to. The Service spans every DaemonSet
   # pod; any node's agent accepts and routes the payload.
   extraPorts:
@@ -98,7 +103,7 @@ alloy:
 
       loki.write "default" {
         endpoint {
-          url = "http://loki.insight-infra.svc.cluster.local:3100/loki/api/v1/push"
+          url = "http://loki.${NS_MONITORING}.svc.cluster.local:3100/loki/api/v1/push"
         }
       }
 
@@ -126,15 +131,15 @@ alloy:
 
       prometheus.remote_write "victoriametrics" {
         endpoint {
-          url = "http://victoriametrics-server.insight-infra.svc.cluster.local:8428/api/v1/write"
+          url = "http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428/api/v1/write"
         }
       }
 
       otelcol.exporter.otlp "to_tempo" {
         client {
-          endpoint = "tempo.insight-infra.svc.cluster.local:4317"
+          endpoint = "tempo.${NS_MONITORING}.svc.cluster.local:4317"
           tls {
-            // In-cluster hop inside insight-infra; Tempo's ingest is plaintext.
+            // In-cluster hop; Tempo's ingest is plaintext.
             insecure = true
           }
         }

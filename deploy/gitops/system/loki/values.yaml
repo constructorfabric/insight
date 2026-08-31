@@ -3,12 +3,13 @@
 ##
 ## Chart: grafana-community/loki   (https://grafana-community.github.io/helm-charts)
 ## Pin in Makefile: LOKI_VERSION
-## Release: `loki` in namespace `insight-infra`.
+## Release: `loki` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
 ##
 ## Per-env overrides go in environments/<env>/loki-values.yaml.
 ##
 ## Push/query endpoint other components use:
-##   http://loki.insight-infra.svc.cluster.local:3100
+##   http://loki.<infra-ns>.svc.cluster.local:3100
 ##
 ## SCOPE: this is the dev / single-tenant baseline — SingleBinary mode,
 ## node-local filesystem storage, NO HA. For production move to
