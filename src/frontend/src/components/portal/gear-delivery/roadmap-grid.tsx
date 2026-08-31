@@ -9,7 +9,7 @@ import { useGearRoadmap } from "@/queries/gear-roadmap";
 const COMMITTED_GLYPH = "◆";
 const PLANNED_GLYPH = "◇";
 
-export function GearRoadmapGridScreen() {
+export function RoadmapGrid() {
   const { t } = useTranslation();
   const { data, isPending, isError } = useGearRoadmap();
 

@@ -5,7 +5,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { buildGantt } from "@/lib/gears/gantt";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
-export function GearGanttScreen() {
+export function GearSchedule() {
   const { t } = useTranslation();
   const { data, isPending, isError } = useGearRoadmap();
 

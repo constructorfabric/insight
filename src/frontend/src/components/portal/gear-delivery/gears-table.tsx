@@ -15,7 +15,7 @@ import {
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
-export function GearItemsScreen() {
+export function GearsTable() {
   const { t } = useTranslation();
   const { data, isPending, isError } = useGearRoadmap();
   const [query, setQuery] = useState("");

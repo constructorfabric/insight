@@ -20,10 +20,11 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarTrigger: () => null,
 }));
 
-import { GearGanttScreen } from "./gear-gantt";
-import { GearItemsScreen } from "./gear-items";
-import { GearOverviewScreen } from "./gear-overview";
-import { GearRoadmapGridScreen } from "./gear-roadmap-grid";
+import { GearDeliveryView } from "@/components/portal/gear-delivery-view";
+import { GearsTable } from "./gears-table";
+import { RoadmapGrid } from "./roadmap-grid";
+import { GearSchedule } from "./schedule";
+import { GearSummary } from "./summary";
 
 function gear(over: Partial<Gear> = {}): Gear {
   return {
@@ -66,9 +67,9 @@ beforeEach(() => {
   queryState = { data: roadmap(), isPending: false, isError: false };
 });
 
-describe("GearOverviewScreen", () => {
+describe("GearSummary", () => {
   it("rolls the board up by subsystem", () => {
-    render(<GearOverviewScreen />);
+    render(<GearSummary />);
 
     expect(screen.getByText("CORE")).toBeInTheDocument();
     expect(screen.getByText("30")).toBeInTheDocument();
@@ -76,7 +77,7 @@ describe("GearOverviewScreen", () => {
   });
 
   it("shows a dash where no gear carries that ladder", () => {
-    render(<GearOverviewScreen />);
+    render(<GearSummary />);
 
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
@@ -84,15 +85,15 @@ describe("GearOverviewScreen", () => {
   it("says so when the board cannot be read", () => {
     queryState = { isPending: false, isError: true };
 
-    render(<GearOverviewScreen />);
+    render(<GearSummary />);
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 });
 
-describe("GearItemsScreen", () => {
+describe("GearsTable", () => {
   it("lists a gear with its estimate and milestone", () => {
-    render(<GearItemsScreen />);
+    render(<GearsTable />);
 
     expect(screen.getByText("CORE - Example Module")).toBeInTheDocument();
     expect(screen.getByText("2030-09")).toBeInTheDocument();
@@ -114,7 +115,7 @@ describe("GearItemsScreen", () => {
       isError: false,
     };
 
-    render(<GearItemsScreen />);
+    render(<GearsTable />);
     await userEvent.type(
       screen.getByRole("searchbox"),
       "dev-two",
@@ -125,7 +126,7 @@ describe("GearItemsScreen", () => {
   });
 });
 
-describe("GearRoadmapGridScreen", () => {
+describe("RoadmapGrid", () => {
   it("gives overdue work its own column, apart from later work", () => {
     queryState = {
       data: roadmap({
@@ -138,7 +139,7 @@ describe("GearRoadmapGridScreen", () => {
       isError: false,
     };
 
-    render(<GearRoadmapGridScreen />);
+    render(<RoadmapGrid />);
 
     const overdueColumn = screen.getByRole("columnheader", {
       name: "Overdue",
@@ -149,7 +150,7 @@ describe("GearRoadmapGridScreen", () => {
   });
 
   it("labels every month of the window", () => {
-    render(<GearRoadmapGridScreen />);
+    render(<RoadmapGrid />);
 
     expect(
       screen.getByRole("columnheader", { name: "2030-08" }),
@@ -160,9 +161,9 @@ describe("GearRoadmapGridScreen", () => {
   });
 });
 
-describe("GearGanttScreen", () => {
+describe("GearSchedule", () => {
   it("draws one lane per assignee and states the assumed capacity", () => {
-    render(<GearGanttScreen />);
+    render(<GearSchedule />);
 
     expect(screen.getByText("dev-one")).toBeInTheDocument();
     expect(screen.getByText(/1 man-day per calendar day/)).toBeInTheDocument();
@@ -175,10 +176,29 @@ describe("GearGanttScreen", () => {
       isError: false,
     };
 
-    render(<GearGanttScreen />);
+    render(<GearSchedule />);
 
     expect(
       screen.getByText("Nothing is left to schedule."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("GearDeliveryView", () => {
+  it("opens on the summary pane and states the assumed capacity", () => {
+    render(<GearDeliveryView item={null} />);
+
+    expect(
+      screen.getByText("Capacity assumed: 1 man-day per person per day"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: "Done %" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the pane the zone item names", () => {
+    render(<GearDeliveryView item="schedule" />);
+
+    expect(screen.getByText("dev-one")).toBeInTheDocument();
   });
 });

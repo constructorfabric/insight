@@ -13,7 +13,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { summariseBySubsystem } from "@/lib/gears/summary";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
-export function GearOverviewScreen() {
+export function GearSummary() {
   const { t } = useTranslation();
   const { data, isPending, isError } = useGearRoadmap();
 
