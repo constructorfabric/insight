@@ -336,17 +336,28 @@ mod envelopes {
     }
 }
 
-/// Round-trips of the two closed sets. The response echoes these strings back,
-/// so a name that did not survive the round trip would be echoed wrong.
+/// The response echoes `grain` and `series` back, and a client may hand that
+/// echo straight back as a request — the drill-down does exactly that. So the
+/// serialised form has to be a value `parse` accepts; a serde rename that
+/// drifted from the parser would break that quietly.
 #[test]
-fn every_grain_and_series_round_trips_through_its_own_name() {
+fn what_the_response_echoes_is_still_a_legal_request_value() {
+    let wire = |value: &serde_json::Value| value.as_str().map(str::to_owned);
+
     for grain in [Grain::FifteenMinutes, Grain::Second] {
-        assert_eq!(Grain::parse(Some(grain.as_str())).ok(), Some(grain));
+        let echoed = serde_json::to_value(grain).ok().as_ref().and_then(wire);
+        assert_eq!(
+            Grain::parse(echoed.as_deref()).ok(),
+            Some(grain),
+            "{grain:?} serialises to something parse rejects: {echoed:?}"
+        );
     }
     for series in [Series::Connector, Series::Stream, Series::Total] {
+        let echoed = serde_json::to_value(series).ok().as_ref().and_then(wire);
         assert_eq!(
-            Series::parse(Some(series.as_str()), false).ok(),
-            Some(series)
+            Series::parse(echoed.as_deref(), false).ok(),
+            Some(series),
+            "{series:?} serialises to something parse rejects: {echoed:?}"
         );
     }
 }

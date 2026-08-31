@@ -71,9 +71,11 @@ pub(crate) fn aggregation_settings() -> [(&'static str, String); 2] {
 /// Bucket width. The set is closed and validated server-side: the view is a
 /// `merge()` over every bronze database, so an operator-supplied interval
 /// expression would be a direct route into that scan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Grain {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub enum Grain {
+    #[serde(rename = "15m")]
     FifteenMinutes,
+    #[serde(rename = "1s")]
     Second,
 }
 
@@ -129,8 +131,9 @@ impl Grain {
 /// plots a single line: grouping it by connector would multiply 400 days of
 /// 15-minute buckets by the connector count for a series the chart then sums
 /// back down anyway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Series {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Series {
     Connector,
     Stream,
     Total,
@@ -158,14 +161,6 @@ impl Series {
                 "expected one of: connector, stream, total",
                 "UNSUPPORTED",
             )),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Connector => Self::CONNECTOR,
-            Self::Stream => Self::STREAM,
-            Self::Total => Self::TOTAL,
         }
     }
 
@@ -292,8 +287,8 @@ pub struct IngestionPoint {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct IngestionIntensityResponse {
     /// Echoed resolved, not as asked: the caller may have pinned neither bound.
-    pub grain: String,
-    pub series: String,
+    pub grain: Grain,
+    pub series: Series,
     pub from: String,
     pub to: String,
     /// The `source_database` the read was scoped to; absent when org-wide.
@@ -379,8 +374,8 @@ pub async fn get_ingestion_intensity(
     points.truncate(MAX_POINTS);
 
     Ok(Json(IngestionIntensityResponse {
-        grain: grain.as_str().to_owned(),
-        series: series.as_str().to_owned(),
+        grain,
+        series,
         from,
         to,
         scope,

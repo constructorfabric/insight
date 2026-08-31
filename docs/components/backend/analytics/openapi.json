@@ -710,6 +710,14 @@
         ],
         "type": "object"
       },
+      "Grain": {
+        "description": "Bucket width. The set is closed and validated server-side: the view is a\n`merge()` over every bronze database, so an operator-supplied interval\nexpression would be a direct route into that scan.",
+        "enum": [
+          "15m",
+          "1s"
+        ],
+        "type": "string"
+      },
       "HistogramBinDto": {
         "properties": {
           "count": {
@@ -802,8 +810,8 @@
             "type": "string"
           },
           "grain": {
-            "description": "Echoed resolved, not as asked: the caller may have pinned neither bound.",
-            "type": "string"
+            "$ref": "#/components/schemas/Grain",
+            "description": "Echoed resolved, not as asked: the caller may have pinned neither bound."
           },
           "points": {
             "items": {
@@ -819,7 +827,7 @@
             ]
           },
           "series": {
-            "type": "string"
+            "$ref": "#/components/schemas/Series"
           },
           "to": {
             "type": "string"
@@ -2680,6 +2688,15 @@
         "enum": [
           "tenant",
           "person"
+        ],
+        "type": "string"
+      },
+      "Series": {
+        "description": "What one plotted band counts. `Total` exists because the full-period trend\nplots a single line: grouping it by connector would multiply 400 days of\n15-minute buckets by the connector count for a series the chart then sums\nback down anyway.",
+        "enum": [
+          "connector",
+          "stream",
+          "total"
         ],
         "type": "string"
       },
