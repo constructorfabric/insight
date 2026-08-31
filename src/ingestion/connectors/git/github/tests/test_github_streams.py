@@ -1994,6 +1994,12 @@ def test_issue_links_snapshot_carries_every_link_set(http_mocker: HttpMocker) ->
     assert [n["number"] for n in json.loads(row["blocked_by_json"])] == [5]
     assert json.loads(row["blocking_json"]) == [], "an empty set is empty, never absent"
     assert [n["number"] for n in json.loads(row["closed_by_pull_requests_json"])] == [42]
+    # The vendor's own counts travel with the sets: a nested connection cannot
+    # be paginated here, so the count is the only way a truncated set is
+    # visible at all.
+    assert row["sub_issues_total"] == 2
+    assert row["blocking_total"] == 0
+    assert row["closed_by_pull_requests_total"] == 1
     assert row["unique_key"].endswith(":acme/app:issue_links:7")
     _no_literal_none(output.records)
     assert_records_conform(output.records, _CONNECTOR, "issue_links", strict=True)

@@ -27,6 +27,7 @@ WITH linked AS (
         COALESCE(event_type, '')                                AS event_type,
         parseDateTimeBestEffortOrNull(event_at)                 AS event_at,
         concat(COALESCE(repo_full_name, ''), '#', toString(COALESCE(item_number, 0))) AS id_readable,
+        COALESCE(repo_full_name, '')                            AS source_repo,
         COALESCE(actor_login, '')                               AS actor_login,
         toString(COALESCE(actor_id, 0))                         AS actor_id,
         COALESCE(link_target_type, '')                          AS target_type_raw,
@@ -69,7 +70,11 @@ SELECT
         'remove', 'add') AS String)                                        AS link_action,
     CAST(if(lower(target_type_raw) = 'pullrequest', 'pull_request', 'issue') AS String) AS target_type,
     CAST(concat(target_repo, '#', toString(target_number)) AS String)      AS target_readable,
-    CAST(is_cross_repository AS Bool)                                      AS is_cross_repository,
+    -- Derived, not read: only the connect and duplicate pairs report
+    -- `isCrossRepository`, so trusting the vendor flag would call every
+    -- cross-repository parent, sub-issue or dependency a same-repository one.
+    -- The two repositories are on the row either way.
+    CAST(source_repo != target_repo AS Bool)                               AS is_cross_repository,
     CAST(nullIf(actor_login, '') AS Nullable(String))                      AS actor_display,
     CAST(nullIf(actor_id, '0') AS Nullable(String))                        AS actor_id,
     toDateTime64(_airbyte_extracted_at, 3)                                 AS collected_at,

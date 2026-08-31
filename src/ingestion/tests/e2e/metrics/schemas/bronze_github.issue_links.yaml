@@ -29,3 +29,8 @@ schemas:
       blocked_by_json: *id001
       blocking_json: *id001
       closed_by_pull_requests_json: *id001
+      sub_issues_total: &id002
+        type: integer
+      blocked_by_total: *id002
+      blocking_total: *id002
+      closed_by_pull_requests_total: *id002

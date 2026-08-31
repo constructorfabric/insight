@@ -117,7 +117,15 @@ models:
       `valid_from` is part of the key rather than a version of one row. Both directions are stored: a
       parent-child pair yields a `sub_issue` row on the parent and a `parent` row on the child.
     columns:
+      - name: unique_key
+        description: "Source, item, link type, target and `valid_from` — the occurrence, not the link."
+        tests:
+          - not_null
       - name: insight_source_id
+        tests:
+          - not_null
+      - name: data_source
+        description: "Vendor that recorded the link; `github` today."
         tests:
           - not_null
       - name: id_readable
@@ -153,6 +161,16 @@ models:
         tests:
           - accepted_values:
               values: ['event', 'observation']
+      - name: is_cross_repository
+        description: "The two ends live in different repositories. Derived by comparing them, because only some event types report it."
+      - name: added_by
+        description: "Who created the link, where the vendor names an actor; NULL for an observed link or an addition that predates collection."
+      - name: removed_by
+        description: "Who removed it; NULL while the link is still there."
+      - name: origin_event_id
+        description: "The vendor event the interval was folded from; NULL for an observed interval."
+      - name: collected_at
+        description: "When the evidence behind this row was collected."
 
   - name: class_task_statuses
     description: "Unified, source-neutral status dimension. Maps each source status id to the reconciled lifecycle `status_category` (new/in_progress/done/undefined). Jira derives it from statusCategory; YouTrack from the State bundle `isResolved` flag. Gold detects a closed task via `status_category='done'` — never a localized status name (issue #1541)."

@@ -2474,6 +2474,10 @@ streams:
           blocked_by_json: {type: [string, "null"]}
           blocking_json: {type: [string, "null"]}
           closed_by_pull_requests_json: {type: [string, "null"]}
+          sub_issues_total: {type: [integer, "null"]}
+          blocked_by_total: {type: [integer, "null"]}
+          blocking_total: {type: [integer, "null"]}
+          closed_by_pull_requests_total: {type: [integer, "null"]}
         required:
           - unique_key
         additionalProperties: true
@@ -2586,6 +2590,27 @@ streams:
             path: [closed_by_pull_requests_json]
             value: "{{ ((record.get('closedByPullRequestsReferences') or {}).get('nodes') or []) | tojson }}"
             value_type: string
+          # The vendor's own count for each set, kept beside the nodes. A
+          # nested connection cannot be paginated from a declarative manifest,
+          # so a set larger than its page silently loses its tail — storing
+          # the count is what lets `assert_issue_link_sets_are_complete` say
+          # so out loud instead.
+          - type: AddedFieldDefinition
+            path: [sub_issues_total]
+            value: "{{ (record.get('subIssues') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [blocked_by_total]
+            value: "{{ (record.get('blockedBy') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [blocking_total]
+            value: "{{ (record.get('blocking') or {}).get('totalCount') or 0 }}"
+            value_type: integer
+          - type: AddedFieldDefinition
+            path: [closed_by_pull_requests_total]
+            value: "{{ (record.get('closedByPullRequestsReferences') or {}).get('totalCount') or 0 }}"
+            value_type: integer
           - type: AddedFieldDefinition
             path: [unique_key]
             value: >-

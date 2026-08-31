@@ -51,6 +51,7 @@ removes AS (
         insight_source_id, id_readable, link_type, target_readable,
         event_at                                                AS removed_at,
         actor_display                                           AS removed_by,
+        collected_at                                            AS removed_collected_at,
         -- INVARIANT: an ASOF LEFT JOIN that matches nothing yields the column
         -- TYPE'S DEFAULT, not NULL — an unclosed interval would read as closed
         -- at the epoch, which is a date, and every range query would believe
@@ -79,7 +80,11 @@ event_intervals AS (
         if(r.matched = 1, r.removed_by, CAST(NULL AS Nullable(String))) AS removed_by,
         'event'                                                 AS evidence,
         a.event_id                                              AS origin_event_id,
-        a.collected_at                                          AS collected_at
+        -- INVARIANT: the newest evidence behind the row, not the addition's.
+        -- `_version` derives from this and `class_task_links` is incremental on
+        -- it, so a row whose only change is that it CLOSED would be filtered
+        -- out and the interval would stay open in silver forever.
+        if(r.matched = 1, greatest(a.collected_at, r.removed_collected_at), a.collected_at) AS collected_at
     FROM adds AS a
     ASOF LEFT JOIN removes AS r
         ON a.insight_source_id = r.insight_source_id
@@ -144,6 +149,7 @@ pr_observations AS (
             JSONExtractString(JSONExtractRaw(link_raw, 'repository'), 'nameWithOwner'),
             '#', toString(JSONExtractInt(link_raw, 'number'))
         )                                                       AS target_readable,
+        COALESCE(s.repo_full_name, '')                          AS source_repo,
         s._tracked_at                                           AS observed_at
     FROM (
         SELECT *, arrayJoin(JSONExtractArrayRaw(COALESCE(closed_by_pull_requests_json, '[]'))) AS link_raw
@@ -151,9 +157,18 @@ pr_observations AS (
     ) AS s
 ),
 
+-- INVARIANT: the newest version of an issue's links, taken from the snapshot
+-- itself and NOT from `pr_observations`. A version whose link set is empty
+-- produces no observation row, so deriving the latest version from the
+-- observations would take the last version that still HAD a link — and every
+-- link removed by emptying the set would read as still open.
 latest_observation AS (
-    SELECT insight_source_id, id_readable, max(observed_at) AS last_version_at
-    FROM pr_observations GROUP BY insight_source_id, id_readable
+    SELECT
+        COALESCE(source_id, '')                                 AS insight_source_id,
+        concat(COALESCE(repo_full_name, ''), '#', toString(COALESCE(item_number, 0))) AS id_readable,
+        max(_tracked_at)                                        AS last_version_at
+    FROM {{ ref('github__issue_links_snapshot') }}
+    GROUP BY insight_source_id, id_readable
 ),
 
 pr_intervals AS (
@@ -164,7 +179,9 @@ pr_intervals AS (
         'closed_by_pr'                                          AS link_type,
         'pull_request'                                          AS target_type,
         o.target_readable                                       AS target_readable,
-        false                                                   AS is_cross_repository,
+        -- The closing pull request may live in another repository, so this is
+        -- a comparison and not a constant.
+        any(o.source_repo) != splitByChar('#', o.target_readable)[1] AS is_cross_repository,
         min(o.observed_at)                                      AS valid_from,
         -- First SEEN, not first true: the link may predate the first snapshot
         -- that carried it, so the lower edge is a bound like an orphan's.
@@ -175,7 +192,10 @@ pr_intervals AS (
         CAST(NULL AS Nullable(String))                          AS removed_by,
         'observation'                                           AS evidence,
         ''                                                      AS origin_event_id,
-        max(o.observed_at)                                      AS collected_at
+        -- The issue's newest version, for the same reason: a link closes
+        -- because a LATER observation no longer carries it, and that evidence
+        -- has to move `_version` or silver never sees the closure.
+        any(l.last_version_at)                                  AS collected_at
     FROM pr_observations AS o
     INNER JOIN latest_observation AS l
         ON l.insight_source_id = o.insight_source_id AND l.id_readable = o.id_readable

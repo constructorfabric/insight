@@ -212,7 +212,11 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_links
     `sub_issues_json` Nullable(String),
     `blocked_by_json` Nullable(String),
     `blocking_json` Nullable(String),
-    `closed_by_pull_requests_json` Nullable(String)
+    `closed_by_pull_requests_json` Nullable(String),
+    `sub_issues_total` Nullable(Int64),
+    `blocked_by_total` Nullable(Int64),
+    `blocking_total` Nullable(Int64),
+    `closed_by_pull_requests_total` Nullable(Int64)
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key

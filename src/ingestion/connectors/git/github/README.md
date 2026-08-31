@@ -62,8 +62,8 @@ GraphQL error, so a typo reads as "nothing changed": a green sync, an empty
 stream, and no way to tell it from a quiet week. The cursor's `datetime_format`
 is therefore `%Y-%m-%d`, so a timestamp cannot reach the query string, and
 `assert_boards_yield_cards` catches the outcome if one ever does. One day is
-re-read on every sync by design: the row key carries the day the card changed,
-so a re-read rewrites the same row.
+re-read on every sync by design, and that is free: the row key is the card, so
+a re-read collapses onto the row already there.
 
 **Where board history lives.** GitHub keeps no history of a board field, an
 option rename, or a non-status card value, so a succession of observations is
