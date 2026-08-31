@@ -5,6 +5,9 @@ use super::forecast::{Lane, ScheduleItem, schedule};
 use super::milestone::{Milestone, Placement, YearMonth};
 use super::model::{Commitment, Gear};
 use super::progress::LadderStep;
+use crate::domain::external_links::ExternalSourceRegistry;
+
+const GIT_PROVIDER: &str = "github";
 
 const WINDOW_MONTHS: usize = 9;
 const CAPACITY_MAN_DAYS_PER_PERSON: f64 = 1.0;
@@ -35,6 +38,15 @@ pub(crate) struct GearDto {
     pub(crate) slot: Option<usize>,
     pub(crate) assignees: Vec<String>,
     pub(crate) closed: bool,
+    /// Absent when no configured external source claims the gear's repository.
+    pub(crate) issue_url: Option<String>,
+    pub(crate) assignee_urls: Vec<AssigneeLink>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AssigneeLink {
+    pub(crate) login: String,
+    pub(crate) url: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -52,7 +64,11 @@ pub(crate) struct SpanDto {
 
 impl toolkit::api::api_dto::ResponseApiDto for GearRoadmapResponse {}
 
-pub(crate) fn build(gears: &[Gear], today: NaiveDate) -> GearRoadmapResponse {
+pub(crate) fn build(
+    gears: &[Gear],
+    today: NaiveDate,
+    links: &ExternalSourceRegistry,
+) -> GearRoadmapResponse {
     let window_start = YearMonth {
         year: today.year(),
         month: today.month(),
@@ -71,7 +87,7 @@ pub(crate) fn build(gears: &[Gear], today: NaiveDate) -> GearRoadmapResponse {
         window_months: WINDOW_MONTHS,
         gears: gears
             .iter()
-            .map(|gear| gear_dto(gear, window_start))
+            .map(|gear| gear_dto(gear, window_start, links))
             .collect(),
         lanes,
     }
@@ -104,7 +120,7 @@ fn lane_dto(lane: Lane) -> LaneDto {
     }
 }
 
-fn gear_dto(gear: &Gear, window_start: YearMonth) -> GearDto {
+fn gear_dto(gear: &Gear, window_start: YearMonth, links: &ExternalSourceRegistry) -> GearDto {
     let (placement, slot) = placement_of(gear, window_start);
 
     GearDto {
@@ -123,7 +139,28 @@ fn gear_dto(gear: &Gear, window_start: YearMonth) -> GearDto {
         slot,
         assignees: gear.assignees.clone(),
         closed: gear.closed,
+        issue_url: issue_url(gear, links),
+        assignee_urls: gear
+            .assignees
+            .iter()
+            .map(|login| AssigneeLink {
+                login: login.clone(),
+                url: links.account_href(GIT_PROVIDER, &gear.source_id, login),
+            })
+            .collect(),
     }
+}
+
+fn issue_url(gear: &Gear, links: &ExternalSourceRegistry) -> Option<String> {
+    links
+        .evidence_links(
+            GIT_PROVIDER,
+            &gear.source_id,
+            "issue",
+            Some(&gear.repo_full_name),
+            Some(&format!("{}#{}", gear.repo_full_name, gear.number)),
+        )
+        .record
 }
 
 fn placement_of(gear: &Gear, window_start: YearMonth) -> (String, Option<usize>) {
@@ -169,8 +206,13 @@ fn commitment_label(commitment: Commitment) -> &'static str {
 mod tests {
     use chrono::NaiveDate;
 
-    use super::{CAPACITY_MAN_DAYS_PER_PERSON, WINDOW_MONTHS, build};
+    use super::{CAPACITY_MAN_DAYS_PER_PERSON, GearRoadmapResponse, WINDOW_MONTHS, build};
+    use crate::domain::external_links::ExternalSourceRegistry;
     use crate::domain::gear_roadmap::model::{Gear, GearRow};
+
+    fn build_for_test(gears: &[Gear], today: NaiveDate) -> GearRoadmapResponse {
+        build(gears, today, &ExternalSourceRegistry::default())
+    }
 
     fn today() -> NaiveDate {
         NaiveDate::from_ymd_opt(2030, 8, 1).expect("valid date")
@@ -189,12 +231,14 @@ mod tests {
             milestone_title: milestone_title.to_owned(),
             assignees: vec!["dev-one".to_owned()],
             closed: false,
+            repo_full_name: "example-org/example-repo".to_owned(),
+            source_id: "source-a".to_owned(),
         })
     }
 
     #[test]
     fn a_milestone_before_the_window_is_overdue_not_backlog() {
-        let response = build(&[gear(1, "30.05", "Todo")], today());
+        let response = build_for_test(&[gear(1, "30.05", "Todo")], today());
 
         assert_eq!(response.gears[0].placement, "overdue");
         assert_eq!(response.gears[0].slot, None);
@@ -202,7 +246,7 @@ mod tests {
 
     #[test]
     fn a_milestone_inside_the_window_carries_its_slot() {
-        let response = build(&[gear(1, "30.09", "Todo")], today());
+        let response = build_for_test(&[gear(1, "30.09", "Todo")], today());
 
         assert_eq!(response.gears[0].placement, "slot");
         assert_eq!(response.gears[0].slot, Some(1));
@@ -210,7 +254,7 @@ mod tests {
 
     #[test]
     fn the_response_states_the_capacity_it_assumed() {
-        let response = build(&[], today());
+        let response = build_for_test(&[], today());
 
         assert!(
             (response.capacity_man_days_per_person - CAPACITY_MAN_DAYS_PER_PERSON).abs()
@@ -221,15 +265,36 @@ mod tests {
     }
 
     #[test]
+    fn a_configured_source_turns_a_gear_into_links() {
+        let sources = [crate::config::ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: crate::config::ExternalSourceProvider::Github,
+            web_base_url: "https://git.example.test/".to_owned(),
+        }];
+        let registry = ExternalSourceRegistry::new(&sources).expect("valid sources");
+
+        let response = build(&[gear(41, "30.09", "Todo")], today(), &registry);
+
+        assert_eq!(
+            response.gears[0].issue_url.as_deref(),
+            Some("https://git.example.test/example-org/example-repo/issues/41")
+        );
+        assert_eq!(
+            response.gears[0].assignee_urls[0].url.as_deref(),
+            Some("https://git.example.test/dev-one")
+        );
+    }
+
+    #[test]
     fn a_finished_gear_takes_no_lane_time() {
-        let response = build(&[gear(1, "30.09", "Done")], today());
+        let response = build_for_test(&[gear(1, "30.09", "Done")], today());
 
         assert!(response.lanes.is_empty());
     }
 
     #[test]
     fn remaining_work_is_scheduled_from_today() {
-        let response = build(&[gear(7, "30.09", "Todo")], today());
+        let response = build_for_test(&[gear(7, "30.09", "Todo")], today());
 
         assert_eq!(response.lanes.len(), 1);
         assert_eq!(response.lanes[0].assignee.as_deref(), Some("dev-one"));

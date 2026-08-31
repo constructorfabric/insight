@@ -36,7 +36,11 @@ pub async fn get_gear_roadmap(
         .await
         .map_err(read_error)?;
 
-    Ok(Json(response::build(&gears, Utc::now().date_naive())))
+    Ok(Json(response::build(
+        &gears,
+        Utc::now().date_naive(),
+        &state.external_links,
+    )))
 }
 
 fn admin_only() -> CanonicalError {

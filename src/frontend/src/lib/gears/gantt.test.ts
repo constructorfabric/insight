@@ -73,3 +73,14 @@ describe("monthTicks", () => {
     expect(monthTicks("2030-01-02", 5)).toEqual([]);
   });
 })
+
+describe("buildGantt bar dates", () => {
+  it("keeps the dates each bar was scheduled for", () => {
+    const chart = buildGantt(LANES);
+
+    expect(chart.lanes[0].bars[0]).toMatchObject({
+      start: "2030-01-01",
+      end: "2030-01-10",
+    });
+  });
+});

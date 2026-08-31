@@ -16,6 +16,8 @@ pub(crate) struct GearRow {
     pub(crate) milestone_title: String,
     pub(crate) assignees: Vec<String>,
     pub(crate) closed: bool,
+    pub(crate) repo_full_name: String,
+    pub(crate) source_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +51,8 @@ pub(crate) struct Gear {
     pub(crate) milestone: Option<Milestone>,
     pub(crate) assignees: Vec<String>,
     pub(crate) closed: bool,
+    pub(crate) repo_full_name: String,
+    pub(crate) source_id: String,
 }
 
 impl Gear {
@@ -68,6 +72,8 @@ impl Gear {
             milestone: Milestone::parse(&row.milestone_title),
             assignees: row.assignees,
             closed: row.closed,
+            repo_full_name: row.repo_full_name,
+            source_id: row.source_id,
         }
     }
 
@@ -117,6 +123,8 @@ mod tests {
             milestone_title: "30.08".to_owned(),
             assignees: vec!["dev-one".to_owned()],
             closed: false,
+            repo_full_name: "example-org/example-repo".to_owned(),
+            source_id: "source-a".to_owned(),
         }
     }
 
@@ -151,6 +159,14 @@ mod tests {
                 month: 8
             }))
         );
+    }
+
+    #[test]
+    fn a_gear_keeps_the_repository_its_issue_lives_in() {
+        let gear = Gear::from_row(row());
+
+        assert_eq!(gear.repo_full_name, "example-org/example-repo");
+        assert_eq!(gear.source_id, "source-a");
     }
 
     #[test]

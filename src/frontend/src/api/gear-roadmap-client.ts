@@ -46,6 +46,15 @@ export interface Gear {
   slot?: number | null;
   assignees: string[];
   closed: boolean;
+  /** Absent when no configured source claims the gear's repository. */
+  issue_url?: string | null;
+  assignee_urls?: AssigneeLink[];
+}
+
+/** A login with its account page, where a configured source knows one. */
+export interface AssigneeLink {
+  login: string;
+  url?: string | null;
 }
 
 export interface GearSpan {

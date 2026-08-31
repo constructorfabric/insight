@@ -2,6 +2,12 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Gear } from "@/api/gear-roadmap-client";
+import { GearBarCard } from "@/components/portal/gear-delivery/bar-card";
+import {
+  PreviewCard,
+  PreviewCardContent,
+  PreviewCardTrigger,
+} from "@/components/ui/preview-card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { buildGantt, monthTicks } from "@/lib/gears/gantt";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
@@ -104,6 +110,8 @@ export function GearSchedule() {
                     gear={gears.get(bar.gearNumber)}
                     offsetDays={bar.offsetDays}
                     lengthDays={bar.lengthDays}
+                    start={bar.start}
+                    end={bar.end}
                   />
                 ))}
               </div>
@@ -119,27 +127,43 @@ function Bar({
   gear,
   offsetDays,
   lengthDays,
+  start,
+  end,
 }: {
   gear: Gear | undefined;
   offsetDays: number;
   lengthDays: number;
+  start: string;
+  end: string;
 }) {
   const tone = subsystemTone(gear?.subsystem ?? null);
   const label = gear?.title ?? "";
 
   return (
-    <div
-      className={`absolute top-1.5 flex h-6 items-center overflow-hidden rounded-sm px-1.5 text-xs ${tone.bar}`}
-      style={{
-        left: `${offsetDays * DAY_WIDTH_PX}px`,
-        width: `${Math.max(lengthDays * DAY_WIDTH_PX, 6)}px`,
-      }}
-      title={`${label}${gear?.milestone ? ` · ${gear.milestone}` : ""}`}
-    >
-      {lengthDays >= MIN_BAR_LABEL_DAYS ? (
-        <span className="truncate">{shortTitle(label)}</span>
-      ) : null}
-    </div>
+    <PreviewCard>
+      <PreviewCardTrigger
+        delay={120}
+        closeDelay={0}
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            className={`absolute top-1.5 flex h-6 items-center overflow-hidden rounded-sm px-1.5 text-xs transition hover:brightness-110 ${tone.bar}`}
+            style={{
+              left: `${offsetDays * DAY_WIDTH_PX}px`,
+              width: `${Math.max(lengthDays * DAY_WIDTH_PX, 6)}px`,
+            }}
+          >
+            {lengthDays >= MIN_BAR_LABEL_DAYS ? (
+              <span className="truncate">{shortTitle(label)}</span>
+            ) : null}
+          </button>
+        }
+      />
+      <PreviewCardContent side="top" className="border bg-popover shadow-lg">
+        <GearBarCard gear={gear} start={start} end={end} />
+      </PreviewCardContent>
+    </PreviewCard>
   );
 }
 

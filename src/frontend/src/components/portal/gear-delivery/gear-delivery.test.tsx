@@ -21,6 +21,7 @@ vi.mock("@/components/ui/sidebar", () => ({
 }));
 
 import { GearDeliveryView } from "@/components/portal/gear-delivery-view";
+import { GearBarCard } from "./bar-card";
 import { GearsTable } from "./gears-table";
 import { RoadmapGrid } from "./roadmap-grid";
 import { GearSchedule } from "./schedule";
@@ -43,6 +44,10 @@ function gear(over: Partial<Gear> = {}): Gear {
     slot: 1,
     assignees: ["dev-one"],
     closed: false,
+    issue_url: "https://git.example.test/example-org/example-repo/issues/1",
+    assignee_urls: [
+      { login: "dev-one", url: "https://git.example.test/dev-one" },
+    ],
     ...over,
   };
 }
@@ -209,5 +214,95 @@ describe("GearDeliveryView", () => {
     render(<GearDeliveryView config={{ title: "Gear schedule", board: "gear-schedule" }} />);
 
     expect(screen.getByText("dev-one")).toBeInTheDocument();
+  });
+});
+
+describe("GearBarCard", () => {
+  it("describes the gear behind a bar, with links out", () => {
+    render(
+      <GearBarCard gear={gear()} start="2030-08-01" end="2030-08-06" />,
+    );
+
+    expect(screen.getByText("CORE - Example Module")).toBeInTheDocument();
+    expect(screen.getByText(/2030-08-01/)).toBeInTheDocument();
+    expect(screen.getByText("6 / 30")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open issue #1/ })).toHaveAttribute(
+      "href",
+      "https://git.example.test/example-org/example-repo/issues/1",
+    );
+    expect(screen.getByRole("link", { name: "dev-one" })).toHaveAttribute(
+      "href",
+      "https://git.example.test/dev-one",
+    );
+  });
+
+  it("falls back to plain logins when no source knows the account", () => {
+    render(
+      <GearBarCard
+        gear={gear({ assignee_urls: [{ login: "dev-one", url: null }] })}
+        start="2030-08-01"
+        end="2030-08-06"
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "dev-one" })).toBeNull();
+    expect(screen.getByText("dev-one")).toBeInTheDocument();
+  });
+});
+
+describe("GearSchedule bars", () => {
+  it("makes every bar a hoverable control named after its gear", () => {
+    render(<GearSchedule />);
+
+    expect(
+      screen.getByRole("button", { name: "CORE - Example Module" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("GearsTable subsystem filter", () => {
+  beforeEach(() => {
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({ number: 1, subsystem: "CORE", title: "CORE - One" }),
+          gear({ number: 2, subsystem: "BSS", title: "BSS - Two" }),
+          gear({ number: 3, subsystem: "BSS", title: "BSS - Three" }),
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+  });
+
+  it("offers one toggle per subsystem on the board, with its count", () => {
+    render(<GearsTable />);
+
+    expect(
+      screen.getByRole("button", { name: "BSS — 2 gears" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "CORE — 1 gears" })).toBeInTheDocument();
+  });
+
+  it("narrows the table to the chosen subsystems", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable />);
+
+    await user.click(screen.getByRole("button", { name: "BSS — 2 gears" }));
+
+    expect(screen.getByText("BSS - Two")).toBeInTheDocument();
+    expect(screen.getByText("BSS - Three")).toBeInTheDocument();
+    expect(screen.queryByText("CORE - One")).toBeNull();
+  });
+
+  it("shows every gear again once the last subsystem is cleared", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable />);
+
+    const bss = screen.getByRole("button", { name: "BSS — 2 gears" });
+    await user.click(bss);
+    await user.click(bss);
+
+    expect(screen.getByText("CORE - One")).toBeInTheDocument();
   });
 });

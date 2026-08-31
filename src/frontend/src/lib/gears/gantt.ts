@@ -6,6 +6,8 @@ export interface GanttBar {
   gearNumber: number;
   offsetDays: number;
   lengthDays: number;
+  start: string;
+  end: string;
 }
 
 export interface GanttLane {
@@ -40,6 +42,8 @@ export function buildGantt(lanes: GearLane[]): GanttChart {
         gearNumber: span.gear_number,
         offsetDays: dayNumber(span.start) - first,
         lengthDays: dayNumber(span.end) - dayNumber(span.start) + 1,
+        start: span.start,
+        end: span.end,
       })),
     })),
   };

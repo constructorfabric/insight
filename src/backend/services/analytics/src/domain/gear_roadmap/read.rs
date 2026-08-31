@@ -23,7 +23,8 @@ static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
             SELECT
                 content_repo_full_name AS repo_full_name,
                 content_number AS content_number,
-                argMax(ifNull(field_values_json, '[]'), ifNull(updated_at, '')) AS field_values
+                argMax(ifNull(field_values_json, '[]'), ifNull(updated_at, '')) AS field_values,
+                argMax(ifNull(source_id, ''), ifNull(updated_at, '')) AS source_id
             FROM bronze_github.project_items
             WHERE project_number = ?
               AND content_number > 0
@@ -53,7 +54,9 @@ static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
             {effort} AS effort_man_days,
             board_issues.milestone_title AS milestone_title,
             JSONExtract(board_issues.assignee_logins, 'Array(String)') AS assignees,
-            board_issues.state = 'closed' AS closed
+            board_issues.state = 'closed' AS closed,
+            ifNull(board_issues.repo_full_name, '') AS repo_full_name,
+            board_items.source_id AS source_id
         FROM board_items
         INNER JOIN board_issues
             ON board_issues.repo_full_name = assumeNotNull(board_items.repo_full_name)
@@ -110,6 +113,15 @@ mod tests {
     fn the_statement_reads_one_board_and_binds_its_number() {
         assert!(READ_GEARS_SQL.contains("WHERE project_number = ?"));
         assert_eq!(READ_GEARS_SQL.matches('?').count(), 1);
+    }
+
+    /// `GearRow` reads every column into a non-optional field, and the row
+    /// decoder rejects `Nullable(String)` for a `String`. The CTEs default
+    /// their aggregates, but a column carried through as a GROUP BY key keeps
+    /// the source nullability and has to be defaulted in the projection.
+    #[test]
+    fn the_repository_is_projected_with_a_default() {
+        assert!(READ_GEARS_SQL.contains("ifNull(board_issues.repo_full_name, '')"));
     }
 
     #[test]

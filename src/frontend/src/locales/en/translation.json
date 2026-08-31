@@ -683,7 +683,8 @@
       "remaining": "Remaining (m*d)",
       "milestone": "Milestone",
       "assignees": "Assignees",
-      "count": "{{count}} gears"
+      "count": "{{count}} gears",
+      "subsystem_filter": "{{subsystem}} — {{count}} gears"
     },
     "grid": {
       "overdue": "Overdue",
@@ -695,7 +696,9 @@
       "explainer": "Every person is assumed to deliver {{capacity}} man-day per calendar day. {{days}} days from {{start}}.",
       "unassigned": "Unassigned",
       "nothing_scheduled": "Nothing is left to schedule.",
-      "lane": "Assignee"
+      "lane": "Assignee",
+      "window": "Scheduled",
+      "open_issue": "Open issue #{{number}}"
     }
   }
 }
