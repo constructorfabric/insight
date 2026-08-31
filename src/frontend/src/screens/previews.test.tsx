@@ -1,9 +1,4 @@
-/**
- * The previews screen. What matters: the gate fails CLOSED (a direct URL past
- * the hidden nav entry gets a refusal, not a broken console), the console
- * renders the listing with an open link and a delete, and the create form
- * refuses to submit empty fields.
- */
+/** The previews screen refuses ungated viewers and drives the console. */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

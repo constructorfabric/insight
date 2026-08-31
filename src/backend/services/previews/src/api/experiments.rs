@@ -28,8 +28,7 @@ use crate::domain::objects::{self, ExperimentStamp};
 use crate::infra::cluster::{CreateError, DeleteOutcome};
 
 /// The identity role names (JWT `roles` → `token_scopes`) that may create or
-/// delete experiments (#2374). Seeded by identity migrations 007 / 017; the
-/// names, not the ids, ride the token.
+/// delete experiments.
 const MANAGE_SCOPES: [&str; 2] = ["previews-admin", "admin"];
 
 /// Body of `POST /v1/experiments`. The image repository is fixed server-side;
@@ -246,11 +245,8 @@ fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     Ok(caller)
 }
 
-/// Require a caller whose verified token scopes allow managing experiments
-/// (create/delete). No database and no S2S call: the scopes come from the JWT
-/// `roles` claim the authenticator minted, mapped by the host authn pipeline.
-/// The list stays authenticated-only — read-only, and the FE hides the
-/// section behind the same roles anyway.
+/// Require a caller whose verified token scopes allow managing experiments;
+/// no database and no S2S call.
 fn require_manage_scope(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     let caller = require_caller(ctx)?;
     if !holds_manage_scope(ctx.token_scopes()) {
@@ -259,15 +255,13 @@ fn require_manage_scope(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     Ok(caller)
 }
 
-/// The one scope decision, over values, so a test needs no `SecurityContext`.
 fn holds_manage_scope(scopes: &[String]) -> bool {
     scopes
         .iter()
         .any(|scope| MANAGE_SCOPES.contains(&scope.as_str()))
 }
 
-/// The canonical 403 for a mutation without a managing scope — one helper so
-/// create and delete refuse identically, and every refusal is logged.
+/// The canonical 403 for a mutation without a managing scope, logged.
 fn manage_scope_denied(ctx: &SecurityContext, caller: Uuid) -> CanonicalError {
     tracing::warn!(
         caller = %caller,

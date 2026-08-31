@@ -150,10 +150,7 @@ mod tests {
         }
     }
 
-    /// The seeded role ids are stable API: `admin` mirrors
-    /// `roles_repo::ADMIN_ROLE_ID` (and the FE's `ADMIN_ROLE_ID`);
-    /// `previews-admin` is consumed by NAME (JWT roles claim), so the literal
-    /// here is what pins its id against an accidental edit.
+    /// The seeded role ids are stable API; this pins them against edits.
     #[test]
     fn seeded_role_ids_and_names_are_stable() {
         use crate::infra::db::roles_repo::ADMIN_ROLE_ID;

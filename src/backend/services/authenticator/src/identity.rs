@@ -100,11 +100,9 @@ pub trait PersonResolver: Send + Sync {
         Ok(None)
     }
 
-    /// The ACTIVE identity role names the person holds in the tenant — minted
-    /// into the JWT `roles` claim at login and re-fetched on `/auth/refresh`
-    /// (#2374). An empty list is a real answer ("no grants"); the caller then
-    /// falls back to its configured `default_roles`, so a resolver without a
-    /// roles source (this default) yields exactly the pre-#2374 behaviour.
+    /// The ACTIVE identity role names the person holds in the tenant. An
+    /// empty list means "no grants" — the caller falls back to its
+    /// `default_roles`, so this default keeps the prior behaviour.
     ///
     /// # Errors
     /// Fails when the Identity Service is unreachable or errors.
@@ -463,8 +461,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_resolver_without_a_roles_source_grants_nothing() -> anyhow::Result<()> {
-        // The trait default answers "no grants", which the caller folds into
-        // its configured default_roles — exactly the pre-roles behaviour.
         let roles = LookupOnly.active_roles("person", "tenant").await?;
 
         assert!(roles.is_empty());

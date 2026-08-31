@@ -624,12 +624,10 @@ impl SessionManager {
         Ok(rotated == 1)
     }
 
-    /// Store re-fetched session roles (`POST /auth/refresh`, #2374), guarded
-    /// on the session still existing — an unguarded `HSET` on a key a
-    /// concurrent revoke just deleted would resurrect a TTL-less roles-only
-    /// hash (same zombie shape [`Self::store_idp_refresh`] guards against).
-    /// The linked JWT is untouched: it converges at its next reissue, which is
-    /// the accepted staleness window.
+    /// Store re-fetched session roles (`POST /auth/refresh`), guarded on the
+    /// session still existing — an unguarded `HSET` after a concurrent revoke
+    /// would resurrect a TTL-less hash (see [`Self::store_idp_refresh`]).
+    /// The linked JWT is untouched; it converges at its next reissue.
     ///
     /// # Errors
     /// Fails on a Redis error.

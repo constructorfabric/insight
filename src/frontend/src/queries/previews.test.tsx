@@ -1,9 +1,4 @@
-/**
- * The previews gate and hooks. What matters: the gate fails CLOSED — no
- * session, the capability off, or no managing role must all read as "no
- * previews surface"; both layers are required at once; and a mutation
- * invalidates the listing so the console reconciles to the cluster.
- */
+/** The previews gate fails closed, and mutations invalidate the listing. */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
@@ -83,7 +78,6 @@ describe("canManagePreviews", () => {
       ],
       ["no roles at all", previewsSession({ roles: [] }), false],
       [
-        // Exact names, never substrings.
         "a role that merely contains the name",
         previewsSession({ roles: ["previews-admin-plus"] }),
         false,

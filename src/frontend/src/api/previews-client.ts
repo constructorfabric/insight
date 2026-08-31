@@ -1,11 +1,7 @@
 /**
- * Thin client for the previews service (`/api/previews/v1`) — preview
- * experiments, each one frontend build served under `/exp/<name>` on the
- * shared preview host.
- *
- * Create and delete are gated server-side on the `previews-admin` or `admin`
- * role in the verified token; the UI's own gate is a courtesy, never the
- * boundary. The wire is camelCase (unlike identity's snake_case).
+ * Thin client for the previews service (`/api/previews/v1`). Create and
+ * delete are gated server-side on the `previews-admin` or `admin` role; the
+ * wire is camelCase (unlike identity's snake_case).
  */
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
@@ -55,7 +51,7 @@ async function failure(res: Response): Promise<PreviewsApiError> {
   return new PreviewsApiError(res.status, body);
 }
 
-/** Every live experiment. Authenticated-only — no role needed to look. */
+/** Every live experiment; authenticated-only. */
 export async function listExperiments(): Promise<Experiment[]> {
   const res = await fetchWithAuth(`${BASE}/experiments`);
   if (!res.ok) throw await failure(res);

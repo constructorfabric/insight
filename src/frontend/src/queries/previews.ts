@@ -1,13 +1,8 @@
 /**
- * Preview-experiment hooks and the capability gate that decides whether the
- * `/previews` surface exists for this viewer at all.
- *
- * The gate is two-layered and entirely session-derived (insight#2374):
- * `experiments_enabled` is the stand-level switch `/auth/me` echoes, and the
- * session `roles` are the identity role names the authenticator minted into
- * the gateway JWT. Both are the same values the previews service enforces
- * server-side — the UI check is a courtesy, never the boundary (the same
- * doctrine as `queries/identity-me.ts`).
+ * Preview-experiment hooks and the session-derived gate for the `/previews`
+ * surface: the stand's `experiments_enabled` AND a managing session role.
+ * The previews service enforces the same roles — the UI check is a courtesy,
+ * never the boundary (same doctrine as `queries/identity-me.ts`).
  */
 import {
   useMutation,
@@ -28,21 +23,13 @@ import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
 import type { Session } from "@/auth/types";
 
-/**
- * The role names that may manage previews — mirrored by the previews
- * service's scope gate and seeded by identity migrations 007 / 017. Names,
- * not ids: the JWT `roles` claim (and therefore the session) carries names.
- */
+/** Mirrors the previews service's scope gate; the session carries NAMES. */
 export const PREVIEWS_MANAGE_ROLES = ["previews-admin", "admin"] as const;
 
 /** Cluster state changes under other operators' hands; half a minute is fine. */
 const EXPERIMENTS_STALE_TIME = 30 * 1000;
 
-/**
- * Whether this viewer gets the previews surface: the stand capability is on
- * AND the session carries a managing role. Pending/absent sessions read as
- * "no" — the shell simply never draws the entry.
- */
+/** Both layers at once; an absent session reads as "no" (fail closed). */
 export function canManagePreviews(session: Session | null): boolean {
   if (!session?.experimentsEnabled) return false;
   return session.roles.some((role) =>
@@ -50,7 +37,6 @@ export function canManagePreviews(session: Session | null): boolean {
   );
 }
 
-/** The session-derived previews gate, as a hook for the nav and the screen. */
 export function usePreviewsGate(): boolean {
   const { session } = useAuth();
   return canManagePreviews(session);
@@ -60,8 +46,7 @@ export function useExperiments(): UseQueryResult<Experiment[]> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   return useQuery({
-    // Keyed by the session scope so a sign-out/sign-in (or view-as) never
-    // serves the previous caller's listing from cache.
+    // Session-scoped key: a sign-in never serves another caller's cache.
     queryKey: ["previews", "experiments", sessionScope],
     queryFn: listExperiments,
     staleTime: EXPERIMENTS_STALE_TIME,
@@ -69,8 +54,7 @@ export function useExperiments(): UseQueryResult<Experiment[]> {
   });
 }
 
-/** Everything previews reads lives under this prefix — one invalidation after
- *  any mutation refreshes the listing. */
+/** One invalidation after any mutation refreshes everything previews reads. */
 const PREVIEWS_KEY = ["previews"] as const;
 
 export function useCreateExperiment(): UseMutationResult<

@@ -98,8 +98,6 @@ describe("manageItemsFor", () => {
   });
 
   it("gates previews independently of admin-ness", () => {
-    // The whole point of the previews-admin role: preview rights can go to a
-    // designer without the identities-admin surfaces coming along.
     const previewsOnly = manageItemsFor({
       isAdmin: false,
       canManagePreviews: true,

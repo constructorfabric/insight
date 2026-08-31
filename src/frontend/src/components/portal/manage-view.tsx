@@ -65,8 +65,7 @@ export function ManageView({ item }: { item: string | null }) {
     );
   if (item === "ai-assistant") return <AiAssistantBody />;
   if (item === "whats-new") return <WhatsNewBody />;
-  // PreviewsBody carries its own session-derived gate (a direct URL lands
-  // here past the hidden nav entry), so no wrapper is needed.
+  // PreviewsBody carries its own gate, so no wrapper.
   if (item === "previews") return <PreviewsBody />;
   return (
     <div className="mx-auto w-full max-w-md p-8">

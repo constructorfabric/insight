@@ -421,16 +421,10 @@ struct InternalActiveRolesResponse {
 }
 
 /// `GET /internal/persons/active-roles?person_id=...` — SERVICE-ONLY read of
-/// the ACTIVE identity role names a person holds in the caller's tenant. The
-/// authenticator calls it at login and on `/auth/refresh` to mint the session
-/// roles into the gateway JWT (#2374); an empty list is a real answer ("no
-/// grants"), never an error, so the caller can fall back to its defaults.
-///
-/// Tenant-SCOPED like `by-roster-email`: role grants live per tenant in
-/// `person_roles`, and the authenticator mints its service JWT with the
-/// session's tenant, so it arrives in the `SecurityContext` like any caller's.
-/// Fails closed when the token carries no tenant. Registered as a raw route so
-/// it stays out of the generated OpenAPI, same as the other internal resolvers.
+/// the ACTIVE role names a person holds in the caller's tenant; the
+/// authenticator mints them into the JWT at login and `/auth/refresh`. An
+/// empty list is a real answer, never an error. Tenant-scoped and fail-closed
+/// like `by-roster-email`; raw route, out of the generated OpenAPI.
 pub async fn internal_person_active_roles(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -974,8 +968,7 @@ mod tests {
         Ok(())
     }
 
-    /// Lock the internal active-roles wire shape (`snake_case`, role NAMES) —
-    /// the authenticator mints these values into the JWT `roles` claim verbatim.
+    /// The authenticator mints these values into the JWT roles claim verbatim.
     #[test]
     fn internal_active_roles_wire_shape() -> anyhow::Result<()> {
         let body = InternalActiveRolesResponse {

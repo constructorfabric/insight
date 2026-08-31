@@ -1,11 +1,7 @@
 /**
- * Preview experiments — self-service list / create / delete (insight#2374).
- *
- * Rendered only behind {@link usePreviewsGate}: the stand capability
- * (`experiments_enabled`) is on AND the session roles carry `previews-admin`
- * or `admin`. Bookmarks land here past the hidden nav entry, so the screen
- * refuses on its own — a courtesy refusal; the previews service enforces the
- * same roles on every mutation regardless of what the frontend draws.
+ * Preview experiments — self-service list / create / delete, behind
+ * {@link usePreviewsGate}. Bookmarks land here past the hidden nav entry, so
+ * the screen refuses on its own; the server enforces the same roles anyway.
  */
 import { ExternalLink, Plus, TriangleAlert } from "lucide-react";
 import { useState } from "react";
@@ -81,7 +77,7 @@ export function PreviewsBody() {
   );
 }
 
-/** How a refused write reads: the server's problem detail when it says one. */
+/** The server's problem detail when it says one, else a generic line. */
 function errorMessage(error: unknown): string {
   if (error && typeof error === "object") {
     const body = (error as { body?: { detail?: string } }).body;
@@ -231,9 +227,7 @@ function ExperimentList() {
                     variant="outline"
                     size="sm"
                     render={
-                      // The API serves the full URL; the experiment lives on
-                      // the preview host, not this origin, so a plain anchor
-                      // is right where a router Link is not.
+                      // Cross-origin (the preview host), so a plain anchor.
                       <a
                         href={experiment.url}
                         target="_blank"

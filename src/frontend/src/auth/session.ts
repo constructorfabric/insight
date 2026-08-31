@@ -62,8 +62,7 @@ export async function loadSession(): Promise<AuthStatus> {
       // only, so guard the wire values like refresh.ts guards its inputs.
       expiresAt: unixSeconds(body.expires_at),
       refreshAt: unixSeconds(body.refresh_at),
-      // Strictly `=== true`: an absent or malformed capability flag reads as
-      // "off", never as "on" (fail closed, like the rest of this probe).
+      // Strictly `=== true`: absent or malformed reads as off (fail closed).
       experimentsEnabled: body.experiments_enabled === true,
       // Present only on `__override` view-as sessions (insight#1941).
       impersonatorEmail: body.impersonator_email || null,

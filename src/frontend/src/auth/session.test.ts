@@ -76,8 +76,6 @@ describe("loadSession", () => {
   });
 
   it("reads experiments_enabled as off unless it is literally true", async () => {
-    // The previews surface exists only where the stand says so; an older
-    // authenticator (absent field) or a malformed value must read as off.
     for (const wire of [undefined, "true", 1, null]) {
       fetchMock().mockResolvedValueOnce({
         ok: true,

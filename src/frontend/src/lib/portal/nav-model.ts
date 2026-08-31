@@ -163,9 +163,8 @@ export interface PaneItem {
    */
   adminOnly?: boolean;
   /**
-   * Rendered only when the previews gate passes (`usePreviewsGate`):
-   * `experiments_enabled` on the stand AND a `previews-admin`/`admin` session
-   * role. The same courtesy-over-server-gate doctrine as `adminOnly`.
+   * Rendered only when the previews gate passes (`usePreviewsGate`) — the
+   * same courtesy-over-server-gate doctrine as `adminOnly`.
    */
   previewsGated?: boolean;
 }
@@ -329,9 +328,7 @@ export function peopleItemsFor(
 
 /** The viewer facts that decide which gated Manage surfaces exist for them. */
 export interface ManageGates {
-  /** Holds the active `admin` identity role (`useIsAdmin`). */
   isAdmin: boolean;
-  /** Passes the previews capability gate (`usePreviewsGate`). */
   canManagePreviews: boolean;
 }
 

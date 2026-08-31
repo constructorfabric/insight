@@ -39,8 +39,8 @@ export type Session = {
   refreshAt: number;
   /**
    * The stand-level preview-experiments capability (`experiments_enabled` on
-   * `/auth/me`, insight#2374). False — including on an older authenticator
-   * that omits the field — keeps the whole `/previews` surface absent.
+   * `/auth/me`). False — including when the field is absent — keeps the
+   * `/previews` surface absent.
    */
   experimentsEnabled: boolean;
   /**

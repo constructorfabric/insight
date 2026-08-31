@@ -644,9 +644,8 @@ async fn mint_and_store_session(
     let token = csprng_token();
     let csrf_token = csprng_token();
 
-    // Per-user identity roles ride the JWT (#2374); `default_roles` stays the
-    // fallback when identity is unreachable or grants nothing. The values
-    // change, never the claim shape (DD-AUTH-07).
+    // Identity roles, `default_roles` as fallback; values only, never the
+    // claim shape (DD-AUTH-07).
     let roles = session_roles(state, &identity.person_id, &identity.tenant_id).await;
 
     // exp clamped to the session absolute cap (cheap hygiene, G3).
@@ -715,8 +714,7 @@ async fn mint_and_store_session(
 }
 
 /// The roles a session carries, freshly asked of identity. A roles blip must
-/// not fail a login or a refresh, so the error folds into the fallback here
-/// and is only logged.
+/// not fail a login, so an error folds into the fallback and is only logged.
 async fn session_roles(state: &AppState, person_id: &str, tenant_id: &str) -> Vec<String> {
     let fetched = state.resolver.active_roles(person_id, tenant_id).await;
     if let Err(e) = &fetched {
@@ -728,9 +726,7 @@ async fn session_roles(state: &AppState, person_id: &str, tenant_id: &str) -> Ve
     effective_roles(fetched.ok(), &state.cfg.default_roles)
 }
 
-/// Fold an identity roles answer into the claim values: grants win; no answer
-/// or no grants falls back to `default_roles`, the pre-#2374 baseline every
-/// session used to carry.
+/// Grants win; no answer or no grants falls back to `default_roles`.
 fn effective_roles(fetched: Option<Vec<String>>, default_roles: &[String]) -> Vec<String> {
     match fetched {
         Some(roles) if !roles.is_empty() => roles,
@@ -896,9 +892,6 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
         "csrf_token": record.csrf_token,
-        // The stand-level preview-experiments capability (#2374): false keeps
-        // the whole previews surface structurally inert, so the SPA can drop
-        // it without asking anything else.
         "experiments_enabled": state.cfg.experiments_enabled,
     });
     // View-as session (#1941): name the real principal so the SPA can show a
@@ -1007,12 +1000,9 @@ pub async fn refresh(
             Err(e) => internal_problem("session_store", &e),
         };
     }
-    // Roles converge on refresh (#2374): re-ask identity and store the answer
-    // so the next JWT reissue mints current values — a grant or revoke needs
-    // no re-login, only the accepted staleness window (JWT reissue + gateway
-    // exchange cache). An unreachable identity keeps the roles the session
-    // already carries; a refresh must not fail, or downgrade a session, over
-    // a roles blip.
+    // Roles converge on refresh; the JWT catches up at its next reissue. An
+    // unreachable identity keeps the current roles — a refresh must not fail,
+    // or downgrade a session, over a roles blip.
     match state
         .resolver
         .active_roles(&record.person_id, &record.tenant_id)
