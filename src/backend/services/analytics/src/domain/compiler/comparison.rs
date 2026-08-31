@@ -273,17 +273,20 @@ fn push_tenant_distribution(sql: &mut String, carried: &str) {
     let _ = writeln!(sql, "),");
     let _ = writeln!(sql, "population_stats AS (");
     let _ = writeln!(sql, "    SELECT");
+    // SAFETY: the value element is made nullable here so the default tuple
+    // `arrayFirst` yields carries NULL; a count fold's own value is not
+    // nullable, and would read as a zero the target never scored.
     let _ = writeln!(
         sql,
-        "        groupArrayIf(tuple(peer.entity_id, peer.value), peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows,"
+        "        groupArrayIf(tuple(peer.entity_id, toNullable(peer.value)), peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows,"
     );
     push_distribution_selects(sql, "        ");
     let _ = writeln!(sql, "    FROM entity_values AS peer");
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
     let _ = writeln!(sql, "    targets.entity_id AS entity_id,");
-    // SAFETY: `arrayFirst` yields the default tuple for an uncaptured target;
-    // its Nullable value element reads NULL rather than a zero.
+    // INVARIANT: `arrayFirst` yields the default tuple for an uncaptured
+    // target, so its value reads NULL exactly as the cohort path's does.
     let _ = writeln!(
         sql,
         "    tupleElement(arrayFirst(row -> row.1 = targets.entity_id, population_stats.target_rows), 2) AS target_value,"
@@ -556,7 +559,7 @@ mod tests {
         assert!(compiled.sql.contains(&lines(&[
             "population_stats AS (",
             "    SELECT",
-            "        groupArrayIf(tuple(peer.entity_id, peer.value), peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows,",
+            "        groupArrayIf(tuple(peer.entity_id, toNullable(peer.value)), peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows,",
         ])));
         assert!(compiled.sql.contains(&lines(&[
             "SELECT",
@@ -574,6 +577,39 @@ mod tests {
             "SETTINGS join_use_nulls = 1",
         ])));
         assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    /// A target the read observed nothing for has no value, and both
+    /// populations must say so the same way. The cohort path reads NULL out of
+    /// its outer join; the tenant path reads it out of `arrayFirst`'s default
+    /// tuple, which only carries NULL because the value element is nullable —
+    /// a count fold's own value is not, and would read as a zero.
+    #[test]
+    fn a_target_the_read_observed_nothing_for_reads_no_value_rather_than_a_zero() {
+        for (population, capture) in [
+            (
+                declared(),
+                "    maxIf(peer.value, peer.entity_id = targets.entity_id) AS target_value,",
+            ),
+            (
+                ComparisonPopulation::Tenant,
+                "        groupArrayIf(tuple(peer.entity_id, toNullable(peer.value)), peer.entity_id IN (SELECT entity_id FROM targets)) AS target_rows,",
+            ),
+        ] {
+            let named = format!("{population:?}");
+            let compiled = compile(
+                &cohort_metric(),
+                &[measure("prs_merged", None)],
+                &query(view(population)),
+            );
+
+            assert!(compiled.sql.contains(capture), "{named}: {}", compiled.sql);
+            assert!(
+                compiled.sql.ends_with("SETTINGS join_use_nulls = 1"),
+                "{named}: {}",
+                compiled.sql
+            );
+        }
     }
 
     #[test]
