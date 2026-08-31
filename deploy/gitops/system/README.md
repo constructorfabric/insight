@@ -73,7 +73,7 @@ managed-vs-bundled choice for the data stores above:
    toggles.
    On = self-host the stack in `insight-infra`. Off = don't (the cluster
    already runs observability, or stdout is enough).
-2. **Where do services export?** — the umbrella's `observability.otlp.endpoint`
+2. **Where do services export?** — the umbrella's `global.observability.otlp.endpoint`
    (`environments/<env>/values.yaml`). Point it at this stack's Alloy when the
    toggles are on; at your own collector for an external one; leave it empty
    for stdout-only.

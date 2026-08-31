@@ -86,7 +86,8 @@
         "imageRegistry":    { "type": "string" },
         "imagePullPolicy":  { "enum": ["Always", "IfNotPresent", "Never"] },
         "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
-        "storageClass":     { "type": "string" }
+        "storageClass":     { "type": "string" },
+        "observability":    { "$ref": "#/definitions/observability" }
       }
     },
 
@@ -120,6 +121,10 @@
     "identity":           { "$ref": "#/definitions/appService" },
     "frontend":           { "$ref": "#/definitions/appService" },
 
+    "observability": { "$ref": "#/definitions/observability" }
+  },
+
+  "definitions": {
     "observability": {
       "type": "object",
       "properties": {
@@ -137,10 +142,7 @@
           }
         }
       }
-    }
-  },
-
-  "definitions": {
+    },
     "infraDep": {
       "type": "object",
       "properties": {

@@ -4,7 +4,7 @@
 ##   logs: node-local pod stdout → Loki (DaemonSet tail, below);
 ##   OTLP: services push to alloy:4317 (gRPC) / 4318 (HTTP) — metrics
 ##         remote-write to VictoriaMetrics, traces forward to Tempo.
-## The umbrella's `observability.otlp.endpoint` points here when the
+## The umbrella's `global.observability.otlp.endpoint` points here when the
 ## bundled stack is on.
 ##
 ## Chart: grafana/alloy   (https://grafana.github.io/helm-charts)
@@ -103,7 +103,7 @@ alloy:
       }
 
       // ── OTLP entry point for the app services (umbrella
-      //    `observability.otlp.endpoint` → alloy:4317). Metrics go to
+      //    `global.observability.otlp.endpoint` → alloy:4317). Metrics go to
       //    VictoriaMetrics, traces to Tempo. The logs signal is NOT routed:
       //    logs reach Loki through the stdout tail above, and routing both
       //    would double every line.

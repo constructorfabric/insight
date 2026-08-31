@@ -269,7 +269,7 @@ global:
   # cluster rather than taking a flag, so a drift here silently seeds a
   # tenant nobody can log into).
   tenantDefaultId: "3f1d8f4e-6c2a-4a9b-91d7-8e5c0b2a7f36"
-  # Not set, and worth knowing why: `observability.otlp.endpoint` is left at
+  # Not set, and worth knowing why: `global.observability.otlp.endpoint` is left at
   # the chart's empty default, which means every service emits structured
   # JSON to stdout and exports no OTLP. There is no collector on this stand
   # to export to (all `system.*` toggles in inventory.yaml are false), and a

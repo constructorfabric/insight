@@ -16,7 +16,7 @@ service:
   tokenPort: 8093
 
 # OpenTelemetry export. Off by default; the umbrella overrides these via
-# APP__opentelemetry__* env vars when `observability.otlp.endpoint` is set.
+# APP__opentelemetry__* env vars when `global.observability.otlp.endpoint` is set.
 opentelemetry:
   metrics:
     enabled: false

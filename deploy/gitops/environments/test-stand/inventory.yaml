@@ -205,7 +205,7 @@ system:
   airbyte: false
   argoWorkflows: false
   # Observability: this stand exports nothing over OTLP
-  # (`observability.otlp.endpoint` is left at the chart's empty default in
+  # (`global.observability.otlp.endpoint` is left at the chart's empty default in
   # values.yaml, i.e. structured JSON to stdout only). Flipping these on
   # would self-host an LGTM stack that nothing points at.
   victoriametrics: false

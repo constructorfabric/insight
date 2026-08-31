@@ -3,7 +3,9 @@ Anchor `insight.validate` in a normal template so it runs under
 `helm lint` (which does not render NOTES.txt). The validator emits
 no output on success — `fail`s on missing required fields. */ -}}
 {{- include "insight.validate" . }}
-{{- $obs := default dict .Values.observability -}}
+{{- /* Canonical location is global.observability (subcharts hash it to roll
+pods); a legacy top-level observability block still overrides the defaults. */ -}}
+{{- $obs := mergeOverwrite (deepCopy (default dict (default dict .Values.global).observability)) (deepCopy (default dict .Values.observability)) -}}
 {{- $obsLogs := default dict $obs.logs -}}
 {{- $obsOtlp := default dict $obs.otlp -}}
 {{- $otlpEndpoint := default "" $obsOtlp.endpoint -}}
