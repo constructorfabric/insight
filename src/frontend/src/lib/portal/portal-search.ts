@@ -49,6 +49,12 @@ export interface PortalSearch {
    * must both land on the same connector's streams.
    */
   conn?: string;
+  /**
+   * One repository under inspection, by its dimension VALUE (`<source>:<owner>/<repo>`).
+   * The value and not the label, because two repositories can share a display
+   * name and a link has to reproduce the one that was opened.
+   */
+  repo?: string;
   /** Org-scope root: a manager's person id. Absent = the viewer's own subtree. */
   scope?: string;
   /** Narrow the scope to direct reports only. */
@@ -104,6 +110,7 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
     // Validated to the same slug shape the endpoint accepts as a `scope`, so a
     // hand-edited value degrades to the overview instead of a 400.
     conn: CONNECTOR_SLUG.test(str(raw.conn) ?? "") ? str(raw.conn) : undefined,
+    repo: str(raw.repo),
     // Lower-cased to match `normalizePersonId`: the same id reaches us from a
     // link, an identity record or a hand-edited URL, and the resolver compares
     // it as a string. An id outside the viewer's subtree (or a pre-cutover
@@ -130,6 +137,7 @@ export const PORTAL_SEARCH_KEYS = [
   "find",
   "dir",
   "lens",
+  "repo",
   "scope",
   "direct",
   "slice",

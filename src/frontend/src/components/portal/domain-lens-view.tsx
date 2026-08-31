@@ -1,7 +1,7 @@
 import { ExplainWithAi } from "@/components/widgets/dashboard/explain-with-ai";
 import { trendSnapshot } from "@/lib/insight/explain-snapshot";
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { MetricName } from "@/components/widgets/metric-help-tooltip";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { AttentionList } from "@/components/portal/attention-list";
@@ -77,11 +77,20 @@ import { peopleEvidenceView } from "@/lib/portal/evidence-people";
 import { formatMetricValue } from "@/lib/format";
 import { seriesColors } from "@/lib/series-colors";
 import {
+  labelForDimensionValue,
   toBarRows,
   UNSPLIT_SEGMENT,
   type BarEntry,
   type BarRow,
+  type BarSegment,
 } from "@/lib/portal/bar-rows";
+import { narrowedEvidenceSelection } from "@/lib/metrics/evidence-targets";
+import { evidenceMetricFor } from "@/lib/metrics/evidence-via";
+import {
+  dayHourMatrix,
+  HOUR_BLOCKS,
+  WEEKDAY_LABELS,
+} from "@/lib/portal/day-hour-matrix";
 import { mergeEventHistogram } from "@/lib/portal/event-histogram";
 import { peerPopulationLabel } from "@/lib/portal/use-cohort-label";
 import {
@@ -110,12 +119,13 @@ import {
   buildTrendData,
   pickTrendBucket,
 } from "@/lib/portal/trend-data";
-import { bucketBreakdown } from "@/lib/portal/trend-drilldown";
+import { bucketBreakdown, bucketRange } from "@/lib/portal/trend-drilldown";
 import {
   TrendDrilldownDialog,
   type TrendDrilldownState,
 } from "@/components/portal/trend-drilldown-dialog";
 import { usePortalNavActions, usePortalSlice } from "@/lib/portal/portal-nav";
+import { usePortalSearch } from "@/lib/portal/portal-search";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import type { TeamMember } from "@/types/insight";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
@@ -156,9 +166,37 @@ export function DomainLensView({
   // takes its tile with it, and a section left with none of its own is gone
   // rather than drawn empty (`visibleSections`).
   const showPlanned = usePortalShowPlanned();
+  // One repository under inspection turns the lens into that repository's
+  // screen: the drilldown's own sections, every request filtered to the value,
+  // and a breadcrumb back. A `repo` that outlives its lens is ignored rather
+  // than rendering a screen about a value this lens does not group by.
+  const { repo } = usePortalSearch();
+  const { openRepository } = usePortalNavActions();
+  const evidence = useMetricEvidenceOptional();
+  const scoped = repo && declared.drilldown ? repo : null;
+  const scopeDimension = scoped ? (declared.drilldown?.dimension ?? null) : null;
   const config = useMemo(
-    () => visibleSections(declared, showPlanned),
-    [declared, showPlanned]
+    () =>
+      visibleSections(
+        scoped && declared.drilldown
+          ? {
+              ...declared,
+              tagline: declared.drilldown.tagline ?? declared.tagline,
+              sections: declared.drilldown.sections,
+            }
+          : declared,
+        showPlanned
+      ),
+    [declared, showPlanned, scoped]
+  );
+  // Every request the screen makes carries this, so no section can forget it
+  // and quietly answer about the whole tenant instead.
+  const scopeFilters = useMemo(
+    () =>
+      scopeDimension && scoped
+        ? [{ dimension: scopeDimension, values: [scoped] }]
+        : undefined,
+    [scopeDimension, scoped]
   );
 
 
@@ -205,10 +243,11 @@ export function DomainLensView({
     () => ({
       metrics: fetchKeys.map((key) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "period" as const }, { view: "peer" as const }],
       })),
     }),
-    [fetchKeys]
+    [fetchKeys, scopeFilters]
   );
   const grid = useMemberGridData(
     gridCollection.metrics.length ? gridCollection : EMPTY_COLLECTION,
@@ -240,11 +279,12 @@ export function DomainLensView({
       metrics: trendBucket
         ? trendKeys.map((key) => ({
             key,
+            ...(scopeFilters ? { filters: scopeFilters } : {}),
             views: [{ view: "timeseries" as const, bucket: trendBucket }],
           }))
         : [],
     }),
-    [trendKeys, trendBucket]
+    [trendKeys, trendBucket, scopeFilters]
   );
   const trend = useMetricCollection(
     trendCollection.metrics.length && memberIds.length
@@ -280,10 +320,11 @@ export function DomainLensView({
     return {
       metrics: [...dims].map(([key, set]) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "breakdown" as const, dimensions: [...set] }],
       })),
     };
-  }, [breakdownSections]);
+  }, [breakdownSections, scopeFilters]);
   const compData = useMetricCollection(
     breakdownSections.length && memberIds.length
       ? compCollection
@@ -308,10 +349,11 @@ export function DomainLensView({
     () => ({
       metrics: eventSections.map((s) => ({
         key: s.metric,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "histogram" as const }],
       })),
     }),
-    [eventSections]
+    [eventSections, scopeFilters]
   );
   const eventData = useMetricCollection(
     eventSections.length && memberIds.length
@@ -344,15 +386,53 @@ export function DomainLensView({
     return {
       metrics: [...dimensionByMetric].map(([key, dimension]) => ({
         key,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
         views: [{ view: "rollup" as const, dimensions: [dimension] }],
       })),
     };
-  }, [tableSections]);
+  }, [tableSections, scopeFilters]);
   const tableData = useMetricCollection(
     tableSections.length && memberIds.length
       ? tableCollection
       : EMPTY_COLLECTION,
     tableSections.length && memberIds.length
+      ? { type: "person", ids: memberIds }
+      : { type: "person", ids: [] },
+    dateRange
+  );
+
+  // Heatmap: a timeseries of its own, because the same metric cannot carry two
+  // timeseries views in one request — and the trend already claims that view
+  // for the metrics it charts. Bucketed by DAY whatever the trend chose: the
+  // matrix reads the weekday off each bucket, so a week-sized bucket would
+  // collapse five weekdays into one cell.
+  const hourSections = useMemo(
+    () =>
+      config.sections.filter(
+        (s): s is Extract<SectionSpec, { kind: "heatmap-hours" }> =>
+          s.kind === "heatmap-hours"
+      ),
+    [config]
+  );
+  const hourCollection = useMemo<MetricCollectionConfig>(
+    () => ({
+      metrics: hourSections.map((s) => ({
+        key: s.metric,
+        ...(scopeFilters ? { filters: scopeFilters } : {}),
+        views: [
+          {
+            view: "timeseries" as const,
+            bucket: "day" as const,
+            dimensions: [HOUR_BLOCK_DIMENSION],
+          },
+        ],
+      })),
+    }),
+    [hourSections, scopeFilters]
+  );
+  const hourData = useMetricCollection(
+    hourSections.length && memberIds.length ? hourCollection : EMPTY_COLLECTION,
+    hourSections.length && memberIds.length
       ? { type: "person", ids: memberIds }
       : { type: "person", ids: [] },
     dateRange
@@ -428,6 +508,18 @@ export function DomainLensView({
     );
   }
 
+  // The value's own label, found wherever the responses named it. The URL
+  // carries the id, which is `<source>:<owner>/<repo>` and not what a reader
+  // recognises; the id stands in until a row arrives that knows better.
+  const scopedLabel = scoped
+    ? (labelForDimensionValue(
+        scopeDimension,
+        scoped,
+        compData.byKey,
+        tableData.byKey
+      ) ?? null)
+    : null;
+
   // The affordance sits with the page title, not on the chart: it explains the
   // view, and a chart that grows a second card would carry two of them.
   const trendSpec = config.sections.find(
@@ -441,12 +533,42 @@ export function DomainLensView({
   // disagree: under a flat policy that roster is the whole organisation, and
   // under an org chart it is the viewer's own subtree — the permission
   // boundary identity already enforces.
-  const openTrendDrilldown = (chart: TrendChart) => {
+  // One hour block over the whole period — the narrowest slice of a heatmap the
+  // evidence request can express. A single cell is that block on ONE weekday,
+  // and there is no weekday predicate to ask for.
+  const openHourBlock = (block: string) => {
+    const heat = config.sections.find(
+      (section): section is Extract<SectionSpec, { kind: "heatmap-hours" }> =>
+        section.kind === "heatmap-hours"
+    );
+    const carrier = heat && grid.byKey.get(evidenceMetricFor(heat.metric));
+    if (!evidence || !carrier?.drilldown) return;
+    const selection = narrowedEvidenceSelection(carrier, memberIds, {
+      filters: [
+        ...(scopeDimension && scoped
+          ? [{ dimension: scopeDimension, value: scoped }]
+          : []),
+        { dimension: HOUR_BLOCK_DIMENSION, value: block },
+      ],
+    });
+    if (selection) {
+      evidence.openEvidenceTargets([{ selection, label: carrier.label }], {
+        activeMetricKey: selection.metric_key,
+      });
+    }
+  };
+
+  const openTrendDrilldown = (chart: TrendChart, bucketStart?: string) => {
+    // A clicked point asks about its own bucket; the card asks about the
+    // period. The label says which, so the dialog never looks like the other.
+    const range = bucketStart
+      ? bucketRange(bucketStart, trendBucket ?? "day")
+      : { from: dateRange.from, to: dateRange.to };
     setDrilldown({
       metricKey: chart.derived ? null : chart.drilldownKey,
-      label: chart.title,
+      label: bucketStart ? `${chart.title} · ${bucketStart}` : chart.title,
       bucketLabel: trendBucket ?? "period",
-      period: { from: dateRange.from, to: dateRange.to },
+      period: range,
       members: scopedMembers,
       breakdown: bucketBreakdown(chart.drilldownKey, trend.byKey, scopedMembers),
     });
@@ -454,9 +576,26 @@ export function DomainLensView({
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
+      {scoped ? (
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => openRepository("")}
+            className="cursor-pointer text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            {declared.title}
+          </button>
+          <span aria-hidden className="text-muted-foreground">
+            ›
+          </span>
+          <span className="font-medium">{scopedLabel ?? scoped}</span>
+        </nav>
+      ) : null}
       <div className="relative flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">{config.title}</h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            {scoped ? (scopedLabel ?? scoped) : config.title}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {orgScope.count} {orgScope.count === 1 ? "person" : "people"} ·{" "}
             {config.tagline ?? "trend & balance"}
@@ -488,6 +627,8 @@ export function DomainLensView({
           compRefetch={compData.refetch}
           eventByKey={eventData.byKey}
           eventIsError={eventData.isError}
+          hourByKey={hourData.byKey}
+          hourIsError={hourData.isError}
           tableByKey={tableData.byKey}
           tableIsError={tableData.isError}
           tableRefetch={tableData.refetch}
@@ -497,6 +638,14 @@ export function DomainLensView({
           nameByEntity={nameByEntity}
           personIdByEntity={personIdByEntity}
           onOpenChart={openTrendDrilldown}
+          onOpenValue={
+            // Only from the listing screen: a table INSIDE the drilldown is
+            // already about one value, so descending again means nothing.
+            !scoped && declared.drilldown
+              ? (value) => openRepository(value)
+              : undefined
+          }
+          onOpenBlock={openHourBlock}
         />
       ))}
 
@@ -542,6 +691,8 @@ function Section({
   compRefetch,
   eventByKey,
   eventIsError,
+  hourByKey,
+  hourIsError,
   tableByKey,
   tableIsError,
   tableRefetch,
@@ -551,6 +702,8 @@ function Section({
   nameByEntity,
   personIdByEntity,
   onOpenChart,
+  onOpenValue,
+  onOpenBlock,
 }: {
   spec: SectionSpec;
   grid: GridData;
@@ -561,6 +714,8 @@ function Section({
   compRefetch: () => void;
   eventByKey: Map<string, NormalizedMetricResult>;
   eventIsError: boolean;
+  hourByKey: Map<string, NormalizedMetricResult>;
+  hourIsError: boolean;
   tableByKey: Map<string, NormalizedMetricResult>;
   tableIsError: boolean;
   tableRefetch: () => void;
@@ -569,7 +724,11 @@ function Section({
   personIdByEntity: Map<string, string>;
   cohortOf: (id: string) => string | null;
   cohortLabel: string;
-  onOpenChart: (chart: TrendChart) => void;
+  onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
+  /** Descend into one dimension value; absent when the lens has no screen for one. */
+  onOpenValue?: (value: string) => void;
+  /** The records of one hour block of a heatmap. */
+  onOpenBlock?: (block: string) => void;
 }) {
   switch (spec.kind) {
     case "headline":
@@ -654,6 +813,25 @@ function Section({
           memberIds={memberIds}
         />
       );
+    case "contributors":
+      return (
+        <ContributorsSection
+          spec={spec}
+          grid={grid}
+          memberIds={memberIds}
+          nameByEntity={nameByEntity}
+        />
+      );
+    case "heatmap-hours":
+      return (
+        <HeatmapHoursSection
+          spec={spec}
+          hourByKey={hourByKey}
+          hourIsError={hourIsError}
+          memberIds={memberIds}
+          onOpenBlock={onOpenBlock}
+        />
+      );
     case "dimension-table":
       return (
         <DimensionTableSection
@@ -661,6 +839,7 @@ function Section({
           tableByKey={tableByKey}
           tableIsError={tableIsError}
           tableRefetch={tableRefetch}
+          onOpenValue={onOpenValue}
         />
       );
     case "ownership":
@@ -671,6 +850,7 @@ function Section({
           compIsError={compIsError}
           compRefetch={compRefetch}
           memberIds={memberIds}
+          nameByEntity={nameByEntity}
         />
       );
     case "attention":
@@ -1066,18 +1246,25 @@ function HeadlineSection({
       if (now == null) return null;
       const prev = representative(grid.previousByKey.get(key), memberIds);
       const isSum = r.computation === "sum";
-      return { key, r, now, prev, isSum };
+      // The records that carry the figure: its own, unless the family says
+      // another metric holds them (a line count is carried by commits).
+      const carrier = grid.byKey.get(evidenceMetricFor(key));
+      return { key, r, now, prev, isSum, carrier };
     })
     .filter((x): x is NonNullable<typeof x> => x != null);
   if (!cards.length) return null;
 
   // Every drillable card of the row, so the dialog a reader opens on one of
   // them lists its neighbours — the same set the members grid offers from a
-  // row of cells.
+  // row of cells. Deduplicated by metric: two tiles carried by one metric
+  // would otherwise name the same key twice, which the request refuses.
+  const seen = new Set<string>();
   const targets = cards.flatMap((c) => {
-    if (!c.r.drilldown) return [];
-    const selection = personsEvidenceSelection(c.r.selection, memberIds);
-    return selection ? [{ selection, label: c.r.label }] : [];
+    if (!c.carrier?.drilldown || seen.has(c.carrier.metric_key)) return [];
+    const selection = personsEvidenceSelection(c.carrier.selection, memberIds);
+    if (!selection) return [];
+    seen.add(c.carrier.metric_key);
+    return [{ selection, label: c.carrier.label }];
   });
 
   return (
@@ -1120,14 +1307,15 @@ function HeadlineCard({
     now: number;
     prev: number | null;
     isSum: boolean;
+    carrier: NormalizedMetricResult | undefined;
   };
   targets: readonly { selection: MetricEvidenceSelection; label: string }[];
   memberIds: readonly string[];
 }) {
   const evidence = useMetricEvidenceOptional();
   const c = card;
-  const selection = c.r.drilldown
-    ? personsEvidenceSelection(c.r.selection, memberIds)
+  const selection = c.carrier?.drilldown
+    ? personsEvidenceSelection(c.carrier.selection, memberIds)
     : null;
   const body = (
     <CardContent className="p-4">
@@ -1143,15 +1331,15 @@ function HeadlineCard({
         <Delta now={c.now} prev={c.prev} direction={c.r.direction} />
       </div>
       <div className={cn("mt-1", TEXT_FIGURE)}>
-        {formatMetricValue(
-          c.isSum ? perCapita(c.r, memberIds) : c.now,
-          c.r.format,
-          c.r.unit
-        )}
+        {formatMetricValue(c.now, c.r.format, c.r.unit)}
       </div>
+      {/* The team total leads, because the dialog this card opens lists the
+        roster's records — a per-person figure on the face and a roster-sized
+        table behind it read as a contradiction. The per-person figure keeps
+        its place underneath, where the comparison it serves still works. */}
       <div className="text-xs text-muted-foreground">
         {c.isSum
-          ? `per active person · ${formatMetricValue(c.now, c.r.format, c.r.unit)} team total`
+          ? `team total · ${formatMetricValue(perCapita(c.r, memberIds), c.r.format, c.r.unit)} per active person`
           : "median / person"}
       </div>
     </CardContent>
@@ -1323,7 +1511,7 @@ function TrendSection({
   trend: TrendData;
   bucket: MetricBucket;
   memberIds: readonly string[];
-  onOpenChart: (chart: TrendChart) => void;
+  onOpenChart: (chart: TrendChart, bucketStart?: string) => void;
 }) {
   const charts = trendCharts(spec, grid, trend, memberIds);
 
@@ -1361,6 +1549,7 @@ function TrendSection({
             series={chart.series}
             data={chart.data}
             isPending={trend.isPending}
+            onBucketClick={(bucketStart) => onOpenChart(chart, bucketStart)}
           />
         </button>
       ))}
@@ -1760,6 +1949,7 @@ function CompositionSection({
   grid: GridData;
   memberIds: readonly string[];
 }) {
+  const evidence = useMetricEvidenceOptional();
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -1814,9 +2004,32 @@ function CompositionSection({
       }
     }
   }
-  const rows = toBarRows(bucket);
+  const rows = toBarRows(bucket, spec.splitBy);
   // A single 100%-share bar is an empty shell (rule 11), same as ByUnitSection.
   if (rows.length < 2) return null;
+
+  // The records behind a bar are the ones that carry the figure, which for a
+  // line count is its commits rather than its own per-day summary.
+  const carrier = grid.byKey.get(evidenceMetricFor(spec.metric));
+  const openBar =
+    evidence && carrier?.drilldown
+      ? (row: BarRow, segment?: BarSegment) => {
+          const selection = narrowedEvidenceSelection(carrier, memberIds, {
+            filters: [
+              { dimension: spec.dimension, value: row.key },
+              ...(segment && spec.splitBy
+                ? [{ dimension: spec.splitBy, value: segment.seed }]
+                : []),
+            ],
+          });
+          if (selection) {
+            evidence.openEvidenceTargets(
+              [{ selection, label: carrier.label }],
+              { activeMetricKey: selection.metric_key }
+            );
+          }
+        }
+      : undefined;
 
   return (
     <BarList
@@ -1825,13 +2038,175 @@ function CompositionSection({
       format={r?.format ?? "integer"}
       unit={r?.unit ?? null}
       notes={spec.notes}
+      onOpen={openBar}
+      canOpen={(_row, segment) => segment?.seed !== UNSPLIT_SEGMENT}
     />
+  );
+}
+
+/* ── contributors + heatmap-hours (inside a drilldown) ───────────────── */
+
+const CONTRIBUTOR_ROWS = 8;
+
+/**
+ * The people who carried this one value, ranked.
+ *
+ * Named, unlike every roster-wide section: the subject is already one
+ * repository, and "who works on this" is the question a reader descends to ask.
+ * The roster-wide screens stay anonymous — see `AttentionSection` for the only
+ * other place a name appears.
+ */
+function ContributorsSection({
+  spec,
+  grid,
+  memberIds,
+  nameByEntity,
+}: {
+  spec: Extract<SectionSpec, { kind: "contributors" }>;
+  grid: GridData;
+  memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
+}) {
+  const r = grid.byKey.get(spec.metric);
+  if (!r) return null;
+
+  const ranked = entityValues(r, memberIds)
+    .filter((e) => e.value > 0)
+    .sort((a, b) => b.value - a.value);
+  if (ranked.length < 2) return null;
+
+  const limit = spec.limit ?? CONTRIBUTOR_ROWS;
+  const bucket = new Map<string, BarEntry>();
+  for (const entry of ranked.slice(0, limit)) {
+    bucket.set(entry.id, {
+      label: nameByEntity.get(entry.id) ?? entry.id,
+      value: entry.value,
+    });
+  }
+  const rest = ranked.slice(limit);
+  if (rest.length) {
+    bucket.set("__rest__", {
+      label: `${rest.length} more ${rest.length === 1 ? "person" : "people"}`,
+      value: rest.reduce((sum, e) => sum + e.value, 0),
+    });
+  }
+
+  return (
+    <BarList
+      title={spec.title}
+      rows={toBarRows(bucket)}
+      format={r.format}
+      unit={r.unit}
+    />
+  );
+}
+
+/**
+ * Weekday × two-hour block: when the work lands.
+ *
+ * The weekday comes from each bucket's own date and the block from the
+ * metric's `hour_block` dimension, which is why the request behind this is
+ * bucketed by DAY — a week-sized bucket has no weekday to read.
+ */
+function HeatmapHoursSection({
+  spec,
+  hourByKey,
+  hourIsError,
+  memberIds,
+  onOpenBlock,
+}: {
+  spec: Extract<SectionSpec, { kind: "heatmap-hours" }>;
+  hourByKey: Map<string, NormalizedMetricResult>;
+  hourIsError: boolean;
+  memberIds: readonly string[];
+  /**
+   * The records of one hour block, across the whole period. A CELL cannot be
+   * opened: it is one weekday of one block, and the evidence request has no
+   * weekday predicate to express that — a dialog for the block alone would
+   * answer a wider question than the cell asks.
+   */
+  onOpenBlock?: (block: string) => void;
+}) {
+  if (hourIsError) return null;
+  const r = hourByKey.get(spec.metric);
+  if (!r) return null;
+
+  const { cells, max, total } = dayHourMatrix(
+    memberIds.flatMap((id) => forEntity(r, id).series)
+  );
+  if (total <= 0 || max <= 0) return null;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        {spec.title} · {formatMetricValue(total, r.format, r.unit)}
+      </p>
+      <Card>
+        <CardContent className="flex flex-col gap-3 p-4">
+          <div
+            className="grid gap-px text-xs"
+            style={{
+              gridTemplateColumns: `3rem repeat(${HOUR_BLOCKS.length}, 1fr)`,
+            }}
+          >
+            <div />
+            {HOUR_BLOCKS.map((block, index) => (
+              <div key={block} className="text-center text-muted-foreground">
+                {onOpenBlock ? (
+                  // Every block is openable, including the ones whose label is
+                  // suppressed for density: the button fills its column, so an
+                  // unlabelled one is still a target for a mouse and a
+                  // screen reader both.
+                  <button
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-label={`Open the records from the ${block}:00 block`}
+                    onClick={() => onOpenBlock(block)}
+                    className="w-full cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    <span aria-hidden={index % 2 !== 0}>
+                      {index % 2 === 0 ? block : "·"}
+                    </span>
+                  </button>
+                ) : (
+                  <span>{index % 2 === 0 ? block : ""}</span>
+                )}
+              </div>
+            ))}
+            {WEEKDAY_LABELS.map((day, dayIndex) => (
+              <Fragment key={day}>
+                <div className="self-center text-muted-foreground">{day}</div>
+                {HOUR_BLOCKS.map((block, blockIndex) => {
+                  const value = cells[dayIndex]?.[blockIndex] ?? 0;
+                  return (
+                    <div
+                      key={block}
+                      title={`${day} ${block}:00 · ${formatMetricValue(value, r.format, r.unit)}`}
+                      className="aspect-square rounded-[3px]"
+                      style={{
+                        backgroundColor: value
+                          ? `color-mix(in oklab, var(--primary) ${Math.round((value / max) * 100)}%, var(--muted))`
+                          : "var(--muted)",
+                      }}
+                    />
+                  );
+                })}
+              </Fragment>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{spec.caption}</p>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
 /* ── dimension-table (rollup: one row per dimension value) ───────────── */
 
 const DIMENSION_TABLE_ROWS = 12;
+
+/** The dimension a `heatmap-hours` section reads. */
+const HOUR_BLOCK_DIMENSION = "hour_block";
 
 function tableCellText(
   value: number | null | undefined,
@@ -1845,12 +2220,16 @@ function DimensionTableSection({
   tableByKey,
   tableIsError,
   tableRefetch,
+  onOpenValue,
 }: {
   spec: Extract<SectionSpec, { kind: "dimension-table" }>;
   tableByKey: Map<string, NormalizedMetricResult>;
   tableIsError: boolean;
   tableRefetch: () => void;
+  /** Descend into one row; absent when the lens has no screen for a value. */
+  onOpenValue?: (value: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (tableIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -1914,8 +2293,8 @@ function DimensionTableSection({
   if (ranked.length < 2) return null;
 
   const limit = spec.limit ?? DIMENSION_TABLE_ROWS;
-  const visible = ranked.slice(0, limit);
-  const rest = ranked.slice(limit);
+  const visible = expanded ? ranked : ranked.slice(0, limit);
+  const rest = expanded ? [] : ranked.slice(limit);
   // A remainder only for what still adds up: sums add; a median or a ratio
   // over "everything else" is not derivable from the shown rows.
   const remainder = rest.length
@@ -1937,9 +2316,20 @@ function DimensionTableSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        {spec.title} · {ranked.length} {spec.noun}
-      </p>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          {spec.title} · {ranked.length} {spec.noun}
+        </p>
+        {expanded && ranked.length > limit ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="cursor-pointer text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            Show top {limit}
+          </button>
+        ) : null}
+      </div>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -1961,7 +2351,17 @@ function DimensionTableSection({
                     className="max-w-64 truncate text-sm font-medium"
                     title={row.label}
                   >
-                    {row.label}
+                    {onOpenValue ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenValue(row.value)}
+                        className="max-w-full cursor-pointer truncate underline-offset-2 hover:underline"
+                      >
+                        {row.label}
+                      </button>
+                    ) : (
+                      row.label
+                    )}
                   </TableCell>
                   {results.map((r) => (
                     <TableCell
@@ -1978,7 +2378,18 @@ function DimensionTableSection({
               ))}
               {remainder ? (
                 <TableRow className="text-muted-foreground">
-                  <TableCell className="text-sm">{remainder.label}</TableCell>
+                  <TableCell className="text-sm">
+                    {/* The remainder is the way into the rows it hides, not a
+                      dead summary line: a reader who wants the long tail has
+                      nowhere else to ask for it. */}
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(true)}
+                      className="cursor-pointer underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      {remainder.label}
+                    </button>
+                  </TableCell>
                   {results.map((r) => (
                     <TableCell
                       key={r.metric_key}
@@ -2015,13 +2426,16 @@ function OwnershipSection({
   compIsError,
   compRefetch,
   memberIds,
+  nameByEntity,
 }: {
   spec: Extract<SectionSpec, { kind: "ownership" }>;
   compData: Map<string, NormalizedMetricResult>;
   compIsError: boolean;
   compRefetch: () => void;
   memberIds: readonly string[];
+  nameByEntity: Map<string, string>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (compIsError) {
     return (
       <section className="flex flex-col gap-3">
@@ -2062,15 +2476,27 @@ function OwnershipSection({
   }
   const rows = [...byValue.entries()]
     .map(([value, bucket]) => {
-      const shares = [...bucket.byEntity.values()].sort((a, b) => b - a);
+      const ranked = [...bucket.byEntity.entries()].sort((a, b) => b[1] - a[1]);
+      const shares = ranked.map(([, share]) => share);
       const top1 = (shares[0] ?? 0) / bucket.total;
       const top3 =
         shares.slice(0, 3).reduce((sum, v) => sum + v, 0) / bucket.total;
-      return { value, label: bucket.label, total: bucket.total, top1, top3 };
+      const nameOf = ([id]: [string, number]) => nameByEntity.get(id) ?? id;
+      return {
+        value,
+        label: bucket.label,
+        total: bucket.total,
+        top1,
+        top3,
+        // The bar stays anonymous; hovering a segment is the reader asking.
+        topName: ranked[0] ? nameOf(ranked[0]) : null,
+        nextNames: ranked.slice(1, 3).map(nameOf),
+        othersCount: Math.max(0, ranked.length - 3),
+      };
     })
     .sort((a, b) => b.total - a.total);
   if (rows.length < 2) return null;
-  const visible = rows.slice(0, OWNERSHIP_ROWS);
+  const visible = expanded ? rows : rows.slice(0, OWNERSHIP_ROWS);
 
   return (
     <section className="flex flex-col gap-3">
@@ -2079,6 +2505,7 @@ function OwnershipSection({
       </p>
       <Card>
         <CardContent className="flex flex-col gap-2 p-4">
+         <TooltipProvider delay={HOVER_DELAY_MS}>
           <ul
             className="flex flex-wrap items-center gap-x-4 gap-y-1 pb-1"
             aria-label="What each colour in a bar means"
@@ -2109,20 +2536,33 @@ function OwnershipSection({
                 role="img"
                 aria-label={`${row.label}: top person ${ownershipPct(row.top1)}, top three ${ownershipPct(row.top3)}`}
               >
-                <span
+                <OwnershipSegment
                   className="rounded-[3px] bg-primary"
-                  style={{ width: `${row.top1 * 100}%` }}
+                  width={row.top1 * 100}
+                  who={row.topName ? [row.topName] : []}
+                  share={ownershipPct(row.top1)}
+                  role="Top person"
                 />
                 {row.top3 > row.top1 ? (
-                  <span
+                  <OwnershipSegment
                     className="rounded-[3px] bg-primary/50"
-                    style={{ width: `${(row.top3 - row.top1) * 100}%` }}
+                    width={(row.top3 - row.top1) * 100}
+                    who={row.nextNames}
+                    share={ownershipPct(row.top3 - row.top1)}
+                    role="Next 2"
                   />
                 ) : null}
                 {row.top3 < 1 ? (
-                  <span
+                  <OwnershipSegment
                     className="rounded-[3px] border border-border bg-muted"
-                    style={{ width: `${(1 - row.top3) * 100}%` }}
+                    width={(1 - row.top3) * 100}
+                    who={[]}
+                    share={ownershipPct(1 - row.top3)}
+                    role={
+                      row.othersCount
+                        ? `Everyone else · ${row.othersCount} ${row.othersCount === 1 ? "person" : "people"}`
+                        : "Everyone else"
+                    }
                   />
                 ) : null}
               </div>
@@ -2140,14 +2580,54 @@ function OwnershipSection({
               </div>
             </div>
           ))}
-          {rows.length > visible.length ? (
-            <p className="text-xs text-muted-foreground">
-              +{rows.length - visible.length} more
-            </p>
+          {rows.length > visible.length || expanded ? (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="cursor-pointer self-start pt-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {expanded
+                ? `Show top ${OWNERSHIP_ROWS}`
+                : `+${rows.length - visible.length} more`}
+            </button>
           ) : null}
+         </TooltipProvider>
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+/**
+ * One share of an ownership bar, named only when hovered.
+ *
+ * The bar's job is the shape of the concentration, which is why the row itself
+ * says no names. A reader who hovers is asking who, and withholding it there
+ * makes the section unusable for the decision it exists to inform.
+ */
+function OwnershipSegment({
+  className,
+  width,
+  who,
+  share,
+  role,
+}: {
+  className: string;
+  width: number;
+  who: readonly string[];
+  share: string;
+  role: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className={className} style={{ width: `${width}%` }} />}
+      />
+      <TooltipContent side="top">
+        {role} · {share}
+        {who.length ? ` · ${who.join(", ")}` : ""}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -2394,6 +2874,38 @@ const HOVER_DELAY_MS = 400;
 /** Rows shown before the reader opts into the full list. */
 const BAR_LIST_COLLAPSED = 12;
 
+/**
+ * One fill inside a bar — a button when its records can be opened, a plain
+ * span when they cannot. Same geometry either way, so a list where only some
+ * rows are drillable still draws one row of bars.
+ */
+function BarPiece({
+  className,
+  style,
+  onOpen,
+  label,
+}: {
+  className: string;
+  style?: CSSProperties;
+  onOpen?: () => void;
+  label: string;
+}) {
+  if (!onOpen) return <span className={className} style={style} />;
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      aria-label={`Open the records behind ${label}`}
+      onClick={onOpen}
+      className={cn(
+        className,
+        "cursor-pointer transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+      )}
+      style={style}
+    />
+  );
+}
+
 export function BarList({
   title,
   rows,
@@ -2401,6 +2913,8 @@ export function BarList({
   unit,
   showShare = true,
   notes,
+  onOpen,
+  canOpen,
 }: {
   title: string;
   rows: BarRow[];
@@ -2410,6 +2924,18 @@ export function BarList({
   showShare?: boolean;
   /** Below the bars, not above: it explains what was read, not what to read. */
   notes?: readonly string[];
+  /**
+   * The records behind one bar, or behind one of its segments. Omitted where
+   * the caller cannot narrow the figure — the bars then stay inert rather
+   * than offering a dialog that would answer a different question.
+   */
+  onOpen?: (row: BarRow, segment?: BarSegment) => void;
+  /**
+   * Whether ONE piece can be narrowed, when the list as a whole can. A
+   * segment the response did not name has no value to filter on, and an
+   * affordance that opens an empty dialog is worse than none.
+   */
+  canOpen?: (row: BarRow, segment?: BarSegment) => boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, BAR_LIST_COLLAPSED);
@@ -2461,7 +2987,7 @@ export function BarList({
               </ul>
             ) : null}
             {visible.map((row) => (
-              <div key={row.label} className="flex items-center gap-3">
+              <div key={row.key} className="flex items-center gap-3">
                 {/* A dimension value is often a path (`owner/repo`), and the part
                   that tells two rows apart is at the END — so the column grows
                   with the viewport and the full value stays on hover. */}
@@ -2495,12 +3021,19 @@ export function BarList({
                         <Tooltip key={segment.seed}>
                           <TooltipTrigger
                             render={
-                              <span
+                              <BarPiece
                                 className="h-full first:rounded-s last:rounded-e"
                                 style={{
                                   width: `${(segment.value / row.value) * 100}%`,
                                   backgroundColor: colors[segment.seed],
                                 }}
+                                onOpen={
+                                  onOpen &&
+                                  (canOpen?.(row, segment) ?? true)
+                                    ? () => onOpen(row, segment)
+                                    : undefined
+                                }
+                                label={`${row.label} · ${segment.label}`}
                               />
                             }
                           />
@@ -2508,11 +3041,20 @@ export function BarList({
                             {segment.label} ·{" "}
                             {formatMetricValue(segment.value, format, unit)} ·{" "}
                             {shareLabel((segment.value / row.value) * 100)}
+                            {onOpen ? " · click to open the records" : ""}
                           </TooltipContent>
                         </Tooltip>
                       ))
                     ) : (
-                      <span className="h-full w-full rounded bg-primary/25" />
+                      <BarPiece
+                        className="h-full w-full rounded bg-primary/25"
+                        onOpen={
+                          onOpen && (canOpen?.(row) ?? true)
+                            ? () => onOpen(row)
+                            : undefined
+                        }
+                        label={row.label}
+                      />
                     )}
                   </div>
                 </div>

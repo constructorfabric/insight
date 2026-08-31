@@ -18,6 +18,12 @@ describe("validatePortalSearch", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
     ).toMatchObject({ zone: "directions", dir: "dev", lens: "Delivery" });
+    // A repository is carried by its dimension VALUE, so a shared link
+    // reproduces the one that was opened even when two share a display name.
+    expect(
+      validatePortalSearch({ lens: "Repositories", repo: "src-a:acme/api" }),
+    ).toMatchObject({ lens: "Repositories", repo: "src-a:acme/api" });
+    expect(validatePortalSearch({ repo: "" }).repo).toBeUndefined();
   });
 
   it("lowercases the scope — an email is case-insensitive but our keys are not", () => {
