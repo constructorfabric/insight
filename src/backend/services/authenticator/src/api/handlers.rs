@@ -644,9 +644,10 @@ async fn mint_and_store_session(
     let token = csprng_token();
     let csrf_token = csprng_token();
 
-    // Default roles only — RBAC/ACL is a later initiative (DD-AUTH-07); the
-    // permissions service will replace these values, never the claim shape.
-    let roles = cfg.default_roles.clone();
+    // Per-user identity roles ride the JWT (#2374); `default_roles` stays the
+    // fallback when identity is unreachable or grants nothing. The values
+    // change, never the claim shape (DD-AUTH-07).
+    let roles = session_roles(state, &identity.person_id, &identity.tenant_id).await;
 
     // exp clamped to the session absolute cap (cheap hygiene, G3).
     let exp = (now + cfg.jwt_ttl_seconds).min(absolute_expires_at);
@@ -711,6 +712,30 @@ async fn mint_and_store_session(
         .await?;
 
     Ok((session_id, token))
+}
+
+/// The roles a session carries, freshly asked of identity. A roles blip must
+/// not fail a login or a refresh, so the error folds into the fallback here
+/// and is only logged.
+async fn session_roles(state: &AppState, person_id: &str, tenant_id: &str) -> Vec<String> {
+    let fetched = state.resolver.active_roles(person_id, tenant_id).await;
+    if let Err(e) = &fetched {
+        tracing::warn!(
+            error = format!("{e:#}"),
+            "identity roles fetch failed: falling back to default_roles"
+        );
+    }
+    effective_roles(fetched.ok(), &state.cfg.default_roles)
+}
+
+/// Fold an identity roles answer into the claim values: grants win; no answer
+/// or no grants falls back to `default_roles`, the pre-#2374 baseline every
+/// session used to carry.
+fn effective_roles(fetched: Option<Vec<String>>, default_roles: &[String]) -> Vec<String> {
+    match fetched {
+        Some(roles) if !roles.is_empty() => roles,
+        Some(_) | None => default_roles.to_vec(),
+    }
 }
 
 // ── /internal/authz ─────────────────────────────────────────────────────────
@@ -871,6 +896,10 @@ pub async fn me(Extension(state): Extension<Arc<AppState>>, jar: CookieJar) -> R
         "expires_at": record.expires_at,
         "refresh_at": refresh_at,
         "csrf_token": record.csrf_token,
+        // The stand-level preview-experiments capability (#2374): false keeps
+        // the whole previews surface structurally inert, so the SPA can drop
+        // it without asking anything else.
+        "experiments_enabled": state.cfg.experiments_enabled,
     });
     // View-as session (#1941): name the real principal so the SPA can show a
     // "viewing as X" banner. Absent on normal sessions.
@@ -978,6 +1007,37 @@ pub async fn refresh(
             Err(e) => internal_problem("session_store", &e),
         };
     }
+    // Roles converge on refresh (#2374): re-ask identity and store the answer
+    // so the next JWT reissue mints current values — a grant or revoke needs
+    // no re-login, only the accepted staleness window (JWT reissue + gateway
+    // exchange cache). An unreachable identity keeps the roles the session
+    // already carries; a refresh must not fail, or downgrade a session, over
+    // a roles blip.
+    match state
+        .resolver
+        .active_roles(&record.person_id, &record.tenant_id)
+        .await
+    {
+        Ok(fetched) => {
+            let roles = effective_roles(Some(fetched), &state.cfg.default_roles);
+            if roles != record.roles
+                && let Err(e) = state
+                    .sessions
+                    .update_session_roles(&session_id, &roles)
+                    .await
+            {
+                tracing::warn!(error = %e, session_id = %session_id, "refresh: storing re-fetched roles failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = format!("{e:#}"),
+                session_id = %session_id,
+                "refresh: roles re-fetch failed; keeping the session's current roles"
+            );
+        }
+    }
+
     tracing::debug!(session_id = %session_id, expires_at = new_expires_at, "session refreshed (credential rotated)");
     state.audit.emit(session_audit(
         "session_refresh",
@@ -1692,6 +1752,26 @@ fn internal_problem(context: &str, err: &anyhow::Error) -> Response {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_grants_win_and_everything_else_is_the_default_roles() {
+        let defaults = vec!["user".to_owned()];
+        for (case, fetched, expected) in [
+            (
+                "grants win",
+                Some(vec!["admin".to_owned(), "previews-admin".to_owned()]),
+                vec!["admin".to_owned(), "previews-admin".to_owned()],
+            ),
+            ("no grants falls back", Some(vec![]), defaults.clone()),
+            ("no answer falls back", None, defaults.clone()),
+        ] {
+            assert_eq!(
+                effective_roles(fetched, &defaults),
+                expected,
+                "wrong roles for: {case}"
+            );
+        }
+    }
 
     #[test]
     fn cache_control_keeps_60s_travel_margin() {
