@@ -13,11 +13,11 @@ use crate::domain::compiler::request::{
     MetricQuery, RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
-use crate::domain::identity_binding::{IdentitySet, resolve_identities};
+use crate::domain::identity_binding::{IdentitySet, resolve_all_identities, resolve_identities};
 
 use super::super::catalog::MetricCatalog;
 use super::super::error::QueryError;
-use super::super::question::query_row_limit;
+use super::super::question::{query_row_limit, row_limit};
 use super::dto::Grain;
 use super::group_cap::ranked_groups;
 use super::validation::{
@@ -69,11 +69,12 @@ pub(super) async fn plan(
     batch: &ValidatedBatch,
 ) -> Result<Vec<PlannedQuery>, QueryError> {
     let identities = identities(clickhouse, tenant_id, batch).await?;
+    let tenant = tenant_pool(clickhouse, tenant_id, batch).await?;
 
     let mut rankings: BTreeMap<RankingKey, Vec<RankedGroup>> = BTreeMap::new();
     let mut compiled = Vec::with_capacity(batch.queries.len());
     for query in &batch.queries {
-        let scope = entity_scope(&query.subjects, &identities);
+        let scope = entity_scope(&query.subjects, &identities, &tenant);
         let limit = cap(catalog, clickhouse, tenant_id, &mut rankings, query, &scope).await?;
         let window = Window {
             from: query.from,
@@ -191,14 +192,53 @@ async fn identities(
         })
 }
 
+/// Everyone the tenant's identity mapping knows, read once for the whole
+/// request and only when a question asks about the tenant.
+///
+/// INVARIANT: no dataset records a row keyed by the tenant, so a tenant-wide
+/// value is its people's rows folded together. Reading them through the
+/// mapping is what makes the fold count people rather than source identities,
+/// and what leaves out the identities the mapping resolves nobody for.
+async fn tenant_pool(
+    clickhouse: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    batch: &ValidatedBatch,
+) -> Result<Vec<ResolvedPerson>, QueryError> {
+    if !batch.asks_about_the_tenant() {
+        return Ok(Vec::new());
+    }
+
+    let identities = resolve_all_identities(clickhouse, tenant_id, query_row_limit())
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "a tenant-wide question could not enumerate the people it folds");
+            QueryError::SubjectsUnresolved
+        })?;
+    if identities.len() > row_limit() {
+        return Err(QueryError::PopulationTooLarge { limit: row_limit() });
+    }
+
+    Ok(identities
+        .into_iter()
+        .map(|(person_id, known_by)| ResolvedPerson {
+            person_ref: person_id.to_string(),
+            identities: known_by.values(),
+        })
+        .collect())
+}
+
 /// INVARIANT: a person is carried with their own identities rather than merged
-/// into one list, because the answer is keyed per person.
+/// into one list, because the answer is keyed per person. A tenant-wide
+/// question carries the whole tenant's people for the same reason: what it
+/// reports as having contributed is people, not the identities they are
+/// recorded under.
 fn entity_scope(
     subjects: &ValidatedSubjects,
     identities: &BTreeMap<Uuid, IdentitySet>,
+    tenant: &[ResolvedPerson],
 ) -> EntityScope {
     match subjects {
-        ValidatedSubjects::Tenant => EntityScope::Tenant,
+        ValidatedSubjects::Tenant => EntityScope::People(tenant.to_vec()),
         ValidatedSubjects::Persons(ids) => EntityScope::People(
             ids.iter()
                 .map(|id| ResolvedPerson {
@@ -298,6 +338,15 @@ mod tests {
         }])
     }
 
+    /// The tenant's mapping as one pooled person, so a tenant-wide read has
+    /// somebody to fold.
+    fn tenant_people() -> Vec<ResolvedPerson> {
+        vec![ResolvedPerson {
+            person_ref: person().to_string(),
+            identities: vec!["dev@example.com".to_owned()],
+        }]
+    }
+
     fn window(query: &ValidatedQuery) -> Window {
         Window {
             from: query.from,
@@ -381,16 +430,75 @@ mod tests {
     }
 
     #[test]
-    fn a_tenant_question_reads_without_an_entity_predicate() {
+    fn a_tenant_question_folds_the_tenants_people_and_counts_them_rather_than_their_identities() {
         let query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
+        let scope = entity_scope(
+            &ValidatedSubjects::Tenant,
+            &BTreeMap::new(),
+            &tenant_people(),
+        );
 
-        let compiled = compiled(&query, &EntityScope::Tenant);
+        let compiled = compiled(&query, &scope);
 
         assert!(
-            !compiled.sql.contains("INNER JOIN pool"),
+            compiled.sql.contains("INNER JOIN pool ON pool.identity = "),
             "{}",
             compiled.sql
         );
+        assert!(
+            compiled
+                .sql
+                .contains("uniqExact(pool.person_ref) AS contributing_entity_count"),
+            "{}",
+            compiled.sql
+        );
+        assert!(
+            compiled
+                .params
+                .contains(&QueryParam::Text("dev@example.com".to_owned())),
+            "every mapped identity in the tenant is bound"
+        );
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    #[test]
+    fn a_tenant_question_reaches_only_the_people_the_mapping_resolves() {
+        let scope = entity_scope(
+            &ValidatedSubjects::Tenant,
+            &BTreeMap::new(),
+            &tenant_people(),
+        );
+
+        assert_eq!(scope, EntityScope::People(tenant_people()));
+    }
+
+    #[tokio::test]
+    async fn a_tenant_question_whose_mapping_cannot_be_enumerated_refuses_the_request() {
+        let batch = ValidatedBatch {
+            queries: vec![ValidatedQuery {
+                subjects: ValidatedSubjects::Tenant,
+                ..validated(QueryShape::CombinedSplit, Grain::Total, &["repository"])
+            }],
+        };
+
+        let error = tenant_pool(&offline_clickhouse(), tenant(), &batch)
+            .await
+            .expect_err("a closed port cannot answer");
+
+        assert!(matches!(error, QueryError::SubjectsUnresolved));
+    }
+
+    #[tokio::test]
+    async fn a_request_about_people_alone_never_enumerates_the_tenants_mapping() {
+        let batch = ValidatedBatch {
+            queries: vec![validated(QueryShape::SubjectTotal, Grain::Total, &[])],
+        };
+
+        let pooled = tenant_pool(&offline_clickhouse(), tenant(), &batch)
+            .await
+            .expect("no question asks about the tenant");
+
+        assert!(pooled.is_empty());
     }
 
     /// Validation refuses an undeclared dimension before anything is planned;
@@ -433,7 +541,11 @@ mod tests {
             ),
         ]);
 
-        let scope = entity_scope(&ValidatedSubjects::Persons(vec![alice, bob]), &resolved);
+        let scope = entity_scope(
+            &ValidatedSubjects::Persons(vec![alice, bob]),
+            &resolved,
+            &[],
+        );
 
         assert_eq!(
             scope,
@@ -460,7 +572,7 @@ mod tests {
             },
         )]);
 
-        let scope = entity_scope(&ValidatedSubjects::Persons(vec![person()]), &resolved);
+        let scope = entity_scope(&ValidatedSubjects::Persons(vec![person()]), &resolved, &[]);
 
         assert_eq!(
             scope,
@@ -476,6 +588,7 @@ mod tests {
         let scope = entity_scope(
             &ValidatedSubjects::Persons(vec![person()]),
             &BTreeMap::new(),
+            &[],
         );
 
         assert_eq!(
