@@ -90,6 +90,7 @@ function metric(overrides: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  mocks.dateRange = { from: "2026-05-13", to: "2026-08-12" };
   mocks.definitions = [
     metric({}),
     metric({ metric_key: "tasks.closed", label: "Issues closed" }),
@@ -112,6 +113,33 @@ function checkbox(name: string): HTMLElement {
 }
 
 describe("ReportBuilderView", () => {
+  it("refuses granularity longer than the period and sends the clamped value", async () => {
+    mocks.dateRange = { from: "2026-08-24", to: "2026-08-30" };
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    expect(screen.getByRole("button", { name: "Weekly" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByRole("button", { name: "Yearly" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Yearly" })).toHaveAttribute(
+      "title",
+      expect.stringMatching(/at least a year — pick weekly or finer/)
+    );
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipe: expect.objectContaining({ granularity: "week" }),
+        })
+      )
+    );
+  });
+
   it("shows applicable metric groups without family tabs", () => {
     render(<ReportBuilderView />);
 

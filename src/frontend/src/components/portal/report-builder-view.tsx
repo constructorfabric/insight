@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import {
   ReportMetricPicker,
@@ -22,6 +28,10 @@ import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
 import { byFamily } from "@/lib/reports/families";
+import {
+  clampGranularity,
+  periodTooShortReason,
+} from "@/lib/reports/granularity-for-period";
 import { TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useReportExport, useReportPreview } from "@/queries/reports";
@@ -56,7 +66,9 @@ export function ReportBuilderView() {
 
   const [selected, setSelected] = useState<string[]>([]);
   const [subject, setSubject] = useState<ReportSubjectKind>("people");
-  const [granularity, setGranularity] = useState<ReportGranularity>("month");
+  const [pickedGranularity, setPickedGranularity] =
+    useState<ReportGranularity>("month");
+  const granularity = clampGranularity(pickedGranularity, dateRange);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -215,21 +227,44 @@ export function ReportBuilderView() {
 
           <div className="flex flex-wrap items-center gap-3">
             <span className={TEXT_LABEL}>Granularity</span>
-            <ToggleGroup
-              value={[granularity]}
-              onValueChange={(value) => {
-                const next = Array.isArray(value) ? value[0] : value;
-                if (isReportGranularity(next)) setGranularity(next);
-              }}
-              variant="outline"
-              size="sm"
-            >
-              {GRANULARITIES.map((option) => (
-                <ToggleGroupItem key={option.value} value={option.value}>
-                  {option.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
+            <TooltipProvider delay={300}>
+              <ToggleGroup
+                value={[granularity]}
+                onValueChange={(value) => {
+                  const next = Array.isArray(value) ? value[0] : value;
+                  if (isReportGranularity(next)) setPickedGranularity(next);
+                }}
+                variant="outline"
+                size="sm"
+              >
+                {GRANULARITIES.map((option) => {
+                  const reason = periodTooShortReason(option.value, dateRange);
+                  return (
+                    <Tooltip key={option.value}>
+                      <TooltipTrigger
+                        render={
+                          <ToggleGroupItem
+                            value={option.value}
+                            disabled={reason != null}
+                            title={reason ?? undefined}
+                          >
+                            {option.label}
+                          </ToggleGroupItem>
+                        }
+                      />
+                      {reason ? (
+                        <TooltipContent
+                          side="top"
+                          className="max-w-xs text-xs leading-relaxed"
+                        >
+                          {reason}
+                        </TooltipContent>
+                      ) : null}
+                    </Tooltip>
+                  );
+                })}
+              </ToggleGroup>
+            </TooltipProvider>
             <span className="text-xs text-muted-foreground">
               The period comes from the bar above.
             </span>
