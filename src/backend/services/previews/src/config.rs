@@ -36,6 +36,13 @@ pub struct GearConfig {
     pub max_ttl_days: u32,
     /// How often the TTL sweep looks for expired experiments.
     pub sweep_interval_secs: u64,
+    /// Base URL of the OCI registry holding the FE image repository; read
+    /// only for tag listing.
+    pub registry_url: String,
+    /// Bearer credential for the tag listing (for GHCR, the base64-encoded
+    /// read token). Empty means listing is unconfigured and `GET /v1/images`
+    /// answers `configured: false`.
+    pub registry_token: String,
 }
 
 impl Default for GearConfig {
@@ -51,6 +58,8 @@ impl Default for GearConfig {
             default_ttl_days: 7,
             max_ttl_days: 30,
             sweep_interval_secs: 300,
+            registry_url: "https://ghcr.io".to_owned(),
+            registry_token: String::new(),
         }
     }
 }
@@ -81,6 +90,10 @@ impl GearConfig {
         anyhow::ensure!(
             self.max_experiments >= 1,
             "max_experiments must be at least 1"
+        );
+        anyhow::ensure!(
+            self.registry_token.is_empty() || !self.registry_url.is_empty(),
+            "registry_token is set but registry_url is empty"
         );
         Ok(())
     }
@@ -123,7 +136,11 @@ mod tests {
     fn a_config_the_request_path_could_only_mis_serve_refuses_to_boot() {
         type BreakIt = fn(&mut GearConfig);
 
-        let cases: [(&str, BreakIt); 4] = [
+        let cases: [(&str, BreakIt); 5] = [
+            ("a registry token without a url", |c| {
+                c.registry_token = "token".to_owned();
+                c.registry_url = String::new();
+            }),
             ("zero default ttl", |c| c.default_ttl_days = 0),
             ("default above max", |c| {
                 c.default_ttl_days = c.max_ttl_days + 1;

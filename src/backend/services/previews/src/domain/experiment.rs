@@ -104,6 +104,19 @@ fn is_build_tag(s: &str) -> bool {
     BUILD_TAG.is_match(s)
 }
 
+/// The registry tags the create form may offer: only `preview-…` tags a
+/// create would accept, deduped and sorted.
+#[must_use]
+pub fn preview_tags(tags: Vec<String>) -> Vec<String> {
+    let mut offered: Vec<String> = tags
+        .into_iter()
+        .filter(|tag| tag.len() <= MAX_TAG_LEN && is_preview_tag(tag))
+        .collect();
+    offered.sort();
+    offered.dedup();
+    offered
+}
+
 /// A validated time-to-live in whole days, clamped nowhere: a request outside
 /// `1..=max` is refused, not adjusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +271,24 @@ mod tests {
         ] {
             assert!(ImageTag::parse(bad).is_err(), "should reject: {bad:?}");
         }
+    }
+
+    #[test]
+    fn the_form_is_offered_only_creatable_preview_tags_deduped_and_sorted() {
+        let listed = vec![
+            "preview-zeta".to_owned(),
+            "latest".to_owned(),
+            "2026.08.06.14.05-abc1234".to_owned(),
+            "preview-alpha".to_owned(),
+            "preview-alpha".to_owned(),
+            "preview-a b".to_owned(),
+            format!("preview-{}", "a".repeat(128)),
+        ];
+
+        assert_eq!(
+            preview_tags(listed),
+            vec!["preview-alpha".to_owned(), "preview-zeta".to_owned()]
+        );
     }
 
     #[test]

@@ -5076,6 +5076,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "regex-lite",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",

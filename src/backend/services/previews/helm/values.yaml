@@ -45,6 +45,12 @@ experiments:
   defaultTtlDays: 7
   maxTtlDays: 30
   sweepIntervalSecs: 300
+  # OCI registry tag listing (GET /v1/images). The token names an EXISTING
+  # Secret (key `token`) holding the read credential — for GHCR, the
+  # base64-encoded read token. Empty = the endpoint answers configured:false
+  # and the UI keeps free-text tag entry.
+  registryUrl: https://ghcr.io
+  registryTokenSecret: ""
 
 # The shared Gateway an experiment's HTTPRoute attaches to. The Gateway's
 # `allowedRoutes` namespace selector must admit `experiments.namespace`

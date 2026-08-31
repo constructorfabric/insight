@@ -40,6 +40,17 @@ class ExperimentStatus(StrEnum):
     expired = 'expired'
 
 
+class ImageListResponse(BaseModel):
+    """
+    Body of `GET /v1/images`.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    configured: bool = Field(..., description='False when the service holds no registry read credential; `tags` is\nthen empty and the create form keeps free-text entry.')
+    tags: list[str] = Field(..., description='The `preview-…` tags of the fixed FE image repository, deduped and\nsorted.')
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -79,4 +90,6 @@ class ExperimentListResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    cap: int = Field(..., description='The configured live-experiment cap; a create at the cap is refused.', ge=0)
     experiments: list[ExperimentResponse]
+    liveCount: int = Field(..., description='How many experiments count against the cap (expired ones do not).', ge=0)
