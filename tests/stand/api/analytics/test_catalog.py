@@ -29,12 +29,23 @@ CATALOG_METRICS = analytics_path("/v1/catalog/metrics")
 #: distribution at all.
 _DISTRIBUTABLE = frozenset({"percentile", "stddev"})
 
-#: A ratio is folded from two measures, so a page of rows names which side it
-#: reads; every other shipped computation reads one.
-_INPUTS_PER_COMPUTATION = {"ratio": 2}
+#: How many drilldown pages a computation advertises, as `(minimum, maximum)`
+#: with `None` for unbounded: a ratio names its two sides, a derived metric one
+#: page per input its definition folds — never fewer than the two that make it
+#: composed — and every other computation the single measure it reads.
+_INPUTS_PER_COMPUTATION: dict[str, tuple[int, int | None]] = {
+    "ratio": (2, 2),
+    "derived": (2, None),
+}
+_ONE_MEASURE: tuple[int, int | None] = (1, 1)
 
 TENANT = {"type": "tenant"}
 COHORT = {"type": "cohort"}
+
+
+def _advertises_one_page_per_input(computation: str, pages: int) -> bool:
+    minimum, maximum = _INPUTS_PER_COMPUTATION.get(computation, _ONE_MEASURE)
+    return pages >= minimum and (maximum is None or pages <= maximum)
 
 
 @pytest.mark.reliability
@@ -92,7 +103,7 @@ def test_every_question_a_metric_advertises_agrees_with_the_rest_of_its_entry(
         )
 
         inputs = questions["rows"]["inputs"]
-        assert len(inputs) == _INPUTS_PER_COMPUTATION.get(computation, 1), (
+        assert _advertises_one_page_per_input(computation, len(inputs)), (
             f"`{key}` is a {computation} and names {inputs} as the pages behind it"
         )
         assert len(inputs) == len(set(inputs)), f"`{key}` names one page twice: {inputs}"
