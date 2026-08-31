@@ -26,10 +26,11 @@ pub async fn get_gear_roadmap(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let project_number = state
-        .config
-        .gear_roadmap_project_number
-        .ok_or_else(board_not_configured)?;
+    let project_number = state.config.gear_roadmap_project_number;
+
+    if project_number <= 0 {
+        return Err(board_not_configured());
+    }
 
     let gears = read_gears(&state.ch, project_number)
         .await

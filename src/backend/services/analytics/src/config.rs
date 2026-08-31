@@ -90,9 +90,9 @@ pub struct GearConfig {
 
     pub external_sources: Vec<ExternalSourceConfig>,
 
-    /// GitHub project (v2) number the gear roadmap reads. Absent until a
-    /// deployment names its board.
-    pub gear_roadmap_project_number: Option<i64>,
+    /// GitHub project (v2) number the gear roadmap reads. Non-positive means
+    /// no deployment has named a board.
+    pub gear_roadmap_project_number: i64,
 }
 
 impl Default for GearConfig {
@@ -112,7 +112,7 @@ impl Default for GearConfig {
             ai_assist: AiAssistConfig::default(),
             reports: ReportsConfig::default(),
             external_sources: Vec::new(),
-            gear_roadmap_project_number: None,
+            gear_roadmap_project_number: 0,
         }
     }
 }
