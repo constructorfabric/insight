@@ -24,12 +24,17 @@ use super::validation::{
     ComparedWindow, QueryShape, ValidatedBatch, ValidatedQuery, ValidatedSplit, ValidatedSubjects,
 };
 
-/// The statements one question runs: its own, and the compared window's when
-/// it asked for one.
 #[derive(Debug, PartialEq)]
-pub(super) struct PlannedQuery {
-    pub current: CompiledMeasureQuery,
-    pub compared: Option<CompiledMeasureQuery>,
+pub(super) enum PlannedQuery {
+    /// The statements one question runs: its own, and the compared window's
+    /// when it asked for one.
+    Read {
+        current: CompiledMeasureQuery,
+        compared: Option<CompiledMeasureQuery>,
+    },
+    /// The mapping knows no identity for anyone this question asks about, so
+    /// no row can carry a value for them and it is answered empty.
+    NoIdentities,
 }
 
 /// The window one compiled read covers.
@@ -75,6 +80,11 @@ pub(super) async fn plan(
     let mut compiled = Vec::with_capacity(batch.queries.len());
     for query in &batch.queries {
         let scope = entity_scope(&query.subjects, &identities, &tenant);
+        if !scope.reaches_any_row() {
+            compiled.push(PlannedQuery::NoIdentities);
+            continue;
+        }
+
         let limit = cap(catalog, clickhouse, tenant_id, &mut rankings, query, &scope).await?;
         let window = Window {
             from: query.from,
@@ -97,7 +107,7 @@ pub(super) async fn plan(
                 )
             })
             .transpose()?;
-        compiled.push(PlannedQuery { current, compared });
+        compiled.push(PlannedQuery::Read { current, compared });
     }
     Ok(compiled)
 }

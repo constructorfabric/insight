@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::domain::compiler::drilldown::{
-    CompiledDrilldown, compile_drilldown, drilldown_input_roles, drilldown_reported_columns,
+    CompiledDrilldown, DrilldownPageShape, compile_drilldown, drilldown_input_roles,
+    drilldown_page_shapes, drilldown_reported_columns,
 };
 use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::group_ranking::compile_group_ranking_query;
@@ -139,6 +140,16 @@ impl MetricCatalog {
         query: &DrilldownQuery,
     ) -> Result<Vec<CompiledDrilldown>, CompileError> {
         compile_drilldown(self.catalog, metric, &self.measures, query)
+    }
+
+    /// The shape a page of each input has before any row is read: what a page
+    /// nobody's rows reach still reports itself as.
+    pub(super) fn drilldown_page_shapes(
+        &self,
+        metric: &MetricDefinition,
+        display_dimensions: &[String],
+    ) -> Result<BTreeMap<String, DrilldownPageShape>, CompileError> {
+        drilldown_page_shapes(self.catalog, metric, &self.measures, display_dimensions)
     }
 
     /// The columns a page of `input_role` reports, which is exactly what a

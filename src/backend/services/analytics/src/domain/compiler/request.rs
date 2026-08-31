@@ -30,6 +30,20 @@ pub enum EntityScope {
     People(Vec<ResolvedPerson>),
 }
 
+impl EntityScope {
+    /// Whether any row can fall inside this scope at all. INVARIANT: a scope
+    /// naming entities but resolving none of them admits nothing — treating it
+    /// as "no narrowing" would answer about the whole tenant instead.
+    #[must_use]
+    pub fn reaches_any_row(&self) -> bool {
+        match self {
+            Self::Tenant => true,
+            Self::Identities(values) => !values.is_empty(),
+            Self::People(members) => members.iter().any(|member| !member.identities.is_empty()),
+        }
+    }
+}
+
 /// A person and the source identities the caller resolved for them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedPerson {
@@ -291,4 +305,48 @@ pub struct GroupRankingQuery {
     pub dimension_filters: Vec<DimensionFilter>,
     pub dimensions: Vec<String>,
     pub count: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scope_naming_entities_none_of_which_resolved_admits_no_row() {
+        let cases = [
+            (EntityScope::Tenant, true),
+            (EntityScope::Identities(Vec::new()), false),
+            (
+                EntityScope::Identities(vec!["dev@example.com".to_owned()]),
+                true,
+            ),
+            (EntityScope::People(Vec::new()), false),
+            (
+                EntityScope::People(vec![ResolvedPerson {
+                    person_ref: "person-1".to_owned(),
+                    identities: Vec::new(),
+                }]),
+                false,
+            ),
+            (
+                EntityScope::People(vec![
+                    ResolvedPerson {
+                        person_ref: "person-1".to_owned(),
+                        identities: Vec::new(),
+                    },
+                    ResolvedPerson {
+                        person_ref: "person-2".to_owned(),
+                        identities: vec!["dev@example.com".to_owned()],
+                    },
+                ]),
+                true,
+            ),
+        ];
+
+        for (scope, reaches) in cases {
+            let named = format!("{scope:?}");
+
+            assert_eq!(scope.reaches_any_row(), reaches, "should decide: {named}");
+        }
+    }
 }
