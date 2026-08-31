@@ -1,7 +1,5 @@
-//! Why a definition and a request cannot be turned into a statement. Every
-//! variant names a request that contradicts the measure or the dataset it
-//! reads; a definition that passed write-time validation contributes none of
-//! them on its own.
+//! Why a definition and a request cannot be turned into a statement: every
+//! variant names a request that contradicts the measure or the dataset it reads.
 
 use crate::domain::definitions::filter::FilterError;
 
@@ -57,6 +55,10 @@ pub enum CompileError {
     },
     #[error("metric `{metric}` declares no peer cohort `{cohort_key}`")]
     UndeclaredCohort { metric: String, cohort_key: String },
+    #[error("dataset `{dataset}` cannot order a page of rows: {reason}")]
+    UnorderableDataset { dataset: String, reason: String },
+    #[error("a page resumes from {found} ordering values, and the read orders by {expected}")]
+    CursorArity { expected: usize, found: usize },
     #[error(
         "the group cap ranks group {rank} by {named} dimension values, and the read groups by {requested}"
     )]

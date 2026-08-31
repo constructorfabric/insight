@@ -159,6 +159,10 @@ class EvidenceGranularity(StrEnum):
     derived_population = 'derived_population'
 
 
+class Executor(StrEnum):
+    semantic = 'semantic'
+
+
 class ExplainResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -199,6 +203,52 @@ class FeedbackRequest(BaseModel):
     path: str | None = Field(None, description='The screen the sender was on. Empty when the SPA cannot name one.')
 
 
+class Fold(StrEnum):
+    """
+    Whether each subject keeps its own value or the subjects fold into one.
+    """
+    per_subject = 'per_subject'
+    combined = 'combined'
+
+
+class Grain(StrEnum):
+    """
+    How finely the window is cut. `total` folds it whole; the rest report a
+    point per bucket beside the window total.
+    """
+    total = 'total'
+    day = 'day'
+    week = 'week'
+    month = 'month'
+
+
+class Type(StrEnum):
+    dimensions = 'dimensions'
+
+
+class Type1(StrEnum):
+    remainder = 'remainder'
+
+
+class Group2(BaseModel):
+    """
+    Everything outside the groups a cap kept, folded into one.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type1
+
+
+class GroupDimension(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    key: str
+    label: str | None = None
+    value: str
+
+
 class HistogramBinDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -206,6 +256,14 @@ class HistogramBinDto(BaseModel):
     count: int = Field(..., ge=0)
     hi: float
     lo: float
+
+
+class HistogramValueDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    bins: list[HistogramBinDto] = Field(..., description="Empty when the entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
+    entity_id: str
 
 
 class ImportCustomMetricsResponse(BaseModel):
@@ -233,7 +291,6 @@ class MetricDimensionDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    href: str | None = None
     key: str
     label: str | None = None
     value: str
@@ -274,7 +331,7 @@ class MetricDrilldownColumnType(StrEnum):
     number = 'number'
 
 
-class Type(StrEnum):
+class Type2(StrEnum):
     person = 'person'
 
 
@@ -283,10 +340,10 @@ class MetricDrilldownEntity1(BaseModel):
         extra='forbid',
     )
     id: str
-    type: Type
+    type: Type2
 
 
-class Type1(StrEnum):
+class Type3(StrEnum):
     persons = 'persons'
 
 
@@ -300,10 +357,10 @@ class MetricDrilldownEntity2(BaseModel):
         extra='forbid',
     )
     ids: list[str]
-    type: Type1
+    type: Type3
 
 
-class Type2(StrEnum):
+class Type4(StrEnum):
     tenant = 'tenant'
 
 
@@ -311,7 +368,7 @@ class MetricDrilldownEntity3(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    type: Type2
+    type: Type4
 
 
 class MetricDrilldownEntity(RootModel[MetricDrilldownEntity1 | MetricDrilldownEntity2 | MetricDrilldownEntity3]):
@@ -356,7 +413,6 @@ class MetricDrilldownRow(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    links: dict[str, str]
     values: dict[str, Any]
 
 
@@ -490,42 +546,23 @@ class View5(StrEnum):
     histogram = 'histogram'
 
 
+class MetricResultViewDto6(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    values: list[HistogramValueDto]
+    view: View5
+
+
 class View6(StrEnum):
     error = 'error'
-
-
-class Type3(StrEnum):
-    person = 'person'
-
-
-class MetricResultsEntity1(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    ids: list[str]
-    type: Type3
-
-
-class Type4(StrEnum):
-    tenant = 'tenant'
-
-
-class MetricResultsEntity2(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    type: Type4
-
-
-class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
-    root: MetricResultsEntity1 | MetricResultsEntity2
 
 
 class Type5(StrEnum):
     person = 'person'
 
 
-class MetricResultsEntityDto1(BaseModel):
+class MetricResultsEntity1(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -537,11 +574,38 @@ class Type6(StrEnum):
     tenant = 'tenant'
 
 
-class MetricResultsEntityDto2(BaseModel):
+class MetricResultsEntity2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
     type: Type6
+
+
+class MetricResultsEntity(RootModel[MetricResultsEntity1 | MetricResultsEntity2]):
+    root: MetricResultsEntity1 | MetricResultsEntity2
+
+
+class Type7(StrEnum):
+    person = 'person'
+
+
+class MetricResultsEntityDto1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[str]
+    type: Type7
+
+
+class Type8(StrEnum):
+    tenant = 'tenant'
+
+
+class MetricResultsEntityDto2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type8
 
 
 class MetricResultsEntityDto(RootModel[MetricResultsEntityDto1 | MetricResultsEntityDto2]):
@@ -567,7 +631,6 @@ class MetricResultsPeriodDto(BaseModel):
 class MetricSchemaErrorCode(StrEnum):
     table_not_found = 'table_not_found'
     column_not_found = 'column_not_found'
-    detail_key_not_found = 'detail_key_not_found'
     dimension_not_covered = 'dimension_not_covered'
     unknown = 'unknown'
 
@@ -650,7 +713,6 @@ class MetricViewRequest6(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    dimensions: list[str] | None = None
     view: View12
 
 
@@ -680,6 +742,14 @@ class PeriodValueDto(BaseModel):
     value: float | None = None
 
 
+class Point(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    date: str = Field(..., description="The bucket's first day, `YYYY-MM-DD`.")
+    value: float | None = None
+
+
 class Problem(BaseModel):
     """
     RFC 9457 problem+json. `context` varies by error category.
@@ -696,6 +766,17 @@ class Problem(BaseModel):
     type: str
 
 
+class Provenance(BaseModel):
+    """
+    What produced this answer.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    definition_version: int | None = Field(None, description='The definition version the store holds for this metric. Absent when the\nstore carries no row for it.')
+    executor: Executor
+
+
 class PutCredentialRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -708,6 +789,14 @@ class PutSettingsRequest(BaseModel):
         extra='forbid',
     )
     system_prompt: str
+
+
+class Shape(StrEnum):
+    values = 'values'
+
+
+class Shape1(StrEnum):
+    series = 'series'
 
 
 class RollupValueDto(BaseModel):
@@ -811,24 +900,54 @@ class SnapshotSeries(BaseModel):
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
 
 
-class SyncFact(BaseModel):
+class SplitLimit(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    duration_ms: int | None = Field(None, description='Absent for a job still in flight, and for one the mover gave no usable\npair of stamps for. Never zero to mean absent.', ge=0)
-    job_id: str = Field(..., description="The mover's own job identity.")
-    records_reported: int | None = Field(None, description='What the mover states it moved. Absent where it reported no count at\nall, which is a different answer from a reported zero.', ge=0)
-    started_at: str | None = Field(None, description='Absent for a job the mover had not started.')
-    status: str = Field(..., description="The mover's own word for how the sync ended, or `unknown` where the\nrecorded word was outside its documented vocabulary.")
+    rank_by: str | None = Field(None, description='The metric the groups are ranked by. Defaults to the metric being read.')
+    remainder: bool = Field(..., description='Whether everything outside the kept groups is reported as one remainder\ngroup, or dropped.')
+    top: int = Field(..., description='How many groups to keep.', ge=0)
 
 
-class SyncHistoryResponse(BaseModel):
+class Type9(StrEnum):
+    persons = 'persons'
+
+
+class Subjects1(BaseModel):
+    """
+    Whose values the question is about.
+
+    Internally tagged on `type`, so a subject kind carries only its own fields
+    and a new kind adds a variant rather than a nullable field:
+    `{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.
+    """
     model_config = ConfigDict(
         extra='forbid',
     )
-    connector: str
-    syncs: list[SyncFact] = Field(..., description='A bounded window, newest first — not the full retained history.')
-    window: int = Field(..., description='How many rows this window holds at most, so the page can say the list\nis a window rather than everything.', ge=0)
+    ids: list[str]
+    type: Type9
+
+
+class Type10(StrEnum):
+    tenant = 'tenant'
+
+
+class Subjects2(BaseModel):
+    """
+    Whose values the question is about.
+
+    Internally tagged on `type`, so a subject kind carries only its own fields
+    and a new kind adds a variant rather than a nullable field:
+    `{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type10
+
+
+class Subjects(RootModel[Subjects1 | Subjects2]):
+    root: Subjects1 | Subjects2 = Field(..., description='Whose values the question is about.\n\nInternally tagged on `type`, so a subject kind carries only its own fields\nand a new kind adds a variant rather than a nullable field:\n`{"type": "persons", "ids": [...]}` or `{"type": "tenant"}`.')
 
 
 class TelemetryRecord(BaseModel):
@@ -842,6 +961,15 @@ class TelemetryRecord(BaseModel):
     name: str | None = None
     time_sent: int | None = Field(None, description='Epoch milliseconds on the same clock: when the batch was flushed.')
     time_triggered: int | None = Field(None, description="Epoch milliseconds on the browser's clock: when the event happened.")
+
+
+class TimeRange(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from', description='Inclusive first day, `YYYY-MM-DD`.')
+    grain: Grain
+    to: str = Field(..., description='Inclusive last day, `YYYY-MM-DD`.')
 
 
 class TimeseriesPointDto(BaseModel):
@@ -967,26 +1095,6 @@ class BreakdownValueDto(BaseModel):
     value: float | None = None
 
 
-class ConnectorHealth(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    configured: bool = Field(..., description='Present in the newest sealed snapshot of the set the controller manages.')
-    connector: str
-    last_sync: SyncFact | None = None
-
-
-class ConnectorHealthResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    as_of: str = Field(..., description='When this answer was computed. Dates the answer; `checked_at` dates the\nfacts in it.')
-    checked_at: str | None = Field(None, description='When the mover was last read. Absent before the first sweep sealed.')
-    connectors: list[ConnectorHealth]
-    history_available: bool = Field(..., description='False when nothing has been recorded at all, so the page can say so\ninstead of implying health.')
-    typical_read_interval_ms: int | None = Field(None, description='The median gap between the recent sealed ticks. Measured, not\nconfigured — nothing on this path knows what cadence was intended.\nAbsent where too few ticks are recorded to establish one.', ge=0)
-
-
 class ContextEntryResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1039,19 +1147,38 @@ class CustomMetricSummary(BaseModel):
     subject: str | None = Field(None, description='Grouping subject, so the management list can partition custom metrics\nby topic like the definitions listing; absent when none is declared.')
 
 
-class HistogramValueDto(BaseModel):
+class Group1(BaseModel):
     """
-    One histogram row. Per-entity shape: `entity_id` set, `dimensions` absent,
-    every requested entity listed. Pooled shape (dimensioned request):
-    `dimensions` set, `entity_id` absent, one row per observed dimension tuple
-    over all selected entities' events — no entity grain, like rollup.
+    Which slice of the split a row belongs to.
     """
     model_config = ConfigDict(
         extra='forbid',
     )
-    bins: list[HistogramBinDto] = Field(..., description="Empty when a listed entity has no events in the period — the entity is\nstill listed, mirroring the period view's every-requested-entity rule.")
-    dimensions: list[MetricDimensionDto] | None = None
-    entity_id: str | None = None
+    dimensions: list[GroupDimension]
+    type: Type
+
+
+class Group(RootModel[Group1 | Group2]):
+    root: Group1 | Group2 = Field(..., description='Which slice of the split a row belongs to.')
+
+
+class GroupedSeries(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    group: Group | None = None
+    points: list[Point]
+    subject: str | None = None
+    total: float | None = Field(None, description='The whole window folded once, which is not the sum of the points for\nevery computation.')
+
+
+class GroupedValue(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    group: Group | None = None
+    subject: str | None = Field(None, description='The person this value belongs to. Absent when the subjects folded into\none value.')
+    value: float | None = None
 
 
 class MetricDefinitionView(BaseModel):
@@ -1166,15 +1293,6 @@ class MetricResultViewDto5(BaseModel):
     view: View4
 
 
-class MetricResultViewDto6(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    dimensions: list[str] | None = Field(None, description='Present only for the pooled (dimensioned) shape; absent for the\nper-entity shape, keeping that wire form unchanged.')
-    values: list[HistogramValueDto]
-    view: View5
-
-
 class MetricResultViewDto7(BaseModel):
     """
     This view's computation failed; sibling views and metrics are
@@ -1220,6 +1338,34 @@ class MetricSnapshot(BaseModel):
     value: str = Field(..., description='The formatted value the tile shows.')
 
 
+class ResultBody1(BaseModel):
+    """
+    The answer's shape, decided by the question's grain: `total` answers with
+    values, every other grain answers with series.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    shape: Shape
+    values: list[GroupedValue]
+
+
+class ResultBody2(BaseModel):
+    """
+    The answer's shape, decided by the question's grain: `total` answers with
+    values, every other grain answers with series.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    series: list[GroupedSeries]
+    shape: Shape1
+
+
+class ResultBody(RootModel[ResultBody1 | ResultBody2]):
+    root: ResultBody1 | ResultBody2 = Field(..., description="The answer's shape, decided by the question's grain: `total` answers with\nvalues, every other grain answers with series.")
+
+
 class SavedQueryListResponse(BaseModel):
     """
     Response envelope for `GET /v1/queries` (`{ "items": [SavedQuerySummary] }`).
@@ -1228,6 +1374,18 @@ class SavedQueryListResponse(BaseModel):
         extra='forbid',
     )
     items: list[SavedQuerySummary]
+
+
+class Split(BaseModel):
+    """
+    Which dimensions the value is broken out by, and how many of their groups
+    the answer keeps.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    dimensions: list[str]
+    limit: SplitLimit | None = None
 
 
 class TimeseriesDto(BaseModel):
@@ -1254,6 +1412,24 @@ class UsageSummaryResponse(BaseModel):
     since: str
     totals: UsageTotals
     until: str
+
+
+class ValuesQuery(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    fold: Fold
+    metric: str = Field(..., description='The metric key the semantic definitions carry, such as `git.commits`.')
+    split: Split | None = None
+    subjects: Subjects
+    time: TimeRange
+
+
+class ValuesRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    queries: list[ValuesQuery]
 
 
 class CustomMetric(BaseModel):
@@ -1348,6 +1524,22 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+
+
+class QueryResult(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    metric: str
+    provenance: Provenance
+    result: ResultBody
+
+
+class ValuesResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    results: list[QueryResult] = Field(..., description='One entry per requested query, in the order they were asked.')
 
 
 class MetricResultDto7(BaseModel):

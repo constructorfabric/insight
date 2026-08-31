@@ -1,10 +1,8 @@
 //! Renders a combined-split read: one value per combination of the dimensions the
 //! request names, folded over every entity the scope admits.
 //!
-//! The row carries no entity — it carries how many entities contributed to it
-//! — plus the `rank` / `remainder` / `group_label` columns a capped read fills
-//! in. An uncapped read reports every group and answers those three with the
-//! constants the row decoder expects either way.
+//! INVARIANT: the row decoder expects `rank` / `remainder` / `group_label`
+//! whether or not the read is capped, so an uncapped one answers with constants.
 
 use std::fmt::Write;
 
@@ -17,8 +15,9 @@ use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
 use super::group_cap::{
     CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
 };
+use super::pool::{Pool, carried_entity, first_cte, scan_clause};
 use super::request::{CombinedSplitView, MetricQuery};
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -26,6 +25,7 @@ pub(super) fn compile(
     fold: &Fold<'_>,
     query: &MetricQuery,
     view: &CombinedSplitView,
+    pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     if view.dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
@@ -34,10 +34,10 @@ pub(super) fn compile(
     }
 
     match &view.group_limit {
-        None => compile_uncapped(dataset, metric, fold, query, &view.dimensions),
+        None => compile_uncapped(dataset, metric, fold, query, &view.dimensions, pool),
         Some(limit) => {
             let cap = GroupCap::resolve(limit, view.dimensions.len())?;
-            compile_capped(dataset, metric, fold, query, &view.dimensions, &cap)
+            compile_capped(dataset, metric, fold, query, &view.dimensions, &cap, pool)
         }
     }
 }
@@ -48,10 +48,11 @@ fn compile_uncapped(
     fold: &Fold<'_>,
     query: &MetricQuery,
     dimensions: &[String],
+    pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let (select, group) = combined_split_dimension_select_group(fold.grain, dimensions)?;
-    let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-    let inner = uncapped_sql(dataset, fold, &read, &select, &group);
+    let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
+    let inner = uncapped_sql(&read, &select, &group);
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -61,23 +62,18 @@ fn compile_uncapped(
     ))
 }
 
-fn uncapped_sql(
-    dataset: &CatalogDataset,
-    fold: &Fold<'_>,
-    read: &ScopedRead,
-    select: &str,
-    group: &str,
-) -> String {
-    let mut sql = String::from("SELECT\n");
+fn uncapped_sql(read: &ScopedRead, select: &str, group: &str) -> String {
+    let mut sql = read.head.clone();
+    sql.push_str("SELECT\n");
     sql.push_str(select);
     let _ = writeln!(sql, "    {} AS value,", read.value);
     let _ = writeln!(
         sql,
         "    uniqExact({}) AS contributing_entity_count,",
-        fold.grain.entity
+        read.entity
     );
     sql.push_str(UNCAPPED_RANK_COLUMNS);
-    let _ = writeln!(sql, "FROM {}", from_clause(dataset));
+    let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY {group}");
     let _ = writeln!(sql, "ORDER BY {group}");
@@ -85,10 +81,8 @@ fn uncapped_sql(
     sql
 }
 
-/// A capped read ranks each scanned row before it folds anything, so the scan
-/// is written before the fold and its values bind first. The transform is
-/// projected in the final stage rather than wrapped around it: the cap already
-/// owns that stage.
+/// INVARIANT: a capped read ranks each scanned row before it folds anything,
+/// so the scan is written before the fold and its values bind first.
 fn compile_capped(
     dataset: &CatalogDataset,
     metric: &MetricDefinition,
@@ -96,10 +90,12 @@ fn compile_capped(
     query: &MetricQuery,
     dimensions: &[String],
     cap: &GroupCap<'_>,
+    pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let raw_dimensions = raw_dimension_select(fold.grain, dimensions)?;
 
     let mut params = Vec::new();
+    let head = first_cte(pool, &mut params)?;
     let predicates = read_predicates(
         dataset,
         fold.grain,
@@ -113,7 +109,8 @@ fn compile_capped(
     params.push(QueryParam::UInt(query.row_limit));
 
     let mut sql = ranked_scan_ctes(
-        dataset,
+        head,
+        &scan_clause(dataset, pool, fold.grain, "    "),
         &raw_dimensions,
         &predicates,
         &rank,
@@ -126,7 +123,7 @@ fn compile_capped(
     let _ = writeln!(
         sql,
         "        uniqExact({}) AS contributing_entity_count",
-        fold.grain.entity
+        carried_entity(pool, fold.grain)
     );
     let _ = writeln!(sql, "    FROM filtered");
     let _ = writeln!(sql, "    GROUP BY group_rank");

@@ -1,23 +1,18 @@
-//! Renders one metric-level read over its measures' dataset.
-//!
-//! A metric is a computation over measures plus a post-aggregation transform,
-//! so the statement this writes is a measure read whose value column is the
-//! computation and whose outer projection is the transform. Every view kind
-//! emits the row shape the metric-result builders already decode: a
-//! subject-total read emits `(entity_id, value)`, a subject-series read emits
-//! one row per bucket plus the range total the same aggregation pipeline
-//! produces, and the split, binned, and comparison views each emit their own.
+//! Renders one metric-level read over its measures' dataset: a measure read
+//! whose value column is the metric's computation and whose outer projection
+//! is its post-aggregation transform. Each view kind emits its own row shape.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
-use crate::domain::field_catalog::model::{CatalogDataset, FieldCatalog};
+use crate::domain::field_catalog::model::FieldCatalog;
 
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query};
+use super::pool::Pool;
 use super::request::{MetricQuery, ViewKind};
-use super::sql::{CompiledMeasureQuery, ReadScope, from_clause};
+use super::sql::{CompiledMeasureQuery, ReadScope};
 use super::{bins, combined_split, comparison, subject_series, subject_split};
 
 pub fn compile_metric_query(
@@ -28,11 +23,15 @@ pub fn compile_metric_query(
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let fold = Fold::resolve(metric, measures)?;
     let dataset = fold.dataset(catalog)?;
+    // INVARIANT: a comparison read takes its entities from its own pool, so the
+    // request's scope narrows every other view and not that one.
+    let pool = Pool::of_scope(&query.entity_scope);
 
     match &query.view {
         ViewKind::SubjectTotal => {
-            let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-            let inner = subject_total_sql(dataset, fold.grain, &read);
+            let read =
+                fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool.as_ref())?;
+            let inner = subject_total_sql(&read);
             Ok(bounded_query(
                 metric.transform.as_ref(),
                 read.params,
@@ -41,28 +40,30 @@ pub fn compile_metric_query(
             ))
         }
         ViewKind::SubjectSeries(view) => {
-            subject_series::compile(dataset, metric, &fold, query, view)
+            subject_series::compile(dataset, metric, &fold, query, view, pool.as_ref())
         }
-        ViewKind::SubjectSplit(view) => {
-            subject_split::compile(dataset, metric, &fold, query, &view.dimensions)
-        }
+        ViewKind::SubjectSplit(view) => subject_split::compile(
+            dataset,
+            metric,
+            &fold,
+            query,
+            &view.dimensions,
+            pool.as_ref(),
+        ),
         ViewKind::CombinedSplit(view) => {
-            combined_split::compile(dataset, metric, &fold, query, view)
+            combined_split::compile(dataset, metric, &fold, query, view, pool.as_ref())
         }
-        ViewKind::Bins => bins::compile(dataset, metric, &fold, query),
+        ViewKind::Bins => bins::compile(dataset, metric, &fold, query, pool.as_ref()),
         ViewKind::Comparison(view) => comparison::compile(dataset, metric, &fold, query, view),
     }
 }
 
-fn subject_total_sql(
-    dataset: &CatalogDataset,
-    measure: &MeasureDefinition,
-    read: &ScopedRead,
-) -> String {
-    let mut sql = String::from("SELECT\n");
-    let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
+fn subject_total_sql(read: &ScopedRead) -> String {
+    let mut sql = read.head.clone();
+    sql.push_str("SELECT\n");
+    let _ = writeln!(sql, "    {} AS entity_id,", read.entity);
     let _ = writeln!(sql, "    {} AS value", read.value);
-    let _ = writeln!(sql, "FROM {}", from_clause(dataset));
+    let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id");
     let _ = write!(sql, "LIMIT ?");

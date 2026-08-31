@@ -1,5 +1,3 @@
--- One row per changed path per commit: a path that appears twice in one commit
--- would double every line measure built on this dataset.
 SELECT
     tenant_id,
     source,

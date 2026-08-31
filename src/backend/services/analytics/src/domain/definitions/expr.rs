@@ -1,11 +1,7 @@
 //! Scalar-expression validator for measure `value_expr` / `subject_expr`
-//! fragments. The fragment is parsed with sqlparser's ClickHouse dialect and
-//! admitted only if its AST contains exclusively: bare column references,
-//! literals, arithmetic, and allowlisted functions. Subqueries, table
-//! references, casts, and every other construct are rejected at the parser, so
-//! SQL's fully specified semantics come for free while safety comes from the
-//! allowlist — and every widening of the allowlist is an explicit reviewed
-//! change to [`ALLOWED_FUNCTIONS`].
+//! fragments: parsed with sqlparser's ClickHouse dialect, and admitted only if
+//! the AST holds nothing but bare column references, literals, arithmetic and
+//! functions on [`ALLOWED_FUNCTIONS`].
 
 use std::collections::BTreeSet;
 
@@ -14,8 +10,7 @@ use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::Token;
 
-/// Functions a scalar expression may call. Deliberately empty until the first
-/// extraction proves a need; each addition is a reviewed change.
+/// Functions a scalar expression may call; empty until a definition needs one.
 const ALLOWED_FUNCTIONS: &[&str] = &[];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,7 +35,6 @@ pub enum ScalarExprError {
     UnsupportedConstruct(&'static str),
 }
 
-/// A validated fragment: the columns it references, for catalog binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScalarExpr {
     pub columns: BTreeSet<String>,

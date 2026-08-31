@@ -9,18 +9,11 @@
     query_settings=metric_serving_query_settings()
 ) }}
 
--- Authored commits: one row per commit a person wrote, carrying the lines that
--- commit actually contributed. A semantic-layer dataset — measures aggregate
--- it, drilldown projects it, and neither re-solves what is settled upstream:
--- which commits are one commit, whose lines are whose, and whether the work
--- reached the default branch.
+-- Authored commits: one row per commit a person wrote, with the lines that
+-- commit contributed.
 --
--- A projection of the shared commit stage onto this dataset's column names, so
--- the derivation the metric evidence reads and the derivation a drilldown
--- reads are the same derivation.
---
--- Ordered by tenant, person and time because that is how it is read: one
--- person's commits over a period, never a scan of every commit ever made.
+-- INVARIANT: a projection of the shared commit stage, so metric evidence and
+-- drilldown read the same derivation.
 
 WITH
 reported_commit_file_lines AS (
@@ -69,18 +62,11 @@ SELECT
     commits.project_label AS project_label,
     commits.source_value AS source,
     commits.source_label AS source_label,
-    -- A commit's own line stats, less the lines of the file changes that lost
-    -- the content dedup. The stats stay the base — a source can report a
-    -- commit's totals without reporting its file changes at all — and only what
-    -- the dedup removed is taken back out, so a commit that introduces nothing
-    -- new reports a size of zero and its file rows agree with what it
-    -- contributed.
+    -- A commit's own stats, less the lines of the file changes that lost the
+    -- content dedup, so a commit that introduces nothing new reports zero.
     --
-    -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL
-    -- arguments — `greatest(0, NULL)` is 0, which would invent a size for a
-    -- commit whose source reported no line stats. `greatest` floors the result
-    -- because a commit's own stats and the sum of its file changes need not
-    -- agree (binary files, truncated diffs).
+    -- SAFETY: the NULL check is explicit because `greatest` IGNORES NULL, and
+    -- the floor covers stats that disagree with the summed file changes.
     if(
         commits.lines_added IS NULL,
         CAST(NULL AS Nullable(Int64)),

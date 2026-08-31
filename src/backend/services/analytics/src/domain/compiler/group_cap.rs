@@ -2,20 +2,16 @@
 //! dimension values earn it, and the dimension columns the capped result
 //! reports back.
 //!
-//! A capped read reports one row per kept group plus, optionally, one row for
-//! everything else. Rank 0 is that remainder row, so the kept groups rank from
-//! 1 and their dimension values are reported from the cap rather than read
-//! back out of the scan.
+//! INVARIANT: rank 0 is the remainder row's, so a kept group ranks from 1.
 
 use std::fmt::Write;
 
 use crate::domain::definitions::definition::MeasureDefinition;
-use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::dimensions::{dimension_aliases, dimension_value_expr};
 use super::error::CompileError;
 use super::request::{GroupLimit, RankedDimension};
-use super::sql::{QueryParam, dimension_binding, from_clause};
+use super::sql::{QueryParam, dimension_binding};
 
 const NULL_TEXT: &str = "CAST(NULL AS Nullable(String))";
 
@@ -35,8 +31,7 @@ pub(super) const UNCAPPED_RANK_COLUMNS: &str = concat!(
     "    CAST(NULL AS Nullable(String)) AS group_label\n",
 );
 
-/// A cap whose every group names exactly one value per dimension the read
-/// groups by, transposed into the column each dimension index reports.
+/// A cap transposed from groups into the column each dimension index reports.
 pub(super) struct GroupCap<'a> {
     limit: &'a GroupLimit,
     dimension_count: usize,
@@ -94,9 +89,8 @@ impl<'a> GroupCap<'a> {
         format!("multiIf({})", branches.join(", "))
     }
 
-    /// The `dim_{index}_value` / `dim_{index}_label` columns of a capped
-    /// result, answered from the cap: a kept group reports the values that
-    /// selected it, and the remainder row reports none.
+    /// A kept group reports the values that selected it; the remainder row
+    /// reports none.
     pub fn dimension_select(&self, params: &mut Vec<QueryParam>) -> String {
         let mut select = String::new();
 
@@ -147,8 +141,7 @@ impl<'a> GroupCap<'a> {
         select
     }
 
-    /// The predicate that drops the rows outside the kept groups, for a cap
-    /// that reports no remainder row.
+    /// The predicate a cap with no remainder row drops its other rows by.
     pub fn remainder_predicate(&self) -> Option<&'static str> {
         if self.limit.include_remainder {
             None
@@ -160,17 +153,18 @@ impl<'a> GroupCap<'a> {
 
 /// The stages every capped read opens with: the scan carrying the columns the
 /// cap ranks by, the rank each scanned row earns, and the rows the cap keeps.
-/// `projections` are the scan's extra columns, already indented and separated.
 pub(super) fn ranked_scan_ctes(
-    dataset: &CatalogDataset,
+    head: String,
+    scan: &str,
     projections: &str,
     predicates: &[String],
     rank: &str,
     remainder_predicate: Option<&'static str>,
 ) -> String {
-    let mut sql = String::from("WITH scoped AS (\n    SELECT\n        *,\n");
+    let mut sql = head;
+    sql.push_str("scoped AS (\n    SELECT\n        *,\n");
     let _ = writeln!(sql, "{projections}");
-    let _ = writeln!(sql, "    FROM {}", from_clause(dataset));
+    let _ = writeln!(sql, "    FROM {scan}");
     let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
     let _ = writeln!(sql, "),");
     let _ = writeln!(sql, "ranked AS (");

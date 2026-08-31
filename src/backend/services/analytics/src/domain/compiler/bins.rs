@@ -1,11 +1,8 @@
 //! Renders a bins read: how many of an entity's own observations fall in
 //! each bin of that entity's range.
 //!
-//! Binning is fixed-width arithmetic over each entity's exact minimum and
-//! maximum, so identical rows always bin identically — an adaptive aggregate
-//! would depend on merge order. The statement owns bin membership and the
-//! bounds only; every displayed edge is derived from those bounds above, so
-//! the edges of an observed bin and an empty one cannot disagree.
+//! INVARIANT: binning is fixed-width arithmetic over each entity's exact
+//! minimum and maximum, so identical rows always bin identically.
 
 use std::fmt::Write;
 
@@ -14,8 +11,9 @@ use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
+use super::pool::{Pool, first_cte, joined_entity, scan_clause};
 use super::request::MetricQuery;
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, read_predicates};
 
 /// How many bins an entity's range is cut into.
 const BINS: u32 = 10;
@@ -26,11 +24,13 @@ pub(super) fn compile(
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
+    pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let row_value = fold.row_value_expr(metric)?;
     let binned = transform_in_place(metric.transform.as_ref(), row_value);
 
     let mut params = Vec::new();
+    let head = first_cte(pool, &mut params)?;
     let mut predicates = read_predicates(
         dataset,
         fold.grain,
@@ -41,10 +41,19 @@ pub(super) fn compile(
     predicates.push(format!("{row_value} IS NOT NULL"));
     params.push(QueryParam::UInt(query.row_limit));
 
-    let mut sql = String::from("WITH raw_events AS (\n    SELECT\n");
-    let _ = writeln!(sql, "        {} AS entity_id,", fold.grain.entity);
+    let mut sql = head;
+    sql.push_str("raw_events AS (\n    SELECT\n");
+    let _ = writeln!(
+        sql,
+        "        {} AS entity_id,",
+        joined_entity(pool, fold.grain)
+    );
     let _ = writeln!(sql, "        assumeNotNull({binned}) AS event_value");
-    let _ = writeln!(sql, "    FROM {}", from_clause(dataset));
+    let _ = writeln!(
+        sql,
+        "    FROM {}",
+        scan_clause(dataset, pool, fold.grain, "    ")
+    );
     let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
     let _ = writeln!(sql, "),");
     let _ = writeln!(sql, "events AS (");
@@ -66,9 +75,8 @@ pub(super) fn compile(
         sql,
         "    toString(assumeNotNull(events.entity_id)) AS entity_id,"
     );
-    // A range that collapses to a point maps every observation to bin 0, which
-    // reads back as the single `[v, v]` bin; `least` closes the last bin on the
-    // maximum instead of opening an eleventh for it.
+    // INVARIANT: a range collapsing to a point maps every observation to bin 0,
+    // and `least` closes the last bin on the maximum rather than opening one more.
     let _ = writeln!(sql, "    if(");
     let _ = writeln!(sql, "        events.entity_hi = events.entity_lo,");
     let _ = writeln!(sql, "        0,");

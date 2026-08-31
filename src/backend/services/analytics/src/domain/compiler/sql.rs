@@ -1,11 +1,8 @@
 //! The pieces every compiled read is assembled from: the relation to scan, the
-//! fold, the time bucket, the predicates that scope a read, and a stored
-//! filter's tree — plus the values each of them binds.
+//! fold, the time bucket, the scope predicates and a stored filter's tree.
 //!
-//! Field names, expressions, and operators come from a definition that already
-//! passed catalog validation and are written into the statement; every value —
-//! request-supplied or carried by the stored filter — is bound. That split is
-//! the whole safety story, and the tests hold it.
+//! SAFETY: catalog-validated names, expressions and operators are written into
+//! the statement; every value is bound.
 
 use chrono::NaiveDate;
 
@@ -19,12 +16,12 @@ use crate::domain::field_catalog::model::{CatalogDataset, FieldRole, ReadDiscipl
 
 use super::error::CompileError;
 use super::request::{
-    Bucket, DimensionFilter, EntityScope, GroupRankingQuery, MeasureQuery, MetricQuery,
+    Bucket, DimensionFilter, DrilldownQuery, EntityScope, GroupRankingQuery, MeasureQuery,
+    MetricQuery,
 };
 
-/// A bound value in the spelling ClickHouse receives it in. Every value a
-/// statement carries is one of these, and none of them is ever written into
-/// the SQL text.
+/// A bound value in the spelling ClickHouse receives it in. None is ever
+/// written into the SQL text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryParam {
     Text(String),
@@ -41,9 +38,8 @@ pub struct CompiledMeasureQuery {
     pub params: Vec<QueryParam>,
 }
 
-/// What a request scopes a read to, whatever the read folds. Borrowed from the
-/// measure- or metric-level request so both compile paths bind the same
-/// predicates in the same order.
+/// What a request scopes a read to, borrowed so both compile paths bind the
+/// same predicates in the same order.
 pub(super) struct ReadScope<'a> {
     pub tenant_id: &'a str,
     pub entity_scope: &'a EntityScope,
@@ -73,6 +69,16 @@ impl<'a> ReadScope<'a> {
         }
     }
 
+    pub fn of_drilldown(query: &'a DrilldownQuery) -> Self {
+        Self {
+            tenant_id: &query.tenant_id,
+            entity_scope: &query.entity_scope,
+            from: query.from,
+            to: query.to,
+            dimension_filters: &query.dimension_filters,
+        }
+    }
+
     pub fn of_ranking(query: &'a GroupRankingQuery) -> Self {
         Self {
             tenant_id: &query.tenant_id,
@@ -83,8 +89,7 @@ impl<'a> ReadScope<'a> {
         }
     }
 
-    /// The same scope with the entity narrowing dropped, for a read that
-    /// selects its entities by joining a pool rather than by a predicate.
+    /// The same scope without the entity narrowing, for a read that joins a pool.
     pub fn over_every_entity(&self, population: &'a EntityScope) -> Self {
         Self {
             tenant_id: self.tenant_id,
@@ -104,10 +109,8 @@ pub(super) fn from_clause(dataset: &CatalogDataset) -> String {
     }
 }
 
-// INVARIANT: `value_expr` and `subject_expr` are written into the statement
-// verbatim. Both are admitted only by the scalar-expression allowlist and are
-// bound to catalogued columns before a definition can be stored, so the
-// compiler never re-parses them.
+// SAFETY: `value_expr` and `subject_expr` are written verbatim; both passed the
+// scalar-expression allowlist and catalog binding before the definition stored.
 pub(super) fn aggregate_expr(measure: &MeasureDefinition) -> Result<String, CompileError> {
     let function = aggregate_function(measure.aggregation);
     match measure.aggregation.operand() {
@@ -162,11 +165,11 @@ fn aggregate_function(aggregation: Aggregation) -> &'static str {
     }
 }
 
-fn value_operand(measure: &MeasureDefinition) -> Result<&str, CompileError> {
+pub(super) fn value_operand(measure: &MeasureDefinition) -> Result<&str, CompileError> {
     require_operand(measure, measure.value_expr.as_deref(), "value")
 }
 
-fn subject_operand(measure: &MeasureDefinition) -> Result<&str, CompileError> {
+pub(super) fn subject_operand(measure: &MeasureDefinition) -> Result<&str, CompileError> {
     require_operand(measure, measure.subject_expr.as_deref(), "subject")
 }
 
@@ -191,8 +194,7 @@ pub(super) fn bucket_expr(event_time: &str, bucket: Bucket) -> String {
 }
 
 /// The `WHERE` predicates of a read over `measure`'s dataset, in binding order.
-/// `filter` is the stored filter to fold into the scan; a read that must keep
-/// two measures' filters apart passes `None` and conditions its folds instead.
+/// A read keeping two measures' filters apart passes `filter` as `None`.
 pub(super) fn read_predicates(
     dataset: &CatalogDataset,
     measure: &MeasureDefinition,
@@ -200,8 +202,8 @@ pub(super) fn read_predicates(
     scope: &ReadScope<'_>,
     params: &mut Vec<QueryParam>,
 ) -> Result<Vec<String>, CompileError> {
-    // INVARIANT: tenancy leads every read and is always enforced. The value is
-    // bound from the request's resolved tenant, never written into the SQL.
+    // INVARIANT: tenancy leads every read, bound from the request's resolved
+    // tenant and never written into the SQL.
     let tenant_field = dataset
         .fields_with_role(FieldRole::Tenant)
         .next()
@@ -211,8 +213,10 @@ pub(super) fn read_predicates(
     let mut predicates = vec![format!("{} = ?", tenant_field.name)];
     params.push(QueryParam::Text(scope.tenant_id.to_owned()));
 
+    // INVARIANT: a people-scoped read is narrowed by the join its `Pool`
+    // declares rather than by a predicate, so no arm adds one here.
     match scope.entity_scope {
-        EntityScope::Tenant => {}
+        EntityScope::Tenant | EntityScope::People(_) => {}
         EntityScope::Identities(identities) => {
             if identities.is_empty() {
                 return Err(CompileError::EmptySelection {
@@ -271,9 +275,8 @@ pub(super) fn render_filter(
     }
 }
 
-// INVARIANT: `FilterTree::validate` rejects an empty combinator at write time.
-// Rendering its identity keeps this function total without inventing a
-// predicate the definition never expressed.
+// INVARIANT: `FilterTree::validate` rejects an empty combinator at write time,
+// so rendering its identity here invents no predicate.
 fn render_combinator(
     measure: &MeasureDefinition,
     children: &[FilterTree],

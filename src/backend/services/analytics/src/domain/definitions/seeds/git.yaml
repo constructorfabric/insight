@@ -1,9 +1,5 @@
-# Git measures and metrics.
-#
-# One file per source family: a family is what a reviewer reads together, and
-# what an extraction moves in one step. Datasets are not authored here — they
-# are a projection of the field catalog, which already declares each relation
-# and how it must be read.
+# Git measures and metrics. Datasets are not authored here — they are a
+# projection of the field catalog.
 measures:
   - key: commits
     dataset: git_commits

@@ -1,6 +1,4 @@
--- One row per request per tenant and repository: a request is identified by
--- the repository it was opened against, so the same id in two repositories is
--- two requests and the same id twice in one is a duplicated read.
+-- A request id is unique only within the repository it was opened against.
 SELECT
     tenant_id,
     source_id,

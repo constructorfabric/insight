@@ -23,6 +23,16 @@ pub enum EntityScope {
     /// Source-identity values matched against the measure's entity field.
     /// Resolving person identifiers into these belongs above the compiler.
     Identities(Vec<String>),
+    /// Named people with the identities the caller resolved. The read joins
+    /// that pair relation, so its rows are keyed by the person.
+    People(Vec<ResolvedPerson>),
+}
+
+/// A person and the source identities the caller resolved for them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPerson {
+    pub person_ref: String,
+    pub identities: Vec<String>,
 }
 
 /// Narrows a read to named values of one of the measure's declared dimensions.
@@ -47,9 +57,8 @@ pub struct MeasureQuery {
     pub row_limit: u64,
 }
 
-/// The row shape a metric read produces, together with the inputs that shape
-/// needs. A view whose row shape is fully determined by the request's window
-/// and scope carries nothing.
+/// The row shape a metric read produces, with the inputs that shape needs. A
+/// view the window and scope fully determine carries nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViewKind {
     /// One value per entity over the whole window; the bucket is not read.
@@ -87,23 +96,20 @@ pub struct SubjectSplitView {
     pub dimensions: Vec<String>,
 }
 
-/// A subject series is grouped by bucket before anything else, so a split
-/// one reports a series per dimension combination rather than one series. It
-/// carries no dimensions when the whole entity is the series.
+/// Grouped by bucket before anything else, so a split subject series
+/// reports a series per dimension combination rather than one series.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubjectSeriesView {
     pub dimensions: Vec<String>,
-    /// Keeps only the named groups, with every other group folded into one
-    /// remainder series. Absent means every group is reported. A cap needs a
-    /// dimension to rank groups of.
+    /// Absent means every group is reported. A cap needs a dimension to rank
+    /// groups of, and folds every other group into one remainder series.
     pub group_limit: Option<GroupLimit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CombinedSplitView {
     pub dimensions: Vec<String>,
-    /// Keeps only the named groups, with every other group folded into one
-    /// remainder row. Absent means every group is reported.
+    /// Absent means every group is reported; a cap folds the rest into one row.
     pub group_limit: Option<GroupLimit>,
 }
 
@@ -133,10 +139,7 @@ pub struct RankedDimension {
 }
 
 /// The peers a distribution is taken over, and the targets it is reported for.
-///
-/// Entities in a cohort are named by person reference, while a dataset keys
-/// its rows by source identity, so the caller resolves each pool member's
-/// identities and the compiled read joins the two.
+/// The caller resolves each pool member's identities and the read joins the two.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonView {
     pub population: ComparisonPopulation,
@@ -144,7 +147,7 @@ pub struct ComparisonView {
     pub targets: Vec<String>,
     /// Every person the read may evaluate, with their resolved identities.
     /// A target absent from the pool reads no value of its own.
-    pub pool: Vec<ComparisonMember>,
+    pub pool: Vec<ResolvedPerson>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,16 +159,8 @@ pub enum ComparisonPopulation {
     Tenant,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComparisonMember {
-    pub person_ref: String,
-    pub identities: Vec<String>,
-}
-
-/// What a caller asks a metric for. A metric owns its own split vocabulary
-/// through the measures it composes, so a metric read is never grouped by a
-/// measure dimension it does not declare — it narrows by one and folds the
-/// rest away, or groups by the ones the view names.
+/// What a caller asks a metric for. INVARIANT: a metric read is never grouped
+/// by a measure dimension the metric does not declare.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetricQuery {
     pub tenant_id: String,
@@ -178,6 +173,46 @@ pub struct MetricQuery {
     pub bucket: Bucket,
     pub dimension_filters: Vec<DimensionFilter>,
     pub view: ViewKind,
+    /// Row ceiling for the statement, bound rather than written into the SQL.
+    pub row_limit: u64,
+}
+
+/// What a caller asks a metric for row by row. INVARIANT: tenancy, scope,
+/// window and dimension narrowing are the aggregate request's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrilldownQuery {
+    pub tenant_id: String,
+    pub entity_scope: EntityScope,
+    /// Inclusive, compared against the measure's event time taken as a date.
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub dimension_filters: Vec<DimensionFilter>,
+    /// Dimension keys to project beyond the measure's own. Each one must be a
+    /// dimension the measure declares.
+    pub display_dimensions: Vec<String>,
+    /// Rows per page. The statement reads one more than this, so the caller
+    /// can tell whether a further page follows without counting the whole read.
+    pub page_size: u64,
+    pub cursor: Option<DrilldownCursor>,
+}
+
+/// Where a page resumes: the ordering values the previous page's last row
+/// carried, in the order the read sorts by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrilldownCursor {
+    pub sort_values: Vec<String>,
+}
+
+/// What the comparison pre-pass asks for: everyone who shares a declared cohort with
+/// one of the targets, so the caller can resolve them into a [`ComparisonView`] pool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CohortMembersQuery {
+    pub tenant_id: String,
+    /// The entity type the metric declares, which cohort membership is under.
+    pub entity_type: String,
+    pub cohort_key: String,
+    /// Person references whose own cohorts the membership is read from.
+    pub targets: Vec<String>,
     /// Row ceiling for the statement, bound rather than written into the SQL.
     pub row_limit: u64,
 }

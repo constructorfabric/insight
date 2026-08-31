@@ -1,10 +1,7 @@
 //! How a requested dimension becomes columns of a result row.
 //!
-//! Position, not key, is what the row decoder reads, so each requested
-//! dimension owns the `dim_{index}_value` / `dim_{index}_label` pair at its
-//! place in the request's order. A dimension whose value a row does not carry
-//! groups under a visible sentinel rather than under NULL, so an absent value
-//! is one group instead of a hole every consumer folds differently.
+//! INVARIANT: position, not key, is what the row decoder reads, and an absent
+//! value groups under a visible sentinel rather than under NULL.
 
 use std::fmt::Write;
 
@@ -17,7 +14,7 @@ pub(super) const UNKNOWN_DIMENSION_VALUE: &str = "__unknown__";
 pub(super) const UNKNOWN_DIMENSION_LABEL: &str = "Unknown";
 
 /// The column pair one requested dimension occupies in a result row.
-pub(super) fn dimension_aliases(index: usize) -> (String, String) {
+pub(crate) fn dimension_aliases(index: usize) -> (String, String) {
     (format!("dim_{index}_value"), format!("dim_{index}_label"))
 }
 
@@ -35,8 +32,7 @@ pub(super) fn dimension_label_expr(binding: &DimensionBinding) -> String {
     )
 }
 
-/// The projection and group key of a read grouped by entity and dimension:
-/// value and label both group, so each row's label belongs to its own value.
+/// Value and label both group, so each row's label belongs to its own value.
 pub(super) fn dimension_select_group(
     measure: &MeasureDefinition,
     keys: &[String],
@@ -60,10 +56,8 @@ pub(super) fn dimension_select_group(
     Ok((select, group.join(", ")))
 }
 
-/// The projection and value keys of a read grouped by dimension alone, which
-/// orders by the same keys it groups by. The label is not one of them, so each
-/// group reports the label its latest row carries, broken by the label itself
-/// so the pick is total.
+/// The label is not a group key, so each group reports the label its latest
+/// row carries, broken by the label itself so the pick is total.
 pub(super) fn combined_split_dimension_select_group(
     measure: &MeasureDefinition,
     keys: &[String],

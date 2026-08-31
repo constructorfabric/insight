@@ -1,8 +1,6 @@
-//! The definitions and requests the compiler tests compile, and the two
-//! spellings the golden assertions read a statement in.
-//!
-//! Every fixture reads the catalogued test datasets, so a fixture cannot bind
-//! a field the catalog would refuse.
+//! The definitions and requests the compiler tests compile. Every fixture
+//! reads the catalogued test datasets, so none can bind a field the catalog
+//! would refuse.
 
 #![allow(clippy::expect_used)]
 
@@ -17,12 +15,13 @@ use crate::domain::definitions::definition::{
 
 use super::error::CompileError;
 use super::metric::compile_metric_query;
-use super::request::{Bucket, EntityScope, MetricQuery, SubjectSeriesView, ViewKind};
+use super::request::{
+    Bucket, DrilldownQuery, EntityScope, MetricQuery, ResolvedPerson, SubjectSeriesView, ViewKind,
+};
 use super::sql::{CompiledMeasureQuery, QueryParam};
 use super::test_catalog::catalog;
 
-/// A count over the collapsing dataset, broken down by one unlabelled
-/// dimension.
+/// A count over the collapsing dataset, with one unlabelled dimension.
 pub fn measure(key: &str, filter: Option<&str>) -> MeasureDefinition {
     MeasureDefinition {
         key: key.to_owned(),
@@ -42,8 +41,7 @@ pub fn measure(key: &str, filter: Option<&str>) -> MeasureDefinition {
     }
 }
 
-/// The same measure with a second dimension whose value key is not itself
-/// presentable, so a label column answers for it.
+/// A second dimension whose value key is not presentable, so a label answers.
 pub fn labelled_measure(key: &str) -> MeasureDefinition {
     let mut measure = measure(key, None);
     measure.dimensions.push(DimensionBinding {
@@ -121,6 +119,47 @@ pub fn plain_subject_series() -> ViewKind {
     })
 }
 
+/// Two people, one known by two identities, so a read must fold both into one
+/// row group.
+pub fn people() -> EntityScope {
+    EntityScope::People(vec![
+        ResolvedPerson {
+            person_ref: "person-1".to_owned(),
+            identities: vec![
+                "one@example.com".to_owned(),
+                "one.alt@example.com".to_owned(),
+            ],
+        },
+        ResolvedPerson {
+            person_ref: "person-2".to_owned(),
+            identities: vec!["two@example.com".to_owned()],
+        },
+    ])
+}
+
+/// The parameters [`people`] binds, in the order the pool writes them.
+pub fn people_params() -> Vec<QueryParam> {
+    vec![
+        text("person-1"),
+        text("one@example.com"),
+        text("person-1"),
+        text("one.alt@example.com"),
+        text("person-2"),
+        text("two@example.com"),
+    ]
+}
+
+pub fn pool_head() -> [&'static str; 6] {
+    [
+        "WITH pool AS (",
+        "    SELECT",
+        "        member.1 AS person_ref,",
+        "        member.2 AS identity",
+        "    FROM (SELECT arrayJoin([(?, ?), (?, ?), (?, ?)]) AS member)",
+        ")",
+    ]
+}
+
 pub fn query(view: ViewKind) -> MetricQuery {
     MetricQuery {
         tenant_id: "acme-tenant".to_owned(),
@@ -134,11 +173,24 @@ pub fn query(view: ViewKind) -> MetricQuery {
     }
 }
 
+/// The same tenancy, scope and window [`query`] reads under, asked row by row.
+pub fn drilldown_query() -> DrilldownQuery {
+    DrilldownQuery {
+        tenant_id: "acme-tenant".to_owned(),
+        entity_scope: EntityScope::Tenant,
+        from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
+        to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
+        dimension_filters: Vec::new(),
+        display_dimensions: Vec::new(),
+        page_size: 50,
+        cursor: None,
+    }
+}
+
 pub fn text(value: &str) -> QueryParam {
     QueryParam::Text(value.to_owned())
 }
 
-/// The statement a golden assertion expects, written one line per line.
 pub fn lines(expected: &[&str]) -> String {
     expected.join("\n")
 }

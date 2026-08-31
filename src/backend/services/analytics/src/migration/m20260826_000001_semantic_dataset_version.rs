@@ -1,10 +1,6 @@
-//! Versions datasets like every other definition. A dataset's semantics —
-//! which relation it reads, how that relation must be read, what a custom
-//! SELECT computes — decide the rows every measure above it aggregates, so a
-//! change to them invalidates cached work exactly as a measure change does, and
-//! a revision cannot be recorded against a definition that has no version.
-//!
-//! Availability is state, not definition: it moves without a version.
+//! Adds `definition_version` to `semantic_datasets`: a dataset's semantics
+//! decide the rows every measure above it aggregates, so a change to them
+//! invalidates cached work exactly as a measure change does.
 
 use sea_orm_migration::prelude::*;
 
@@ -25,8 +21,8 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let conn = manager.get_connection();
         conn.execute_unprepared(ADD_COLUMN).await?;
-        // MariaDB has no `ADD CONSTRAINT IF NOT EXISTS`, and a re-run must not
-        // fail the deploy, so a duplicate constraint is the success case.
+        // WORKAROUND: MariaDB has no `ADD CONSTRAINT IF NOT EXISTS`, so a
+        // duplicate constraint is the success case on a re-run.
         if let Err(error) = conn.execute_unprepared(ADD_CHECK).await {
             let message = error.to_string();
             if !message.contains("Duplicate") && !message.contains("already exists") {

@@ -1,24 +1,9 @@
-//! Canonical person identifiers → the source-native identity values a dataset
-//! carries.
-//!
-//! A request names people by person id. A dataset's entity column holds what
-//! its source recorded: a lowercased email, and for a fact that knows the
-//! author's account, the source's own account id. This module turns the former
-//! into the latter so a read can be scoped to people, and does nothing else.
-//!
-//! Identity policy is not this module's. Which binding of an account is
-//! current, which emails an account claims, what an email two people claim
-//! resolves to, and what a binding to the excluded person means are all owned
-//! by the identity mapping and stated once, in
-//! `src/ingestion/dbt/macros/resolve_person_id.sql`. This module only asks that
-//! mapping questions and hands the answers on; when the rules change, they
-//! change there and [`sql`] follows.
-//!
-//! A person the mapping resolves nothing for is absent from the answer rather
-//! than present with an empty set — "resolves to nobody" is the mapping's own
-//! outcome for a shared address, and it must not read as "every row".
+//! Canonical person identifiers → the source-native identity values a dataset's
+//! entity column carries. Identity policy is owned by the identity mapping
+//! (`src/ingestion/dbt/macros/resolve_person_id.sql`); this module only asks it
+//! questions and hands the answers on.
 
-#![allow(dead_code)] // tests are this module's only callers in the crate
+#![allow(dead_code)] // the semantic executor is the only caller
 
 mod error;
 mod sql;
@@ -30,8 +15,8 @@ use uuid::Uuid;
 
 pub use error::IdentityBindingError;
 
-/// The source-native values that stand for one person in a dataset's entity
-/// column. Both lists are deduplicated and sorted by the server.
+/// The source-native values standing for one person; both lists arrive sorted
+/// and deduplicated.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IdentitySet {
     pub emails: Vec<String>,
@@ -46,7 +31,8 @@ struct IdentityRow {
     account_ids: Vec<String>,
 }
 
-/// The identity values each of `person_ids` is known by, in one read.
+/// A person the mapping resolves nothing for is absent from the answer rather
+/// than present with an empty set, which must not read as "every row".
 pub async fn resolve_identities(
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
@@ -58,7 +44,7 @@ pub async fn resolve_identities(
 
     let tenant = tenant_id.to_string();
     let rows = clickhouse
-        .query(&sql::mapping_sql())
+        .query(&sql::mapping_sql(sql::MappingScope::RequestedPeople))
         .bind(tenant.as_str())
         .bind(person_ids)
         .bind(tenant.as_str())
@@ -78,10 +64,37 @@ pub async fn resolve_identities(
     Ok(by_person(rows))
 }
 
-/// How fresh the mapping that answered is, as a monotonic marker.
-///
+/// Every person the mapping resolves in this tenant, under exactly the rules
+/// [`resolve_identities`] applies to a named list. `row_limit` is the caller's
+/// served ceiling plus one, so an over-large population is detected rather than
+/// silently truncated.
+pub async fn resolve_all_identities(
+    clickhouse: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    row_limit: u64,
+) -> Result<BTreeMap<Uuid, IdentitySet>, IdentityBindingError> {
+    let tenant = tenant_id.to_string();
+    let rows = clickhouse
+        .query(&sql::mapping_sql(sql::MappingScope::EveryPerson))
+        .bind(tenant.as_str())
+        .bind(tenant.as_str())
+        .bind(row_limit)
+        .fetch_all::<IdentityRow>()
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                %error,
+                %tenant_id,
+                "enumerating the tenant's source identities failed"
+            );
+            IdentityBindingError::MappingUnreadable
+        })?;
+
+    Ok(by_person(rows))
+}
+
 /// Two reads taken under one marker saw one mapping; a marker that moved says
-/// the mapping may have, and says nothing about which person it moved for.
+/// the mapping may have, and nothing about which person it moved for.
 pub async fn identity_epoch(
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
@@ -126,8 +139,7 @@ fn by_person(rows: Vec<IdentityRow>) -> BTreeMap<Uuid, IdentitySet> {
 mod tests {
     use super::*;
 
-    /// Points at a closed port: any read that reached the network here would
-    /// fail rather than answer.
+    /// Points at a closed port: a read that reached the network would fail.
     fn offline_client() -> insight_clickhouse::Client {
         insight_clickhouse::Client::new(insight_clickhouse::Config {
             url: "http://127.0.0.1:1".to_owned(),
@@ -162,6 +174,13 @@ mod tests {
     async fn an_unreadable_mapping_resolves_nobody_rather_than_everybody() {
         let resolved =
             resolve_identities(&offline_client(), Uuid::now_v7(), &[Uuid::now_v7()]).await;
+
+        assert_eq!(resolved, Err(IdentityBindingError::MappingUnreadable));
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_tenant_population_resolves_nobody_rather_than_everybody() {
+        let resolved = resolve_all_identities(&offline_client(), Uuid::now_v7(), 10_001).await;
 
         assert_eq!(resolved, Err(IdentityBindingError::MappingUnreadable));
     }

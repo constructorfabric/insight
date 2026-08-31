@@ -1,12 +1,9 @@
 //! Field-catalog vocabulary: what a dataset field is and what it may be used
-//! for. Types come from the schema artifact; roles are authored. Neither half
-//! is a catalog on its own — [`super::loader`] joins them.
+//! for. Types come from the schema artifact; roles are authored.
 
 use serde::Deserialize;
 
-/// A field's type, normalized from the warehouse's spelling into the classes
-/// the semantic layer reasons about. Nullability rides beside the class
-/// because it decides null handling, not what a field can be used for.
+/// A field's type, normalized from the warehouse's spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldType {
     pub class: TypeClass,
@@ -17,20 +14,18 @@ pub struct FieldType {
 pub enum TypeClass {
     /// Text, including enumerations and fixed-width strings.
     Text,
-    /// Whole and fractional numbers alike: both aggregate, and the distinction
-    /// belongs to the warehouse, not to what a definition may declare.
+    /// Whole and fractional numbers alike.
     Number,
     Boolean,
     Date,
     Timestamp,
     Uuid,
-    /// Composite values (arrays, tuples, maps). Structurally visible so the
-    /// catalog can name them; not usable as a measurable or a dimension.
+    /// Arrays, tuples and maps: nameable, never measurable or groupable.
     Composite,
 }
 
-/// What a field may be used for. A field carries at most one structural role;
-/// display roles are declared separately so one field can both group and label.
+/// INVARIANT: a field carries at most one of these; display roles are declared
+/// separately so one field can both group and label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldRole {
@@ -46,8 +41,7 @@ pub enum FieldRole {
     Tenant,
 }
 
-/// What a field contributes to a drilldown row. Independent of [`FieldRole`]:
-/// display is presentation capability, not query capability.
+/// What a field contributes to a drilldown row, independent of [`FieldRole`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayRole {
@@ -78,8 +72,7 @@ pub struct CatalogField {
     pub field_type: FieldType,
     pub role: Option<FieldRole>,
     pub display: Vec<DisplayRole>,
-    /// For a dimension: the field carrying its human label, when the value key
-    /// is not itself presentable.
+    /// For a dimension: the field carrying its human label.
     pub label_field: Option<String>,
 }
 
@@ -90,6 +83,9 @@ pub struct CatalogDataset {
     pub relation: String,
     pub read_discipline: ReadDiscipline,
     pub sorting_key: Vec<String>,
+    /// INVARIANT: a row-by-row read orders by the sorting key AND these, since
+    /// the sorting key alone does not separate rows that tie on it.
+    pub row_identity: Vec<String>,
     pub fields: Vec<CatalogField>,
 }
 
@@ -99,10 +95,8 @@ pub struct FieldCatalog {
 }
 
 impl FieldType {
-    /// Parse a ClickHouse type name. Unknown names are admitted as composite —
-    /// the catalog records that the field exists without claiming it can be
-    /// measured or grouped, which is the safe direction: a role naming it is
-    /// rejected by the join, and an absent field is never silently invented.
+    /// An unknown type name is admitted as composite: the catalog records that
+    /// the field exists without claiming it can be measured or grouped.
     pub fn parse(raw: &str) -> Self {
         let trimmed = raw.trim();
         if let Some(inner) = strip_wrapper(trimmed, "Nullable") {
@@ -135,7 +129,6 @@ impl FieldType {
         }
     }
 
-    /// Whether a field of this type may carry the given role.
     pub fn admits(self, role: FieldRole) -> bool {
         match role {
             FieldRole::Entity | FieldRole::Tenant => {
@@ -152,9 +145,7 @@ impl FieldType {
 }
 
 impl ReadDiscipline {
-    /// The discipline a ClickHouse engine name implies. A replacing engine
-    /// keeps superseded rows until a merge that may never come, so every read
-    /// of one must collapse them.
+    /// The discipline a ClickHouse engine name implies.
     pub fn for_engine(engine: &str) -> Self {
         if engine.starts_with("Replacing") || engine.starts_with("Collapsing") {
             Self::Collapsing

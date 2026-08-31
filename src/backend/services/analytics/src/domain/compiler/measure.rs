@@ -8,10 +8,10 @@ use crate::domain::definitions::definition::{DimensionBinding, MeasureDefinition
 use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::error::CompileError;
+use super::pool::{Pool, joined_entity, only_cte, scan_clause};
 use super::request::MeasureQuery;
 use super::sql::{
-    ReadScope, aggregate_expr, bucket_expr, dimension_binding, from_clause, label_field,
-    read_predicates,
+    ReadScope, aggregate_expr, bucket_expr, dimension_binding, label_field, read_predicates,
 };
 
 pub use super::sql::{CompiledMeasureQuery, QueryParam};
@@ -27,8 +27,10 @@ pub fn compile_measure_query(
         .map(|key| dimension_binding(measure, key))
         .transpose()?;
     let aggregate = aggregate_expr(measure)?;
+    let pool = Pool::of_scope(&query.entity_scope);
 
     let mut params = Vec::new();
+    let head = only_cte(pool.as_ref(), &mut params)?;
     let predicates = read_predicates(
         dataset,
         measure,
@@ -38,8 +40,13 @@ pub fn compile_measure_query(
     )?;
     params.push(QueryParam::UInt(query.row_limit));
 
-    let mut sql = String::from("SELECT\n");
-    let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
+    let mut sql = head;
+    sql.push_str("SELECT\n");
+    let _ = writeln!(
+        sql,
+        "    {} AS entity_id,",
+        joined_entity(pool.as_ref(), measure)
+    );
     let _ = writeln!(
         sql,
         "    {} AS metric_date,",
@@ -50,7 +57,11 @@ pub fn compile_measure_query(
         let _ = writeln!(sql, "    {} AS dimension_label,", label_field(binding));
     }
     let _ = writeln!(sql, "    toFloat64({aggregate}) AS value");
-    let _ = writeln!(sql, "FROM {}", from_clause(dataset));
+    let _ = writeln!(
+        sql,
+        "FROM {}",
+        scan_clause(dataset, pool.as_ref(), measure, "")
+    );
     let _ = writeln!(sql, "WHERE {}", predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY {}", group_columns(group_by).join(", "));
     let _ = write!(sql, "LIMIT ?");
@@ -565,6 +576,7 @@ any:
             relation: "class_git_pull_requests".to_owned(),
             read_discipline: ReadDiscipline::Direct,
             sorting_key: vec!["unique_key".to_owned()],
+            row_identity: vec!["unique_key".to_owned()],
             fields: vec![CatalogField {
                 name: "author_email".to_owned(),
                 field_type: FieldType::parse("String"),

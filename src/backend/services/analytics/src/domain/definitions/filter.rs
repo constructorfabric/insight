@@ -1,17 +1,12 @@
 //! Measure filter tree: `all` / `any` / `not` combinators over
-//! `{field, op, value}` leaves, operators from a closed enum. The shape is the
-//! MBQL / JSON-Logic predicate-tree family; nothing here is an invented
-//! expression language. Deserialization admits only the documented keys, and
-//! [`FilterTree::validate`] bounds depth and size so a stored filter can never
-//! be pathological.
+//! `{field, op, value}` leaves, with operators from a closed enum.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-/// INVARIANT: bounds checked by [`FilterTree::validate`]; the compiler may
-/// recurse without its own depth guard only because every stored tree passed
-/// this validation at write time.
+/// INVARIANT: the compiler recurses without its own depth guard because every
+/// stored tree passed [`FilterTree::validate`] at write time.
 const MAX_DEPTH: usize = 8;
 const MAX_LEAVES: usize = 64;
 
@@ -100,15 +95,12 @@ pub enum FilterTree {
 }
 
 impl FilterTree {
-    /// Structural validation: bounds, combinator arity, field-name shape, and
-    /// operator/value agreement. Field existence and type compatibility are
-    /// the catalog-binding stage, not this one.
+    /// Structural only; field existence and type are the catalog-binding stage.
     pub fn validate(&self) -> Result<(), FilterError> {
         let mut leaves = 0usize;
         self.walk(0, &mut leaves)
     }
 
-    /// Every field the tree references, deduplicated, for catalog binding.
     pub fn referenced_fields(&self) -> BTreeSet<&str> {
         let mut fields = BTreeSet::new();
         self.collect_fields(&mut fields);

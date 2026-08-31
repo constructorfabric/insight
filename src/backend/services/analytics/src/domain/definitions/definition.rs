@@ -1,6 +1,5 @@
-//! The typed definition format. Authored YAML and stored rows are
-//! serializations of these types, and every consumer — parser, validators,
-//! store, editing API — reads the same ones, so the format is defined once.
+//! The typed definition format: the shapes authored YAML and stored rows are
+//! serializations of.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,8 +23,6 @@ pub enum Origin {
     Custom,
 }
 
-/// Binds a dimension key to the fields that carry its value and, where the
-/// value key is not presentable on its own, its label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DimensionBinding {
@@ -35,9 +32,7 @@ pub struct DimensionBinding {
     pub label_field: Option<String>,
 }
 
-/// How a relation must be read for its rows to be the deduplicated truth. A
-/// replacing engine keeps superseded rows until a merge that may never come,
-/// so every read of one must collapse them.
+/// How a relation must be read for its rows to be the deduplicated truth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadDiscipline {
@@ -47,8 +42,6 @@ pub enum ReadDiscipline {
     None,
 }
 
-/// A queryable relation with guaranteed semantics — deduplicated,
-/// tenant-scoped, stable columns — that measures aggregate over.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatasetDefinition {
@@ -58,12 +51,10 @@ pub struct DatasetDefinition {
     pub read_discipline: ReadDiscipline,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// How far back the dataset's history reaches, as a served contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_horizon: Option<String>,
 }
 
-/// A declarative aggregation of one dataset — the lowest editable layer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeasureDefinition {
@@ -86,9 +77,8 @@ pub struct MeasureDefinition {
     pub dimensions: Vec<DimensionBinding>,
 }
 
-/// How a metric turns measures into a served value. The `MetricFlow` metric
-/// types are the reference vocabulary; percentiles are metric-level because a
-/// percentile of pre-aggregated values is not a percentile.
+/// A percentile is metric-level because a percentile of pre-aggregated values
+/// is not a percentile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Computation {
@@ -101,7 +91,7 @@ pub enum Computation {
     },
     Percentile {
         measure: String,
-        /// The quantile to serve, in `(0, 1)`; `0.5` is the median.
+        /// The quantile to serve, in `(0, 1)`.
         quantile: f64,
     },
 }
@@ -168,8 +158,7 @@ impl Aggregation {
         }
     }
 
-    /// Which expression this aggregation requires, mirroring the store's
-    /// `chk_semantic_measures_aggregation_expr` biconditional.
+    /// INVARIANT: mirrors the store's `chk_semantic_measures_aggregation_expr`.
     pub fn operand(self) -> Operand {
         match self {
             Self::Count => Operand::None,
@@ -226,7 +215,6 @@ impl Direction {
 }
 
 impl MetricDefinition {
-    /// Every measure key this metric reads, for reference checking.
     pub fn input_measures(&self) -> Vec<&str> {
         match &self.computation {
             Computation::Direct { measure } | Computation::Percentile { measure, .. } => {

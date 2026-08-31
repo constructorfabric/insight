@@ -1,7 +1,6 @@
 //! The catalogued datasets the compiler tests read: one collapsing relation
 //! carrying every field role a measure binds, and one direct relation. Both
-//! load through the real snapshot and role loader, so a fixture cannot admit
-//! what the catalog would not.
+//! load through the real snapshot and role loader.
 
 #![allow(clippy::expect_used)]
 
@@ -16,7 +15,10 @@ const SNAPSHOT: &str = r#"[
     "sorting_key": "unique_key",
     "columns": [
       {"name": "tenant_id", "type": "Nullable(String)"},
+      {"name": "unique_key", "type": "String"},
       {"name": "author_email", "type": "String"},
+      {"name": "author_name", "type": "String"},
+      {"name": "title", "type": "Nullable(String)"},
       {"name": "closed_on", "type": "Nullable(DateTime)"},
       {"name": "state", "type": "String"},
       {"name": "repo_slug", "type": "String"},
@@ -34,6 +36,7 @@ const SNAPSHOT: &str = r#"[
     "sorting_key": "unique_key",
     "columns": [
       {"name": "tenant_id", "type": "Nullable(String)"},
+      {"name": "unique_key", "type": "String"},
       {"name": "author_email", "type": "String"},
       {"name": "committed_on", "type": "Nullable(DateTime)"},
       {"name": "repo_slug", "type": "String"}
@@ -46,19 +49,29 @@ datasets:
   - key: git_pull_requests
     database: silver
     relation: class_git_pull_requests
+    row_identity: [data_source, pull_request_id]
     fields:
       tenant_id: tenant
       author_email: entity
       closed_on: event_time
       state: dimension
-      repo_slug: dimension
+      repo_slug:
+        role: dimension
+        display: [location]
       data_source: dimension
       is_draft: dimension
       lines_added: measurable
-      pull_request_id: dimension
+      pull_request_id:
+        role: dimension
+        display: [reference]
+      title:
+        display: [title]
+      author_name:
+        display: [actor]
   - key: git_commits
     database: silver
     relation: class_git_commits
+    row_identity: [unique_key]
     fields:
       tenant_id: tenant
       author_email: entity

@@ -1,7 +1,6 @@
-//! Joins the two halves of the catalog: the schema snapshot (generated) and the
+//! Joins the two halves of the catalog: the generated schema snapshot and the
 //! authored roles. The join is the validation — a role naming a field the
-//! warehouse does not carry, or a type that cannot hold that role, fails here
-//! rather than at query time.
+//! warehouse lacks, or a type that cannot hold it, fails here, not at query time.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -36,6 +35,8 @@ pub enum CatalogError {
         field_type: String,
         role: String,
     },
+    #[error("dataset `{dataset}` identifies a row by `{field}`, which is not a column")]
+    RowIdentityFieldNotFound { dataset: String, field: String },
     #[error("dataset `{dataset}` labels `{field}` with `{label_field}`, which is not a column")]
     LabelFieldNotFound {
         dataset: String,
@@ -75,11 +76,12 @@ struct DatasetRoles {
     database: String,
     relation: String,
     #[serde(default)]
+    row_identity: Vec<String>,
+    #[serde(default)]
     fields: BTreeMap<String, FieldDeclaration>,
 }
 
-/// A field is declared either as a bare role (`author_email: entity`) or as a
-/// block carrying display roles and label bindings.
+/// Either a bare role (`author_email: entity`) or a block with display roles.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum FieldDeclaration {
@@ -132,6 +134,14 @@ fn join(
         })?;
 
     let column_names: HashSet<&str> = found.columns.iter().map(|c| c.name.as_str()).collect();
+    for field in &declared.row_identity {
+        if !column_names.contains(field.as_str()) {
+            return Err(CatalogError::RowIdentityFieldNotFound {
+                dataset: declared.key.clone(),
+                field: field.clone(),
+            });
+        }
+    }
     for (field, declaration) in &declared.fields {
         if !column_names.contains(field.as_str()) {
             return Err(CatalogError::FieldNotFound {
@@ -199,6 +209,7 @@ fn join(
         relation: declared.relation,
         read_discipline: ReadDiscipline::for_engine(&found.engine),
         sorting_key: parse_sorting_key(&found.sorting_key),
+        row_identity: declared.row_identity,
         fields,
     })
 }
@@ -239,6 +250,12 @@ mod tests {
     fn roles(fields: &str) -> String {
         format!(
             "datasets:\n  - key: git_commits\n    database: silver\n    relation: class_git_commits\n    fields:\n{fields}"
+        )
+    }
+
+    fn roles_identified_by(identity: &str) -> String {
+        format!(
+            "datasets:\n  - key: git_commits\n    database: silver\n    relation: class_git_commits\n    row_identity: [{identity}]\n    fields:\n{MINIMUM}"
         )
     }
 
@@ -292,6 +309,44 @@ mod tests {
             .unwrap();
         assert_eq!(branch.role, Some(FieldRole::Dimension));
         assert_eq!(branch.label_field.as_deref(), Some("branch_label"));
+    }
+
+    #[test]
+    fn a_declared_row_identity_resolves_against_the_relation() {
+        let catalog =
+            load(SNAPSHOT, &roles_identified_by("branch, message")).expect("catalog loads");
+
+        assert_eq!(
+            catalog.dataset("git_commits").unwrap().row_identity,
+            ["branch", "message"]
+        );
+    }
+
+    #[test]
+    fn a_row_identity_column_the_warehouse_lacks_is_rejected() {
+        let error =
+            load(SNAPSHOT, &roles_identified_by("commit_sha")).expect_err("field is absent");
+
+        assert_eq!(
+            error,
+            CatalogError::RowIdentityFieldNotFound {
+                dataset: "git_commits".to_owned(),
+                field: "commit_sha".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_dataset_may_declare_no_row_identity() {
+        let catalog = load(SNAPSHOT, &roles(MINIMUM)).expect("catalog loads");
+
+        assert!(
+            catalog
+                .dataset("git_commits")
+                .unwrap()
+                .row_identity
+                .is_empty()
+        );
     }
 
     #[test]

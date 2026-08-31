@@ -11,12 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONNECTORS_DIR="$(cd "${SCRIPT_DIR}/../../connectors" && pwd)"
 DDL_DIR="${SCRIPT_DIR}/../connectors-ddl"
 
-# The same schema in a second serialization: the DDL is what a fresh cluster
-# applies, this is what a program reads. The analytics service's field catalog
-# embeds it as its validation universe, so it covers exactly the databases a
-# semantic-layer dataset may name and it lands inside the service's own tree —
-# the analytics image builds with `src/backend` as its context and cannot reach
-# a file under `src/ingestion`.
+# The analytics field catalog embeds this snapshot, so it lands inside that
+# service's tree: the analytics image cannot reach a file under `src/ingestion`.
 COLUMN_SNAPSHOT="${SCRIPT_DIR}/../../../backend/services/analytics/src/domain/field_catalog/columns.snapshot.json"
 COLUMN_SNAPSHOT_DATABASES="'silver', 'insight'"
 

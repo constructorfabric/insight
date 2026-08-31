@@ -1,10 +1,5 @@
 //! Renders a subject-split read: one value per entity per combination of the
 //! dimensions the request names.
-//!
-//! The row shape is the period row widened by a `dim_{index}_value` /
-//! `dim_{index}_label` pair per requested dimension, positioned in the
-//! request's order. A dimension the row does not carry a value for groups
-//! under the unknown sentinel rather than under NULL.
 
 use std::fmt::Write;
 
@@ -14,8 +9,9 @@ use crate::domain::field_catalog::model::CatalogDataset;
 use super::dimensions::dimension_select_group;
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query};
+use super::pool::Pool;
 use super::request::MetricQuery;
-use super::sql::{CompiledMeasureQuery, ReadScope, from_clause};
+use super::sql::{CompiledMeasureQuery, ReadScope};
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -23,6 +19,7 @@ pub(super) fn compile(
     fold: &Fold<'_>,
     query: &MetricQuery,
     dimensions: &[String],
+    pool: Option<&Pool<'_>>,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     if dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
@@ -31,8 +28,8 @@ pub(super) fn compile(
     }
 
     let (select, group) = dimension_select_group(fold.grain, dimensions)?;
-    let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-    let inner = subject_split_sql(dataset, fold, &read, &select, &group);
+    let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query), pool)?;
+    let inner = subject_split_sql(&read, &select, &group);
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -42,18 +39,13 @@ pub(super) fn compile(
     ))
 }
 
-fn subject_split_sql(
-    dataset: &CatalogDataset,
-    fold: &Fold<'_>,
-    read: &ScopedRead,
-    select: &str,
-    group: &str,
-) -> String {
-    let mut sql = String::from("SELECT\n");
-    let _ = writeln!(sql, "    {} AS entity_id,", fold.grain.entity);
+fn subject_split_sql(read: &ScopedRead, select: &str, group: &str) -> String {
+    let mut sql = read.head.clone();
+    sql.push_str("SELECT\n");
+    let _ = writeln!(sql, "    {} AS entity_id,", read.entity);
     sql.push_str(select);
     let _ = writeln!(sql, "    {} AS value", read.value);
-    let _ = writeln!(sql, "FROM {}", from_clause(dataset));
+    let _ = writeln!(sql, "FROM {}", read.scan);
     let _ = writeln!(sql, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = writeln!(sql, "GROUP BY entity_id, {group}");
     let _ = writeln!(sql, "ORDER BY entity_id");

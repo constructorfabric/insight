@@ -9,32 +9,20 @@
     query_settings=metric_serving_query_settings()
 ) }}
 
--- Authored file changes: one row per change a person wrote, at the grain a
--- person recognises — this file, in this commit, adding these lines. Measures
--- sum it by category, extension or change type; drilldown shows the files
--- themselves rather than a daily total that cannot be checked.
+-- Authored file changes: one row per change a person wrote — this file, in
+-- this commit, adding these lines.
 --
--- A projection of the shared file-change stage onto this dataset's column
--- names, so the derivation the metric evidence reads and the derivation a
--- drilldown reads are the same derivation.
---
--- Ordered by tenant, person and time because that is how it is read: one
--- person's changes over a period, never a scan of every change ever made.
+-- INVARIANT: a projection of the shared file-change stage, so metric evidence
+-- and drilldown read the same derivation.
 
 WITH
--- One row per change CONTENT, not per commit that carries it. The same content
--- entering a repository on two lines of history — a branch squashed onto the
--- default branch as well, a cherry-pick, a reverted-then-restored file — is one
--- authored change with one oid pair, and summing both commits' diffs would
--- count those lines twice.
+-- One row per change CONTENT, not per commit that carries it: the same content
+-- entering a repository twice (a squash, a cherry-pick, a restore) is one
+-- authored change, and summing both commits' diffs would double its lines.
+-- Earliest commit wins, so the value does not move when a later commit repeats.
 --
--- Earliest commit wins, so the value lands in the period the content was first
--- authored and does not move when a later commit repeats it.
---
--- The commit_hash tie-breaker keeps rows whose content identity is unknown (a
--- source that reports no oid) distinct per commit: without it every such row
--- for one path would collapse into one, because LIMIT 1 BY reads their NULL
--- keys as equal.
+-- INVARIANT: the commit_hash tie-breaker keeps rows with no oid distinct per
+-- commit — LIMIT 1 BY reads their NULL keys as equal and would collapse them.
 deduplicated_file_changes AS (
     SELECT
         tenant_id,
@@ -93,9 +81,8 @@ SELECT
         lower(file_changes.change_type) = 'deleted', 'Deleted',
         file_changes.change_type
     ) AS change_type_label,
-    -- Inherited, not recomputed: lines belong to the bucket their commit
-    -- belongs to. A commit in `default` whose lines read `non_default` is the
-    -- column disagreement this inheritance exists to prevent.
+    -- INVARIANT: inherited from the commit, never recomputed — lines belong to
+    -- the bucket their commit belongs to.
     commits.branch_scope_value AS branch_scope,
     commits.branch_scope_label AS branch_scope_label,
     commits.repository_value AS repository,

@@ -1,12 +1,6 @@
 //! Product definitions: authored as repo YAML, embedded at compile time,
-//! validated by the build, and reconciled into the store at startup. The repo
-//! is how they are authored and reviewed; the store is the single runtime
-//! source of truth for every reader.
-//!
-//! Datasets are not authored here. The field catalog already declares each
-//! dataset's relation and the read discipline its engine implies, so dataset
-//! rows are a projection of the catalog — one place to change a relation, not
-//! two to keep in agreement.
+//! validated by the build, and reconciled into the store at startup. Datasets
+//! are not authored here — they are a projection of the field catalog.
 
 use sea_orm::{DatabaseConnection, TransactionTrait};
 use serde::Deserialize;
@@ -21,7 +15,6 @@ use crate::domain::field_catalog::{
     model::{FieldCatalog, ReadDiscipline as CatalogReadDiscipline},
 };
 
-/// Who the audit trail records for a definition that came from the repo.
 const ACTOR: &str = "product-seed";
 
 const FAMILIES: &[(&str, &str)] = &[("git", include_str!("seeds/git.yaml"))];
@@ -67,7 +60,6 @@ fn format_errors(errors: &[ValidationError]) -> String {
     })
 }
 
-/// Parse and validate every shipped definition against the field catalog.
 pub fn product_definitions() -> Result<ProductDefinitions, SeedError> {
     let catalog =
         field_catalog::product_catalog().map_err(|error| SeedError::Catalog(error.to_string()))?;
@@ -105,14 +97,11 @@ fn datasets_from_catalog(catalog: &FieldCatalog) -> Vec<DatasetDefinition> {
         .collect()
 }
 
-/// Converge the store on the shipped definitions. Datasets land before the
-/// measures that read them and metrics after the measures they compose, so a
-/// reader never sees a definition whose references are not yet written.
+/// INVARIANT: datasets land before the measures that read them and metrics
+/// after the measures they compose, so no reader sees a dangling reference.
 pub async fn reconcile_product_definitions(db: &DatabaseConnection) -> Result<(), SeedError> {
     let definitions = product_definitions()?;
 
-    // One family's convergence is one transaction: a mid-way failure leaves the
-    // store on the previous definitions rather than on half of the new ones.
     let txn = db.begin().await.map_err(StoreError::from)?;
     for dataset in &definitions.datasets {
         reconcile_dataset(&txn, dataset, Origin::Product, ACTOR).await?;
@@ -167,6 +156,7 @@ mod tests {
             relation: key.to_owned(),
             read_discipline,
             sorting_key: Vec::new(),
+            row_identity: Vec::new(),
             fields: Vec::new(),
         };
         let catalog = FieldCatalog {

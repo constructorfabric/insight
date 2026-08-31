@@ -9,27 +9,16 @@
     query_settings=metric_serving_query_settings()
 ) }}
 
--- Opened pull requests: one row per request a person raised, carrying the
--- review it received and the waits it went through. A semantic-layer dataset —
--- measures aggregate it, drilldown projects it, and neither re-solves what is
--- settled here: whose request it is, whether it targets the default branch,
--- and how long each stage took.
+-- Opened pull requests: one row per request a person raised, with the review it
+-- received and the waits it went through.
 --
--- Identity stays as the source gave it, in BOTH forms the source offers: the
--- author's profile email and the author's account id. The account is the
--- source's own answer to "whose request is this" and survives an empty profile
--- email, so a query binds the person from it first and from the email only when
--- no account is bound. Nothing here derives an identity the source did not
--- state.
---
--- Ordered by tenant, person and time because that is how it is read: one
--- person's requests over a period, never a scan of every request ever opened.
+-- INVARIANT: identity is carried in both forms the source offers — the author's
+-- profile email and the author's account id — and nothing here derives an
+-- identity the source did not state.
 
 WITH
--- The default branch NAME per repository, which is what a request's
--- destination has to be compared against. Every git connector reports it.
--- min() rather than any() so a repository that somehow claims two default
--- branches resolves the same way on every read.
+-- The default branch NAME per repository. min() rather than any() so a
+-- repository claiming two default branches resolves the same way on every read.
 repository_default_branches AS (
     SELECT
         tenant_id,
@@ -41,13 +30,11 @@ repository_default_branches AS (
     WHERE is_default = 1
     GROUP BY tenant_id, source_id, project_key, repo_slug
 ),
--- What review a request received. A reviewer counts once and only with evidence
--- of a review — a recorded review time, or an approval — so a reviewer merely
--- requested does not read as one who looked.
+-- A reviewer counts once and only with evidence of a review, so a reviewer
+-- merely requested does not read as one who looked.
 --
--- SAFETY: an approval may carry no review time, so `has_approval` and
--- `approved_at` are separate facts: a NULL `approved_at` is not proof that
--- nobody approved.
+-- SAFETY: an approval may carry no review time, so a NULL `approved_at` is not
+-- proof that nobody approved.
 pull_request_review_summary AS (
     SELECT
         tenant_id,
@@ -75,14 +62,12 @@ SELECT
     prs.pr_number AS pr_number,
     prs.title AS title,
     -- '' rather than a dropped row: a request whose author the source names only
-    -- by account still belongs to that person, and the account binds it when a
-    -- query runs.
+    -- by account still belongs to that person.
     lower(trimBoth(prs.author_email)) AS author_email,
     prs.author_account_id AS author_account_id,
     prs.author_name AS author_name,
-    -- assumeNotNull is safe under the WHERE below, and keeps the event time and
-    -- the partition key out of Nullable: a partition key may not be nullable,
-    -- and a sort key that is costs a read for nothing.
+    -- SAFETY: safe under the WHERE below, and a partition key may not be
+    -- nullable.
     assumeNotNull(prs.created_on) AS created_at,
     toDate(assumeNotNull(prs.created_on)) AS created_date,
     prs.closed_on AS closed_at,
@@ -96,10 +81,8 @@ SELECT
     coalesce(review_summary.reviewer_count, 0) AS reviewer_count,
     review_summary.first_reviewed_at AS first_reviewed_at,
     review_summary.approved_at AS approved_at,
-    -- A request targets the default branch or it does not. An unreported
-    -- destination, and a repository whose default branch is unknown, both read
-    -- `non_default` — the agreed reading for an absent signal, which keeps
-    -- default + non_default = total.
+    -- INVARIANT: an unreported destination and an unknown default branch both
+    -- read `non_default`, which keeps default + non_default = total.
     if(
         prs.destination_branch != ''
             AND prs.destination_branch = coalesce(defaults.branch_name, ''),
@@ -118,10 +101,8 @@ SELECT
     prs.lines_added AS lines_added,
     prs.lines_removed AS lines_removed,
     prs.files_changed AS files_changed,
-    -- Every duration is NULL unless the pair of timestamps it spans exists and
-    -- runs forwards. A negative span is a source disagreeing with itself about
-    -- its own clock, and averaging it in would move a team's number by a value
-    -- that never happened.
+    -- INVARIANT: every duration is NULL unless its pair of timestamps exists and
+    -- runs forwards; a negative span is a source disagreeing with its own clock.
     if(
         prs.state = 'MERGED'
             AND prs.closed_on IS NOT NULL
@@ -151,8 +132,7 @@ SELECT
         dateDiff('second', review_summary.approved_at, prs.closed_on) / 3600.0,
         CAST(NULL AS Nullable(Float64))
     ) AS approval_to_merge_hours,
-    -- The share of a merged request's life spent waiting for its first look.
-    -- Both legs of the split have to exist for the share to mean anything: a
+    -- Both legs of the split must exist for the share to mean anything: a
     -- request reviewed but not merged has a wait with nothing to be a share of.
     if(
         first_review_hours IS NOT NULL

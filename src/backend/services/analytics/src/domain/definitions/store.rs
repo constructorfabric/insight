@@ -1,14 +1,7 @@
-//! The definition store's write path — the only one. Every writer comes
-//! through here, so a definition can never be written by a path that skips
-//! versioning or the audit trail.
-//!
-//! Versioning is never hand-maintained: a write canonicalizes the definition's
-//! semantic fields, compares them against what the row already holds, and bumps
-//! `definition_version` only on difference — with a compare-and-set against the
-//! version it read, so two writers cannot both bump to the same number. A
-//! forgotten bump would serve new semantics from a cache keyed by the old
-//! version, so the possibility is removed structurally rather than by
-//! convention.
+//! The definition store's write path — the only one. A write canonicalizes the
+//! definition's semantic fields, compares them against what the row holds, and
+//! bumps `definition_version` only on difference, under a compare-and-set
+//! against the version it read.
 
 use sea_orm::{ConnectionTrait, DbErr, Statement, Value};
 use serde_json::json;
@@ -36,14 +29,12 @@ impl DefinitionKind {
     }
 }
 
-/// What a write did, so a reconciler can report and a caller can react.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteOutcome {
-    /// The definition did not exist; it was written at version 1.
     Created,
-    /// Semantic fields differed; the row moved to this version.
+    /// The version the row moved to.
     Bumped(i32),
-    /// The stored semantics already match; nothing was written.
+    /// The version the untouched row already holds.
     Unchanged(i32),
 }
 
@@ -55,7 +46,6 @@ pub enum StoreError {
     Conflict { key: String, version: i32 },
 }
 
-/// The version a write plan targets, decided before any row is touched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WritePlan {
     Insert,
@@ -71,8 +61,8 @@ fn plan(stored: Option<(i32, &serde_json::Value)>, incoming: &serde_json::Value)
     }
 }
 
-/// The semantic body of a dataset: which rows a measure over it will see.
-/// Availability is the probe's state, not definition, and never appears here.
+/// INVARIANT: only fields that change which rows a measure sees belong here —
+/// availability is probe state and must never move a version.
 fn dataset_body(dataset: &DatasetDefinition) -> serde_json::Value {
     json!({
         "relation": dataset.relation,
@@ -89,9 +79,8 @@ fn stored_dataset_body(model: &semantic_datasets::Model) -> serde_json::Value {
     })
 }
 
-/// The semantic body of a measure: everything that changes what the number
-/// means. Description and enablement are deliberately absent — they are not
-/// semantics, so editing them must not invalidate a cache.
+/// INVARIANT: only fields that change what the number means belong here —
+/// description and enablement must never move a version.
 fn measure_body(measure: &MeasureDefinition) -> serde_json::Value {
     json!({
         "dataset": measure.dataset,
@@ -105,10 +94,8 @@ fn measure_body(measure: &MeasureDefinition) -> serde_json::Value {
     })
 }
 
-/// INVARIANT: the write path stores dimensions through this same ordering, so
-/// the stored JSON compares equal to a canonicalized incoming body byte for
-/// byte. Sorting in only one of the two places makes every reconcile read as a
-/// semantic change and bump versions forever.
+/// INVARIANT: the write path stores dimensions through this same ordering, or
+/// every reconcile reads as a semantic change and bumps versions forever.
 fn canonical_dimensions(dimensions: &[DimensionBinding]) -> Vec<DimensionBinding> {
     let mut dimensions = dimensions.to_vec();
     dimensions.sort_by(|a, b| a.key.cmp(&b.key));
@@ -128,8 +115,8 @@ fn stored_measure_body(model: &semantic_measures::Model) -> serde_json::Value {
     })
 }
 
-/// The semantic body of a metric. Format, direction, and labels are display
-/// identity: they change how a value reads, never what it is.
+/// INVARIANT: only fields that change what the value is belong here — format,
+/// direction and labels are display identity and must never move a version.
 fn metric_body(metric: &MetricDefinition) -> serde_json::Value {
     json!({
         "computation": metric.computation,
@@ -255,7 +242,6 @@ pub async fn reconcile_metric<C: ConnectionTrait>(
         &incoming,
     ) {
         WritePlan::Unchanged { at } => {
-            // Display identity may still have moved; it is not versioned.
             update_metric_display(conn, metric).await?;
             return Ok(WriteOutcome::Unchanged(at));
         }
@@ -499,8 +485,7 @@ async fn update_metric<C: ConnectionTrait>(
     Ok(result.rows_affected())
 }
 
-/// Display identity is not versioned, so it is written without a bump and
-/// without a revision: nothing about meaning changed.
+/// Written without a bump or a revision: display identity is not versioned.
 async fn update_metric_display<C: ConnectionTrait>(
     conn: &C,
     metric: &MetricDefinition,
@@ -559,9 +544,8 @@ fn optional_str(value: Option<&str>) -> Value {
 fn json_value<T: serde::Serialize>(value: Option<&T>) -> Value {
     match value.map(|value| serde_json::to_string(value)) {
         Some(Ok(json)) => Value::from(json),
-        // A definition that cannot serialize never reaches the store: the write
-        // path only accepts parsed, validated definitions, whose types are
-        // serde-derived and total.
+        // SAFETY: only parsed, validated definitions reach the store, and their
+        // serde-derived types are total, so serialization cannot fail.
         Some(Err(_)) | None => Value::String(None),
     }
 }

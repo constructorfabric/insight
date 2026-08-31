@@ -1,10 +1,7 @@
-//! Renders the group-cap pre-pass: which dimension groups a capped read keeps.
+//! Renders the group-cap pre-pass: which dimension groups a capped read keeps,
+//! ranked by the metric's value over the whole window.
 //!
-//! Ranking is its own read because the cap it feeds must be the same for every
-//! view that shares a cap policy, and because a group's position is decided by
-//! the metric's value over the whole window rather than by anything a capped
-//! statement could compute mid-flight. A group whose value is unknown is not
-//! ranked at all — an unknown value is not a low one.
+//! INVARIANT: a group whose value is unknown is not ranked at all.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -15,8 +12,9 @@ use crate::domain::field_catalog::model::FieldCatalog;
 use super::dimensions::combined_split_dimension_select_group;
 use super::error::CompileError;
 use super::fold::{Fold, transformed};
+use super::pool::Pool;
 use super::request::GroupRankingQuery;
-use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope};
 
 pub fn compile_group_ranking_query(
     catalog: &FieldCatalog,
@@ -33,12 +31,19 @@ pub fn compile_group_ranking_query(
     let fold = Fold::resolve(metric, measures)?;
     let dataset = fold.dataset(catalog)?;
     let (select, group) = combined_split_dimension_select_group(fold.grain, &query.dimensions)?;
-    let read = fold.scoped_read(dataset, metric, &ReadScope::of_ranking(query))?;
+    let pool = Pool::of_scope(&query.entity_scope);
+    let read = fold.scoped_read(
+        dataset,
+        metric,
+        &ReadScope::of_ranking(query),
+        pool.as_ref(),
+    )?;
 
-    let mut inner = String::from("SELECT\n");
+    let mut inner = read.head.clone();
+    inner.push_str("SELECT\n");
     inner.push_str(&select);
     let _ = writeln!(inner, "    {} AS value", read.value);
-    let _ = writeln!(inner, "FROM {}", from_clause(dataset));
+    let _ = writeln!(inner, "FROM {}", read.scan);
     let _ = writeln!(inner, "WHERE {}", read.predicates.join("\n  AND "));
     let _ = write!(inner, "GROUP BY {group}");
 

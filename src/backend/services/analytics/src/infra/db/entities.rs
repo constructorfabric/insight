@@ -123,11 +123,10 @@ pub mod feedback {
 
 #[allow(dead_code)] // the store writes through SQL statements; the entity types the read side
 pub mod semantic_datasets {
-    //! `semantic_datasets` entity — a queryable relation measures aggregate
-    //! over, with the read discipline its rows demand.
+    //! `semantic_datasets` entity — a relation measures aggregate over.
     //!
-    //! INVARIANT: `availability` is state written by the structural probe, not
-    //! definition: it moves without touching `definition_version`.
+    //! INVARIANT: `availability` is probe state, not definition: it moves
+    //! without touching `definition_version`.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -163,8 +162,7 @@ pub mod semantic_measures {
     //! `semantic_measures` entity — one declarative aggregation of one dataset.
     //!
     //! INVARIANT: `definition_version` is bumped only by
-    //! `domain::definitions::store`, which compares canonicalized semantic
-    //! fields and writes with a compare-and-set; nothing else may set it.
+    //! `domain::definitions::store`, under a compare-and-set.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -197,8 +195,7 @@ pub mod semantic_measures {
 
 #[allow(dead_code)] // the store writes through SQL statements; the entity types the read side
 pub mod semantic_metrics {
-    //! `semantic_metrics` entity — a composition of measures into a served
-    //! value, with its display identity.
+    //! `semantic_metrics` entity — measures composed into a served value.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -229,8 +226,7 @@ pub mod semantic_metrics {
 
 #[allow(dead_code)] // the audit trail is written here and read by operators, not by the service
 pub mod semantic_definition_revisions {
-    //! `semantic_definition_revisions` entity — append-only audit of every
-    //! definition write, from the store's first day.
+    //! `semantic_definition_revisions` entity — append-only definition audit.
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]

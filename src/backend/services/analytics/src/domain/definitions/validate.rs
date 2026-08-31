@@ -1,11 +1,6 @@
-//! Validates definitions against the field catalog — the stage that decides
-//! whether a well-formed definition is a *true* one: does the field exist, may
-//! it hold the role the definition uses it in, does the expression name only
+//! Validates definitions against the field catalog: does the field exist, may
+//! it hold the role the definition uses it in, does an expression name only
 //! catalogued columns, does every reference resolve.
-//!
-//! One implementation serves both write paths: product definitions run it at
-//! build time (an invalid one fails CI and cannot ship) and authored ones run
-//! it at write time, so an invalid definition is never stored.
 
 use std::collections::BTreeSet;
 
@@ -67,8 +62,8 @@ pub enum ValidationError {
     },
 }
 
-/// Validate a whole definition set together: every cross-reference resolves
-/// within it, so a set that validates can be reconciled in any order.
+/// A set validates only if it closes over its own references, so a set that
+/// validates can be reconciled in any order.
 pub fn validate_definitions(
     catalog: &FieldCatalog,
     measures: &[MeasureDefinition],
@@ -273,9 +268,8 @@ fn validate_metric(
         }
     }
 
-    // Cross-dataset composition joins aggregates on entity, time bucket, and
-    // conformed dimensions — capability the compiler does not have yet, so a
-    // definition may not ask for it.
+    // Joining aggregates across datasets is capability the compiler does not
+    // have, so a definition may not ask for it.
     if let Some((first_key, first_dataset)) = datasets.first()
         && let Some((other_key, _)) = datasets
             .iter()

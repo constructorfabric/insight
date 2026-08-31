@@ -1,11 +1,6 @@
-//! Live MariaDB tests for the definition store's write path.
-//!
-//! `#[ignore]`d and skipped when `INTEGRATION_TESTS_MARIADB_URL` is unset, so
-//! `cargo test` stays green on a stock dev machine (the convention of
-//! `metric_definitions/live_tests.rs`). CI runs them with `--include-ignored`
-//! against a migrated MariaDB, which is where the SQL earns its coverage: the
-//! version decision is unit-tested, but idempotence, the compare-and-set, and
-//! the CHECK constraints only exist against a real server.
+//! Live MariaDB tests for the definition store's write path. `#[ignore]`d and
+//! skipped when `INTEGRATION_TESTS_MARIADB_URL` is unset; CI runs them with
+//! `--include-ignored` against a migrated MariaDB.
 
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
 
@@ -36,8 +31,7 @@ async fn connect_or_skip() -> Option<DatabaseConnection> {
     }
 }
 
-/// Product rows are keyed by `(tenant sentinel, key)`, so a test key must be
-/// unique per test to keep parallel runs independent.
+/// Unique per test: product rows are keyed by `(tenant sentinel, key)`.
 fn measure(key: &str) -> MeasureDefinition {
     MeasureDefinition {
         key: key.to_owned(),
@@ -205,7 +199,6 @@ async fn a_write_against_a_superseded_version_touches_nothing() {
         .await
         .expect("first write");
 
-    // Another writer bumps the row after this one read version 1.
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE semantic_measures SET definition_version = definition_version + 1 \
@@ -228,7 +221,6 @@ async fn a_write_against_a_superseded_version_touches_nothing() {
         "a losing writer leaves the row exactly as it found it"
     );
 
-    // Re-reading is what resolves it: the next reconcile sees version 2.
     assert_eq!(
         reconcile_measure(&db, &changed, Origin::Product, ACTOR)
             .await
@@ -288,9 +280,6 @@ async fn the_store_rejects_an_aggregation_without_its_operand() {
     let key = "live_store_check";
     cleanup(&db, &[key]).await;
 
-    // `sum` without a value expression violates the store's biconditional. The
-    // validators reject this before it reaches the store; the CHECK is the
-    // backstop that makes the rejection structural.
     let mut invalid = measure(key);
     invalid.aggregation = Aggregation::Sum;
     assert!(

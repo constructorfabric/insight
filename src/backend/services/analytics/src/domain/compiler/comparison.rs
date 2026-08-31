@@ -1,18 +1,7 @@
 //! Renders a comparison read: each target's own value beside the spread of the pool
-//! it is compared against.
-//!
-//! A cohort names its members by person reference while a dataset keys its
-//! rows by source identity, so the caller resolves each member's identities
-//! and the statement joins the two: the pool is a bound (person, identity)
-//! relation, the metric folds once per person over that person's rows, and the
-//! distribution is taken over those per-person values. Everything stays one
-//! statement — the fold, the pool, and the distribution are three stages of
-//! one scan.
-//!
-//! Cohort membership is not a dataset. It is read from its own relation with
-//! the same tenancy, entity type, and cohort key the request resolved, and
-//! nothing here repairs it: a pool that tie-breaks its own input would hide
-//! the input being wrong.
+//! it is compared against. The fold, the pool and the distribution are three
+//! stages of one statement; cohort membership is read from its own relation
+//! with the tenancy, entity type and cohort key the request resolved.
 
 use std::fmt::Write;
 
@@ -21,22 +10,70 @@ use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
+use super::pool::{Pool, continued_cte, joined_entity, scan_clause};
 use super::request::{
-    ComparisonMember, ComparisonPopulation, ComparisonView, EntityScope, MetricQuery,
+    CohortMembersQuery, ComparisonPopulation, ComparisonView, EntityScope, MetricQuery,
 };
-use super::sql::{
-    CompiledMeasureQuery, QueryParam, ReadScope, from_clause, placeholders, read_predicates,
-};
+use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, placeholders, read_predicates};
 
 /// Where cohort membership is declared.
 const COHORT_RELATION: &str = "insight.metric_entity_cohorts_current";
 
-/// Fewest observed peers a distribution is disclosed for. Quartiles over a
-/// handful of people are noise presented as signal — someone is always the
-/// bottom quarter of three — and at two the median discloses the one
-/// colleague's value. Below the floor the pool size is still reported and
-/// every other statistic reads NULL.
+/// Fewest observed peers a distribution is disclosed for. Below it the pool
+/// size is still reported and every other statistic reads NULL.
 const MIN_PEER_N: u32 = 5;
+
+/// Who a declared-cohort peer read may evaluate: everyone who shares a cohort
+/// with one of the targets, scoped exactly as the peer read itself binds.
+pub fn compile_cohort_members_query(
+    query: &CohortMembersQuery,
+) -> Result<CompiledMeasureQuery, CompileError> {
+    if query.targets.is_empty() {
+        return Err(CompileError::EmptySelection {
+            selection: "the comparison targets".to_owned(),
+        });
+    }
+
+    let mut params = Vec::new();
+    push_cohort_scope_values(
+        &mut params,
+        &query.tenant_id,
+        &query.entity_type,
+        &query.cohort_key,
+    );
+    push_cohort_scope_values(
+        &mut params,
+        &query.tenant_id,
+        &query.entity_type,
+        &query.cohort_key,
+    );
+    params.extend(query.targets.iter().cloned().map(QueryParam::Text));
+    params.push(QueryParam::UInt(query.row_limit));
+
+    let sql = [
+        "SELECT DISTINCT entity_id".to_owned(),
+        format!("FROM {COHORT_RELATION}"),
+        "WHERE tenant_id = ?".to_owned(),
+        "  AND entity_type = ?".to_owned(),
+        "  AND cohort_key = ?".to_owned(),
+        "  AND cohort_id IN (".to_owned(),
+        "    SELECT cohort_id".to_owned(),
+        format!("    FROM {COHORT_RELATION}"),
+        "    WHERE tenant_id = ?".to_owned(),
+        "      AND entity_type = ?".to_owned(),
+        "      AND cohort_key = ?".to_owned(),
+        format!(
+            "      AND entity_id IN ({})",
+            placeholders(query.targets.len())
+        ),
+        "  )".to_owned(),
+        "ORDER BY entity_id".to_owned(),
+        "LIMIT ?".to_owned(),
+    ]
+    .join("\n");
+
+    Ok(CompiledMeasureQuery { sql, params })
+}
 
 pub(super) fn compile(
     dataset: &CatalogDataset,
@@ -59,12 +96,13 @@ pub(super) fn compile(
         ComparisonPopulation::Tenant => tenant_targets_cte(view, &mut params),
     };
 
-    let pool = pool_cte(&view.pool, &mut params)?;
-    let member_values = member_values_cte(dataset, metric, fold, query, &mut params)?;
+    let pool = Pool::of_peers(&view.pool);
+    let pool_cte = continued_cte(&pool, &mut params)?;
+    let member_values = member_values_cte(dataset, metric, fold, query, &pool, &mut params)?;
     let carried = transform_in_place(metric.transform.as_ref(), "member_values.value");
 
     let mut sql = head;
-    sql.push_str(&pool);
+    sql.push_str(&pool_cte);
     sql.push_str(&member_values);
     match &view.population {
         ComparisonPopulation::DeclaredCohort { .. } => push_cohort_distribution(&mut sql, &carried),
@@ -75,9 +113,8 @@ pub(super) fn compile(
     Ok(CompiledMeasureQuery { sql, params })
 }
 
-/// The two reads of the cohort relation: the targets the view answers for, and
-/// everyone who shares a cohort with one of them. Both scope by the same
-/// tenancy, entity type, and cohort key, in that binding order.
+/// The two reads of the cohort relation, both scoped by the same tenancy,
+/// entity type and cohort key, in that binding order.
 fn declare_cohort_ctes(
     metric: &MetricDefinition,
     query: &MetricQuery,
@@ -127,16 +164,25 @@ fn declare_cohort_ctes(
     Ok(sql)
 }
 
-// INVARIANT: tenancy leads a cohort read exactly as it leads a dataset read,
-// bound from the request and never written into the statement.
 fn push_cohort_scope(
     params: &mut Vec<QueryParam>,
     query: &MetricQuery,
     metric: &MetricDefinition,
     cohort_key: &str,
 ) {
-    params.push(QueryParam::Text(query.tenant_id.clone()));
-    params.push(QueryParam::Text(metric.entity_type.clone()));
+    push_cohort_scope_values(params, &query.tenant_id, &metric.entity_type, cohort_key);
+}
+
+// INVARIANT: tenancy leads a cohort read exactly as it leads a dataset read,
+// bound from the request and never written into the statement.
+fn push_cohort_scope_values(
+    params: &mut Vec<QueryParam>,
+    tenant_id: &str,
+    entity_type: &str,
+    cohort_key: &str,
+) {
+    params.push(QueryParam::Text(tenant_id.to_owned()));
+    params.push(QueryParam::Text(entity_type.to_owned()));
     params.push(QueryParam::Text(cohort_key.to_owned()));
 }
 
@@ -149,42 +195,14 @@ fn tenant_targets_cte(view: &ComparisonView, params: &mut Vec<QueryParam>) -> St
     )
 }
 
-/// The caller's identity resolution as a bound relation: one row per
-/// (person, identity) pair, so a person with several identities folds their
-/// rows together and an identity is never attributed twice.
-fn pool_cte(
-    pool: &[ComparisonMember],
-    params: &mut Vec<QueryParam>,
-) -> Result<String, CompileError> {
-    let pairs: usize = pool.iter().map(|member| member.identities.len()).sum();
-    if pairs == 0 {
-        return Err(CompileError::EmptySelection {
-            selection: "the comparison pool".to_owned(),
-        });
-    }
-
-    for member in pool {
-        for identity in &member.identities {
-            params.push(QueryParam::Text(member.person_ref.clone()));
-            params.push(QueryParam::Text(identity.clone()));
-        }
-    }
-
-    let tuples = vec!["(?, ?)"; pairs].join(", ");
-    Ok(format!(
-        "pool AS (\n    SELECT\n        member.1 AS person_ref,\n        member.2 AS identity\n    FROM (SELECT arrayJoin([{tuples}]) AS member)\n),\n"
-    ))
-}
-
-/// The metric folded once per pool member. The pool join is what narrows this
-/// read to the population, so the request's own entity scope is not a
-/// predicate here — a comparison read answers about a target by comparing it to
-/// people the target did not select.
+/// INVARIANT: the pool join narrows this read to the population, so the
+/// request's own entity scope is not a predicate here.
 fn member_values_cte(
     dataset: &CatalogDataset,
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
+    pool: &Pool<'_>,
     params: &mut Vec<QueryParam>,
 ) -> Result<String, CompileError> {
     let population = EntityScope::Tenant;
@@ -194,13 +212,16 @@ fn member_values_cte(
     let predicates = read_predicates(dataset, fold.grain, fold.where_filter, &scope, params)?;
 
     let mut sql = String::from("member_values AS (\n    SELECT\n");
-    let _ = writeln!(sql, "        pool.person_ref AS entity_id,");
-    let _ = writeln!(sql, "        {value} AS value");
-    let _ = writeln!(sql, "    FROM {}", from_clause(dataset));
     let _ = writeln!(
         sql,
-        "    INNER JOIN pool ON pool.identity = {}",
-        fold.grain.entity
+        "        {} AS entity_id,",
+        joined_entity(Some(pool), fold.grain)
+    );
+    let _ = writeln!(sql, "        {value} AS value");
+    let _ = writeln!(
+        sql,
+        "    FROM {}",
+        scan_clause(dataset, Some(pool), fold.grain, "    ")
     );
     let _ = writeln!(sql, "    WHERE {}", predicates.join("\n      AND "));
     let _ = writeln!(sql, "    GROUP BY entity_id");
@@ -208,9 +229,8 @@ fn member_values_cte(
     Ok(sql)
 }
 
-// WORKAROUND: ClickHouse inlines a `WITH` body once per reference, so a second
-// reference to `entity_values` would re-scan the whole window. The target's own
-// value is extracted from the peer rows with a conditional aggregate instead.
+// WORKAROUND: ClickHouse inlines a `WITH` body once per reference, so the
+// target's own value is a conditional aggregate rather than a second scan.
 fn push_cohort_distribution(sql: &mut String, carried: &str) {
     let _ = writeln!(sql, "entity_values AS (");
     let _ = writeln!(sql, "    SELECT");
@@ -225,10 +245,8 @@ fn push_cohort_distribution(sql: &mut String, carried: &str) {
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
     let _ = writeln!(sql, "    targets.entity_id AS entity_id,");
-    // INVARIANT: at most one peer row matches a target — the cohort relation
-    // is one row per (tenant, entity, cohort key) and `member_values` groups by
-    // person — so `maxIf` returns exactly that row's value, NULL when the
-    // target was never observed.
+    // INVARIANT: the cohort relation is one row per (tenant, entity, cohort
+    // key), so `maxIf` returns that row's value, NULL for an unobserved target.
     let _ = writeln!(
         sql,
         "    maxIf(peer.value, peer.entity_id = targets.entity_id) AS target_value,"
@@ -242,9 +260,8 @@ fn push_cohort_distribution(sql: &mut String, carried: &str) {
     let _ = write!(sql, "SETTINGS join_use_nulls = 1");
 }
 
-// INVARIANT: the population is aggregated once over the whole pool and the
-// requested targets' own values are captured in that same pass, so the cost is
-// one scan and one aggregation however many targets the request carries.
+// INVARIANT: the population is aggregated once and the targets' own values are
+// captured in the same pass, whatever the number of targets.
 fn push_tenant_distribution(sql: &mut String, carried: &str) {
     let _ = writeln!(sql, "entity_values AS (");
     let _ = writeln!(sql, "    SELECT");
@@ -263,9 +280,8 @@ fn push_tenant_distribution(sql: &mut String, carried: &str) {
     let _ = writeln!(sql, ")");
     let _ = writeln!(sql, "SELECT");
     let _ = writeln!(sql, "    targets.entity_id AS entity_id,");
-    // SAFETY: `arrayFirst` yields the default tuple when a target was never
-    // captured; its Nullable value element reads NULL, so an unobserved target
-    // stays unobserved rather than reading a zero.
+    // SAFETY: `arrayFirst` yields the default tuple for an uncaptured target;
+    // its Nullable value element reads NULL rather than a zero.
     let _ = writeln!(
         sql,
         "    tupleElement(arrayFirst(row -> row.1 = targets.entity_id, population_stats.target_rows), 2) AS target_value,"
@@ -313,7 +329,8 @@ mod tests {
         compile, compile_err, direct, lines, measure, metric, percent_of_total, query, text,
     };
     use crate::domain::compiler::request::{
-        ComparisonMember, ComparisonPopulation, ComparisonView, EntityScope, ViewKind,
+        CohortMembersQuery, ComparisonPopulation, ComparisonView, EntityScope, ResolvedPerson,
+        ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
     use crate::domain::definitions::definition::MetricDefinition;
@@ -325,16 +342,16 @@ mod tests {
         }
     }
 
-    fn pool() -> Vec<ComparisonMember> {
+    fn pool() -> Vec<ResolvedPerson> {
         vec![
-            ComparisonMember {
+            ResolvedPerson {
                 person_ref: "person-1".to_owned(),
                 identities: vec![
                     "one@example.com".to_owned(),
                     "one.alt@example.com".to_owned(),
                 ],
             },
-            ComparisonMember {
+            ResolvedPerson {
                 person_ref: "person-2".to_owned(),
                 identities: vec!["two@example.com".to_owned()],
             },
@@ -353,6 +370,69 @@ mod tests {
         ComparisonPopulation::DeclaredCohort {
             cohort_key: "org_unit".to_owned(),
         }
+    }
+
+    fn members_query(targets: &[&str]) -> CohortMembersQuery {
+        CohortMembersQuery {
+            tenant_id: "acme-tenant".to_owned(),
+            entity_type: "person".to_owned(),
+            cohort_key: "org_unit".to_owned(),
+            targets: targets.iter().map(|target| (*target).to_owned()).collect(),
+            row_limit: 10_001,
+        }
+    }
+
+    #[test]
+    fn the_pool_of_a_declared_cohort_is_everyone_who_shares_a_cohort_with_a_target() {
+        let compiled =
+            super::compile_cohort_members_query(&members_query(&["person-1", "person-2"]))
+                .expect("a named target compiles");
+
+        assert_eq!(
+            compiled.sql,
+            lines(&[
+                "SELECT DISTINCT entity_id",
+                "FROM insight.metric_entity_cohorts_current",
+                "WHERE tenant_id = ?",
+                "  AND entity_type = ?",
+                "  AND cohort_key = ?",
+                "  AND cohort_id IN (",
+                "    SELECT cohort_id",
+                "    FROM insight.metric_entity_cohorts_current",
+                "    WHERE tenant_id = ?",
+                "      AND entity_type = ?",
+                "      AND cohort_key = ?",
+                "      AND entity_id IN (?, ?)",
+                "  )",
+                "ORDER BY entity_id",
+                "LIMIT ?",
+            ])
+        );
+        assert_eq!(
+            compiled.params,
+            vec![
+                text("acme-tenant"),
+                text("person"),
+                text("org_unit"),
+                text("acme-tenant"),
+                text("person"),
+                text("org_unit"),
+                text("person-1"),
+                text("person-2"),
+                QueryParam::UInt(10_001),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_cohort_pool_of_no_target_would_read_every_cohort_and_is_rejected() {
+        assert_eq!(
+            super::compile_cohort_members_query(&members_query(&[]))
+                .expect_err("expected a compile error"),
+            CompileError::EmptySelection {
+                selection: "the comparison targets".to_owned(),
+            }
+        );
     }
 
     #[test]

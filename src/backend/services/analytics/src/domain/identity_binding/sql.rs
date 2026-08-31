@@ -1,33 +1,22 @@
 //! The statements this module sends, and the single place the relations they
-//! read are named.
-//!
-//! The rules the inline relations reproduce belong to the identity mapping
-//! (`src/ingestion/dbt/macros/resolve_person_id.sql`); they are written out
-//! here only because the mapping does not yet publish them as relations of its
-//! own. When it does, [`MAPPING`] becomes
-//! [`MappingRelations::PublishedViews`] and nothing else in this crate moves.
+//! read are named. The rules the inline relations reproduce belong to the
+//! identity mapping (`src/ingestion/dbt/macros/resolve_person_id.sql`).
 
-/// The reserved person meaning "not a human" — bots, CI and service accounts
-/// are bound to it, and it is unmintable because UUIDv7 never produces an
-/// all-ones value.
+/// The reserved person meaning "not a human"; unmintable because UUIDv7 never
+/// produces an all-ones value.
 const EXCLUDED_PERSON: &str = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 
 /// Where this module reads the identity mapping from.
-///
-/// Both variants answer the same two questions, project the same columns and
-/// take the same single bound parameter, so the swap is the whole migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MappingRelations {
-    /// The mapping's rules read straight off `identity.identity_inputs` and
-    /// `identity.identity_persons`.
+    /// The mapping's rules, read straight off the `identity` tables.
     InlineIdentityTables,
     /// The mapping's own published views.
     PublishedViews,
 }
 
 /// INVARIANT: whichever relations are in force, each projects `person_id` plus
-/// one identity value column and carries exactly one `?` for the tenant. The
-/// requested people narrow the answer in [`mapping_sql`], outside the relation.
+/// one identity value column and carries exactly one `?` for the tenant.
 pub(super) const MAPPING: MappingRelations = MappingRelations::InlineIdentityTables;
 
 impl MappingRelations {
@@ -48,17 +37,14 @@ impl MappingRelations {
     }
 }
 
-/// Per person, the identity values a dataset's entity column can hold for them.
-///
 /// INVARIANT: `WHERE person_id IN ?` sits outside the email claims, after their
-/// dual-claimant `HAVING`. Narrowing the claims to the requested people first
-/// would hide the second claimant of a shared email and award that email to the
-/// first — the one outcome the mapping's rules exist to prevent.
+/// dual-claimant `HAVING` — narrowing first would award a shared email to its
+/// first claimant.
 ///
-/// INVARIANT: both value columns are coalesced. The columns underneath are
+/// INVARIANT: both value columns are coalesced; the columns underneath are
 /// `Nullable(String)`, and a nullable element type makes the row decode refuse
-/// the array — a refusal only a real server raises.
-pub(super) fn mapping_sql() -> String {
+/// the array.
+pub(super) fn mapping_sql(scope: MappingScope) -> String {
     let mut sql = vec![
         "SELECT".to_owned(),
         "    person_id,".to_owned(),
@@ -73,10 +59,10 @@ pub(super) fn mapping_sql() -> String {
     ];
 
     sql.extend(indent(&MAPPING.email_claims(), 8));
+    sql.push("    ) AS email_map".to_owned());
+    sql.extend(scope.narrowing().map(ToOwned::to_owned));
     sql.extend(
         [
-            "    ) AS email_map",
-            "    WHERE person_id IN ?",
             "    UNION ALL",
             "    SELECT",
             "        person_id,",
@@ -88,31 +74,45 @@ pub(super) fn mapping_sql() -> String {
     );
 
     sql.extend(indent(&MAPPING.account_bindings(), 8));
-    sql.extend(
-        [
-            "    ) AS account_map",
-            "    WHERE person_id IN ?",
-            ") AS claimed",
-            "GROUP BY person_id",
-            "ORDER BY person_id",
-        ]
-        .map(ToOwned::to_owned),
-    );
+    sql.push("    ) AS account_map".to_owned());
+    sql.extend(scope.narrowing().map(ToOwned::to_owned));
+    sql.extend([") AS claimed", "GROUP BY person_id", "ORDER BY person_id"].map(ToOwned::to_owned));
+    sql.extend(scope.ceiling().map(ToOwned::to_owned));
 
     sql.join("\n")
 }
 
-/// How fresh the mapping is, in milliseconds since the epoch.
+/// Which people one mapping read answers for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MappingScope {
+    /// The people the caller named; their count is the caller's own bound.
+    RequestedPeople,
+    /// Everyone the mapping resolves in the tenant, up to a bound row ceiling.
+    EveryPerson,
+}
+
+impl MappingScope {
+    fn narrowing(self) -> Option<&'static str> {
+        match self {
+            Self::RequestedPeople => Some("    WHERE person_id IN ?"),
+            Self::EveryPerson => None,
+        }
+    }
+
+    fn ceiling(self) -> Option<&'static str> {
+        match self {
+            Self::RequestedPeople => None,
+            Self::EveryPerson => Some("LIMIT ?"),
+        }
+    }
+}
+
+/// How fresh the mapping is, in milliseconds since the epoch. The greater of
+/// the two stores' markers may say "newer" more often than the map moved, but
+/// never says "unchanged" about a map that did.
 ///
-/// Each mapping store carries one monotonic marker: the journal's mirror
-/// timestamp, and the observation log's `ReplacingMergeTree` version. The
-/// greater of the two advances whenever either store is written, which is what
-/// a cursor needs — it may say "newer" more often than the map really changed,
-/// but it never says "unchanged" about a map that did.
-///
-/// The observation log is deliberately unfiltered: it carries a producer-side
-/// tenant that never equals the journal's, so no predicate over it means what
-/// it appears to, and no join between the two stores may use one.
+/// SAFETY: the observation log is unfiltered on purpose — it carries a
+/// producer-side tenant that never equals the journal's.
 pub(super) const EPOCH_SQL: &str = "SELECT toUInt64(greatest(\n    \
      (SELECT max(toUnixTimestamp64Milli(_synced_at)) FROM identity.identity_persons \
      WHERE insight_tenant_id = toUUID(?)),\n    \
@@ -130,10 +130,8 @@ fn published_view(value_column: &str, view: &str) -> String {
     .join("\n")
 }
 
-/// The mapping's account-derived email claim, read in the direction it is
-/// written: every email an account has carried claims it, the account's latest
-/// binding names the claimant, a claim by the excluded person is no claim at
-/// all, and an email two people claim resolves to nobody.
+/// Every email an account has carried claims it, the account's latest binding
+/// names the claimant, and an email two people claim resolves to nobody.
 fn inline_email_claims() -> String {
     let mut sql = [
         "SELECT",
@@ -176,9 +174,8 @@ fn inline_email_claims() -> String {
 /// The same bindings the email claim joins through, keyed for a fact that
 /// carries the source's own account id rather than an address.
 ///
-/// A binding to the excluded person stays: read forward it terminates
-/// resolution, and read backwards it can only ever appear under the excluded
-/// person itself, never under a human.
+/// SAFETY: no exclusion filter here — read backwards, a binding to the excluded
+/// person can only appear under that person, never under a human.
 fn inline_account_bindings() -> String {
     current_bindings("lower(trimBoth(value_effective))")
 }
@@ -186,9 +183,8 @@ fn inline_account_bindings() -> String {
 /// The latest `value_type = 'id'` row per `(source_type, source_id,
 /// account_id)` — the binding that decides who an account is.
 ///
-/// The account key is normalized differently on the two sides the mapping
-/// serves: the email claim joins the observation log's raw `source_account_id`,
-/// while a fact's account column is matched case-insensitively.
+/// INVARIANT: the account key is normalized per caller — the email claim joins
+/// the raw `source_account_id`, a fact's account column matches case-insensitively.
 fn current_bindings(account_id: &str) -> String {
     [
         "SELECT".to_owned(),
@@ -219,8 +215,7 @@ mod tests {
 
     use super::*;
 
-    /// What each `?` in a statement stands for, read off the text in front of
-    /// it. The bind order in `mod.rs` has to match this sequence exactly.
+    /// What each `?` stands for; the bind order in `mod.rs` must match it.
     fn placeholders(sql: &str) -> Vec<&'static str> {
         sql.match_indices('?')
             .map(|(at, _)| {
@@ -229,6 +224,8 @@ mod tests {
                     "tenant"
                 } else if before.ends_with("person_id IN ") {
                     "people"
+                } else if before.ends_with("LIMIT ") {
+                    "row ceiling"
                 } else {
                     "unrecognized"
                 }
@@ -243,9 +240,36 @@ mod tests {
     #[test]
     fn the_mapping_binds_the_tenant_and_the_person_set_once_per_relation() {
         assert_eq!(
-            placeholders(&mapping_sql()),
+            placeholders(&mapping_sql(MappingScope::RequestedPeople)),
             vec!["tenant", "people", "tenant", "people"]
         );
+    }
+
+    #[test]
+    fn enumerating_the_tenant_drops_the_person_narrowing_and_binds_a_row_ceiling() {
+        assert_eq!(
+            placeholders(&mapping_sql(MappingScope::EveryPerson)),
+            vec!["tenant", "tenant", "row ceiling"]
+        );
+    }
+
+    #[test]
+    fn both_scopes_read_the_same_claims_under_the_same_rules() {
+        let named = mapping_sql(MappingScope::RequestedPeople);
+        let every = mapping_sql(MappingScope::EveryPerson);
+
+        let dropped: BTreeSet<&str> = named
+            .lines()
+            .filter(|line| !every.contains(*line))
+            .collect();
+        let added: BTreeSet<&str> = every
+            .lines()
+            .filter(|line| !named.contains(*line))
+            .collect();
+
+        assert_eq!(dropped, BTreeSet::from(["    WHERE person_id IN ?"]));
+        assert_eq!(added, BTreeSet::from(["LIMIT ?"]));
+        assert!(every.contains("HAVING uniqExact(cb.person_id) = 1"));
     }
 
     #[test]
@@ -273,7 +297,7 @@ mod tests {
 
     #[test]
     fn the_requested_people_narrow_the_claims_only_after_the_shared_email_rule() {
-        let sql = mapping_sql();
+        let sql = mapping_sql(MappingScope::RequestedPeople);
 
         assert!(
             sql.find("HAVING uniqExact(cb.person_id) = 1") < sql.find("WHERE person_id IN ?"),
@@ -293,7 +317,7 @@ mod tests {
 
     #[test]
     fn the_statement_carries_no_value_of_its_own_beyond_the_reserved_person() {
-        let sql = mapping_sql();
+        let sql = mapping_sql(MappingScope::RequestedPeople);
 
         assert_eq!(
             quoted_literals(&sql),
@@ -303,7 +327,7 @@ mod tests {
 
     #[test]
     fn both_identity_values_decode_as_plain_strings() {
-        let sql = mapping_sql();
+        let sql = mapping_sql(MappingScope::RequestedPeople);
 
         assert!(sql.contains("coalesce(email, '') AS value"), "{sql}");
         assert!(sql.contains("coalesce(account_id, '') AS value"), "{sql}");
@@ -351,7 +375,7 @@ mod tests {
     #[test]
     fn the_mapping_statement_reads_as_written() {
         assert_eq!(
-            mapping_sql(),
+            mapping_sql(MappingScope::RequestedPeople),
             [
                 "SELECT",
                 "    person_id,",
