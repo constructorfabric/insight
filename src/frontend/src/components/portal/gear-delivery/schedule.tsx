@@ -9,7 +9,7 @@ import {
   PreviewCardTrigger,
 } from "@/components/ui/preview-card";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { buildGantt, monthTicks } from "@/lib/gears/gantt";
+import { buildGantt, monthTicks, type GanttLane } from "@/lib/gears/gantt";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
@@ -85,11 +85,7 @@ export function GearSchedule() {
                 style={{ width: LANE_LABEL_WIDTH }}
                 title={lane.assignee ?? t("gear_roadmap.gantt.unassigned")}
               >
-                {lane.assignee ?? (
-                  <span className="text-muted-foreground italic">
-                    {t("gear_roadmap.gantt.unassigned")}
-                  </span>
-                )}
+                <LaneName lane={lane} />
               </div>
 
               <div
@@ -120,6 +116,33 @@ export function GearSchedule() {
         </div>
       </div>
     </section>
+  );
+}
+
+function LaneName({ lane }: { lane: GanttLane }) {
+  const { t } = useTranslation();
+
+  if (lane.assignee === null) {
+    return (
+      <span className="text-muted-foreground italic">
+        {t("gear_roadmap.gantt.unassigned")}
+      </span>
+    );
+  }
+
+  if (lane.assigneeUrl === null) {
+    return <>{lane.assignee}</>;
+  }
+
+  return (
+    <a
+      href={lane.assigneeUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="underline underline-offset-2"
+    >
+      {lane.assignee}
+    </a>
   );
 }
 

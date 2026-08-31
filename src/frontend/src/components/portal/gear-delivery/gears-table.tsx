@@ -5,6 +5,13 @@ import type { Gear } from "@/api/gear-roadmap-client";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -17,11 +24,13 @@ import { UNGROUPED } from "@/lib/gears/roadmap-grid";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
+const ALL = "__all__";
+
 export function GearsTable() {
   const { t } = useTranslation();
   const { data, isPending, isError } = useGearRoadmap();
   const [query, setQuery] = useState("");
-  const [chosen, setChosen] = useState<readonly string[]>([]);
+  const [chosen, setChosen] = useState(ALL);
 
   const all = useMemo(() => data?.gears ?? [], [data]);
   const subsystems = useMemo(() => countBySubsystem(all), [all]);
@@ -44,41 +53,41 @@ export function GearsTable() {
           aria-label={t("gear_roadmap.items.filter_placeholder")}
           className="max-w-xs"
         />
+        <Select value={chosen} onValueChange={(value) => setChosen(value ?? ALL)}>
+          <SelectTrigger size="sm" aria-label="Subsystem" className="w-44">
+            <SelectValue>
+              {chosen === ALL ? t("gear_roadmap.items.all_subsystems") : chosen}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>
+              {t("gear_roadmap.items.all_subsystems")}
+            </SelectItem>
+            {subsystems.map(([subsystem, count]) => (
+              <SelectItem
+                key={subsystem}
+                value={subsystem}
+                aria-label={`${subsystem} — ${count} gears`}
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`size-2 rounded-full ${subsystemTone(subsystem).dot}`}
+                  />
+                  {subsystem}
+                  <span className="tabular-nums text-muted-foreground">
+                    {count}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <span className="text-xs text-muted-foreground tabular-nums">
           {t("gear_roadmap.items.count", { count: gears.length })}
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {subsystems.map(([subsystem, count]) => {
-          const active = chosen.includes(subsystem);
-          return (
-            <button
-              key={subsystem}
-              type="button"
-              aria-pressed={active}
-              aria-label={t("gear_roadmap.items.subsystem_filter", {
-                subsystem,
-                count,
-              })}
-              onClick={() => setChosen(toggle(chosen, subsystem))}
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition ${
-                active
-                  ? "border-primary bg-primary/10 font-medium"
-                  : "border-transparent bg-muted hover:bg-accent"
-              }`}
-            >
-              <span
-                className={`size-2 rounded-full ${
-                  subsystemTone(subsystem).dot
-                }`}
-              />
-              {subsystem}
-              <span className="tabular-nums text-muted-foreground">{count}</span>
-            </button>
-          );
-        })}
-      </div>
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <Table>
@@ -259,25 +268,11 @@ function countBySubsystem(gears: Gear[]): [string, number][] {
   );
 }
 
-function toggle(chosen: readonly string[], subsystem: string): string[] {
-  return chosen.includes(subsystem)
-    ? chosen.filter((entry) => entry !== subsystem)
-    : [...chosen, subsystem];
-}
-
-/** An empty choice means every subsystem, never none. */
-function filterGears(
-  gears: Gear[],
-  query: string,
-  chosen: readonly string[],
-): Gear[] {
+function filterGears(gears: Gear[], query: string, chosen: string): Gear[] {
   const needle = query.trim().toLowerCase();
 
   return gears.filter((gear) => {
-    if (
-      chosen.length > 0 &&
-      !chosen.includes(gear.subsystem ?? UNGROUPED)
-    ) {
+    if (chosen !== ALL && (gear.subsystem ?? UNGROUPED) !== chosen) {
       return false;
     }
 

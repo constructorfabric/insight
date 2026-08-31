@@ -52,6 +52,9 @@ pub(crate) struct AssigneeLink {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct LaneDto {
     pub(crate) assignee: Option<String>,
+    /// Absent for an unassigned lane, and where no configured source knows the
+    /// account.
+    pub(crate) assignee_url: Option<String>,
     pub(crate) spans: Vec<SpanDto>,
 }
 
@@ -78,7 +81,7 @@ pub(crate) fn build(
 
     let lanes = schedule(&items, today)
         .into_iter()
-        .map(lane_dto)
+        .map(|lane| lane_dto(lane, gears, links))
         .collect::<Vec<_>>();
 
     GearRoadmapResponse {
@@ -105,9 +108,15 @@ fn schedule_item(gear: &Gear) -> Option<ScheduleItem<'_>> {
     })
 }
 
-fn lane_dto(lane: Lane) -> LaneDto {
+fn lane_dto(lane: Lane, gears: &[Gear], links: &ExternalSourceRegistry) -> LaneDto {
+    let assignee_url = lane
+        .assignee
+        .as_deref()
+        .and_then(|login| account_href(login, gears, links));
+
     LaneDto {
         assignee: lane.assignee,
+        assignee_url,
         spans: lane
             .spans
             .into_iter()
@@ -149,6 +158,16 @@ fn gear_dto(gear: &Gear, window_start: YearMonth, links: &ExternalSourceRegistry
             })
             .collect(),
     }
+}
+
+/// The lane carries a login, not a source, so the account page is resolved
+/// through a gear the person is on — that is where the source is recorded.
+fn account_href(login: &str, gears: &[Gear], links: &ExternalSourceRegistry) -> Option<String> {
+    let gear = gears
+        .iter()
+        .find(|gear| gear.assignees.iter().any(|entry| entry == login))?;
+
+    links.account_href(GIT_PROVIDER, &gear.source_id, login)
 }
 
 fn issue_url(gear: &Gear, links: &ExternalSourceRegistry) -> Option<String> {
@@ -281,6 +300,23 @@ mod tests {
         );
         assert_eq!(
             response.gears[0].assignee_urls[0].url.as_deref(),
+            Some("https://git.example.test/dev-one")
+        );
+    }
+
+    #[test]
+    fn a_lane_names_the_account_page_of_the_person_in_it() {
+        let sources = [crate::config::ExternalSourceConfig {
+            id: "source-a".to_owned(),
+            provider: crate::config::ExternalSourceProvider::Github,
+            web_base_url: "https://git.example.test/".to_owned(),
+        }];
+        let registry = ExternalSourceRegistry::new(&sources).expect("valid sources");
+
+        let response = build(&[gear(41, "30.09", "Todo")], today(), &registry);
+
+        assert_eq!(
+            response.lanes[0].assignee_url.as_deref(),
             Some("https://git.example.test/dev-one")
         );
     }

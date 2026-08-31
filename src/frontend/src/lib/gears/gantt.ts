@@ -12,6 +12,7 @@ export interface GanttBar {
 
 export interface GanttLane {
   assignee: string | null;
+  assigneeUrl: string | null;
   bars: GanttBar[];
 }
 
@@ -38,6 +39,7 @@ export function buildGantt(lanes: GearLane[]): GanttChart {
     totalDays: last - first + 1,
     lanes: lanes.map((lane) => ({
       assignee: lane.assignee ?? null,
+      assigneeUrl: lane.assignee_url ?? null,
       bars: lane.spans.map((span) => ({
         gearNumber: span.gear_number,
         offsetDays: dayNumber(span.start) - first,

@@ -61,6 +61,7 @@ function roadmap(over: Partial<GearRoadmap> = {}): GearRoadmap {
     lanes: [
       {
         assignee: "dev-one",
+        assignee_url: "https://git.example.test/dev-one",
         spans: [{ gear_number: 1, start: "2030-08-01", end: "2030-08-06" }],
       },
     ],
@@ -176,10 +177,41 @@ describe("RoadmapGrid", () => {
 });
 
 describe("GearSchedule", () => {
+  it("links the lane to the account page of the person in it", () => {
+    render(<GearSchedule />);
+
+    expect(screen.getByRole("link", { name: "dev-one" })).toHaveAttribute(
+      "href",
+      "https://git.example.test/dev-one",
+    );
+  });
+
+  it("leaves an unlinked lane as plain text", () => {
+    queryState = {
+      data: roadmap({
+        lanes: [
+          {
+            assignee: "dev-two",
+            spans: [
+              { gear_number: 1, start: "2030-08-01", end: "2030-08-06" },
+            ],
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+
+    render(<GearSchedule />);
+
+    expect(screen.queryByRole("link", { name: "dev-two" })).toBeNull();
+    expect(screen.getByText("dev-two")).toBeInTheDocument();
+  });
+
   it("draws one lane per assignee and states the assumed capacity", () => {
     render(<GearSchedule />);
 
-    expect(screen.getByText("dev-one")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "dev-one" })).toBeInTheDocument();
     expect(screen.getByText(/1 man-day per calendar day/)).toBeInTheDocument();
   });
 
@@ -275,33 +307,44 @@ describe("GearsTable subsystem filter", () => {
     };
   });
 
-  it("offers one toggle per subsystem on the board, with its count", () => {
+  it("opens on every subsystem, one control wide", () => {
     render(<GearsTable />);
 
     expect(
-      screen.getByRole("button", { name: "BSS — 2 gears" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "CORE — 1 gears" })).toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Subsystem" }),
+    ).toHaveTextContent("All subsystems");
   });
 
-  it("narrows the table to the chosen subsystems", async () => {
+  it("narrows the table to the chosen subsystem", async () => {
     const user = userEvent.setup();
     render(<GearsTable />);
 
-    await user.click(screen.getByRole("button", { name: "BSS — 2 gears" }));
+    await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
+    await user.click(await screen.findByRole("option", { name: /^BSS/ }));
 
     expect(screen.getByText("BSS - Two")).toBeInTheDocument();
     expect(screen.getByText("BSS - Three")).toBeInTheDocument();
     expect(screen.queryByText("CORE - One")).toBeNull();
   });
 
-  it("shows every gear again once the last subsystem is cleared", async () => {
+  it("counts the gears each subsystem holds", async () => {
     const user = userEvent.setup();
     render(<GearsTable />);
 
-    const bss = screen.getByRole("button", { name: "BSS — 2 gears" });
-    await user.click(bss);
-    await user.click(bss);
+    await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
+
+    expect(await screen.findByRole("option", { name: "BSS — 2 gears" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "CORE — 1 gears" })).toBeInTheDocument();
+  });
+
+  it("shows every gear again when the choice is cleared", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable />);
+
+    await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
+    await user.click(await screen.findByRole("option", { name: /^BSS/ }));
+    await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
+    await user.click(await screen.findByRole("option", { name: "All subsystems" }));
 
     expect(screen.getByText("CORE - One")).toBeInTheDocument();
   });

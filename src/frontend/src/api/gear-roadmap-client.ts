@@ -66,6 +66,8 @@ export interface GearSpan {
 /** One schedule lane. A null assignee is a gear nobody owns. */
 export interface GearLane {
   assignee?: string | null;
+  /** Absent for an unassigned lane, and where no source knows the account. */
+  assignee_url?: string | null;
   spans: GearSpan[];
 }
 
