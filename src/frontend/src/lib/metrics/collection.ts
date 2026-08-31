@@ -96,6 +96,33 @@ export function filterCollectionByKey(
   return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
+/**
+ * Drop metrics whose request narrows by a dimension they do not declare.
+ *
+ * The backend rejects the WHOLE request over one such filter — "metric
+ * tasks.closed does not support dimension repository" — so a screen that
+ * scopes a whole direction to one repository would blank itself over the
+ * metrics that have nothing to do with repositories.
+ *
+ * Dropping, not un-filtering: an unfiltered tile on a scoped screen would show
+ * a figure for the whole roster under a heading that names one repository,
+ * which is worse than an absent tile. `declared === null` means the catalog has
+ * not answered, and then nothing is dropped — the caller holds the request
+ * instead, the same rule `filterCollectionToAvailable` follows.
+ */
+export function filterCollectionToDeclaredDimensions(
+  collection: MetricCollectionConfig,
+  declared: ReadonlyMap<string, ReadonlySet<string>> | null,
+): MetricCollectionConfig {
+  if (!declared) return collection;
+  return filterCollectionByKey(collection, (key) => {
+    const asked = collection.metrics.find((m) => m.key === key)?.filters ?? [];
+    if (!asked.length) return true;
+    const supported = declared.get(key);
+    return asked.every((filter) => supported?.has(filter.dimension) ?? false);
+  });
+}
+
 export type MetricCollectionEntity =
   // The tenant variant carries no ids: the backend derives the organization
   // from the session, and a client-supplied identifier is rejected outright.

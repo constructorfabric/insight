@@ -10,6 +10,7 @@ import {
   buildMetricCollectionRequest,
   entityObserved,
   filterCollectionToAvailable,
+  filterCollectionToDeclaredDimensions,
   type NormalizedMetricResult,
   chunkEntityIds,
   entityChunkSize,
@@ -687,6 +688,80 @@ describe("entityObserved", () => {
       period: { view: "period", values: [{ entity_id: "a@x", value: 0 }] },
     } as unknown as NormalizedMetricResult;
     expect(entityObserved(noPeer, "a@x")).toBe(false);
+  });
+});
+
+describe("filterCollectionToDeclaredDimensions", () => {
+  const REPO = [{ dimension: "repository", values: ["src:acme/api"] }];
+  const declared = new Map<string, ReadonlySet<string>>([
+    ["git.commits", new Set(["repository", "hour_block"])],
+    ["git.prs_merged", new Set(["repository"])],
+    ["tasks.closed", new Set(["project"])],
+  ]);
+  const scoped: MetricCollectionConfig = {
+    metrics: [
+      { key: "git.commits", filters: REPO, views: [{ view: "period" }] },
+      { key: "tasks.closed", filters: REPO, views: [{ view: "period" }] },
+    ],
+  };
+
+  it("drops a metric narrowed by a dimension it does not declare", () => {
+    // The backend answers the whole request with 400 "metric tasks.closed does
+    // not support dimension repository", so this is the difference between a
+    // scoped screen and a blank one.
+    const out = filterCollectionToDeclaredDimensions(scoped, declared);
+    expect(out.metrics.map((m) => m.key)).toEqual(["git.commits"]);
+  });
+
+  it("keeps a metric that asks for no dimension at all", () => {
+    const plain: MetricCollectionConfig = {
+      metrics: [{ key: "tasks.closed", views: [{ view: "period" }] }],
+    };
+    expect(filterCollectionToDeclaredDimensions(plain, declared)).toBe(plain);
+  });
+
+  it("needs EVERY named dimension, not just one of them", () => {
+    const both: MetricCollectionConfig = {
+      metrics: [
+        {
+          key: "git.prs_merged",
+          filters: [
+            { dimension: "repository", values: ["src:acme/api"] },
+            { dimension: "hour_block", values: ["08"] },
+          ],
+          views: [{ view: "period" }],
+        },
+      ],
+    };
+    // git.prs_merged declares `repository` and not `hour_block`.
+    expect(filterCollectionToDeclaredDimensions(both, declared).metrics).toEqual(
+      [],
+    );
+  });
+
+  it("drops a metric the catalog does not describe at all", () => {
+    const unknown: MetricCollectionConfig = {
+      metrics: [
+        { key: "git.mystery", filters: REPO, views: [{ view: "period" }] },
+      ],
+    };
+    expect(
+      filterCollectionToDeclaredDimensions(unknown, declared).metrics,
+    ).toEqual([]);
+  });
+
+  it("drops nothing while the catalog is unknown", () => {
+    // Null is "not answered yet" — the caller holds the request instead.
+    expect(filterCollectionToDeclaredDimensions(scoped, null)).toBe(scoped);
+  });
+
+  it("returns the SAME object when every filter is supported", () => {
+    const fine: MetricCollectionConfig = {
+      metrics: [
+        { key: "git.commits", filters: REPO, views: [{ view: "period" }] },
+      ],
+    };
+    expect(filterCollectionToDeclaredDimensions(fine, declared)).toBe(fine);
   });
 });
 

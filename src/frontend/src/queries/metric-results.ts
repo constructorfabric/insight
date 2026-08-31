@@ -14,6 +14,7 @@ import {
   chunkEntityIds,
   filterCollectionByKey,
   filterCollectionToAvailable,
+  filterCollectionToDeclaredDimensions,
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
@@ -26,7 +27,10 @@ import {
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useAvailableMetricKeys } from "@/queries/metric-definitions";
+import {
+  useAvailableMetricKeys,
+  useDeclaredMetricDimensions,
+} from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -122,9 +126,13 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const asked = filterCollectionByKey(
-    filterCollectionToAvailable(collection, catalog.keys),
+    filterCollectionToDeclaredDimensions(
+      filterCollectionToAvailable(collection, catalog.keys),
+      dimensions.byMetricKey
+    ),
     gate
   );
   const canonicalEntity: MetricCollectionEntity =
@@ -150,6 +158,7 @@ export function useMetricCollection(
     entitySelected(entity, ids) &&
     request.metrics.length > 0 &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   const current = useQuery({
@@ -225,10 +234,12 @@ export function useMetricCollectionSet(
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const enabled =
     entitySelected(entity, ids) &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
@@ -238,7 +249,10 @@ export function useMetricCollectionSet(
   const requests = collections.flatMap(({ key, collection: raw }) => {
     // Same catalog and install gates as `useMetricCollection` — see the notes there.
     const collection = filterCollectionByKey(
-      filterCollectionToAvailable(raw, catalog.keys),
+      filterCollectionToDeclaredDimensions(
+        filterCollectionToAvailable(raw, catalog.keys),
+        dimensions.byMetricKey
+      ),
       gate
     );
     const chunkSize = entityChunkSize(collection);
