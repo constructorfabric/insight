@@ -947,6 +947,16 @@ describe("MetricEvidenceDialog", () => {
       expect(screen.getByText("3 matching records")).toBeInTheDocument();
     });
 
+    // A header reading "not sorted" over rows that plainly are is the table
+    // disagreeing with itself.
+    it("announces the order the server actually served", () => {
+      renderDialog();
+      expect(mocks.tableProps?.sort).toEqual({
+        key: "date",
+        direction: "desc",
+      });
+    });
+
     it("cycles a column through ascending, descending and back to the default", async () => {
       renderDialog();
 
@@ -966,8 +976,9 @@ describe("MetricEvidenceDialog", () => {
       });
 
       sortBy("value");
-      expect(mocks.tableProps?.sort).toBeNull();
-      // Back to no order of its own: the server's default is what answers.
+      // Back to no order of its own: the server's default is what answers,
+      // and what the headers go back to announcing.
+      expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
       expect(await requested()).not.toHaveProperty("sort");
     });
 
@@ -1064,7 +1075,7 @@ describe("MetricEvidenceDialog", () => {
         "add"
       );
       sortBy("value");
-      expect(mocks.tableProps?.sort).not.toBeNull();
+      expect(mocks.tableProps?.sort).toEqual({ key: "value", direction: "asc" });
 
       view.rerender(
         <MetricEvidenceDialog
@@ -1074,7 +1085,9 @@ describe("MetricEvidenceDialog", () => {
         />
       );
 
-      expect(mocks.tableProps?.sort).toBeNull();
+      // Back to the server's default, which is what the next request asks
+      // for and what the headers announce.
+      expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
       expect(
         screen.getByRole("searchbox", { name: "Search records" })
       ).toHaveValue("");

@@ -189,6 +189,12 @@ export function MetricEvidenceDialog({
   // the controls that ask it to are inert rather than misleading.
   const narrowsRows =
     query.data == null || servesOrderedRows(query.data.pages[0]);
+  // What the headers announce. Asking for no order in particular still gets
+  // one — the server's default — and a header reading "not sorted" over rows
+  // that plainly are is the table disagreeing with itself. The cycle still
+  // turns on `sort`, so the first click on the defaulted column moves it
+  // rather than appearing to do nothing.
+  const shownSort = sort ?? query.data?.pages[0]?.selection?.sort ?? null;
 
   const visiblePeople = useMemo(() => {
     const needle = peopleSearch.trim().toLowerCase();
@@ -509,7 +515,7 @@ export function MetricEvidenceDialog({
               metricKey={activeMetricKey}
               rows={rows}
               columns={columns}
-              sort={sort}
+              sort={shownSort}
               onSortChange={(key) =>
                 setSort((current) => nextSort(current, key))
               }

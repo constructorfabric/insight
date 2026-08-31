@@ -239,6 +239,10 @@ pub struct ValidatedMetricDrilldown {
     pub to: NaiveDate,
     pub limit: usize,
     pub cursor: Option<CursorKey>,
+    /// People whose name the search matches. The reader searches the `Who`
+    /// column by name; the query holds an id, so the handler reads the names
+    /// it already resolved back into ids the predicate can compare.
+    pub search_person_ids: Vec<String>,
     pub plan: EvidencePlan,
     pub snapshot_id: String,
     pub fingerprint: String,

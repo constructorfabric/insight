@@ -153,6 +153,11 @@ describe("TrendDrilldownDialog", () => {
     expect(mocks.queryMetricDrilldown).toHaveBeenCalledTimes(1);
   });
 
+  it("announces the order the server actually served", () => {
+    renderDialog();
+    expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
+  });
+
   it("asks the server for a new order when a header is clicked", async () => {
     renderDialog();
     const onSortChange = mocks.tableProps?.onSortChange as (

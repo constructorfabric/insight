@@ -50,11 +50,15 @@ pub async fn query_metric_drilldown(
     let mut req = validate_request(&state.db, &state.ch, ctx.subject_tenant_id(), req).await?;
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
 
+    // Ahead of the read: the reader searches `Who` by name, and the names are
+    // what turn that needle into identities the query can compare.
+    let names = roster_names(&state, &req).await?;
+    req.search_person_ids = people_named_like(&names, req.selection.search.as_deref());
+
     let log_comment = format!("metric-drilldown:page:{}", req.plan.definition.key());
     let rows = fetch_rows(&state, &req, &log_comment).await?;
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
-    let names = roster_names(&state, &req).await?;
     let response = build_response(&req, rows, &names, &state.external_links)?;
     tracing::info!(
         duration_ms = started.elapsed().as_millis(),
@@ -90,10 +94,12 @@ pub async fn export_metric_drilldown(
     )
     .await?;
     validated.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
+    let names = roster_names(&state, &validated).await?;
+    validated.search_person_ids = people_named_like(&names, validated.selection.search.as_deref());
+
     let evidence = collect_export_rows(&state, &validated, deadline).await?;
     let exported_rows = evidence.len();
 
-    let names = roster_names(&state, &validated).await?;
     let (columns, rows) = presentation(
         &evidence,
         &validated.plan,
@@ -168,6 +174,20 @@ async fn roster_names(
         .into_iter()
         .filter_map(|(id, name)| Some((id.to_string(), person_name(&name)?)))
         .collect())
+}
+
+/// The people the needle picks out of the `Who` column, as the ids the query
+/// compares. Folded the same way the SQL search folds — case-insensitively,
+/// on a substring.
+fn people_named_like(names: &BTreeMap<String, String>, search: Option<&str>) -> Vec<String> {
+    let Some(needle) = search.map(str::to_lowercase) else {
+        return Vec::new();
+    };
+    names
+        .iter()
+        .filter(|(_, name)| name.to_lowercase().contains(&needle))
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 fn person_name(name: &person_names::PersonName) -> Option<String> {
@@ -415,6 +435,19 @@ fn query_busy() -> CanonicalError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_needle_picks_the_people_it_names_case_insensitively() {
+        let names = BTreeMap::from([
+            ("id-a".to_owned(), "Ada Example".to_owned()),
+            ("id-b".to_owned(), "Grace Park".to_owned()),
+        ]);
+
+        assert_eq!(people_named_like(&names, Some("ada")), ["id-a"]);
+        assert_eq!(people_named_like(&names, Some("PARK")), ["id-b"]);
+        assert!(people_named_like(&names, Some("nobody")).is_empty());
+        assert!(people_named_like(&names, None).is_empty());
+    }
 
     #[test]
     fn a_person_is_named_by_whichever_name_identity_holds() {

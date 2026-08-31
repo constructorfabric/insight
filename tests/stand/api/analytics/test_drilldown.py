@@ -1214,10 +1214,15 @@ def test_drilldown_refuses_a_wrong_version_cursor(
     than accepting whatever decodes — and the reason names the version, not
     malformedness, so a cursor from a different deployment generation is
     distinguishable from corruption.
+
+    Version `0` rather than "the next one": a version the service has not
+    reached yet becomes the one it serves at the next bump, and this test then
+    asserts a refusal of the cursor the service now issues. Versions only ever
+    count up, so `0` is the one value that can never be current.
     """
     response = api.post(
         DRILLDOWN,
-        json_body=_seeded_request(stand_manifest, cursor=_tampered(issued_cursor, version=3)),
+        json_body=_seeded_request(stand_manifest, cursor=_tampered(issued_cursor, version=0)),
     )
     _refusal(response, 400, "cursor version is unsupported")
 

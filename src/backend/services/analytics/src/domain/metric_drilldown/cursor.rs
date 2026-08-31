@@ -18,7 +18,14 @@ const CURSOR_VERSION: u8 = 3;
 pub struct CursorKey {
     /// Leads the key because it leads the ORDER BY: blank cells sit past every
     /// filled one, whichever way the sorted column runs.
-    pub(super) sort_flag: u8,
+    ///
+    /// INVARIANT: a bool, not the `UInt8` the query projects. A cursor is
+    /// caller-held bytes, and any other number would compare against the
+    /// query's own 0-or-1 as if it outranked both — serving a page twice or
+    /// dropping the rest of the result set. As a bool there is no such value
+    /// to send: anything else fails to decode, and a cursor that does not
+    /// decode is already refused.
+    pub(super) sort_flag: bool,
     pub(super) sort_value: String,
     pub(super) role: String,
     pub(super) entity_id: String,
@@ -148,7 +155,7 @@ pub(super) fn encode_cursor(
         fingerprint: fingerprint.to_owned(),
         snapshot_id: snapshot_id.to_owned(),
         key: CursorKey {
-            sort_flag: row.sort_flag,
+            sort_flag: row.sort_flag != 0,
             sort_value: row.sort_value.clone(),
             role: row.role.clone(),
             entity_id: row.entity_id.clone(),

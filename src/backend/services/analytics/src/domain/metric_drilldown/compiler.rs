@@ -71,6 +71,8 @@ fn compile_value_query(
         req.selection.search.as_deref(),
         &columns,
         false,
+        &person,
+        &req.search_person_ids,
         &mut params,
     );
     let cursor = order.cursor_predicate(
@@ -123,6 +125,21 @@ struct PersonProjection {
     join: String,
 }
 
+impl PersonProjection {
+    /// A query that resolves nobody: the column is not presented, so there is
+    /// no join to read and no identity to compare against.
+    fn unresolved() -> Self {
+        Self {
+            expression: "''".to_owned(),
+            join: String::new(),
+        }
+    }
+
+    fn resolves(&self) -> bool {
+        !self.join.is_empty()
+    }
+}
+
 /// INVARIANT: both identity relations are views, so an unnarrowed join reads
 /// every account and every email the tenant holds. The roster the selection
 /// already binds is what bounds them.
@@ -131,15 +148,11 @@ fn person_projection(
     columns: &[MetricDrilldownColumn],
     params: &mut Vec<String>,
 ) -> PersonProjection {
-    let unresolved = PersonProjection {
-        expression: "''".to_owned(),
-        join: String::new(),
-    };
     let MetricDrilldownEntity::Persons { ids } = entity else {
-        return unresolved;
+        return PersonProjection::unresolved();
     };
     if ids.is_empty() || !columns.iter().any(|column| column.key == PERSON_KEY) {
-        return unresolved;
+        return PersonProjection::unresolved();
     }
 
     let roster = vec!["?"; ids.len()].join(", ");
@@ -230,7 +243,14 @@ fn compile_ratio_query(
     let filter_sql = filter_predicate(&req.selection.filters, &mut params);
     // Both terms read the aggregates the subquery emits, so both wait for the
     // outer level rather than joining the filters inside.
-    let search = search_predicate(req.selection.search.as_deref(), &columns, true, &mut params);
+    let search = search_predicate(
+        req.selection.search.as_deref(),
+        &columns,
+        true,
+        &PersonProjection::unresolved(),
+        &[],
+        &mut params,
+    );
     let cursor = order.cursor_predicate(
         req.cursor.as_ref(),
         "role, metric_date, observed_at, source_key, measure_key, record_id, record_kind, subject_key, entity_id",
@@ -492,7 +512,7 @@ impl OrderKey {
     ) -> Option<String> {
         let cursor = cursor?;
         // INVARIANT: bound in the order the tuple names the columns.
-        params.push(cursor.sort_flag.to_string());
+        params.push(u8::from(cursor.sort_flag).to_string());
         params.push(cursor.sort_value.clone());
         params.extend([
             cursor.role.clone(),
@@ -517,14 +537,21 @@ impl OrderKey {
 }
 
 /// A free-text needle against every column the reader can see, read exactly as
-/// the cell is rendered. A column the query cannot express is not searched.
+/// the cell is rendered.
 ///
 /// INVARIANT: the UTF-8 form of the comparison. A name or a commit subject is
 /// not always ASCII, and the ASCII form would fold only half of one.
+///
+/// `Who` is the one column the row does not carry as text — the query holds an
+/// identity and the reader sees a name — so it is matched by the ids whose
+/// names the caller's needle already picked out. Leaving it out would make a
+/// visible column silently unsearchable.
 fn search_predicate(
     search: Option<&str>,
     columns: &[MetricDrilldownColumn],
     ratio: bool,
+    person: &PersonProjection,
+    person_ids: &[String],
     params: &mut Vec<String>,
 ) -> Option<String> {
     let needle = search?;
@@ -537,6 +564,14 @@ fn search_predicate(
         matches.push(format!(
             "positionCaseInsensitiveUTF8({}, ?) > 0",
             column.as_text()
+        ));
+    }
+    if person.resolves() && !person_ids.is_empty() {
+        let placeholders = vec!["?"; person_ids.len()].join(", ");
+        params.extend(person_ids.iter().cloned());
+        matches.push(format!(
+            "{expression} IN ({placeholders})",
+            expression = person.expression
         ));
     }
     if matches.is_empty() {
@@ -613,7 +648,7 @@ mod tests {
         );
         let mut request = validated(plan);
         request.cursor = Some(CursorKey {
-            sort_flag: 0,
+            sort_flag: false,
             sort_value: "2026-07-01".to_owned(),
             entity_id: "person@example.com".to_owned(),
             role: "value".to_owned(),
@@ -945,7 +980,7 @@ mod tests {
     fn a_descending_page_walks_the_cursor_the_other_way() {
         let mut request = commit_plan();
         request.cursor = Some(CursorKey {
-            sort_flag: 1,
+            sort_flag: true,
             sort_value: "2026-07-01".to_owned(),
             entity_id: "person@example.com".to_owned(),
             role: "value".to_owned(),
@@ -979,6 +1014,37 @@ mod tests {
         );
         assert!(sql.contains("evidence.details['title']"));
         assert!(sql.contains("toString(evidence.metric_date)"));
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    // The reader searches a column they can see. `Who` shows a name and the
+    // row carries an identity, so the needle reaches the query as the people
+    // it already picked out.
+    #[test]
+    fn a_search_reaches_the_who_column_through_the_people_it_names() {
+        let mut request = roster_plan(&[TEST_PERSON]);
+        request.selection.search = Some("ada".to_owned());
+        request.search_person_ids = vec![TEST_PERSON.to_string()];
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(
+            sql.contains("OR multiIf(coalesce(account_map.account_id"),
+            "the needle's people join the same OR chain: {sql}"
+        );
+        assert_eq!(sql.matches('?').count(), params.len());
+    }
+
+    // Nothing to compare against, so nothing is added — and never a bare `IN
+    // ()`, which is a syntax error rather than an empty result.
+    #[test]
+    fn a_search_matching_nobody_adds_no_identity_term() {
+        let mut request = roster_plan(&[TEST_PERSON]);
+        request.selection.search = Some("nobody".to_owned());
+        let (sql, params) =
+            compile_query(&request).unwrap_or_else(|error| panic!("query must compile: {error}"));
+
+        assert!(!sql.contains("OR multiIf(coalesce(account_map.account_id"));
         assert_eq!(sql.matches('?').count(), params.len());
     }
 

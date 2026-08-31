@@ -264,6 +264,8 @@ async fn validate_common(
         to,
         limit,
         cursor,
+        // Filled by the handler, which is where the names are resolved.
+        search_person_ids: Vec::new(),
         plan,
         snapshot_id,
         fingerprint,

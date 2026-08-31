@@ -171,6 +171,7 @@ pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
         to: NaiveDate::from_ymd_opt(2026, 7, 31).unwrap_or_else(|| panic!("valid test end date")),
         limit: 1,
         cursor: None,
+        search_person_ids: Vec::new(),
         plan,
         snapshot_id: "snapshot".to_owned(),
     }

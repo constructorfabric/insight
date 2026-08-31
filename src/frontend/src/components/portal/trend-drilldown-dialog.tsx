@@ -155,6 +155,8 @@ function Records({
     [query.data],
   );
   const columns = query.data?.pages[0]?.columns ?? [];
+  // The server's default order is still an order; see the records dialog.
+  const shownSort = sort ?? query.data?.pages[0]?.selection?.sort ?? null;
   const pageLimitReached =
     (query.data?.pages.length ?? 0) >= MAX_PAGES && query.hasNextPage;
 
@@ -211,7 +213,7 @@ function Records({
         metricKey={metricKey}
         rows={rows}
         columns={columns}
-        sort={sort}
+        sort={shownSort}
         onSortChange={(key) => setSort((current) => nextSort(current, key))}
         fetchNextPage={query.fetchNextPage}
         hasNextPage={query.hasNextPage && !pageLimitReached}
