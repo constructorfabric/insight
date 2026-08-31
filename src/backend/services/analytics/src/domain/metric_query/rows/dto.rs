@@ -25,6 +25,10 @@ pub struct RowsRequest {
     /// Dimension keys to report beyond the ones the metric's measure declares.
     #[serde(default)]
     pub display_dimensions: Vec<String>,
+    /// Which column to order the page by. Absent leaves a page in the only
+    /// order it is guaranteed to have, which no request can name.
+    #[serde(default)]
+    pub sort: Option<RowSort>,
     /// Rows per page. Absent means 100.
     #[serde(default)]
     pub page_size: Option<u32>,
@@ -32,6 +36,24 @@ pub struct RowsRequest {
     /// first page.
     #[serde(default)]
     pub cursor: Option<String>,
+}
+
+/// Orders a page by one of the columns it reports.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RowSort {
+    /// A column the page reports, spelled as its `columns[].key`.
+    pub column: String,
+    pub direction: SortDirection,
+}
+
+/// Which way a sorted column runs. Rows carrying no value in it are reported
+/// last either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SortDirection {
+    Asc,
+    Desc,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -104,6 +126,7 @@ mod tests {
                 "display_dimensions": ["repository"],
                 "page_size": 25,
                 "cursor": "eyJ2IjoxfQ",
+                "sort": { "column": "date", "direction": "desc" },
             }),
         ];
 
@@ -134,7 +157,13 @@ mod tests {
                 "metric": "git.commits",
                 "subjects": { "type": "persons", "ids": [] },
                 "time": { "from": "2026-01-01", "to": "2026-01-31" },
-                "sort": "date",
+                "order_by": "date",
+            }),
+            serde_json::json!({
+                "metric": "git.commits",
+                "subjects": { "type": "persons", "ids": [] },
+                "time": { "from": "2026-01-01", "to": "2026-01-31" },
+                "sort": { "column": "date", "direction": "ascending" },
             }),
         ];
 

@@ -6,9 +6,12 @@ use std::collections::BTreeMap;
 
 use uuid::Uuid;
 
+use serde_json::Value;
+
 use crate::domain::compiler::drilldown::CompiledDrilldown;
+use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::request::{
-    DrilldownCursor, DrilldownQuery, EntityScope, ResolvedPerson,
+    DrilldownCursor, DrilldownQuery, DrilldownSort, EntityScope, ResolvedPerson, SortValue,
 };
 use crate::domain::identity_binding::{IdentitySet, identity_epoch, resolve_identities};
 
@@ -77,12 +80,17 @@ fn compile(
         dimension_filters: request.filters.clone(),
         display_dimensions: request.display_dimensions.clone(),
         page_size: u64::from(request.page_size),
+        sort: request.sort.as_ref().map(|sort| DrilldownSort {
+            column: sort.column.clone(),
+            direction: sort.direction,
+        }),
         cursor: resume.map(|resume| DrilldownCursor {
+            sort_value: sort_value(&resume.sort_value),
             sort_values: resume.sort_values.clone(),
         }),
     };
 
-    let mut pages = catalog.compile_drilldown(metric, &query)?;
+    let mut pages = catalog.compile_drilldown(metric, &query).map_err(refused)?;
     let Some(asked) = pages
         .iter()
         .position(|page| page.input_role == request.input_role)
@@ -97,6 +105,33 @@ fn compile(
         });
     };
     Ok(pages.swap_remove(asked))
+}
+
+/// Where a position resumes in the sorted column, in the type that column
+/// compares as. A null is carried as absent: the page resumes inside the tail
+/// nulls are reported in.
+fn sort_value(value: &Value) -> Option<SortValue> {
+    match value {
+        Value::Null => None,
+        Value::Number(number) => Some(
+            number
+                .as_f64()
+                .map_or_else(|| SortValue::Text(number.to_string()), SortValue::Number),
+        ),
+        Value::String(text) => Some(SortValue::Text(text.clone())),
+        Value::Bool(_) | Value::Array(_) | Value::Object(_) => {
+            Some(SortValue::Text(value.to_string()))
+        }
+    }
+}
+
+/// A page refused for the column it was asked to order by names that column's
+/// own field rather than the compiler that found it unreportable.
+fn refused(error: CompileError) -> QueryError {
+    if let CompileError::UnsortableColumn { column, sortable } = error {
+        return QueryError::UnknownSortColumn { column, sortable };
+    }
+    QueryError::Uncompilable(error)
 }
 
 /// INVARIANT: a person is carried with their own identities rather than merged
@@ -122,6 +157,7 @@ mod tests {
     use chrono::NaiveDate;
 
     use crate::domain::compiler::drilldown::DrilldownColumnKind;
+    use crate::domain::compiler::request::SortDirection;
     use crate::domain::compiler::sql::QueryParam;
 
     use super::super::super::catalog::product_metric_catalog;
@@ -129,6 +165,7 @@ mod tests {
         SHIPPED_METRIC, SHIPPED_RATIO_METRIC, offline_clickhouse, shipped_input_roles, tenant,
     };
     use super::super::cursor::Anchor;
+    use super::super::validation::ValidatedSort;
     use super::*;
 
     fn person() -> Uuid {
@@ -148,6 +185,7 @@ mod tests {
             filters: Vec::new(),
             input_role: input_role.to_owned(),
             display_dimensions: Vec::new(),
+            sort: None,
             page_size: 100,
             cursor: None,
         }
@@ -221,6 +259,7 @@ mod tests {
                 snapshot_id: "dataset-uuid".to_owned(),
                 identity_epoch: 1,
             },
+            sort_value: Value::Null,
             sort_values: vec!["'; DROP TABLE x; --".to_owned(); arity],
         };
 
@@ -282,5 +321,92 @@ mod tests {
         .expect_err("a closed port cannot answer");
 
         assert!(matches!(error, QueryError::SubjectsUnresolved));
+    }
+
+    fn ordered(column: &str, direction: SortDirection) -> ValidatedRows {
+        ValidatedRows {
+            sort: Some(ValidatedSort {
+                column: column.to_owned(),
+                direction,
+            }),
+            ..request(SHIPPED_METRIC, "value")
+        }
+    }
+
+    fn resumed(sort_value: Value, arity: usize) -> Resume {
+        Resume {
+            anchor: Anchor {
+                snapshot_id: "dataset-uuid".to_owned(),
+                identity_epoch: 1,
+            },
+            sort_value,
+            sort_values: vec!["row-7".to_owned(); arity],
+        }
+    }
+
+    fn sort_key_arity(request: &ValidatedRows) -> usize {
+        compiled(request, None)
+            .columns
+            .iter()
+            .filter(|column| matches!(column.kind, DrilldownColumnKind::SortKey(_)))
+            .count()
+    }
+
+    #[test]
+    fn a_page_told_which_column_to_order_by_orders_the_read_by_it() {
+        let compiled = compiled(&ordered("date", SortDirection::Descending), None);
+
+        assert!(compiled.sql.contains("DESC NULLS LAST"), "{}", compiled.sql);
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    #[test]
+    fn a_sorted_page_binds_the_value_it_resumes_at_rather_than_writing_it_in() {
+        let asked = ordered("date", SortDirection::Ascending);
+        let arity = sort_key_arity(&asked);
+
+        let compiled = compiled(
+            &asked,
+            Some(&resumed(Value::from("'; DROP TABLE x; --"), arity)),
+        );
+
+        assert!(!compiled.sql.contains("DROP TABLE"), "{}", compiled.sql);
+        assert!(compiled.sql.contains("IS NULL OR"), "{}", compiled.sql);
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    #[test]
+    fn a_position_carrying_no_sorted_value_resumes_inside_the_rows_reported_last() {
+        let asked = ordered("date", SortDirection::Ascending);
+        let arity = sort_key_arity(&asked);
+
+        let compiled = compiled(&asked, Some(&resumed(Value::Null, arity)));
+
+        assert!(
+            compiled.sql.contains("IS NULL AND"),
+            "a null position resumes inside the null tail: {}",
+            compiled.sql
+        );
+        assert!(!compiled.sql.contains("IS NULL OR"));
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    /// Validation refuses an unreportable column first; this is the backstop
+    /// behind it, and it must still name the field the caller wrote it in.
+    #[test]
+    fn a_column_the_page_does_not_report_is_refused_under_the_field_that_named_it() {
+        let error = compile(
+            catalog(),
+            tenant(),
+            &ordered("not_a_column", SortDirection::Ascending),
+            &resolved(),
+            None,
+        )
+        .expect_err("a page reports no such column");
+
+        assert!(
+            matches!(error, QueryError::UnknownSortColumn { .. }),
+            "{error}"
+        );
     }
 }

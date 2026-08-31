@@ -176,7 +176,7 @@ mod tests {
         let compiled = compile(
             &metric(percentile("pr_size", 0.5)),
             &[sized_measure("pr_size")],
-            &query(histogram(10)),
+            &query(bins_view(10)),
         );
 
         assert!(

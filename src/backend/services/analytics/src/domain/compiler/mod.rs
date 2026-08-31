@@ -424,6 +424,7 @@ mod product_tests {
             dimension_filters: Vec::new(),
             display_dimensions: Vec::new(),
             page_size: 50,
+            sort: None,
             cursor: None,
         }
     }
@@ -517,6 +518,7 @@ mod product_tests {
 
         let mut query = drilldown(EntityScope::Tenant);
         query.cursor = Some(DrilldownCursor {
+            sort_value: None,
             sort_values: vec!["position".to_owned(); arity],
         });
 
