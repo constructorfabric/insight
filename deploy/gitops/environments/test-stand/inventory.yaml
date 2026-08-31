@@ -80,10 +80,14 @@ protected: true
 
 # ─── Namespaces ────────────────────────────────────────────────────────
 namespaces:
-  # The umbrella release namespace. Everything this env touches lives
-  # here, which is also why a namespace-scoped ServiceAccount is enough
-  # for CI to deploy — no cluster-scoped grant is needed or wanted.
+  # The umbrella release namespace. Everything this env touches lives here bar
+  # the previews RBAC below, which is why a namespace-scoped ServiceAccount is
+  # enough for CI to deploy — no cluster-scoped grant is needed or wanted.
   services: insight
+
+  # Where the previews subchart binds its experiments RBAC (#1981).
+  # ci-deployer-rbac.yaml spells this name literally — change both together.
+  previews: insight-previews
 
   # Read the warning before changing this.
   #

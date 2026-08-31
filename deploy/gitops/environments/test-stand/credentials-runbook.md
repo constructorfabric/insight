@@ -54,8 +54,11 @@ CA, which invalidates every other certificate on the cluster at once.
    kubectl config current-context
    yq -r '.kubeContext' deploy/gitops/environments/test-stand/inventory.yaml
    ```
-3. The application namespace already exists (`insight` by default). See
-   §7 "First install into an empty namespace" if it does not.
+3. The application namespace already exists (`insight` by default), and so
+   does the experiments namespace (`insight-previews` — `namespaces.previews`
+   in `inventory.yaml`). The manifest grants over the second but never creates
+   it, so `provision-ci` fails on a cluster that lacks it. See §7 "First
+   install into an empty namespace".
 4. `gh` authenticated with admin rights on the repository, for §4.
 
 ---
@@ -74,7 +77,7 @@ kubectl --context "$(yq -r '.kubeContext' deploy/gitops/environments/test-stand/
   apply --dry-run=client -f deploy/gitops/environments/test-stand/ci-deployer-rbac.yaml
 ```
 
-Read the manifest. You are looking for five things:
+Read the manifest. You are looking for six things:
 
 - the binding is a `RoleBinding`, not a `ClusterRoleBinding`;
 - its `roleRef` is `ClusterRole/admin` — a cluster role bound namespace-wide, which
@@ -88,6 +91,15 @@ Read the manifest. You are looking for five things:
   deployment identity over a namespace this repository does not own is
   infrastructure policy, owned by whoever installs Airbyte. `make
   verify-ci-credential` (§3) asserts the grant exists there; it never creates it;
+- the manifest **does** carry `ci-deployer-previews-rbac` in `insight-previews`,
+  and that is not a contradiction of the line above: no third party installs
+  that namespace, it exists only because this release binds RBAC into it, so
+  leaving the grant out of band would leave it unreproducible. The *namespace*
+  is still L0 and stays out of the manifest — `revoke-ci` deletes everything the
+  manifest names, and a revoked credential must not take live experiments with
+  it. Its three workload rules (`deployments`, `services`, `httproutes`) are
+  never exercised: they exist so RBAC escalation prevention permits creating the
+  chart's own Role, and they must stay a rule-for-rule mirror of it;
 - the token `Secret` carries no `data:` block (the token controller fills it).
 
 If your kube-context does not resolve to the inventory's `kubeContext`, the
@@ -153,6 +165,10 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 | `update persistentvolumeclaims -n insight` | its chart and version labels change on every bump |
 | `create roles.rbac.authorization.k8s.io -n airbyte` | the chart renders `insight-airbyte-auth-reader` into the Airbyte namespace, not the release one |
 | `create rolebindings.rbac.authorization.k8s.io -n airbyte` | same object, the binding half |
+| `create roles.rbac.authorization.k8s.io -n insight-previews` | the previews subchart renders `insight-previews-experiments` into the experiments namespace |
+| `create rolebindings.rbac.authorization.k8s.io -n insight-previews` | same object, the binding half |
+| `create deployments.apps -n insight-previews` | escalation prevention: the chart's Role grants it, so the credential must hold it to create that Role |
+| `create httproutes.gateway.networking.k8s.io -n insight-previews` | same reason |
 
 **Must be `no`** — this is the containment claim:
 
@@ -160,6 +176,7 @@ make -C deploy/gitops verify-ci-credential ENV=test-stand
 |---|---|
 | `'*' '*' --all-namespaces` | the blanket check |
 | `get pods -n airbyte` | the cross-namespace grant is RBAC-only; it reads one Secret by name and nothing else |
+| `get pods -n insight-previews` | the previews grant is RBAC-only; the experiments themselves are the previews service's business, not CI's |
 | `list namespaces --all-namespaces` | cannot enumerate the cluster |
 | `create namespaces --all-namespaces` | see §7 |
 | `get secrets --all-namespaces` | the datastore namespaces' credentials stay out of reach |

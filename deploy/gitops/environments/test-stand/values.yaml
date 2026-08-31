@@ -433,13 +433,12 @@ gitCliProxy:
   deploy: false
 
 previews:
-  # Off, against the chart default: the subchart emits a Namespace and
-  # Role/RoleBinding in the experiments namespace, and this stand deploys
-  # with the namespace-scoped `ci-deployer` ServiceAccount — the upgrade
-  # dies on `namespaces is forbidden` before anything renders. Turn on only
-  # together with a ci-deployer-rbac.yaml grant for that namespace, when the
-  # stand suite starts exercising previews (#1981).
-  deploy: false
+  # Stays deployed (the chart default): the gateway routes `/api/previews`
+  # unconditionally, and nginx refuses to start on an upstream it cannot resolve.
+  experiments:
+    # Off, against the chart default: the namespace is L0 here. `create
+    # namespaces` takes no resourceNames, so CI must never hold it.
+    manageNamespace: false
 
 frontend: # the web UI (dashboard)
   replicaCount: 1
