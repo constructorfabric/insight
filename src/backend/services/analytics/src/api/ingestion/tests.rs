@@ -371,3 +371,195 @@ fn the_echoed_window_is_the_shape_the_chart_parses_back() {
         "2026-08-26T14:30:00.000Z",
     );
 }
+
+/// The concurrency ceiling.
+///
+/// Bounding one aggregation says nothing about how many run at once, and each
+/// of these scans across every bronze database. What has to hold is that the
+/// surface refuses rather than queues without end, and that the refusal says
+/// when to come back.
+mod capacity {
+    use axum::http::StatusCode;
+    use toolkit_canonical_errors::Problem;
+
+    use super::super::{ACQUIRE_TIMEOUT, MAX_CONCURRENT_READS, acquire_read_permit, read_busy};
+
+    #[test]
+    fn the_refusal_tells_the_caller_when_to_come_back() {
+        let envelope = serde_json::to_value(Problem::from(read_busy())).unwrap_or_default();
+        assert_eq!(
+            envelope["status"],
+            u16::from(StatusCode::TOO_MANY_REQUESTS),
+            "a capacity refusal should not read as a caller error: {envelope}"
+        );
+        let wire = envelope.to_string();
+        assert!(
+            wire.contains(&ACQUIRE_TIMEOUT.as_secs().to_string()),
+            "the refusal carries no retry-after: {wire}"
+        );
+    }
+
+    /// One test owns the whole ceiling on purpose: the semaphore is a module
+    /// static, so a second test draining it in parallel would decide this one's
+    /// outcome. Virtual time keeps the refusal instant rather than waiting out
+    /// the real acquire timeout.
+    #[tokio::test(start_paused = true)]
+    async fn the_ceiling_refuses_rather_than_queueing_without_end() {
+        let mut held = Vec::new();
+        for slot in 0..MAX_CONCURRENT_READS {
+            let permit = acquire_read_permit().await;
+            assert!(permit.is_ok(), "slot {slot} inside the ceiling was refused");
+            held.push(permit.ok());
+        }
+
+        assert!(
+            acquire_read_permit().await.is_err(),
+            "a read past the ceiling was admitted"
+        );
+
+        // A finished read hands its slot back, so the surface recovers on its
+        // own rather than staying closed once it has been busy.
+        held.pop();
+        assert!(
+            acquire_read_permit().await.is_ok(),
+            "a returned permit did not free a slot"
+        );
+    }
+}
+
+/// Resolving a whole request, rather than each parser on its own.
+///
+/// The wiring between them is its own contract: `series` takes its default from
+/// whether a scope SURVIVED parsing, and the window's ceiling comes from the
+/// grain that was just resolved. Testing the parsers separately says nothing
+/// about either.
+mod plan {
+    use super::super::{Grain, IngestionIntensityQuery, IntensityPlan, Series, Window};
+    use super::{at, noon};
+
+    fn query(
+        grain: Option<&str>,
+        series: Option<&str>,
+        scope: Option<&str>,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> IngestionIntensityQuery {
+        IngestionIntensityQuery {
+            grain: grain.map(str::to_owned),
+            series: series.map(str::to_owned),
+            scope: scope.map(str::to_owned),
+            from: from.map(str::to_owned),
+            to: to.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn an_empty_request_resolves_to_the_overview_read() {
+        assert_eq!(
+            IntensityPlan::resolve(&query(None, None, None, None, None), noon()).ok(),
+            Some(IntensityPlan {
+                grain: Grain::FifteenMinutes,
+                series: Series::Connector,
+                scope: None,
+                window: Window {
+                    from: noon() - chrono::Duration::days(1),
+                    to: noon(),
+                },
+            }),
+        );
+    }
+
+    #[test]
+    fn a_scope_changes_the_default_banding() {
+        // The default is read off the scope AFTER parsing, not off the raw
+        // parameter — this is the wiring a per-parser test cannot reach.
+        let plan = IntensityPlan::resolve(
+            &query(None, None, Some("bronze_bamboohr"), None, None),
+            noon(),
+        );
+        assert_eq!(plan.as_ref().ok().map(|p| p.series), Some(Series::Stream));
+        assert_eq!(
+            plan.ok().and_then(|p| p.scope),
+            Some("bronze_bamboohr".to_owned()),
+        );
+    }
+
+    #[test]
+    fn an_empty_scope_leaves_the_read_org_wide() {
+        // `scope=` is what an unset parameter serialises to, so it must not
+        // flip the banding to per-stream.
+        let plan = IntensityPlan::resolve(&query(None, None, Some(""), None, None), noon());
+        assert_eq!(
+            plan.as_ref().ok().map(|p| p.series),
+            Some(Series::Connector)
+        );
+        assert_eq!(plan.ok().and_then(|p| p.scope), None);
+    }
+
+    #[test]
+    fn an_explicit_series_outranks_the_scope_default() {
+        assert_eq!(
+            IntensityPlan::resolve(
+                &query(None, Some("total"), Some("bronze_jira"), None, None),
+                noon(),
+            )
+            .ok()
+            .map(|p| p.series),
+            Some(Series::Total),
+        );
+    }
+
+    #[test]
+    fn the_window_ceiling_follows_the_grain_that_was_resolved() {
+        // A day is fine at 15 minutes and refused at one second: the ceiling
+        // comes from the grain parsed moments earlier, not from a default.
+        let day = (Some("2026-08-25T12:00:00Z"), Some("2026-08-26T12:00:00Z"));
+        assert!(
+            IntensityPlan::resolve(&query(Some("15m"), None, None, day.0, day.1), noon()).is_ok()
+        );
+        assert!(
+            IntensityPlan::resolve(&query(Some("1s"), None, None, day.0, day.1), noon()).is_err()
+        );
+    }
+
+    #[test]
+    fn a_bad_grain_is_refused_before_anything_else_is_read() {
+        // Every other field here is also invalid; the grain has to answer first
+        // or the caller fixes one thing and meets the next.
+        assert!(
+            IntensityPlan::resolve(
+                &query(
+                    Some("1m"),
+                    Some("nope"),
+                    Some("silver_x"),
+                    Some("yesterday"),
+                    None
+                ),
+                noon(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_offset_window_survives_resolution_as_the_same_instant() {
+        assert_eq!(
+            IntensityPlan::resolve(
+                &query(
+                    None,
+                    None,
+                    None,
+                    Some("2026-08-26T09:00:00+02:00"),
+                    Some("2026-08-26T10:00:00+02:00"),
+                ),
+                noon(),
+            )
+            .ok()
+            .map(|p| p.window),
+            Some(Window {
+                from: at(2026, 8, 26, 7, 0),
+                to: at(2026, 8, 26, 8, 0),
+            }),
+        );
+    }
+}

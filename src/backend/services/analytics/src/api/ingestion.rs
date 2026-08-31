@@ -329,6 +329,41 @@ pub(crate) fn intensity_sql(grain: Grain, series: Series, scoped: bool) -> Strin
     )
 }
 
+/// Everything the read needs, resolved from the query string in one place.
+///
+/// Each parser is closed and tested on its own, but the ORDER and the wiring
+/// between them are their own contract: `series` takes its default from whether
+/// a scope survived parsing, and the window's ceiling depends on the grain. A
+/// handler cannot assert that without a warehouse behind it, so it lives here.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct IntensityPlan {
+    pub(crate) grain: Grain,
+    pub(crate) series: Series,
+    pub(crate) scope: Option<String>,
+    pub(crate) window: Window,
+}
+
+impl IntensityPlan {
+    /// Refusals come in the order a caller can act on: what the read is
+    /// bucketed by, then what it is scoped to, then how it is banded, then the
+    /// window — each one already decided by the time the next is read.
+    pub(crate) fn resolve(
+        query: &IngestionIntensityQuery,
+        now: DateTime<Utc>,
+    ) -> Result<Self, CanonicalError> {
+        let grain = Grain::parse(query.grain.as_deref())?;
+        let scope = parse_scope(query.scope.as_deref())?;
+        let series = Series::parse(query.series.as_deref(), scope.is_some())?;
+        let window = Window::resolve(query.from.as_deref(), query.to.as_deref(), grain, now)?;
+        Ok(Self {
+            grain,
+            series,
+            scope,
+            window,
+        })
+    }
+}
+
 pub async fn get_ingestion_intensity(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
@@ -336,15 +371,12 @@ pub async fn get_ingestion_intensity(
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
-    let grain = Grain::parse(query.grain.as_deref())?;
-    let scope = parse_scope(query.scope.as_deref())?;
-    let series = Series::parse(query.series.as_deref(), scope.is_some())?;
-    let window = Window::resolve(
-        query.from.as_deref(),
-        query.to.as_deref(),
+    let IntensityPlan {
         grain,
-        Utc::now(),
-    )?;
+        series,
+        scope,
+        window,
+    } = IntensityPlan::resolve(&query, Utc::now())?;
 
     let from = Window::bound(window.from);
     let to = Window::bound(window.to);
