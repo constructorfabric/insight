@@ -8,11 +8,12 @@ use uuid::Uuid;
 
 use serde_json::Value;
 
-use crate::domain::compiler::drilldown::CompiledDrilldown;
+use crate::domain::compiler::drilldown::{CompiledDrilldown, DrilldownPageShape};
 use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::request::{
     DrilldownCursor, DrilldownQuery, DrilldownSort, EntityScope, ResolvedPerson, SortValue,
 };
+use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::identity_binding::{IdentitySet, identity_epoch, resolve_identities};
 
 use super::super::catalog::MetricCatalog;
@@ -20,12 +21,18 @@ use super::super::error::QueryError;
 use super::cursor::Resume;
 use super::validation::ValidatedRows;
 
-/// The one statement a page runs, and the mapping marker its rows were
-/// attributed through.
 #[derive(Debug)]
-pub(super) struct PlannedPage {
-    pub compiled: CompiledDrilldown,
-    pub identity_epoch: u64,
+pub(super) enum PlannedPage {
+    /// The one statement a page runs, and the mapping marker its rows were
+    /// attributed through.
+    Read {
+        compiled: CompiledDrilldown,
+        identity_epoch: u64,
+    },
+    /// The mapping knows no identity for anyone this page asks about, so no
+    /// row can carry one of their events. The page reports the columns it
+    /// would have filled, and no row.
+    NoIdentities { shape: DrilldownPageShape },
 }
 
 pub(super) async fn plan(
@@ -50,11 +57,14 @@ pub(super) async fn plan(
         QueryError::SubjectsUnresolved
     })?;
 
-    let compiled = compile(catalog, tenant_id, request, &identities, resume)?;
-    Ok(PlannedPage {
-        compiled,
+    compile(
+        catalog,
+        tenant_id,
+        request,
+        &identities,
+        resume,
         identity_epoch,
-    })
+    )
 }
 
 fn compile(
@@ -63,7 +73,8 @@ fn compile(
     request: &ValidatedRows,
     identities: &BTreeMap<Uuid, IdentitySet>,
     resume: Option<&Resume>,
-) -> Result<CompiledDrilldown, QueryError> {
+    identity_epoch: u64,
+) -> Result<PlannedPage, QueryError> {
     // INVARIANT: validation refuses a metric the definitions do not carry, so
     // every planned page names one they do.
     let Some(metric) = catalog.metric(&request.metric_key) else {
@@ -72,9 +83,16 @@ fn compile(
         });
     };
 
+    let scope = entity_scope(&request.subjects, identities);
+    if !scope.reaches_any_row() {
+        return Ok(PlannedPage::NoIdentities {
+            shape: page_shape(catalog, metric, request)?,
+        });
+    }
+
     let query = DrilldownQuery {
         tenant_id: tenant_id.to_string(),
-        entity_scope: entity_scope(&request.subjects, identities),
+        entity_scope: scope,
         from: request.from,
         to: request.to,
         dimension_filters: request.filters.clone(),
@@ -95,16 +113,40 @@ fn compile(
         .iter()
         .position(|page| page.input_role == request.input_role)
     else {
-        return Err(QueryError::UnknownInput {
-            input: request.input_role.clone(),
-            valid: pages
-                .iter()
-                .map(|page| format!("`{}`", page.input_role))
-                .collect::<Vec<_>>()
-                .join(", "),
-        });
+        return Err(unknown_input(
+            &request.input_role,
+            pages.iter().map(|page| page.input_role.as_str()),
+        ));
     };
-    Ok(pages.swap_remove(asked))
+    Ok(PlannedPage::Read {
+        compiled: pages.swap_remove(asked),
+        identity_epoch,
+    })
+}
+
+/// How the page describes itself when it reads no row at all.
+fn page_shape(
+    catalog: &MetricCatalog,
+    metric: &MetricDefinition,
+    request: &ValidatedRows,
+) -> Result<DrilldownPageShape, QueryError> {
+    let mut shapes = catalog
+        .drilldown_page_shapes(metric, &request.display_dimensions)
+        .map_err(refused)?;
+
+    shapes
+        .remove(&request.input_role)
+        .ok_or_else(|| unknown_input(&request.input_role, shapes.keys().map(String::as_str)))
+}
+
+fn unknown_input<'a>(asked: &str, valid: impl Iterator<Item = &'a str>) -> QueryError {
+    QueryError::UnknownInput {
+        input: asked.to_owned(),
+        valid: valid
+            .map(|role| format!("`{role}`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
 }
 
 /// Where a position resumes in the sorted column, in the type that column
@@ -201,9 +243,32 @@ mod tests {
         )])
     }
 
+    /// The mapping marker every planned page in these tests was built under.
+    const MAPPING_EPOCH: u64 = 1;
+
+    fn planned(
+        request: &ValidatedRows,
+        identities: &BTreeMap<Uuid, IdentitySet>,
+        resume: Option<&Resume>,
+    ) -> PlannedPage {
+        compile(
+            catalog(),
+            tenant(),
+            request,
+            identities,
+            resume,
+            MAPPING_EPOCH,
+        )
+        .unwrap_or_else(|error| panic!("`{}` plans: {error}", request.metric_key))
+    }
+
     fn compiled(request: &ValidatedRows, resume: Option<&Resume>) -> CompiledDrilldown {
-        compile(catalog(), tenant(), request, &resolved(), resume)
-            .unwrap_or_else(|error| panic!("`{}` compiles: {error}", request.metric_key))
+        match planned(request, &resolved(), resume) {
+            PlannedPage::Read { compiled, .. } => compiled,
+            PlannedPage::NoIdentities { .. } => {
+                panic!("`{}` resolves an identity to read", request.metric_key)
+            }
+        }
     }
 
     #[test]
@@ -270,6 +335,42 @@ mod tests {
         assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
     }
 
+    /// A person the mapping knows nothing about reads as no data, not as a bad
+    /// request: the page is the one the metric describes, holding no row.
+    #[test]
+    fn a_page_no_identity_resolves_for_is_empty_and_still_reports_its_columns() {
+        let asked = request(SHIPPED_METRIC, "value");
+
+        let planned = planned(&asked, &BTreeMap::new(), None);
+
+        let PlannedPage::NoIdentities { shape } = planned else {
+            panic!("a page nobody's identities reach reads no row");
+        };
+        assert_eq!(shape.columns, compiled(&asked, None).columns);
+    }
+
+    /// A set the mapping answers for in part is read for the part it answers
+    /// for; the members it names nothing for contribute nothing.
+    #[test]
+    fn a_page_one_of_whose_people_resolves_is_read_for_that_person() {
+        let asked = ValidatedRows {
+            subjects: vec![person(), Uuid::from_u128(9)],
+            ..request(SHIPPED_METRIC, "value")
+        };
+
+        let planned = planned(&asked, &resolved(), None);
+
+        let PlannedPage::Read { compiled, .. } = planned else {
+            panic!("a page one of whose people resolves is read");
+        };
+        assert!(
+            compiled
+                .params
+                .contains(&QueryParam::Text("dev@example.com".to_owned())),
+            "the resolved member's identity is bound"
+        );
+    }
+
     /// The compiler is the backstop behind validation, which refuses an input
     /// the metric does not compose before anything is planned.
     #[test]
@@ -280,6 +381,7 @@ mod tests {
             &request(SHIPPED_METRIC, "numerator"),
             &resolved(),
             None,
+            MAPPING_EPOCH,
         )
         .expect_err("a direct metric composes no numerator");
 
@@ -401,6 +503,7 @@ mod tests {
             &ordered("not_a_column", SortDirection::Ascending),
             &resolved(),
             None,
+            MAPPING_EPOCH,
         )
         .expect_err("a page reports no such column");
 

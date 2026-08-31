@@ -167,14 +167,38 @@ pub fn compile_drilldown(
         .collect()
 }
 
-/// Every column a page of each input reports, keyed by the input role: exactly
-/// the set a request may ask that page to be ordered by.
-pub fn drilldown_reported_columns(
+/// What a page projects and what one of its rows contributes — everything a
+/// reader needs to describe the page before any row is read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrilldownPageShape {
+    pub columns: Vec<DrilldownColumn>,
+    pub contribution: Contribution,
+}
+
+impl DrilldownPageShape {
+    /// The names this page reports its columns under, which is exactly the set
+    /// a request may ask it to be ordered by.
+    #[must_use]
+    pub fn reported_keys(&self) -> Vec<String> {
+        self.columns
+            .iter()
+            .filter_map(|column| column.kind.reported_key(self.contribution))
+            .collect()
+    }
+}
+
+/// The shape a page of each input has, keyed by the input role.
+///
+/// INVARIANT: a page's columns are decided by the metric, the dataset and the
+/// dimensions the request asked to display — never by the scope it reads under
+/// or the rows it matched, so a page that matched nothing describes itself the
+/// same way a full one does.
+pub fn drilldown_page_shapes(
     catalog: &FieldCatalog,
     metric: &MetricDefinition,
     measures: &BTreeMap<String, MeasureDefinition>,
     display_dimensions: &[String],
-) -> Result<BTreeMap<String, Vec<String>>, CompileError> {
+) -> Result<BTreeMap<String, DrilldownPageShape>, CompileError> {
     let fold = Fold::resolve(metric, measures)?;
     let dataset = fold.dataset(catalog)?;
 
@@ -193,10 +217,31 @@ pub fn drilldown_reported_columns(
                 &sort_keys,
             )?;
 
-            let contribution = Contribution::of(measure.aggregation);
-            Ok((role.to_owned(), projection.reported_keys(contribution)))
+            Ok((
+                role.to_owned(),
+                DrilldownPageShape {
+                    columns: projection.columns(),
+                    contribution: Contribution::of(measure.aggregation),
+                },
+            ))
         })
         .collect()
+}
+
+/// Every column a page of each input reports, keyed by the input role: exactly
+/// the set a request may ask that page to be ordered by.
+pub fn drilldown_reported_columns(
+    catalog: &FieldCatalog,
+    metric: &MetricDefinition,
+    measures: &BTreeMap<String, MeasureDefinition>,
+    display_dimensions: &[String],
+) -> Result<BTreeMap<String, Vec<String>>, CompileError> {
+    Ok(
+        drilldown_page_shapes(catalog, metric, measures, display_dimensions)?
+            .into_iter()
+            .map(|(role, shape)| (role, shape.reported_keys()))
+            .collect(),
+    )
 }
 
 // INVARIANT: placeholders bind by position, so parameters are pushed in the

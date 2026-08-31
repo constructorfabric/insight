@@ -20,7 +20,7 @@ use super::super::provenance::{metric_versions, provenance};
 use super::columns::PageShape;
 use super::cursor::{Anchor, decode, encode, fingerprint, relation_snapshot, still_anchored};
 use super::dto::RowsResponse;
-use super::plan::plan;
+use super::plan::{PlannedPage, plan};
 use super::validation::ValidatedRows;
 
 /// What one read answered.
@@ -41,6 +41,24 @@ pub async fn answer(
         .transpose()?;
 
     let planned = plan(catalog, clickhouse, tenant_id, &request, resume.as_ref()).await?;
+    let (compiled, identity_epoch) = match planned {
+        PlannedPage::Read {
+            compiled,
+            identity_epoch,
+        } => (compiled, identity_epoch),
+        PlannedPage::NoIdentities { shape } => {
+            let versions = metric_versions(db, std::slice::from_ref(&request.metric_key)).await;
+
+            return Ok(RowsResponse {
+                provenance: provenance(&versions, &request.metric_key, ServedFrom::Computed),
+                metric: request.metric_key,
+                input: request.input_role,
+                columns: PageShape::of(&shape.columns, shape.contribution).columns(),
+                rows: Vec::new(),
+                next_cursor: None,
+            });
+        }
+    };
     let CompiledDrilldown {
         relation,
         contribution,
@@ -48,7 +66,7 @@ pub async fn answer(
         sql,
         params,
         ..
-    } = planned.compiled;
+    } = compiled;
 
     let comment = format!("metric-rows:{}:{}", request.input_role, request.metric_key);
     let statement = CompiledMeasureQuery { sql, params };
@@ -64,7 +82,7 @@ pub async fn answer(
     // that spanned a rebuild is refused rather than served half from each.
     let anchor = Anchor {
         snapshot_id: relation_snapshot(clickhouse, &relation.database, &relation.relation).await?,
-        identity_epoch: planned.identity_epoch,
+        identity_epoch,
     };
     if let Some(resume) = &resume {
         still_anchored(&resume.anchor, &anchor)?;

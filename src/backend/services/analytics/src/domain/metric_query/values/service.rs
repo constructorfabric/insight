@@ -109,6 +109,9 @@ async fn body(
 
 /// The question's own rows, and the compared window's when it asked for one.
 /// Both are read before either is assembled, so a comparison is never half-read.
+///
+/// INVARIANT: a question no identity resolves for reads exactly as a scan that
+/// matched nothing, so both are assembled into the same answer.
 async fn read_both<T>(
     clickhouse: &insight_clickhouse::Client,
     planned: &PlannedQuery,
@@ -117,8 +120,12 @@ async fn read_both<T>(
 where
     T: DeserializeOwned,
 {
-    let rows = bounded(fetch::<T>(clickhouse, &planned.current, comment).await?)?;
-    let Some(compared) = &planned.compared else {
+    let PlannedQuery::Read { current, compared } = planned else {
+        return Ok((Vec::new(), None));
+    };
+
+    let rows = bounded(fetch::<T>(clickhouse, current, comment).await?)?;
+    let Some(compared) = compared else {
         return Ok((rows, None));
     };
 
@@ -161,7 +168,7 @@ mod tests {
     }
 
     fn planned() -> PlannedQuery {
-        PlannedQuery {
+        PlannedQuery::Read {
             current: CompiledMeasureQuery {
                 sql: "SELECT 1".to_owned(),
                 params: Vec::new(),
@@ -189,6 +196,35 @@ mod tests {
                 ),
                 "{shape:?}"
             );
+        }
+    }
+
+    /// A person the mapping knows nothing about reads as no data, not as a bad
+    /// request: the question is answerable, and its answer is that nothing was
+    /// observed.
+    #[tokio::test]
+    async fn a_question_no_identity_resolves_for_is_answered_empty_without_a_read() {
+        for shape in [
+            QueryShape::SubjectTotal,
+            QueryShape::SubjectSplit,
+            QueryShape::CombinedSplit,
+            QueryShape::SubjectSeries,
+        ] {
+            let body = body(
+                &offline_clickhouse(),
+                &query(shape),
+                &PlannedQuery::NoIdentities,
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{shape:?} is answerable: {error}"));
+
+            let empty = match shape {
+                QueryShape::SubjectSeries => ResultBody::Series { series: Vec::new() },
+                QueryShape::SubjectTotal | QueryShape::SubjectSplit | QueryShape::CombinedSplit => {
+                    ResultBody::Values { values: Vec::new() }
+                }
+            };
+            assert_eq!(body, empty, "{shape:?}");
         }
     }
 

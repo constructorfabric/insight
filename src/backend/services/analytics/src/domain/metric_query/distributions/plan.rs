@@ -21,7 +21,9 @@ use super::validation::{ValidatedDistribution, ValidatedDistributions};
 // folds to a bucket and this field goes unread.
 const UNREAD_BUCKET: Bucket = Bucket::Day;
 
-/// The statements one question runs: one per reading it asked for.
+/// The statements one question runs: one per reading it asked for. A question
+/// the mapping knows no identity for anyone in runs neither — no row can carry
+/// one of their observations, so both readings are assembled from nothing.
 #[derive(Debug, PartialEq)]
 pub(super) struct PlannedDistribution {
     pub histogram: Option<CompiledMeasureQuery>,
@@ -60,6 +62,12 @@ fn compile(
             metric: query.metric_key.clone(),
         });
     };
+    if !scope.reaches_any_row() {
+        return Ok(PlannedDistribution {
+            histogram: None,
+            quantiles: None,
+        });
+    }
 
     let read = |view: ViewKind| {
         catalog
@@ -145,6 +153,8 @@ mod tests {
     use std::num::NonZeroU32;
 
     use chrono::NaiveDate;
+
+    use crate::domain::compiler::sql::QueryParam;
 
     use super::super::super::catalog::product_metric_catalog;
     use super::super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, offline_clickhouse, tenant};
@@ -243,6 +253,63 @@ mod tests {
             quantiles.sql.contains("quantilesExact(0.25, 0.5, 0.75)("),
             "{}",
             quantiles.sql
+        );
+    }
+
+    /// A person the mapping knows nothing about reads as no data, not as a bad
+    /// request: no reading is taken, and the answer is the empty distribution.
+    #[test]
+    fn a_question_no_identity_resolves_for_takes_neither_reading() {
+        let query = validated(Some(10), Some(vec![0.5]));
+
+        let planned = compile(
+            product_metric_catalog().expect("loads"),
+            tenant(),
+            &query,
+            &entity_scope(&query.subjects, &BTreeMap::new()),
+        )
+        .expect("a question nobody's identities reach is still answerable");
+
+        assert_eq!(
+            planned,
+            PlannedDistribution {
+                histogram: None,
+                quantiles: None,
+            }
+        );
+    }
+
+    /// A set the mapping answers for in part is read for the part it answers
+    /// for; the members it names nothing for contribute nothing.
+    #[test]
+    fn a_question_one_of_whose_people_resolves_is_read_for_that_person() {
+        let unresolved = Uuid::from_u128(9);
+        let query = ValidatedDistribution {
+            subjects: vec![person(), unresolved],
+            ..validated(Some(10), None)
+        };
+        let known = BTreeMap::from([(
+            person(),
+            IdentitySet {
+                emails: vec!["dev@example.com".to_owned()],
+                account_ids: Vec::new(),
+            },
+        )]);
+
+        let planned = compile(
+            product_metric_catalog().expect("loads"),
+            tenant(),
+            &query,
+            &entity_scope(&query.subjects, &known),
+        )
+        .expect("a question one of whose people resolves is read");
+
+        let histogram = planned.histogram.expect("a histogram was asked for");
+        assert!(
+            histogram
+                .params
+                .contains(&QueryParam::Text("dev@example.com".to_owned())),
+            "the resolved member's identity is bound"
         );
     }
 
