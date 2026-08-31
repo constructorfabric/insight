@@ -13,6 +13,9 @@ use crate::domain::metric_definitions::definition::{
 };
 use crate::infra::identity::IdentityProfile;
 
+const XLSX_MAX_ROWS: u64 = 1_048_576;
+const XLSX_MAX_COLUMNS: u64 = 16_384;
+
 fn date(value: &str) -> NaiveDate {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .unwrap_or_else(|error| panic!("fixture date must parse: {error}"))
@@ -210,4 +213,37 @@ fn rejects_profiles_that_do_not_match_people_order() {
     };
 
     assert_eq!(error, ReportPlanningError::ProfileSetMismatch);
+}
+
+#[test]
+fn checks_xlsx_dimensions_against_format_limits() {
+    let supported = ReportSize {
+        total_rows: XLSX_MAX_ROWS - 1,
+        total_cells: 1,
+        worksheet_rows: XLSX_MAX_ROWS,
+        worksheet_columns: XLSX_MAX_COLUMNS,
+    };
+    assert_eq!(
+        supported.xlsx_dimensions(),
+        Ok(XlsxDimensions {
+            rows: 1_048_576,
+            columns: 16_384,
+        })
+    );
+
+    for exceeded in [
+        ReportSize {
+            worksheet_rows: XLSX_MAX_ROWS + 1,
+            ..supported
+        },
+        ReportSize {
+            worksheet_columns: XLSX_MAX_COLUMNS + 1,
+            ..supported
+        },
+    ] {
+        assert_eq!(
+            exceeded.xlsx_dimensions(),
+            Err(ReportPlanningError::XlsxDimensionsExceeded)
+        );
+    }
 }
