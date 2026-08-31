@@ -81,6 +81,9 @@ pub struct IssueSnapshot {
     pub insight_source_id: String,
     pub issue_id: IssueId,
     pub id_readable: IdReadable,
+    /// The issue summary. `None` when the source reports none — never falls back to an
+    /// identifier, so an evidence row with no summary renders empty rather than a key twice.
+    pub title: Option<String>,
     pub created_at: DateTime<Utc>,
     pub reporter_id: Option<String>,
     pub current_fields: HashMap<FieldId, FieldValue>,
@@ -135,6 +138,8 @@ pub struct FieldHistoryRecord {
     pub data_source: DataSource,
     pub issue_id: IssueId,
     pub id_readable: IdReadable,
+    /// Per-issue, not per-event: every row of one issue carries the same summary.
+    pub title: Option<String>,
     pub event_id: String,
     pub event_at: DateTime<Utc>,
     pub event_kind: EventKind,

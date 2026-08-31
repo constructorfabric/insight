@@ -26,6 +26,8 @@ import pytest
 from insight_stand import ApiClient, PersonaSession, identity_path
 
 from .. import scratch
+from ..operations import ADMIN_GATED, IDENTITY_OPERATIONS, SOME_ACCOUNT_ID, Operation
+from ..schemas import PROBLEM_CONTENT_TYPE, ProblemDocument
 
 #: `{id}`-taking routes, admin-gated unless noted. `/v1/subchart/{id}` is the
 #: one an ordinary session reaches, so it is asked for by a lead below.
@@ -151,77 +153,106 @@ def test_deleting_something_nobody_holds_is_404(
     )
 
 
-@pytest.mark.requires_seed("admin_operator", "ceo")
-@pytest.mark.parametrize("collection", ADMIN_DELETES, ids=_id)
-@pytest.mark.security
-def test_deleting_without_the_grant_is_403(
-    realm_admin_session: PersonaSession, collection: str
-) -> None:
-    """And the gate comes first, so the refusal discloses nothing.
-
-    The pair that makes the 404 above mean something. Ordered as the service
-    checks — grant, then existence — so a caller without it cannot use the
-    delete route to learn which ids are real.
-    """
-    response = realm_admin_session.client.delete(
-        identity_path(f"{collection}/{scratch.UNKNOWN_ID}")
-    )
-    assert response.status_code == 403, (
-        f"DELETE {collection}/<unknown> answered {response.status_code} to a caller "
-        f"holding the realm role but no grant — a 404 would leak that the gate ran "
-        f"after the lookup: {response.text[:300]}"
-    )
-
-
-#: The admin WRITES. Each needs a body the extractor ACCEPTS, so that what the
-#: 403 below proves is the grant check and not a parse failure.
-ADMIN_WRITES: tuple[tuple[str, str], ...] = (
-    ("POST", "/v1/roles"),
-    ("POST", "/v1/person-roles"),
-    ("POST", "/v1/visibility"),
+#: Every operation the gate guards, in catalogue order.
+ADMIN_GATED_OPERATIONS: tuple[Operation, ...] = tuple(
+    op for op in IDENTITY_OPERATIONS if op.label in ADMIN_GATED
 )
 
-#: Shapes each route's extractor accepts. The IDS name nobody — a refusal must
-#: not depend on the referenced rows existing, and an ungranted caller must be
-#: turned away before anything is looked up either way.
-_VALID_BODIES: dict[str, dict[str, str]] = {
-    "/v1/roles": {"name": "stand-never-created"},
-    "/v1/person-roles": {"person_id": scratch.UNKNOWN_ID, "role_id": scratch.UNKNOWN_ID},
-    "/v1/visibility": {
+#: Shapes each write route's extractor ACCEPTS, so that what the 403 proves is
+#: the grant check and not a parse failure. The ids name nobody — a refusal must
+#: not depend on the referenced rows existing.
+#:
+#: INVARIANT: keyed by (method, path). Three of these paths also carry a GET,
+#: and the client's typed verbs refuse a body on GET on purpose; keying by path
+#: alone would smuggle one back in through `request`.
+_ACCOUNT: dict[str, str] = {
+    "source": scratch.SCRATCH_SOURCE_TYPE,
+    "source_id": scratch.SCRATCH_SOURCE_ID,
+    "id": SOME_ACCOUNT_ID,
+}
+_VALID_BODIES: dict[tuple[str, str], dict[str, object]] = {
+    ("POST", "/v1/roles"): {"name": "stand-never-created"},
+    ("POST", "/v1/person-roles"): {
+        "person_id": scratch.UNKNOWN_ID,
+        "role_id": scratch.UNKNOWN_ID,
+    },
+    ("POST", "/v1/visibility"): {
         "viewer_person_id": scratch.UNKNOWN_ID,
         "viewed_person_id": scratch.UNKNOWN_ID,
     },
+    ("POST", "/v1/resolution/bind"): {
+        "bindings": [{"account": _ACCOUNT, "person_id": scratch.UNKNOWN_ID}]
+    },
+    ("POST", "/v1/resolution/merge"): {
+        "source_person_id": scratch.UNKNOWN_ID,
+        "target_person_id": scratch.OTHER_UNKNOWN_ID,
+    },
+    ("POST", "/v1/resolution/detach"): {"account": _ACCOUNT},
+    ("POST", "/v1/resolution/exclude"): {"account": _ACCOUNT},
 }
 
 
-def _valid_body(suffix: str) -> dict[str, str]:
-    return _VALID_BODIES[suffix]
+def _body_for(operation: Operation) -> dict[str, object] | None:
+    for (method, suffix), body in _VALID_BODIES.items():
+        if operation.method == method and operation.path == identity_path(suffix):
+            return dict(body)
+    return None
+
+
+@pytest.mark.security
+def test_every_gated_write_has_a_body_the_extractor_accepts() -> None:
+    """A gated POST added to the catalogue and not here would be sent no body at
+    all, answer 415 from the extractor, and fail the sweep below on a status that
+    says nothing about the gate."""
+    posts = {op.path for op in ADMIN_GATED_OPERATIONS if op.method == "POST"}
+    described = {identity_path(suffix) for method, suffix in _VALID_BODIES if method == "POST"}
+
+    assert posts == described, f"gated POSTs without a body: {sorted(posts - described)}"
 
 
 @pytest.mark.requires_seed("admin_operator", "ceo")
-@pytest.mark.parametrize(("method", "suffix"), ADMIN_WRITES, ids=_id)
+@pytest.mark.parametrize("operation", ADMIN_GATED_OPERATIONS, ids=lambda op: op.label)
 @pytest.mark.security
-def test_creating_without_the_grant_is_403(
-    realm_admin_session: PersonaSession, method: str, suffix: str
+def test_every_admin_gated_operation_is_403_without_the_grant(
+    realm_admin_session: PersonaSession, operation: Operation
 ) -> None:
-    """The body is validated BEFORE the grant is checked — asserted as it is.
+    """The whole gate, as one table.
 
-    An ungranted caller sending an unparseable body gets 400 `request body did
-    not match the expected schema`, not 403: Axum runs a handler's extractors
-    before the handler, and the gate lives inside it. So a caller with no grant
-    can learn a route's rough shape — a small disclosure, unavoidable at this
-    layer, and not the one that matters: the DATA ordering is pinned by the
-    403-before-404 on the deletes above. This sends a body the extractor
-    ACCEPTS, which is what makes the 403 prove the grant check.
+    Each handler calls `require_admin` for itself, so a gate dropped from any
+    one of them is invisible to a case that drives another — and the catalogue
+    is the only list that grows when a route does.
+
+    Two properties fold in here. The gate comes FIRST, so a caller without it
+    cannot use a delete route to learn which ids are real: every id named below
+    belongs to nobody, and the answer is 403 rather than 404. And the body is
+    validated BEFORE the gate — Axum runs a handler's extractors before the
+    handler, and the gate lives inside it — so each write sends a body the
+    extractor accepts, which is what makes its 403 prove the grant check. That
+    an ungranted caller can still learn a route's rough shape is a small
+    disclosure, unavoidable at this layer, and not the one that matters.
+
+    `admin_operator` is seeded although it is never called: without somebody
+    holding the grant, a stand refuses everyone and every case here passes
+    while proving nothing.
     """
     response = realm_admin_session.client.request(
-        method, identity_path(suffix), json_body=dict(_valid_body(suffix))
+        operation.method, operation.path, json_body=_body_for(operation)
     )
+
     assert response.status_code == 403, (
-        f"{method} {suffix} answered {response.status_code} to a caller holding the "
-        f"realm role but no grant — a well-formed request from an ungranted caller "
-        f"must be refused: {response.text[:300]}"
+        f"{operation.label} answered {response.status_code} to a caller holding the "
+        f"realm role but no grant: {response.text[:300]}"
     )
+    # Both halves, as the 401 sweep does them: a refusal whose body a client
+    # cannot read is only half a rejection, and the console decides what to show
+    # from `status` and the reason it carries.
+    assert response.content_type == PROBLEM_CONTENT_TYPE, (
+        f"{operation.label} refused with content-type {response.content_type!r}, "
+        f"expected {PROBLEM_CONTENT_TYPE!r}: {response.text[:300]}"
+    )
+    problem = response.parse(ProblemDocument)
+    assert problem.status == 403
+    assert problem.detail, f"{operation.label}: the refusal carries no detail a caller can act on"
 
 
 @pytest.mark.requires_seed("admin_operator")

@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from insight_stand import coverage
 
-# Two catalogued operations, standing in for the real 45.
+# Two catalogued operations, standing in for the real catalogue.
 QUERIES = coverage.Operation(method="GET", path="/api/analytics/v1/queries")
 SUBCHART = coverage.Operation(method="GET", path="/api/identity/v1/subchart")
 CATALOGUE = [QUERIES, SUBCHART]
@@ -80,6 +81,77 @@ def test_an_operation_only_the_sweep_touched_is_not_covered() -> None:
 
     violations = coverage.violations(report, None)
     assert any("SWEPT ONLY" in v and SUBCHART.path in v for v in violations), violations
+
+
+def test_an_operation_only_the_admin_sweep_touched_is_not_covered() -> None:
+    """The same failure as the anonymous sweep, one status code over.
+
+    `identity/test_admin.py` calls every admin-gated operation without the
+    grant, so every one of them carries a 403 whether or not a test ever drove
+    it. Counting that as coverage would hide precisely the operations nobody
+    exercised — and unlike the 401 case, the observation comes from a suite that
+    looks like it is testing the route.
+    """
+    report = _catalogue_report(
+        {
+            (QUERIES.method, QUERIES.path): [200],
+            (SUBCHART.method, SUBCHART.path): [401, 403],
+        }
+    )
+
+    assert report.exercised == [QUERIES.label]
+    assert report.swept_only == [SUBCHART.label]
+    assert not report.passed
+
+
+def test_a_refusal_beside_a_real_answer_still_counts_as_covered() -> None:
+    """The guard must not punish a route for also being tested for refusal."""
+    report = _catalogue_report(
+        {
+            (QUERIES.method, QUERIES.path): [200, 401, 403],
+            (SUBCHART.method, SUBCHART.path): [200],
+        }
+    )
+
+    assert sorted(report.exercised) == sorted([QUERIES.label, SUBCHART.label])
+    assert report.passed
+
+
+@pytest.mark.parametrize("earned", [404, 400])
+def test_a_refusal_no_sweep_produces_is_not_in_the_set(earned: int) -> None:
+    """The boundary, named by the operations that sit on it.
+
+    `REFUSALS` is not "statuses that are refusals" — it is "statuses a sweep
+    stamps on every operation it touches". 404 and 400 are earned per route, and
+    the suite exercises `POST /v1/resolution/detach` only at 404 and
+    `POST /v1/resolution/merge` only at 400, both deliberately. Widening the set
+    by the loose reading would report those as gaps and block the merge queue.
+    """
+    assert earned not in coverage.REFUSALS
+
+    report = _catalogue_report(
+        {
+            (QUERIES.method, QUERIES.path): [earned],
+            (SUBCHART.method, SUBCHART.path): [200],
+        }
+    )
+
+    assert QUERIES.label in report.exercised
+    assert report.passed
+
+
+def test_a_bare_403_with_no_anonymous_call_is_still_only_a_sweep() -> None:
+    """An operation the admin sweep touched and the anonymous sweep somehow did
+    not is in the same position: refused, never answered."""
+    report = _catalogue_report(
+        {
+            (QUERIES.method, QUERIES.path): [403],
+            (SUBCHART.method, SUBCHART.path): [200],
+        }
+    )
+
+    assert report.swept_only == [QUERIES.label]
+    assert not report.passed
 
 
 def test_a_real_id_counts_against_the_operation_it_belongs_to() -> None:

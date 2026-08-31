@@ -1,0 +1,106 @@
+{{- if ne (int .Values.replicaCount) 1 }}
+{{- fail "previews runs exactly one replica: the TTL sweep has no leader election and the live-count cap is checked per pod — a second replica double-sweeps and over-admits, and zero leaves /api/previews with no backing pod (use previews.deploy=false to leave it out). Leave replicaCount=1." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "insight-previews.fullname" . }}
+  labels:
+    {{- include "insight-previews.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "insight-previews.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "insight-previews.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll pods when the gears config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global }}
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      # The dedicated ServiceAccount carries the namespace-scoped experiment
+      # RBAC (see experiments-rbac.yaml); the service fails boot without a
+      # reachable Kubernetes API.
+      serviceAccountName: {{ include "insight-previews.fullname" . }}
+      # Suppress the legacy `<SVC>_SERVICE_HOST/PORT/…` Docker-link env-vars
+      # kubelet auto-injects for every Service in the namespace at pod-start
+      # (see api-gateway deployment for the longer explanation).
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: previews
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # gears-rust host: structural config from the mounted ConfigMap.
+          # There is no Secret: the only per-stand leaf (routeHost) is not a
+          # credential and rides the ConfigMap.
+          command: ["/app/previews"]
+          args: ["-c", "/app/config/insight.yaml"]
+          volumeMounts:
+            - name: previews-config
+              mountPath: /app/config/insight.yaml
+              subPath: insight.yaml
+              readOnly: true
+            {{- if .Values.gateway.caCertSecret }}
+            # Discovery-issuer CA for the oidc-authn-plugin's https JWKS fetch.
+            - name: authn-ca
+              mountPath: /etc/insight/authn-ca
+              readOnly: true
+            {{- end }}
+            # The only two paths the process writes under a read-only root:
+            # the gears host creates `server.home_dir` at boot, and grpc-hub
+            # binds its UDS under /tmp (both set in the ConfigMap).
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: previews-config
+          configMap:
+            name: {{ include "insight-previews.fullname" . }}-gears-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.gateway.caCertSecret }}
+        - name: authn-ca
+          secret:
+            secretName: {{ .Values.gateway.caCertSecret | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

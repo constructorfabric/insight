@@ -6,7 +6,7 @@
 ##
 ## What is INCLUDED here:
 ##   - Edge / auth: gateway (nginx+auth), authenticator, keycloak
-##   - Application: analytics, identity-resolution, frontend
+##   - Application: analytics, identity-resolution, previews, frontend
 ##
 ## What is NOT included (deployed separately):
 ##   - L2 infra (ClickHouse, MariaDB, Redis, Redpanda) — deployed as
@@ -25,8 +25,8 @@ type: application
 # version    — packaging version of the chart. Bump on EVERY chart change.
 # appVersion — product version. Matches the image tag of all insight-* images.
 # Release pipeline: git tag v0.1.0 → version=0.1.0, appVersion="0.1.0".
-version: 0.6.3
-appVersion: "2026.08.27.10.44-f28c8fa"
+version: 0.6.29
+appVersion: "2026.08.31.09.54-35f82f3"
 kubeVersion: ">=1.27.0-0"
 home: https://github.com/constructorfabric/insight
 sources:
@@ -92,6 +92,15 @@ dependencies:
     version: "0.2.0"
     repository: "file://../../src/backend/services/identity-resolution/helm"
     condition: identityResolution.deploy
+  # Previews — preview-experiment provisioning (epic #1981). Manages the
+  # per-experiment FE Deployment/Service/HTTPRoute trio in a dedicated
+  # namespace via the Kubernetes API; the objects ARE the experiments (no
+  # database). Reached through the gateway at /api/previews.
+  - name: insight-previews
+    alias: previews
+    version: "0.1.0"
+    repository: "file://../../src/backend/services/previews/helm"
+    condition: previews.deploy
   # Clone-based git extraction for the nocode git connectors. Consumed ONLY by
   # Airbyte connector pods — no gateway route, absent from platform-config, and
   # its own NetworkPolicy closes ingress to everything else.

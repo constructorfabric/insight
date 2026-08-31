@@ -18,8 +18,8 @@ vi.mock("@/api/metric-results-client", async (orig) => ({
 
 const mock = vi.mocked(queryMetricResults);
 
-// Every requested view echoed back so the current (period+peer) and previous
-// (period-only) twins both resolve to real data.
+// Every requested view echoed back, with a comparison reading so the trend
+// arrows have real data.
 function respond(req: MetricResultsRequest): MetricResultsResponse {
   if (req.entity.type !== "person") throw new Error("person request expected");
   const ids = req.entity.ids;
@@ -36,7 +36,11 @@ function respond(req: MetricResultsRequest): MetricResultsResponse {
         v.view === "period"
           ? {
               view: "period",
-              values: ids.map((id) => ({ entity_id: id, value: 1 })),
+              values: ids.map((id) => ({
+                entity_id: id,
+                value: 1,
+                ...(req.compare_to ? { compare_to: 10 } : {}),
+              })),
             }
           : {
               view: "peer",
@@ -75,7 +79,7 @@ describe("useMemberGridData", () => {
     mock.mockImplementation(async (req) => respond(req));
   });
 
-  it("returns the current byKey and the previous-period twin, keyed once", async () => {
+  it("serves the grid and its trend arrows from one request", async () => {
     const { result } = renderHook(
       () =>
         useMemberGridData(
@@ -93,19 +97,20 @@ describe("useMemberGridData", () => {
       expect(result.current.previousByKey.has("git.commits")).toBe(true);
     });
 
-    // Current fetch requests period + peer; the previous twin requests period
-    // only (trends compare values, not standings).
-    const viewsFor = (from: string) =>
-      mock.mock.calls
-        .map((c) => c[0])
-        .find((r) => r.period.from === from)
-        ?.metrics[0]?.views.map((v) => v.view);
-    expect(viewsFor(RANGE.from)).toEqual(["period", "peer"]);
-    // The previous range differs from the current; its twin is period-only.
-    const prevCall = mock.mock.calls
-      .map((c) => c[0])
-      .find((r) => r.period.from !== RANGE.from);
-    expect(prevCall?.metrics[0]?.views.map((v) => v.view)).toEqual(["period"]);
+    // One request, carrying period + peer over the range and the previous
+    // period as its comparison window — not a second fetch over a shifted
+    // range.
+    expect(mock).toHaveBeenCalledTimes(1);
+    const req = mock.mock.calls[0]![0];
+    expect(req.period.from).toBe(RANGE.from);
+    expect(req.metrics[0]?.views.map((v) => v.view)).toEqual([
+      "period",
+      "peer",
+    ]);
+    expect(req.compare_to).toEqual({ from: "2026-03-01", to: "2026-03-30" });
+    expect(
+      result.current.previousByKey.get("git.commits")?.period?.values[0]?.value,
+    ).toBe(10);
   });
 
   it("is pending with no entities and does no fetch", () => {

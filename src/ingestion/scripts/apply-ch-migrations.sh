@@ -67,6 +67,9 @@ SQL
 echo "=== Provisioning presentation access (role + grant-less user) (#1963/#1964) ==="
 bash "$SCRIPT_DIR/bootstrap-db/provision-presentation-access.sh"
 
+echo "=== Provisioning grafana access (SELECT-only role + grant-less user) (#2888) ==="
+bash "$SCRIPT_DIR/bootstrap-db/provision-grafana-access.sh"
+
 echo "=== Creating bronze/silver placeholders (ADR-0007) ==="
 bash "$SCRIPT_DIR/create-bronze-placeholders.sh"
 
@@ -76,6 +79,41 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   echo "  $(basename "$migration")"
   run_ch < "$migration"
 done
+
+echo "=== Healing GitHub Projects V2 bronze keys ==="
+# Both relations were briefly keyed with the collection day inside `unique_key`.
+# That keeps every observation permanently current instead of collapsing onto
+# the entity — the shape `union_by_tag` names outright (ADR-0001, ADR-0004).
+#
+# The rows cannot be repaired in place, because the key IS the identity: a
+# day-keyed row and its entity-keyed replacement are different rows forever, and
+# no merge will ever reconcile them. Bronze is derivable from the API, so the
+# stale generation is dropped instead.
+#
+# Guarded on the stale rows themselves, so this is a no-op on a fresh cluster
+# and a no-op on the second deploy. It must run BEFORE dbt: the SCD2 snapshots
+# above these tables key on `unique_key`, and a day-keyed row would enter them
+# as its own entity and stay there.
+#
+# `project_fields` is full refresh, so the next sync rewrites it whole.
+# `project_items` is cursored, so it refills as the cursor advances — clearing
+# that stream's state makes it immediate. Nothing reads either relation yet, so
+# the gap costs nothing either way.
+heal_github_project_day_keys() {
+  local table="$1" stale
+  ch_table_exists bronze_github "${table}" || return 0
+  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
+    "${table}" | _ch_http_query | tr -d '[:space:]')"
+  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  [[ "${stale}" -gt 0 ]] || return 0
+  echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
+  run_ch <<SQL
+TRUNCATE TABLE bronze_github.${table};
+SQL
+}
+
+heal_github_project_day_keys project_fields
+heal_github_project_day_keys project_items
 
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
@@ -215,6 +253,47 @@ SQL
 }
 
 heal_task_field_history_table silver class_task_field_history
+
+# The column above only makes room for the summary; jira-enrich fills it. That
+# binary skips any issue that already has rows, so on a warm installation the
+# summary never reaches a Jira issue whose changelog has gone quiet — and a
+# closed issue, the kind task metrics count, never moves again. Emptying the
+# staging table makes the next enrich run bootstrap every issue from bronze,
+# which is the only channel that rewrites those rows.
+#
+# The window is invisible downstream: this hook builds tag:gold only, silver's
+# delete+insert removes just the unique_keys the incoming batch carries (an
+# empty Jira arm carries none), and the sync pipeline runs enrich before dbt.
+#
+# Self-limiting instead of ledger-backed, per this script's re-run contract:
+# rows but not one title means the table predates the enrich change, and the
+# bronze probe keeps an instance whose issues genuinely carry no summary from
+# truncating on every deploy.
+
+# SAFETY: callers use `ch_answer_is_yes ... || return 0`, which disables `set -e`
+# for the body — a probe failure (auth/transient, or a column the DDL macro has
+# not added yet, since it runs at dbt on-run-start below) reads as "no" and the
+# caller skips its heal rather than aborting the deploy.
+ch_answer_is_yes() {
+  local query="$1" answer
+  answer="$(printf '%s' "$query" | _ch_http_query | tr -d '[:space:]')"
+  [[ "$answer" == "1" ]]
+}
+
+heal_jira_task_history_titles() {
+  ch_table_is_real staging jira__task_field_history || return 0
+  ch_table_is_real bronze_jira jira_issue || return 0
+  ch_answer_is_yes "SELECT count() = 1 FROM system.columns WHERE database='staging' AND table='jira__task_field_history' AND name='title'" || return 0
+  ch_answer_is_yes "SELECT count() > 0 AND countIf(title IS NOT NULL) = 0 FROM staging.jira__task_field_history" || return 0
+  ch_answer_is_yes "SELECT count() > 0 FROM bronze_jira.jira_issue WHERE JSONExtractString(COALESCE(custom_fields_json, ''), 'summary') != ''" || return 0
+
+  echo "  staging.jira__task_field_history (emptied; next enrich run re-bootstraps it with summaries)"
+  run_ch <<SQL
+TRUNCATE TABLE staging.jira__task_field_history;
+SQL
+}
+
+heal_jira_task_history_titles
 
 echo "=== Healing git file-change object id columns ==="
 # The file-change object ids arrive at the tail of every projection that feeds
@@ -363,6 +442,45 @@ heal_task_id_column staging jira__task_comments comment_id
 heal_task_id_column silver class_task_worklogs worklog_id
 heal_task_id_column silver class_task_comments comment_id
 
+# The cohort and coverage relations are dbt VIEWs (identity resolves at query
+# time). A cluster that predates that holds them as MergeTree TABLEs, and dbt's
+# view materialization replaces via CREATE OR REPLACE VIEW, which is not
+# guaranteed to replace a table.
+#
+# SAFETY: renamed, never dropped, and only when the gold build that recreates
+# them is about to run. A failed build aborts the script (set -e) with the data
+# still in `<table>__pre_view_backup`, which an operator can rename back; the
+# backup is dropped only after the build succeeds.
+GOLD_VIEW_QUARANTINE=()
+
+quarantine_gold_table_for_view() {
+  local db="$1" table="$2"
+  local engine
+  engine="$(
+    printf "SELECT engine FROM system.tables WHERE database='%s' AND name='%s'" "$db" "$table" |
+      _ch_http_query |
+      tr -d '[:space:]'
+  )"
+  [[ -n "$engine" && "$engine" != "View" ]] || return 0
+  echo "  ${db}.${table} (${engine}, renamed to ${table}__pre_view_backup)"
+  run_ch <<SQL
+DROP TABLE IF EXISTS ${db}.${table}__pre_view_backup;
+RENAME TABLE ${db}.${table} TO ${db}.${table}__pre_view_backup;
+SQL
+  GOLD_VIEW_QUARANTINE+=("${db}.${table}__pre_view_backup")
+}
+
+drop_gold_view_quarantine() {
+  local relation
+  for relation in "${GOLD_VIEW_QUARANTINE[@]:-}"; do
+    [[ -n "$relation" ]] || continue
+    echo "  ${relation}"
+    run_ch <<SQL
+DROP TABLE IF EXISTS ${relation};
+SQL
+  done
+}
+
 # SKIP_DBT_GOLD=1 (set by bootstrap-db snapshot generation) skips this step:
 # generation already built every tag:gold model with the pinned dbt venv
 # (run-dbt.sh) BEFORE the migrations ran, and re-running here would need a `dbt`
@@ -375,6 +493,13 @@ else
 # DBT_GOLD_SELECT widens the selection (space-separated dbt selectors);
 # the seed's silver step adds +identity_inputs, deploys leave it unset.
 read -r -a _dbt_select <<<"${DBT_GOLD_SELECT:-tag:gold}"
+# SAFETY: appended after the override so no caller can narrow the selector and
+# leave the map views at the snapshot's point-in-time bodies.
+_dbt_select+=("tag:identity:map")
+echo "=== Quarantining gold identity relations still held as tables ==="
+quarantine_gold_table_for_view insight metric_entity_cohorts_current
+quarantine_gold_table_for_view insight identity_resolution_coverage
+
 # INVARIANT: never export DBT_FULL_REFRESH — reconcile-connectors owns that
 # name, and env reaches every child.
 _dbt_flags=()
@@ -435,6 +560,9 @@ with open(os.path.join(os.environ["DBT_PROFILES_DIR"], "profiles.yml"), "w") as 
     yaml.safe_dump(profile, f)
 PY
 (cd "$SCRIPT_DIR/../dbt" && dbt run --profiles-dir "$DBT_PROFILES_DIR" --log-format json --select "${_dbt_select[@]}" ${_dbt_flags[@]+"${_dbt_flags[@]}"})
+
+echo "=== Dropping quarantined pre-view tables (gold build succeeded) ==="
+drop_gold_view_quarantine
 rm -rf "$DBT_PROFILES_DIR"
 fi
 

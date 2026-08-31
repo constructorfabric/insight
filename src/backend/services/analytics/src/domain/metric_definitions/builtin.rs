@@ -3,8 +3,8 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::metric_definitions::definition::{
-    EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat, MetricInputRole,
-    RatioDenominatorAggregation, SourceKind, ValueTransform,
+    AliasCollapse, EvidenceGranularity, MetricComputation, MetricDirection, MetricFormat,
+    MetricInputRole, RatioDenominatorAggregation, SourceKind, ValueTransform,
 };
 use crate::domain::metric_definitions::evidence_presentation::EvidencePresentation;
 
@@ -134,6 +134,10 @@ pub struct BuiltinSource {
 pub struct MeasureSeed {
     pub key: String,
     pub evidence_granularity: EvidenceGranularity,
+    /// Declared per (source, measure): `active_day` is a per-day flag in
+    /// `ai_usage` and a distinct-count subject in `collab`.
+    #[serde(default)]
+    pub alias_collapse: AliasCollapse,
     /// How this measure's evidence rows read in the drilldown. Absent where
     /// the rows carry no human-facing details of their own.
     #[serde(default)]
@@ -551,6 +555,56 @@ mod tests {
             for dimension_key in &builtin_source.dimensions {
                 assert!(is_snake_case(dimension_key));
                 assert!(dimensions.insert(dimension_key.as_str()));
+            }
+        }
+    }
+
+    // INVARIANT: a distribution statistic may not declare a collapse — median,
+    // percentile and standard deviation are event-grain, and merging same-day
+    // rows moves the statistic. Additive computations collapse by design, and
+    // distinct counts are unaffected: they read `uniqExact(subject_key)` and the
+    // collapse groups by `subject_key`, so the collapse is a no-op there.
+    #[test]
+    fn alias_collapse_is_never_declared_on_distribution_inputs() {
+        let collapse_by_source: HashMap<&str, HashMap<&str, AliasCollapse>> = builtin_sources()
+            .iter()
+            .map(|builtin_source| {
+                (
+                    builtin_source.source.key.as_str(),
+                    builtin_source
+                        .measures
+                        .iter()
+                        .map(|measure| (measure.key.as_str(), measure.alias_collapse))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        for metric in builtin_metrics() {
+            let collapses = collapse_by_source
+                .get(metric.source_key.as_str())
+                .unwrap_or_else(|| panic!("unknown source for {}", metric.metric_key));
+            if !matches!(
+                metric.computation,
+                SeedComputation::Median
+                    | SeedComputation::Percentile { .. }
+                    | SeedComputation::Stddev
+            ) {
+                continue;
+            }
+            for input in &metric.inputs {
+                let collapse = collapses
+                    .get(input.measure_key.as_str())
+                    .copied()
+                    .unwrap_or_default();
+                assert!(
+                    !collapse.needs_pre_collapse(),
+                    "{} is {:?} but binds {}, which declares alias_collapse: {}",
+                    metric.metric_key,
+                    metric.computation,
+                    input.measure_key,
+                    collapse.as_db(),
+                );
             }
         }
     }

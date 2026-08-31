@@ -245,10 +245,35 @@ impl MetricDefinitionValidator {
         }
 
         match self.has_columns(cohort.table_ref(), COHORT_COLUMNS).await {
+            Ok(ColumnCheck::Present) => {}
+            Ok(missing) => {
+                return ProbeOutcome::Definitive(ValidationState::Error(missing.error_code()));
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "metric cohort source validation failed");
+                return ProbeOutcome::Inconclusive;
+            }
+        }
+
+        match self.has_columns(PERSON_MAP_TABLE, PERSON_MAP_COLUMNS).await {
+            Ok(ColumnCheck::Present) => {}
+            Ok(missing) => {
+                return ProbeOutcome::Definitive(ValidationState::Error(missing.error_code()));
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "identity map validation failed");
+                return ProbeOutcome::Inconclusive;
+            }
+        }
+
+        match self
+            .has_columns(ACCOUNT_ASSIGNMENT_TABLE, ACCOUNT_ASSIGNMENT_COLUMNS)
+            .await
+        {
             Ok(ColumnCheck::Present) => ProbeOutcome::Definitive(ValidationState::Ok),
             Ok(missing) => ProbeOutcome::Definitive(ValidationState::Error(missing.error_code())),
             Err(error) => {
-                tracing::warn!(error = %error, "metric cohort source validation failed");
+                tracing::warn!(error = %error, "identity account map validation failed");
                 ProbeOutcome::Inconclusive
             }
         }
@@ -594,15 +619,17 @@ impl MetricDefinitionValidator {
     }
 }
 
-// The columns the RUNTIME actually reads. `entity_id` carries the canonical
-// person id since the identity cutover — same column, canonical content — so
-// the list is unchanged by it: a second identity column would have made the
-// duplication part of this published contract.
+// The columns the RUNTIME actually reads. `entity_id` carries the source
+// identity; the runtime resolves it through `identity.person_map` while serving,
+// so the relation never publishes a second, pre-resolved identity column.
 const OBSERVATION_COLUMNS: &[&str] = &[
     "tenant_id",
     "source_key",
     "entity_type",
     "entity_id",
+    "account_source_type",
+    "account_source_id",
+    "account_id",
     "metric_date",
     "observed_at",
     "measure_key",
@@ -616,6 +643,9 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
     ("source_key", "String"),
     ("entity_type", "String"),
     ("entity_id", "String"),
+    ("account_source_type", "String"),
+    ("account_source_id", "String"),
+    ("account_id", "String"),
     ("metric_date", "Date"),
     ("observed_at", "Nullable(DateTime64(3))"),
     ("measure_key", "String"),
@@ -631,6 +661,18 @@ const EVIDENCE_COLUMN_TYPES: &[(&str, &str)] = &[
     ),
     ("details", "Map(String, String)"),
 ];
+
+/// The live email → person map every person read joins. Probed like any other
+/// serving contract: a missing map makes the relation unqueryable, not empty.
+const PERSON_MAP_TABLE: (&str, &str) = ("identity", "person_map");
+
+const PERSON_MAP_COLUMNS: &[&str] = &["email", "person_id"];
+
+/// The live account → person binding consulted before the email map.
+const ACCOUNT_ASSIGNMENT_TABLE: (&str, &str) = ("identity", "account_assignment");
+
+const ACCOUNT_ASSIGNMENT_COLUMNS: &[&str] =
+    &["source_type", "source_id", "account_id", "person_id"];
 
 const COHORT_COLUMNS: &[&str] = &[
     "tenant_id",
@@ -990,6 +1032,7 @@ fn all_measures_covered(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::AliasCollapse;
     use crate::domain::metric_definitions::definition::MetricInputRole;
 
     fn input(source_key: &str, measure_key: &str) -> MetricInput {
@@ -998,6 +1041,7 @@ mod tests {
             observation: ObservationSource::Managed(relation()),
             source_key: source_key.to_owned(),
             measure_key: measure_key.to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         }
     }
 

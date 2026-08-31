@@ -14,6 +14,7 @@ import { Route as SplatRouteImport } from './routes/$'
 import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as PortalRouteImport } from './routes/portal'
+import { Route as PreviewsRouteImport } from './routes/previews'
 import { Route as QueriesRouteImport } from './routes/queries'
 import { Route as WhatsNewRouteImport } from './routes/whats-new'
 import { Route as IcPersonRouteImport } from './routes/ic.$person'
@@ -44,6 +45,11 @@ const MetricsRoute = MetricsRouteImport.update({
 const PortalRoute = PortalRouteImport.update({
   id: '/portal',
   path: '/portal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreviewsRoute = PreviewsRouteImport.update({
+  id: '/previews',
+  path: '/previews',
   getParentRoute: () => rootRouteImport,
 } as any)
 const QueriesRoute = QueriesRouteImport.update({
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
+  '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
+  '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
@@ -109,6 +117,7 @@ export interface FileRoutesById {
   '/custom-metrics': typeof CustomMetricsRoute
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
+  '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
+    | '/previews'
     | '/queries'
     | '/whats-new'
     | '/ic/$person'
@@ -137,6 +147,7 @@ export interface FileRouteTypes {
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
+    | '/previews'
     | '/queries'
     | '/whats-new'
     | '/ic/$person/personal'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/custom-metrics'
     | '/metrics'
     | '/portal'
+    | '/previews'
     | '/queries'
     | '/whats-new'
     | '/ic/$person'
@@ -163,6 +175,7 @@ export interface RootRouteChildren {
   CustomMetricsRoute: typeof CustomMetricsRoute
   MetricsRoute: typeof MetricsRoute
   PortalRoute: typeof PortalRoute
+  PreviewsRoute: typeof PreviewsRoute
   QueriesRoute: typeof QueriesRoute
   WhatsNewRoute: typeof WhatsNewRoute
   IcPersonRoute: typeof IcPersonRouteWithChildren
@@ -203,6 +216,13 @@ declare module '@tanstack/react-router' {
       path: '/portal'
       fullPath: '/portal'
       preLoaderRoute: typeof PortalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/previews': {
+      id: '/previews'
+      path: '/previews'
+      fullPath: '/previews'
+      preLoaderRoute: typeof PreviewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/queries': {
@@ -272,6 +292,7 @@ const rootRouteChildren: RootRouteChildren = {
   CustomMetricsRoute: CustomMetricsRoute,
   MetricsRoute: MetricsRoute,
   PortalRoute: PortalRoute,
+  PreviewsRoute: PreviewsRoute,
   QueriesRoute: QueriesRoute,
   WhatsNewRoute: WhatsNewRoute,
   IcPersonRoute: IcPersonRouteWithChildren,

@@ -16,6 +16,8 @@ spec:
       annotations:
         # Roll pods when the gears config changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Platform CM arrives via envFrom; roll pods when its observability inputs change.
+        checksum/observability: {{ default dict (default dict .Values.global).observability | toYaml | sha256sum }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -114,6 +116,10 @@ spec:
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
           # so there are no APP__ env overrides for it here.
           envFrom:
+            # Umbrella observability contract; optional so standalone installs schedule.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-identity-resolution-config`). Provides
             # the APP__gears__identity_resolution__config__* leaf overrides.

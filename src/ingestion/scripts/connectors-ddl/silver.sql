@@ -947,6 +947,31 @@ ORDER BY unique_key
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS silver.class_task_links
+(
+    `unique_key` String,
+    `insight_source_id` String,
+    `data_source` String,
+    `id_readable` String,
+    `link_type` String,
+    `target_type` Enum8('issue' = 1, 'pull_request' = 2),
+    `target_readable` String,
+    `is_cross_repository` Bool,
+    `valid_from` DateTime64(3),
+    `valid_from_known` UInt8,
+    `valid_to` Nullable(DateTime64(3)),
+    `added_by` Nullable(String),
+    `removed_by` Nullable(String),
+    `evidence` Enum8('event' = 1, 'observation' = 2),
+    `origin_event_id` Nullable(String),
+    `collected_at` DateTime64(3),
+    `_version` UInt64
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY unique_key
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS silver.class_task_projects
 (
     `unique_key` Nullable(String),

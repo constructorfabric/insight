@@ -27,18 +27,33 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id, resolved ONCE per gold build ('' when identity
-          does not know the source email — those rows stay for coverage and
-          reach no serving relation). The same snapshot every downstream
-          relation answers for.
+          Source identity of the measured entity, normalized by
+          `normalized_email()`. For a person that is the email the source
+          recorded — NOT the canonical person id: the analytics runtime joins
+          `identity.person_map` when it serves, so a correction lands without
+          rebuilding this relation. Rows whose email cannot resolve stay here
+          and start counting the moment it does. Empty only on a row that
+          carries an account key, which resolves account-first instead.
         tests:
           - not_null
-      - name: source_entity_id
+      - name: account_source_type
         description: >
-          Source-native email the row was resolved from — provenance and the
-          coverage denominator; never a serving key.
+          Source family of the author's account binding, in the identity
+          store's vocabulary (e.g. github, bitbucket). '' when the row carries
+          no account-keyed fact: resolution then stays on the email path.
         tests:
           - not_null
+      - name: account_source_id
+        description: >
+          Raw connector source id of the account binding. The read-time join
+          hashes it with sipHash128, in lockstep with how the connectors'
+          identity_inputs mint `insight_source_id`.
+      - name: account_id
+        description: >
+          Source-native account id of the row's author. Rows with an account
+          resolve account-first through `identity.account_assignment` — an
+          account bound to the excluded person attributes to nobody and never
+          falls back to the email map.
       - name: metric_date
         description: "Date used by metric period filtering"
         tests:
@@ -225,6 +240,21 @@ models:
           set across families; there is no source-native identity to record.
         tests:
           - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
+        tests:
+          - not_null
       - name: metric_date
         description: "Run start date; deployment creation date"
         tests:
@@ -340,6 +370,12 @@ models:
           this relation.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
           For a month-grain measure, the first day of the month it bills for, so
@@ -404,14 +440,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: "Observation date"
         tests:
@@ -488,14 +529,28 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: >
+          Source family of the author's account binding, in the identity
+          store's vocabulary. '' when the row carries no account-keyed fact.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: >
+          Raw connector source id of the account binding; the runtime hashes
+          it in lockstep with identity's `insight_source_id` minting.
+      - name: account_id
+        description: >
+          Source-native account id of the row's author. Account-carrying rows
+          resolve account-first through `identity.account_assignment`; an
+          account bound to the excluded person attributes to nobody.
       - name: metric_date
         description: >
           Observation date: commit date for commit-derived measures,
@@ -601,14 +656,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: "Observation date (activity date per source)."
         tests:
@@ -698,14 +758,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
           Observation date: close date for closed-issue measures, transition
@@ -830,6 +895,21 @@ models:
           appears in this family (issue #2803, decision 5).
         tests:
           - not_null
+      - name: account_source_type
+        description: >
+          Always '' — a tenant-grain row carries no account binding. Present
+          because the analytics validator probes one column set across
+          families.
+        tests:
+          - not_null
+      - name: account_source_id
+        description: "Always '' — no account binding to hash."
+        tests:
+          - not_null
+      - name: account_id
+        description: "Always '' — no account binding to resolve."
+        tests:
+          - not_null
       - name: metric_date
         description: >
           Run start date for run measures, deployment creation date for
@@ -903,14 +983,19 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Source identity of the measured entity — `entity_type + entity_id`
+          identifies it, and for a person that is the normalized source email.
+          The analytics runtime resolves it to a canonical person through
+          `identity.person_map` at query time; identity_resolution_coverage
+          reports how much of this relation currently resolves.
         tests:
           - not_null
+      - name: account_source_type
+        description: "Account-binding source family; '' — no account-keyed facts here"
+      - name: account_source_id
+        description: "Raw connector source id of the account binding; '' here"
+      - name: account_id
+        description: "Source-native account id; '' keeps resolution on the email path"
       - name: metric_date
         description: >
           Observation date: page creation date for pages_created, edit day
@@ -997,11 +1082,14 @@ models:
       Current cohort membership per person for peer comparison. One row per
       (tenant, entity_type, entity_id, cohort_key) — uniqueness is asserted by
       tests/gold/assert_metric_entity_cohorts_unique.sql, and since entity_id is
-      the canonical person id that uniqueness is per PERSON: the model collapses
-      a person's several HR emails itself and EXCLUDES anyone whose emails claim
-      different org units, so the peer query reads it straight instead of
-      repairing the grain per request. The column set is a published contract
-      probed by the analytics service schema validator (`COHORT_COLUMNS`).
+      the canonical person id that uniqueness is per PERSON: the model resolves
+      a person's several HR emails through `identity.person_map` itself and
+      EXCLUDES anyone whose emails claim different org units, so the peer query
+      reads it straight instead of repairing the grain per request. A view, so
+      it resolves against the same live map the runtime uses for observations —
+      the two sides of a peer comparison can never disagree. The column set is a
+      published contract probed by the analytics service schema validator
+      (`COHORT_COLUMNS`).
     columns:
       - name: tenant_id
         description: "Tenant isolation field"
@@ -1016,12 +1104,9 @@ models:
                 values: ['person']
       - name: entity_id
         description: >
-          Canonical person id — `entity_type + entity_id` identifies the
-          measured entity, and for a person that identity IS the person id,
-          stamped into the evidence relations once per gold build. Source rows
-          whose email identity cannot resolve never reach this relation;
-          identity_resolution_coverage counts them from evidence, which keeps
-          the source email as source_entity_id.
+          Canonical person id: a cohort is a set of people, not of accounts, so
+          membership is resolved here through `identity.person_map` and a person
+          appears once however many HR emails they have.
         tests:
           - not_null
       - name: cohort_key
@@ -1036,14 +1121,101 @@ models:
           Cohort membership value: org unit id when present, department name
           fallback otherwise. NULL when the person has neither.
 
+  - name: git_commit_file_line_totals
+    description: >
+      Per-commit totals over the file changes AS COLLECTED — before the content
+      dedup removes what an earlier commit already carries. Keyed on the
+      canonical commit grain (tenant, data_source, commit_hash), the one
+      git_authored_commits collapses to. file_change_rows is the membership
+      answer the evidence build reads: a count rather than a sum, because the
+      line columns are Nullable and an all-NULL group sums to NULL, which no
+      join could tell from a commit the file-change stream never reached.
+    columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+      - name: commit_hash
+        description: "Commit the totals belong to"
+        tests:
+          - not_null
+      - name: file_change_rows
+        description: "Collected file-change rows for the commit, pre-dedup"
+        tests:
+          - not_null
+      - name: lines_added
+        description: "Sum of collected added lines, pre-dedup"
+      - name: lines_removed
+        description: "Sum of collected removed lines, pre-dedup"
+
+  - name: git_file_change_coverage
+    description: >
+      How much of each connector instance's authored work arrived with its file
+      changes — the measuring device for diff collection, since the size
+      metrics report a commit's own total when its changes were never collected
+      and so no longer show the gap themselves. Measured on the class relations
+      and grouped per source_id on purpose: collection is a property of a
+      connector instance, and the gold commit set deliberately collapses one
+      hash across a fork and its upstream, which would let a healthy instance
+      hide a broken one. Merge commits are excluded — every connector skips
+      their diffs by design. Judge a live instance by recent_collected_pct; the
+      all-time share carries history no re-read can reach.
+    columns:
+      - name: tenant_id
+        description: >
+          Tenant isolation field. Nullable on the git class relations and
+          preserved as such here, so no not_null test.
+      - name: data_source
+        description: "Git source discriminator (insight_github, insight_gitlab, ...)"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector instance the commits were collected by"
+      - name: commits
+        description: "Non-merge commits the instance delivered"
+      - name: commits_requiring_file_changes
+        description: >
+          Of those, the commits whose source reported a non-zero size — the
+          only class coverage is measured over, because a diff must exist.
+      - name: known_zero_size_commits
+        description: >
+          Commits the source reported as 0 added and 0 removed. No file detail
+          was ever due, so counting them would move coverage with the share of
+          empty commits rather than with collection health.
+      - name: unknown_size_commits
+        description: >
+          Commits whose source reported no size at all — neither a collection
+          success nor a failure, and a data-quality signal of its own.
+      - name: commits_with_file_changes
+        description: "Of commits_requiring_file_changes, those the file-change stream reached"
+      - name: collected_pct
+        description: >
+          Share of commits_requiring_file_changes with collected changes, all
+          time, percent (1 decimal). NULL when nothing required a diff.
+      - name: recent_commits_requiring_file_changes
+        description: "Requiring commits inside the git_coverage_recent_days window"
+      - name: recent_collected_pct
+        description: >
+          The same share inside the recent window. This is the number a live
+          collection regression moves, and what the data-quality test reads.
+      - name: uncollected_lines
+        description: >
+          Added plus removed lines reported by commits that required a diff and
+          have none — the prioritisation signal for how much authored volume
+          has no file grain.
+
   - name: identity_resolution_coverage
     description: >
       Identity-resolution match rate measured over ACTIVITY (evidence source
       rows), one row per source (git/ai_usage/ai_cost/collab/task/wiki) plus
-      hr_cohorts for the peer-membership relation. A TABLE materialized in
-      the same gold build as the serving relations, reading the resolution
-      snapshot stamped into evidence — so coverage answers for exactly what
-      is served, never a fresher map. Row-weighted on purpose —
+      hr_cohorts for the peer-membership relation. A VIEW joining the same
+      live `identity.person_map` the runtime joins, so the rate describes what
+      a dashboard would show right now rather than what a past build stamped.
+      Row-weighted on purpose —
       unresolved_rows counts what the dashboards actually lose;
       unresolved_people counts the distinct unknown emails behind the gap
       (roughly the operator decisions that would close it). The "match rate

@@ -49,7 +49,18 @@ INVENTORY        := environments/$(ENV)/inventory.yaml
 KUBE_CTX         ?= $(shell yq -r '.kubeContext // ""' $(INVENTORY) 2>/dev/null)
 NS_APP           ?= $(shell yq -r '.namespaces.services // "insight"'        $(INVENTORY) 2>/dev/null)
 NS_INFRA         ?= $(shell yq -r '.namespaces.infra    // "insight-infra"'  $(INVENTORY) 2>/dev/null)
+NS_PREVIEWS      ?= $(shell yq -r '.namespaces.previews // "insight-previews"' $(INVENTORY) 2>/dev/null)
 RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(INVENTORY) 2>/dev/null)
+
+# Namespaces for the cross-service hostnames in system/*/values.yaml
+# (`loki.${NS_MONITORING}.svc.cluster.local` and friends), substituted by
+# render-system-values.sh before helm reads the values — see
+# _system_values_args. Data stores are addressed via ${NS_INFRA}; the
+# observability stack (LGTM + kube-state-metrics) via ${NS_MONITORING}, one
+# unit that an environment may host apart from the data stores. Every
+# system-* target here installs into NS_INFRA, so it defaults to that —
+# override per invocation (env var / CLI) if the stack lives elsewhere.
+NS_MONITORING    ?= $(NS_INFRA)
 
 # Back-compat alias for older targets still referencing NAMESPACE.
 NAMESPACE        ?= $(NS_APP)
@@ -139,22 +150,49 @@ ARGO_VERSION     ?= 1.0.13
 ARGO_RBAC_TMPL   ?= bootstrap/argo-rbac.yaml.template
 ARGO_WORKFLOW_SA ?= argo-workflow
 
-# Observability stack (LGTM — logs first). Installed only when the bundled
-# stack is enabled via inventory.system.{loki,alloy,grafana}; otherwise the
-# host cluster collects from stdout and these targets are skipped.
-# Chart versions verified latest via `helm search repo grafana/<chart>
+# Observability stack (LGTM). Installed only when the bundled stack is
+# enabled via inventory.system.{victoriametrics,loki,tempo,alloy,grafana};
+# otherwise the host cluster collects from stdout and these targets are
+# skipped.
+# Chart versions verified latest via `helm search repo <repo>/<chart>
 # --versions` (bump deliberately, same discipline as the pins above).
 LOKI_RELEASE     ?= loki
-LOKI_CHART       ?= grafana/loki
-LOKI_VERSION     ?= 7.0.0      # app 3.6.7
+# grafana/loki now tracks Grafana Enterprise Logs; the OSS chart continues
+# as grafana-community/loki (same manifests, renumbered versions).
+LOKI_CHART       ?= grafana-community/loki
+LOKI_VERSION     ?= 18.11.4    # app 3.7.7
+
+TEMPO_RELEASE    ?= tempo
+# grafana/tempo is frozen like grafana/grafana and grafana/loki; the OSS
+# chart continues as grafana-community/tempo.
+TEMPO_CHART      ?= grafana-community/tempo
+TEMPO_VERSION    ?= 2.3.0      # app 2.10.8
 
 ALLOY_RELEASE    ?= alloy
 ALLOY_CHART      ?= grafana/alloy
-ALLOY_VERSION    ?= 1.9.0      # app v1.16.3
+ALLOY_VERSION    ?= 1.12.1     # app v1.19.2
+
+# Second Alloy release for METRICS collection (kubelet/cAdvisor +
+# kube-state-metrics → VictoriaMetrics). Same chart and version as the log
+# collector so the config dialect is identical; single-replica Deployment
+# because every scrape target is cluster-wide.
+ALLOY_METRICS_RELEASE ?= alloy-metrics
+
+KUBE_STATE_METRICS_RELEASE ?= kube-state-metrics
+KUBE_STATE_METRICS_CHART   ?= prometheus-community/kube-state-metrics
+KUBE_STATE_METRICS_VERSION ?= 8.4.1   # app v2.20.0
 
 GRAFANA_RELEASE  ?= grafana
-GRAFANA_CHART    ?= grafana/grafana
-GRAFANA_VERSION  ?= 10.5.15    # app 12.3.1
+# grafana/grafana is deprecated (frozen 2026-01-30); development moved to
+# grafana-community/helm-charts. Alloy still lives in the old repo.
+GRAFANA_CHART    ?= grafana-community/grafana
+GRAFANA_VERSION  ?= 13.0.0     # app 13.2.0
+
+# Metrics store — PromQL-compatible, remote-write receiver built in at
+# /api/v1/write (always on, no flag needed).
+VICTORIAMETRICS_RELEASE ?= victoriametrics
+VICTORIAMETRICS_CHART   ?= vm/victoria-metrics-single
+VICTORIAMETRICS_VERSION ?= 0.45.0
 
 # Per-cluster bootstrap controllers (gateway, cert-manager, sealed-secrets).
 # Versions pinned here; bump deliberately. Per-env overrides go in
@@ -210,8 +248,12 @@ help:
 	@echo "  make system-redpanda-console ENV=$(ENV)   }"
 	@echo "  make system-airbyte ENV=$(ENV)            }   (Airbyte = chart + post-install setup wizard)"
 	@echo "  make system-argo ENV=$(ENV)               }   (Argo Workflows = chart + supplemental RBAC apply)"
+	@echo "  make system-victoriametrics ENV=$(ENV)    }"
 	@echo "  make system-loki ENV=$(ENV)               }"
+	@echo "  make system-tempo ENV=$(ENV)              }"
 	@echo "  make system-alloy ENV=$(ENV)              } L2 — observability (LGTM, bundled mode)."
+	@echo "  make system-kube-state-metrics ENV=$(ENV) }"
+	@echo "  make system-alloy-metrics ENV=$(ENV)      }   (infra metrics → VictoriaMetrics)"
 	@echo "  make system-grafana ENV=$(ENV)            }"
 	@echo "  make system-status ENV=$(ENV)             Show what's installed in insight-infra"
 	@echo "  make provision-ci ENV=$(ENV)      Provision the namespace-scoped CI deploy credential"
@@ -233,7 +275,7 @@ help:
 	@echo
 	@echo "Resolved values (inventory + CLI/env overrides):"
 	@echo "  ENV=$(ENV)  KUBE_CTX=$(KUBE_CTX)  RELEASE=$(RELEASE)"
-	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)"
+	@echo "  NS_APP=$(NS_APP)  NS_INFRA=$(NS_INFRA)  NS_PREVIEWS=$(NS_PREVIEWS)"
 	@echo "  CHART=$(CHART)"
 	@echo "  INSIGHT_VERSION=$(INSIGHT_VERSION)"
 	@echo "  VALUES=$(VALUES)"
@@ -512,6 +554,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 	@mkdir -p $(RENDER_DIR)
 	@helm template $(RELEASE) $(CHART) --version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) \
 		-n $(NS_APP) -f $(VALUES) \
+		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		> $(RENDER_DIR)/last-render-$(ENV).yaml
 	@echo "$(C_GRN)rendered$(C_RST) $(CHART):$(INSIGHT_VERSION) → $(RENDER_DIR)/last-render-$(ENV).yaml"
 	@# A release whose only revision is a failed install cannot be upgraded, and
@@ -557,6 +600,7 @@ deploy-insight: sync-clean vpn-up kube-ctx confirm values-present chart-present 
 		--version $(INSIGHT_VERSION) $(HELM_EXTRA_FLAGS) $(HELM_UPGRADE_FLAGS) "$${SET_ARGS[@]}" \
 		--namespace $(NS_APP) $(HELM_NS_FLAG) \
 		-f $(VALUES) \
+		--set previews.experiments.namespace=$(NS_PREVIEWS) \
 		--wait $(HELM_ATOMIC_FLAG) --timeout $(TIMEOUT) \
 		--history-max 10 \
 		2>&1 | tee $$LOG || rc=$$?; \
@@ -614,8 +658,12 @@ system: inventory-present vpn-up kube-ctx
 	$(call _run_if_enabled,system.redpandaConsole,system-redpanda-console)
 	$(call _run_if_enabled,system.airbyte,system-airbyte)
 	$(call _run_if_enabled,system.argoWorkflows,system-argo)
+	$(call _run_if_enabled,system.victoriametrics,system-victoriametrics)
 	$(call _run_if_enabled,system.loki,system-loki)
+	$(call _run_if_enabled,system.tempo,system-tempo)
 	$(call _run_if_enabled,system.alloy,system-alloy)
+	$(call _run_if_enabled,system.kubeStateMetrics,system-kube-state-metrics)
+	$(call _run_if_enabled,system.alloyMetrics,system-alloy-metrics)
 	$(call _run_if_enabled,system.grafana,system-grafana)
 	@echo "$(C_GRN)system complete$(C_RST) → $(NS_INFRA)"
 
@@ -623,9 +671,15 @@ define _helm_repo_add
 	helm repo add $(1) $(2) >/dev/null 2>&1 || true; helm repo update $(1) >/dev/null
 endef
 
-# Helper: render `-f system/<svc>/values.yaml [-f environments/<env>/<svc>-values.yaml]`
+# Helper: render `-f <base> [-f <overlay>]` for system/<svc>/values.yaml and
+# environments/<env>/<svc>-values.yaml. Values are NOT passed to helm verbatim:
+# render-system-values.sh resolves the ${NS_*} producer-namespace placeholders
+# (exact braced tokens only — Grafana `$VAR`/`$$VAR` provisioning escapes and
+# any other `$` syntax pass through untouched) into
+# $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
-_system_values_args = -f system/$(1)/values.yaml $(shell test -s environments/$(ENV)/$(1)-values.yaml && echo -f environments/$(ENV)/$(1)-values.yaml)
+_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING)
+_system_values_args = $(or $(shell $(_system_ns_env) bash scripts/render-system-values.sh $(1) $(ENV) $(RENDER_DIR)/system-values),$(error render-system-values.sh failed for '$(1)' — see the message above))
 
 # Helper: require a sealed-secret named `<svc>-creds` to be present in
 # the repo for this env. Apply it to $(NS_INFRA). If missing, print
@@ -716,19 +770,40 @@ system-redpanda-console: vpn-up kube-ctx
 		--wait --timeout 5m
 
 # ── Observability (LGTM) ────────────────────────────────────────────────
-# Loki (store) + Alloy (DaemonSet collector) + Grafana (UI). Install order
-# matters: Loki first (Alloy/Grafana point at it), then Alloy, then
-# Grafana. `make system` honours that ordering via the chain above.
+# VictoriaMetrics (metrics store) + Loki (log store) + Tempo (trace store)
+# + Alloy (DaemonSet collector) + Grafana (UI). Install order matters:
+# stores first (Alloy/Grafana point at them), then Alloy, then Grafana.
+# `make system` honours that ordering via the chain above.
 # No required creds in the baseline (single-tenant, no auth); the optional-
 # secrets helper picks up a sealed `grafana-creds` if an env adds one.
+.PHONY: system-victoriametrics
+system-victoriametrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,vm,https://victoriametrics.github.io/helm-charts/)
+	$(call _apply_optional_system_secrets,victoriametrics)
+	helm upgrade --install $(VICTORIAMETRICS_RELEASE) $(VICTORIAMETRICS_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(VICTORIAMETRICS_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,victoriametrics) \
+		--wait --timeout 10m
+
 .PHONY: system-loki
 system-loki: vpn-up kube-ctx
-	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
 	$(call _apply_optional_system_secrets,loki)
 	helm upgrade --install $(LOKI_RELEASE) $(LOKI_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
 		--version $(LOKI_VERSION) $(HELM_EXTRA_FLAGS) \
 		$(call _system_values_args,loki) \
+		--wait --timeout 10m
+
+.PHONY: system-tempo
+system-tempo: vpn-up kube-ctx
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,tempo)
+	helm upgrade --install $(TEMPO_RELEASE) $(TEMPO_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(TEMPO_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,tempo) \
 		--wait --timeout 10m
 
 .PHONY: system-alloy
@@ -741,9 +816,31 @@ system-alloy: vpn-up kube-ctx
 		$(call _system_values_args,alloy) \
 		--wait --timeout 5m
 
+# Infra metrics: kube-state-metrics first (alloy-metrics scrapes it),
+# then the alloy-metrics scraper. Both remote-write into VictoriaMetrics.
+.PHONY: system-kube-state-metrics
+system-kube-state-metrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,prometheus-community,https://prometheus-community.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,kube-state-metrics)
+	helm upgrade --install $(KUBE_STATE_METRICS_RELEASE) $(KUBE_STATE_METRICS_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(KUBE_STATE_METRICS_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,kube-state-metrics) \
+		--wait --timeout 5m
+
+.PHONY: system-alloy-metrics
+system-alloy-metrics: vpn-up kube-ctx
+	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	$(call _apply_optional_system_secrets,alloy-metrics)
+	helm upgrade --install $(ALLOY_METRICS_RELEASE) $(ALLOY_CHART) \
+		--namespace $(NS_INFRA) --create-namespace \
+		--version $(ALLOY_VERSION) $(HELM_EXTRA_FLAGS) \
+		$(call _system_values_args,alloy-metrics) \
+		--wait --timeout 5m
+
 .PHONY: system-grafana
 system-grafana: vpn-up kube-ctx
-	@$(call _helm_repo_add,grafana,https://grafana.github.io/helm-charts)
+	@$(call _helm_repo_add,grafana-community,https://grafana-community.github.io/helm-charts)
 	$(call _apply_optional_system_secrets,grafana)
 	helm upgrade --install $(GRAFANA_RELEASE) $(GRAFANA_CHART) \
 		--namespace $(NS_INFRA) --create-namespace \
@@ -1113,9 +1210,16 @@ bootstrap-envoy-gateway: vpn-up kube-ctx
 		--version $(ENVOY_GATEWAY_VERSION) $(HELM_EXTRA_FLAGS) \
 		$$VALUES_ARGS \
 		--wait --timeout 5m
+	@# Namespaces come from inventory.yaml (namespaces.*), never hardcoded:
+	@# ${NS_APP} / ${NS_INFRA} / ${NS_PREVIEWS} placeholders in gateway.yaml
+	@# are substituted here. A manifest without placeholders applies as-is.
 	@if [ -f $(BOOTSTRAP_DIR)/gateway.yaml ]; then \
 		echo "applying $(BOOTSTRAP_DIR)/gateway.yaml"; \
-		kubectl --context $(KUBE_CTX) apply -f $(BOOTSTRAP_DIR)/gateway.yaml; \
+		sed -e 's|$${NS_APP}|$(NS_APP)|g' \
+		    -e 's|$${NS_INFRA}|$(NS_INFRA)|g' \
+		    -e 's|$${NS_PREVIEWS}|$(NS_PREVIEWS)|g' \
+		    $(BOOTSTRAP_DIR)/gateway.yaml \
+		| kubectl --context $(KUBE_CTX) apply -f -; \
 	fi
 
 .PHONY: bootstrap-cert-manager

@@ -8,6 +8,7 @@ test at all. This module closes those gaps one at a time.
 
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
@@ -86,19 +87,18 @@ def _bamboohr_employee(
     *, run_tag: str, entity_id: str, email: str, display_name: str, supervisor_email: str | None
 ) -> dict:
     """A minimal `bronze_bamboohr.employees` row — the real shape the bamboohr
-    connector would append, not a hand-crafted identity_inputs row."""
-    return {
-        # Non-nullable Airbyte CDK columns — real connector rows always carry
-        # these; some staging transformations (e.g. latest-row selection)
-        # rely on `_airbyte_extracted_at`.
-        "_airbyte_raw_id": str(uuid.uuid4()),
-        "_airbyte_extracted_at": "2026-01-05T00:00:00",
-        "_airbyte_meta": "{}",
-        "_airbyte_generation_id": 0,
+    connector would append, not a hand-crafted identity_inputs row.
+
+    The identity fields go in BOTH the top-level columns and `raw_data`. Since
+    the connector began collecting every employee field without configuration,
+    the snapshot versions on `raw_data` and the field history is derived from
+    its keys — a row carrying only the columns yields no history, and with it
+    no identity_inputs at all.
+    """
+    fields = {
+        # The payload carries `id` too — the connector builds it from the whole
+        # report row, which is keyed by it.
         "id": entity_id,
-        "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
-        "tenant_id": f"pipeline-tenant-{run_tag}",
-        "source_id": f"pipeline-source-{run_tag}",
         "workEmail": email,
         "displayName": display_name,
         "firstName": display_name.split(" ")[0],
@@ -110,6 +110,24 @@ def _bamboohr_employee(
         "status": "Active",
         "supervisorEmail": supervisor_email,
         "supervisorEId": None,
+    }
+    return {
+        # Non-nullable Airbyte CDK columns — real connector rows always carry
+        # these; some staging transformations (e.g. latest-row selection)
+        # rely on `_airbyte_extracted_at`.
+        "_airbyte_raw_id": str(uuid.uuid4()),
+        "_airbyte_extracted_at": "2026-01-05T00:00:00",
+        "_airbyte_meta": "{}",
+        "_airbyte_generation_id": 0,
+        "unique_key": f"pipeline-{run_tag}-bamboohr-{entity_id}",
+        "tenant_id": f"pipeline-tenant-{run_tag}",
+        "source_id": f"pipeline-source-{run_tag}",
+        # Same shape the fixture-loader derives for YAML fixtures: keys sorted,
+        # values the source did not state left out.
+        "raw_data": json.dumps(
+            {k: v for k, v in sorted(fields.items()) if v is not None}, separators=(",", ":")
+        ),
+        **fields,
     }
 
 

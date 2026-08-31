@@ -44,6 +44,7 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
 
 # MariaDB via SeaORM — connection pool + entities + raw resolve queries.
 sea-orm = { workspace = true }
@@ -59,6 +60,7 @@ base64 = { workspace = true }
 # `insight-clickhouse` wraps the client; the direct `clickhouse` dep is for the
 # `Row` derive on the query row struct.
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 

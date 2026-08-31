@@ -71,18 +71,21 @@ def _person_ids_for(emails: list[str], aliases: dict[str, list[str]]) -> dict[st
 
 def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> None:
     """Give each persona an account that carries their email and is bound to
-    their person id — the shape resolve_person_id() reads.
+    their person id — the shape `identity.person_map` resolves through.
 
     Resolution is account-derived: `identity_inputs` says which account carries
     an email, `identity_persons` says who that account belongs to. The rig plays
     both producers (the connector models and the service's persons-sync), one
     synthetic account per persona.
 
-    Runs BEFORE the gold dbt build so every observation row resolves.
+    Ordering is not free: the map RELATION must exist before the gold build,
+    because `metric_entity_cohorts_current` is a view that INNER JOINs
+    `person_map` and ClickHouse validates a view's query when it creates it. The
+    map's CONTENTS are read per request, so only the rows may change afterwards.
     """
-    # NOT worker-scoped: the resolve_person_id macro names `identity` literally,
-    # so a per-worker suffix here would leave gold reading an unseeded table.
-    # Enabling xdist for this suite has to make the macro schema-aware first.
+    # NOT worker-scoped: the map models name the `identity` schema literally, so
+    # a per-worker suffix would leave the map reading an unseeded table. xdist
+    # needs them schema-aware first.
     clickhouse.ensure_database(cfg, "identity")
     clickhouse.execute(
         cfg,
@@ -259,9 +262,9 @@ def test_metric_smoke(
     if "class_collab_meeting_activity" in silver_set:
         tracked_models.run(["class_focus_metrics"], worker_ctx=worker_ctx, full_refresh=True)
 
-    # 4. Identity bindings for the personas the cases address, BEFORE the
-    #    gold build — the resolve macro joins them into person_id during the
-    #    build (the rig plays the persons-sync role here).
+    # 4. Identity bindings for the personas the cases address (the rig plays the
+    #    persons-sync role). Must precede the gold build: the cohorts view
+    #    INNER JOINs person_map, and creating a view validates its references.
     persona_emails = _all_persona_emails(test_yaml)
     all_person_ids = _person_ids_for(persona_emails, test_yaml.identity_aliases)
     to_person_id = {email: all_person_ids[email] for email in _requested_persona_emails(test_yaml)}
@@ -271,6 +274,10 @@ def test_metric_smoke(
     identity_stub.allow_visible(persona_emails)
     _seed_identity_persons(ch_seeder.cfg, all_person_ids)
     _seed_identity_accounts(ch_seeder.cfg, test_yaml.identity_accounts, start_id=len(all_person_ids) + 1)
+
+    # Selected without upstream: `identity_inputs` is hand-created above and
+    # excluded from the silver selection.
+    dbt_runner.run("tag:identity:map", worker_ctx=worker_ctx)
 
     if staging or silver_set or ran_enrich_steps:
         dbt_runner.run("tag:gold", worker_ctx=worker_ctx)

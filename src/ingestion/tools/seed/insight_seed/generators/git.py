@@ -2,17 +2,18 @@
 git silver-table generator: commits + pull-requests.
 
 Only the development team produces git activity. Sales / HR / Support
-get zero rows here by construction.
+get zero rows here by construction. RNG draws for the commit and
+pull-request skeleton live in `git_history` — this module shapes silver
+rows from what that builder produced.
 """
 
 from __future__ import annotations
 
-import datetime as _dt
-import random
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from ..profiles import DEV_LEAD_UUID, TEAM_PROFILES, Person
+from . import git_history
 from .base import (
     clamp,
     days_window,
@@ -23,17 +24,18 @@ from .base import (
     seeded_rng,
     weekday_multiplier,
 )
+from .git_history import DayHistory, build_history
 from .insert import bulk_insert, truncate
 
 if TYPE_CHECKING:
     import clickhouse_connect.driver.client
 
+# WORKAROUND: assignment, not import — mypy's no_implicit_reexport would
+# otherwise hide these from test_git_links.py's `git.<name>` access.
+COMMITS_CAP = git_history.COMMITS_CAP
+PRS_CAP = git_history.PRS_CAP
+_eligible = git_history.eligible
 
-# Hard per-person-per-day caps. Generation respects these by
-# construction — they aren't validation rules, just upper bounds on
-# the Poisson draws so the dataset stays plausible.
-COMMITS_CAP = 20
-PRS_CAP = 6
 
 # One logical git source for the whole seed. This MUST be written to every
 # git silver table: gold/git_metric_observations builds its project and
@@ -70,33 +72,12 @@ HOSTILE_COMMIT_MESSAGES = (
 )
 
 
-def _eligible(roster: Sequence[Person]) -> list[Person]:
-    """Persons whose team profile has any git weight."""
-    return [p for p in roster if p.team and TEAM_PROFILES[p.team].weights.get("github", 0) > 0]
-
-
-def _daily_commit_count(rng: random.Random, mean: float) -> int:
-    """The day's commit count, floored at one per person-day.
-
-    The floor keeps every git bucket drillable: the dashboard's trailing
-    windows start on whichever calendar day the run lands, so the leading
-    partial week bucket can cover a single day — and a zero-commit day
-    renders that bucket "—", undrillable. weekday_multiplier still shapes
-    the volume.
-
-    One formula on purpose: seed_class_git_pull_requests_commits re-derives
-    the day's commit list from the same RNG stream seed_class_git_commits
-    draws from, and any divergence — such as only one of them flooring —
-    strands that day's PRs without link rows.
-    """
-    return max(1, min(poisson(rng, mean), COMMITS_CAP))
-
-
 def seed_class_git_commits(
     client: clickhouse_connect.driver.client.Client,
     roster: Sequence[Person],
     tenant_uuid: str,
     days: int,
+    history: Sequence[DayHistory] | None = None,
 ) -> int:
     truncate(client, "silver", "class_git_commits")
     cols = [
@@ -124,40 +105,31 @@ def seed_class_git_commits(
     # evidence model filters merge commits out, so a message on one would never
     # reach the drilldown.
     lead_commits: list[int] = []
-    for p in _eligible(roster):
-        persona = persona_multiplier(p.uuid)
-        weight = TEAM_PROFILES[p.team or ""].weights["github"]
-        for d in days_window(days):
-            rng = seeded_rng(p.uuid, d, "git.commits")
-            mean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = _daily_commit_count(rng, mean)
-            for i in range(n_commits):
-                sha = deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40]
-                is_merge = 1 if rng.random() < 0.05 else 0
-                # LOC per commit capped at ≤200 by construction.
-                added = float(rng.randint(2, 180))
-                removed = float(rng.randint(0, 80))
-                if p.uuid == DEV_LEAD_UUID and not is_merge:
-                    lead_commits.append(len(rows))
-                rows.append(
-                    (
-                        tenant_uuid,
-                        sha.replace("-", ""),
-                        PROJECT_KEY,
-                        REPO_SLUG,
-                        SOURCE_ID,
-                        tenant_uuid,
-                        p.email,
-                        d,
-                        is_merge,
-                        "src/main.rs",
-                        added,
-                        removed,
-                        "insight_github",
-                        "",
-                        version,
-                    )
+    if history is None:
+        history = build_history(roster, days)
+    for day in history:
+        for commit in day.commits:
+            if day.person.uuid == DEV_LEAD_UUID and not commit.is_merge:
+                lead_commits.append(len(rows))
+            rows.append(
+                (
+                    tenant_uuid,
+                    commit.hash,
+                    PROJECT_KEY,
+                    REPO_SLUG,
+                    SOURCE_ID,
+                    tenant_uuid,
+                    day.person.email,
+                    day.date,
+                    1 if commit.is_merge else 0,
+                    "src/main.rs",
+                    commit.lines_added,
+                    commit.lines_removed,
+                    "insight_github",
+                    "",
+                    version,
                 )
+            )
 
     # The most recent of those commits, not the earliest: a suite asking about
     # "the seeded period" asks about the tail the API will answer for, and a
@@ -180,6 +152,7 @@ def seed_class_git_pull_requests(
     roster: Sequence[Person],
     tenant_uuid: str,
     days: int,
+    history: Sequence[DayHistory] | None = None,
 ) -> int:
     truncate(client, "silver", "class_git_pull_requests")
     cols = [
@@ -209,52 +182,37 @@ def seed_class_git_pull_requests(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    for p in _eligible(roster):
-        persona = persona_multiplier(p.uuid)
-        weight = TEAM_PROFILES[p.team or ""].weights["github"]
-        author_name = p.email.split("@", 1)[0].replace("_", " ").title()
-        for d in days_window(days):
-            rng = seeded_rng(p.uuid, d, "git.prs")
-            mean = 0.8 * persona * weight * weekday_multiplier(d)
-            n_prs = min(poisson(rng, mean), PRS_CAP)
-            for i in range(n_prs):
-                pr_id = deterministic_int("git.pr", p.uuid, d.isoformat(), str(i))
-                created = _dt.datetime.combine(
-                    d,
-                    _dt.time(9 + rng.randint(0, 8), rng.randint(0, 59), tzinfo=_dt.UTC),
+    if history is None:
+        history = build_history(roster, days)
+    for day in history:
+        author_name = day.person.email.split("@", 1)[0].replace("_", " ").title()
+        for pr in day.prs:
+            # Uppercase to match the gold model's state filters
+            # (git_metric_observations: prs.state = 'MERGED').
+            state = "MERGED" if pr.merged_on else "OPEN"
+            merged_naive = None if pr.merged_on is None else pr.merged_on.replace(tzinfo=None)
+            rows.append(
+                (
+                    tenant_uuid,
+                    pr.pr_id,
+                    day.person.email,
+                    author_name,
+                    state,
+                    pr.created.replace(tzinfo=None),
+                    merged_naive,
+                    merged_naive,  # closed_on tracks merged_on for merged PRs
+                    pr.lines_added,
+                    pr.lines_removed,
+                    tenant_uuid,
+                    "insight_github",
+                    version,
+                    f"feature/pr-{pr.pr_id}",
+                    "main",
+                    SOURCE_ID,
+                    PROJECT_KEY,
+                    REPO_SLUG,
                 )
-                merged_in_h = rng.randint(1, 72) if rng.random() < 0.85 else None
-                merged_on = (
-                    created + _dt.timedelta(hours=merged_in_h) if merged_in_h is not None else None
-                )
-                # Uppercase to match the gold model's state filters
-                # (git_metric_observations: prs.state = 'MERGED').
-                state = "MERGED" if merged_on else "OPEN"
-                merged_naive = None if merged_on is None else merged_on.replace(tzinfo=None)
-                pr_added = float(rng.randint(20, 350))
-                pr_removed = float(rng.randint(0, 180))
-                rows.append(
-                    (
-                        tenant_uuid,
-                        pr_id,
-                        p.email,
-                        author_name,
-                        state,
-                        created.replace(tzinfo=None),
-                        merged_naive,
-                        merged_naive,  # closed_on tracks merged_on for merged PRs
-                        pr_added,
-                        pr_removed,
-                        tenant_uuid,
-                        "insight_github",
-                        version,
-                        f"feature/pr-{pr_id}",
-                        "main",
-                        SOURCE_ID,
-                        PROJECT_KEY,
-                        REPO_SLUG,
-                    )
-                )
+            )
     return bulk_insert(client, "silver", "class_git_pull_requests", cols, rows)
 
 
@@ -339,6 +297,7 @@ def seed_class_git_pull_requests_commits(
     roster: Sequence[Person],
     tenant_uuid: str,
     days: int,
+    history: Sequence[DayHistory] | None = None,
 ) -> int:
     """PR -> commit links.
 
@@ -349,9 +308,10 @@ def seed_class_git_pull_requests_commits(
     dimension CAST fails on the resulting NULLs — so the table is not
     optional for a stand that expects git metrics.
 
-    Links are reconstructed from the same seeded RNG streams the PR and
-    commit generators use, so a PR's commits are that author's commits from
-    the same day. Deterministic across runs by construction.
+    Links are dealt round-robin from the same `DayHistory.commits` and
+    `.prs` that `seed_class_git_commits` and `seed_class_git_pull_requests`
+    themselves render, so a PR's commits are that author's commits from the
+    same day. Deterministic across runs by construction.
     """
     truncate(client, "silver", "class_git_pull_requests_commits")
     cols = [
@@ -367,48 +327,33 @@ def seed_class_git_pull_requests_commits(
     ]
     rows: list[tuple[object, ...]] = []
     version = 1
-    for p in _eligible(roster):
-        persona = persona_multiplier(p.uuid)
-        weight = TEAM_PROFILES[p.team or ""].weights["github"]
-        for d in days_window(days):
-            # Re-derive the day's commit hashes exactly as
-            # seed_class_git_commits does (same salt, same draw order).
-            crng = seeded_rng(p.uuid, d, "git.commits")
-            cmean = 5 * persona * weight * weekday_multiplier(d)
-            n_commits = _daily_commit_count(crng, cmean)
-            hashes = [
-                deterministic_uuid("git.commit", p.uuid, d.isoformat(), str(i))[:40].replace(
-                    "-", ""
-                )
-                for i in range(n_commits)
-            ]
-            # Re-derive the day's PR ids the same way.
-            prng = seeded_rng(p.uuid, d, "git.prs")
-            pmean = 0.8 * persona * weight * weekday_multiplier(d)
-            n_prs = min(poisson(prng, pmean), PRS_CAP)
-            for i in range(n_prs):
-                pr_id = deterministic_int("git.pr", p.uuid, d.isoformat(), str(i))
-                # Deal the day's commits round-robin across the day's PRs.
-                # A day with fewer commits than PRs wraps instead of leaving
-                # the tail PRs linkless: gold's pr_commit_emails derives a
-                # PR's author attribution from these links, so a linkless PR
-                # NULLs its dimensions, while a commit shared by two PRs is
-                # ordinary git.
-                linked = hashes[i::n_prs] or [hashes[i % n_commits]]
-                for order, commit_hash in enumerate(linked):
-                    rows.append(
-                        (
-                            tenant_uuid,
-                            SOURCE_ID,
-                            PROJECT_KEY,
-                            REPO_SLUG,
-                            pr_id,
-                            commit_hash,
-                            order,
-                            "insight_github",
-                            version,
-                        )
+    if history is None:
+        history = build_history(roster, days)
+    for day in history:
+        if not day.prs:
+            continue
+        hashes = [c.hash for c in day.commits]
+        for i, pr in enumerate(day.prs):
+            # Deal the day's commits round-robin across the day's PRs. A day
+            # with fewer commits than PRs wraps instead of leaving the tail
+            # PRs linkless: gold's pr_commit_emails derives a PR's author
+            # attribution from these links, so a linkless PR NULLs its
+            # dimensions, while a commit shared by two PRs is ordinary git.
+            linked = hashes[i :: len(day.prs)] or [hashes[i % len(hashes)]]
+            for order, commit_hash in enumerate(linked):
+                rows.append(
+                    (
+                        tenant_uuid,
+                        SOURCE_ID,
+                        PROJECT_KEY,
+                        REPO_SLUG,
+                        pr.pr_id,
+                        commit_hash,
+                        order,
+                        "insight_github",
+                        version,
                     )
+                )
     return bulk_insert(client, "silver", "class_git_pull_requests_commits", cols, rows)
 
 
@@ -417,17 +362,20 @@ def generate(
     roster: Sequence[Person],
     tenant_uuid: str,
     days: int,
+    history: Sequence[DayHistory],
 ) -> dict[str, int]:
     _ = clamp  # imported for future use; silence unused warning under strict ruff
     return {
-        "silver.class_git_commits": seed_class_git_commits(client, roster, tenant_uuid, days),
+        "silver.class_git_commits": seed_class_git_commits(
+            client, roster, tenant_uuid, days, history
+        ),
         "silver.class_git_pull_requests": seed_class_git_pull_requests(
-            client, roster, tenant_uuid, days
+            client, roster, tenant_uuid, days, history
         ),
         "silver.class_git_file_changes": seed_class_git_file_changes(
             client, roster, tenant_uuid, days
         ),
         "silver.class_git_pull_requests_commits": seed_class_git_pull_requests_commits(
-            client, roster, tenant_uuid, days
+            client, roster, tenant_uuid, days, history
         ),
     }

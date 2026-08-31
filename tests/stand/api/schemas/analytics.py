@@ -58,6 +58,23 @@ class AiSettingsResponse(BaseModel):
     system_prompt: str
 
 
+class BreakdownWindowValueDto(BaseModel):
+    """
+    One group's reading over the comparison window.
+
+    `value` and `present` are independent: a ratio over a group that IS in the
+    window reads NULL whenever its denominator is zero, so absence cannot be
+    inferred from the value. A reader that wants what a standalone request over
+    that window would have returned keeps the rows with `present` and renders
+    their `value` as it stands, NULL included.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    present: bool
+    value: float | None = None
+
+
 class Bucket(StrEnum):
     day = 'day'
     week = 'week'
@@ -685,6 +702,7 @@ class PeriodValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: float | None = Field(None, description='The same reading over `compare_to`. Omitted both when no comparison\nwindow was asked for and when the entity has no value in it — the two\nare not distinguished on the wire, and a reader that asked knows which\ncase it is in.')
     entity_id: str
     value: float | None = None
 
@@ -717,6 +735,79 @@ class PutSettingsRequest(BaseModel):
         extra='forbid',
     )
     system_prompt: str
+
+
+class ReportCell(RootModel[str | float]):
+    root: str | float
+
+
+class ReportColumnDataType(StrEnum):
+    text = 'text'
+    date = 'date'
+    number = 'number'
+
+
+class ReportColumnMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    data_type: ReportColumnDataType
+    format: MetricFormat | None = None
+    key: str
+    label: str
+    unit: str | None = None
+
+
+class ReportExportFormat(StrEnum):
+    csv = 'csv'
+    xlsx = 'xlsx'
+
+
+class ReportGranularity(StrEnum):
+    day = 'day'
+    week = 'week'
+    month = 'month'
+    quarter = 'quarter'
+    year = 'year'
+
+
+class ReportPeriod(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    to: str
+
+
+class ReportRow(RootModel[list[ReportCell | None]]):
+    root: list[ReportCell | None]
+
+
+class Type7(StrEnum):
+    people = 'people'
+
+
+class ReportSubject1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[UUID] = Field(..., max_length=1000)
+    type: Type7
+
+
+class Type8(StrEnum):
+    tenant = 'tenant'
+
+
+class ReportSubject2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type8
+
+
+class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
+    root: ReportSubject1 | ReportSubject2
 
 
 class RollupValueDto(BaseModel):
@@ -971,8 +1062,10 @@ class BreakdownValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: BreakdownWindowValueDto | None = None
     dimensions: list[MetricDimensionDto]
     entity_id: str
+    present: bool | None = Field(None, description='Whether this group has any observation inside the primary period.\nPresent only on a windowed response, where the group set spans every\nwindow and a reader has to know which of them each group belongs to.')
     value: float | None = None
 
 
@@ -1215,6 +1308,7 @@ class MetricResultsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
+    compare_to: MetricResultsPeriod | None = None
     entity: MetricResultsEntity
     metrics: list[MetricRequest]
     period: MetricResultsPeriod
@@ -1240,6 +1334,36 @@ class MetricSnapshot(BaseModel):
     trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
     until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
     value: str = Field(..., description='The formatted value the tile shows.')
+
+
+class ReportExportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    format: ReportExportFormat
+    granularity: ReportGranularity
+    metric_keys: list[str] = Field(..., max_length=100)
+    period: ReportPeriod
+    subject: ReportSubject
+
+
+class ReportPreviewResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[ReportColumnMetadata]
+    rows: list[ReportRow]
+    total_rows: int = Field(..., ge=0)
+
+
+class ReportRecipe(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    granularity: ReportGranularity
+    metric_keys: list[str] = Field(..., max_length=100)
+    period: ReportPeriod
+    subject: ReportSubject
 
 
 class SavedQueryListResponse(BaseModel):

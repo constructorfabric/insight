@@ -22,7 +22,7 @@ pub fn process_issue(
 ) -> Vec<FieldHistoryRecord> {
     match existing {
         None => bootstrap(meta, snapshot, events_sorted),
-        Some(existing_state) => incremental(meta, events_sorted, existing_state),
+        Some(existing_state) => incremental(meta, snapshot, events_sorted, existing_state),
     }
 }
 
@@ -94,7 +94,12 @@ fn bootstrap(
         };
         let prev = state.remove(&ev.field_id).unwrap_or_else(FieldValue::empty);
         let next = apply_delta(prev, &ev.delta, field_meta.cardinality);
-        out.push(emit_changelog_row(ev, field_meta, &next));
+        out.push(emit_changelog_row(
+            ev,
+            field_meta,
+            snapshot.title.as_deref(),
+            &next,
+        ));
         state.insert(ev.field_id.clone(), next);
     }
 
@@ -105,6 +110,7 @@ fn bootstrap(
 /// are already in silver from a prior bootstrap). Only forward-apply new events.
 fn incremental(
     meta: &HashMap<FieldId, FieldMeta>,
+    snapshot: &IssueSnapshot,
     events_sorted: &[DeltaEvent],
     existing: &HashMap<FieldId, LastState>,
 ) -> Vec<FieldHistoryRecord> {
@@ -130,7 +136,12 @@ fn incremental(
         };
         let prev = state.remove(&ev.field_id).unwrap_or_else(FieldValue::empty);
         let next = apply_delta(prev, &ev.delta, field_meta.cardinality);
-        out.push(emit_changelog_row(ev, field_meta, &next));
+        out.push(emit_changelog_row(
+            ev,
+            field_meta,
+            snapshot.title.as_deref(),
+            &next,
+        ));
         state.insert(ev.field_id.clone(), next);
     }
 
@@ -272,6 +283,7 @@ fn emit_creation_row(snapshot: &IssueSnapshot) -> FieldHistoryRecord {
         data_source: DataSource::Jira,
         issue_id: snapshot.issue_id.clone(),
         id_readable: snapshot.id_readable.clone(),
+        title: snapshot.title.clone(),
         event_id: synthetic_initial_event_id(&snapshot.issue_id),
         event_at: snapshot.created_at,
         event_kind: EventKind::SyntheticInitial,
@@ -304,6 +316,7 @@ fn emit_synthetic_initial_row(
         data_source: DataSource::Jira,
         issue_id: snapshot.issue_id.clone(),
         id_readable: snapshot.id_readable.clone(),
+        title: snapshot.title.clone(),
         event_id: synthetic_initial_event_id(&snapshot.issue_id),
         event_at: snapshot.created_at,
         event_kind: EventKind::SyntheticInitial,
@@ -328,6 +341,7 @@ fn emit_synthetic_initial_row(
 fn emit_changelog_row(
     ev: &DeltaEvent,
     meta: &FieldMeta,
+    title: Option<&str>,
     state_after: &FieldValue,
 ) -> FieldHistoryRecord {
     let (delta_action, delta_value_id, delta_value_display) = match &ev.delta {
@@ -352,6 +366,7 @@ fn emit_changelog_row(
         data_source: DataSource::Jira,
         issue_id: ev.issue_id.clone(),
         id_readable: ev.id_readable.clone(),
+        title: title.map(str::to_owned),
         event_id: ev.event_id.clone(),
         event_at: ev.event_at,
         event_kind: EventKind::Changelog,

@@ -71,12 +71,10 @@ COMPONENTS = [
         "paths": ["src/backend/services/analytics"],
         "triggered_by": ["insight-migration"],
     },
-    # cover=False (mirrors authenticator): the crate's business logic
-    # is exercised by env-gated live tests (IDENTITY_TEST_* against a dev
-    # MariaDB/ClickHouse) that skip cleanly in CI, so only the pure-logic unit
-    # tests would count — gating the crate far below the 80% line. fmt + clippy
-    # + tests still run and gate the pipeline. Re-enable coverage when the
-    # HTTP+MariaDB integration suite lands (#1753).
+    # cover=False: the api/ and repository layers are still thin on tests, so the
+    # 80% gate would block every change to this crate rather than the ones that
+    # deserve blocking. fmt + clippy + tests run and gate the pipeline meanwhile.
+    # Revisit once those layers carry suites of their own (#1753).
     {
         "name": "identity-resolution",
         "lang": "rust",
@@ -97,6 +95,19 @@ COMPONENTS = [
         # NOT do that (component_for() picks a single owner — always the lib's
         # own component); `triggered_by` is the registry's co-trigger for this.
         "triggered_by": ["insight-clickhouse", "insight-migration"],
+    },
+    # cover=False (mirrors identity-resolution): the crate is a thin HTTP
+    # shell over the Kubernetes API — the pure domain (object builders,
+    # slug/tag validation, TTL/status rules) is unit-tested, but the kube I/O
+    # and host wiring need a cluster, so coverage would gate far below the 80%
+    # line. fmt + clippy + tests still run and gate the pipeline.
+    {
+        "name": "previews",
+        "lang": "rust",
+        "root": "src/backend",
+        "package": "previews",
+        "cover": False,
+        "paths": ["src/backend/services/previews"],
     },
     # git-cli-proxy shells out to the git CLI; its integration tests build
     # fixture repos with `git init` + file:// origins in tempdirs (hermetic —

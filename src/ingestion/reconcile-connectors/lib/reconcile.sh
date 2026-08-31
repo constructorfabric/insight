@@ -1437,11 +1437,18 @@ _reconcile_one_connector() {
   tenant="$(reconcile_compute_tenant "${name}")"
   if [[ "${RECONCILE_DRY_RUN:-0}" -eq 1 ]]; then  # RULE-DEFAULTS-OK: feature flag — OFF when caller doesn't opt in
     log_line INFO "${name}: would create/update Argo CronWorkflow"
-  elif ! argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                                  "${source_id_label}" "${dbt_select}" \
-                                  "${enrich_image}" >/dev/null 2>&1; then
-    log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
-    rc=1
+  else
+    local apply_rc=0
+    argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                            "${source_id_label}" "${dbt_select}" \
+                            "${enrich_image}" >/dev/null 2>&1 || apply_rc=$?
+    if [[ "${apply_rc}" -eq 2 ]]; then
+      log_line ERROR "${name}: applied Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
+      rc=1
+    elif [[ "${apply_rc}" -ne 0 ]]; then
+      log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
+      rc=1
+    fi
   fi
 
   # Sync-trigger only on data-affecting changes (per ADR-0008 / KEY DECISION #2).

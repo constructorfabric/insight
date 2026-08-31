@@ -25,6 +25,19 @@ data:
       default:
         console_level: info
 
+    opentelemetry:
+      resource:
+        service_name: "insight-analytics"
+      exporter:
+        kind: {{ .Values.opentelemetry.exporter.kind }}
+        {{- with .Values.opentelemetry.exporter.endpoint }}
+        endpoint: {{ . | quote }}
+        {{- end }}
+      tracing:
+        enabled: {{ .Values.opentelemetry.tracing.enabled }}
+      metrics:
+        enabled: {{ .Values.opentelemetry.metrics.enabled }}
+
     gears:
       api-gateway:
         config:
@@ -124,6 +137,8 @@ data:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
+          reports:
+            temp_dir: {{ .Values.reports.tempDir | quote }}
           external_sources: {{- if not .Values.externalSources }} []{{- end }}
             {{- range .Values.externalSources }}
             - id: {{ .id | quote }}

@@ -13,8 +13,9 @@ pub(crate) mod test_fixture;
 pub mod validator;
 
 pub use definition::{
-    CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation, MetricDefinition,
-    MetricDirection, MetricFormat, ObservationSource, RatioDenominatorAggregation,
+    AliasCollapse, CohortSource, ComputationSpec, EvidenceGranularity, EvidenceRelation,
+    MetricDefinition, MetricDirection, MetricFormat, MetricInput, ObservationSource,
+    RatioDenominatorAggregation,
 };
 pub use evidence_presentation::{
     EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation, StoredPresentation,

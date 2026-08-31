@@ -24,6 +24,13 @@
 -- INVARIANT: `field_id` is the vendor's own identifier, never a role. Gold
 -- resolves a role through `config.task_field_roles`; putting a role here would
 -- bake one deployment's interpretation into the record of what happened.
+--
+-- One field identifier is composed rather than quoted: a board's status is
+-- `project_status:<project node id>`. GitHub names no field on a board status
+-- event — it states the board and the two column names — and every board
+-- defines its own status field, so the board is the field's identity. It is
+-- NOT the issue's `state`: an issue's open/closed lifecycle and a board column
+-- are different fields, bound separately, and nothing here merges them.
 
 WITH
 issues AS (
@@ -83,6 +90,13 @@ events AS (
             e.event_type IN ('AssignedEvent', 'UnassignedEvent'),      'assignees',
             e.event_type = 'IssueTypeChangedEvent',                    'type',
             e.event_type = 'IssueFieldChangedEvent',                   COALESCE(e.field_id, ''),
+            -- A board's status is its OWN field, never the issue's `state`.
+            -- Every board defines its own, so the board IS the field identity:
+            -- the event says "on board X, status went A to B" and names no
+            -- field object. Deriving which ProjectV2 field object it was would
+            -- mean guessing; the board is stated and sufficient.
+            e.event_type = 'ProjectV2ItemStatusChangedEvent',
+                if(COALESCE(e.project_id, '') = '', '', concat('project_status:', e.project_id)),
             ''
         )                                                       AS field_id,
         multiIf(
@@ -95,6 +109,15 @@ events AS (
             e.event_type = 'UnassignedEvent', '',
             e.event_type = 'IssueTypeChangedEvent', COALESCE(e.new_value_id, ''),
             e.event_type = 'IssueFieldChangedEvent', COALESCE(e.new_value, ''),
+            -- The value key carries the board too. `class_task_statuses.status_id`
+            -- is unique per source and gold joins it to this column, so a bare
+            -- column name would collapse two boards' same-named columns into
+            -- one dimension row — and board option identifiers are inherited
+            -- from a template, so they collide as well. Lower-cased because a
+            -- board states its own casing and two spellings are one column.
+            e.event_type = 'ProjectV2ItemStatusChangedEvent',
+                if(COALESCE(e.new_value, '') = '', '',
+                   concat(COALESCE(e.project_id, ''), ':', lower(e.new_value))),
             ''
         )                                                       AS value_id,
         multiIf(
@@ -106,13 +129,20 @@ events AS (
             e.event_type = 'ClosedEvent',           'open',
             e.event_type = 'ReopenedEvent',         concat('closed:', lower(COALESCE(e.state_reason, ''))),
             e.event_type = 'IssueTypeChangedEvent', COALESCE(e.prev_value_id, ''),
+            -- The first status event of a card states an empty previous value,
+            -- which must stay empty: `initial_values` reads it as the value at
+            -- creation and a composed key over nothing is not a value.
+            e.event_type = 'ProjectV2ItemStatusChangedEvent',
+                if(COALESCE(e.prev_value, '') = '', '',
+                   concat(COALESCE(e.project_id, ''), ':', lower(e.prev_value))),
             COALESCE(e.prev_value, '')
         )                                                       AS prev_value_id,
         e._airbyte_extracted_at                                 AS _airbyte_extracted_at
     FROM {{ source('bronze_github', 'issue_timeline_events') }} AS e FINAL
     WHERE e.event_type IN (
         'ClosedEvent', 'ReopenedEvent', 'AssignedEvent', 'UnassignedEvent',
-        'IssueTypeChangedEvent', 'IssueFieldChangedEvent'
+        'IssueTypeChangedEvent', 'IssueFieldChangedEvent',
+        'ProjectV2ItemStatusChangedEvent'
     )
 ),
 
@@ -255,7 +285,12 @@ initial_values AS (
         AND s.source_id = e.source_id
         AND s.issue_id = e.issue_id
         AND s.field_id = e.field_id
-    WHERE e.first_prev != ''
+    -- Board status is excluded from initial synthesis on purpose. An initial
+    -- row is dated at the issue's creation, but a card can join a board long
+    -- after — synthesising one would fabricate a span the issue never had.
+    -- Nothing is lost: adding a card emits its own status event, whose
+    -- previous value is empty.
+    WHERE e.first_prev != '' AND NOT startsWith(e.field_id, 'project_status:')
 ),
 
 -- Row 1 of every issue: who created it and when. A sentinel, not a field —
@@ -359,7 +394,14 @@ SELECT
     CAST([value_id] AS Array(String))                           AS value_ids,
     CAST([if(value_display != '', value_display, value_id)] AS Array(String)) AS value_displays,
     CAST(
-        multiIf(field_id = 'assignees', 'account_id', field_id = 'state', 'string_literal', 'opaque_id')
+        multiIf(
+            field_id = 'assignees', 'account_id',
+            field_id = 'state', 'string_literal',
+            -- A board column is named, not identified: history states the
+            -- display name and nothing else.
+            startsWith(field_id, 'project_status:'), 'string_literal',
+            'opaque_id'
+        )
         AS Enum8('opaque_id' = 1, 'account_id' = 2, 'string_literal' = 3, 'path' = 4, 'none' = 5)
     )                                                           AS value_id_type,
     toDateTime64(_airbyte_extracted_at, 3)                      AS collected_at,

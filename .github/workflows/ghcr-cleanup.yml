@@ -11,14 +11,6 @@ name: GHCR cleanup
 #
 # snok/container-retention-policy v3 is multi-arch aware: it protects
 # untagged per-arch digests referenced by tagged manifest lists.
-#
-# DRY-RUN: both jobs start with dry-run: true. Review one run's log
-# (workflow_dispatch), confirm the deletion list is sane, then flip to false.
-#
-# ⚠️ Before flipping trunk to dry-run: false — every deployed environment
-# must pin images NEWER than the cut-off (a deleted tag breaks pod
-# rescheduling and helm rollbacks). As of 2026-07-29 virtuozzo still runs
-# 2026.07.15.* images.
 
 on:
   schedule:
@@ -51,7 +43,7 @@ jobs:
           image-tags: "2???.??.??.??.??-???????"
           cut-off: 4w
           keep-n-most-recent: 15
-          dry-run: true
+          dry-run: false
 
   branch:
     if: github.event_name == 'delete' && github.event.ref_type == 'branch' && !startsWith(github.event.ref, 'release-')
@@ -78,4 +70,4 @@ jobs:
           image-names: ${{ env.SERVICE_IMAGES }} ${{ env.CONNECTOR_IMAGES }}
           image-tags: "*.${{ steps.suffix.outputs.safe }}"
           cut-off: 0s
-          dry-run: true
+          dry-run: false

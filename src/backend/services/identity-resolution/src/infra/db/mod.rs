@@ -35,7 +35,11 @@ pub mod visibility_repo;
 #[cfg(test)]
 mod binding_reads_live_tests;
 #[cfg(test)]
+mod email_map_live_tests;
+#[cfg(test)]
 mod person_listing_live_tests;
+#[cfg(test)]
+mod profile_resolve_live_tests;
 #[cfg(test)]
 mod roster_email_live_tests;
 #[cfg(test)]
@@ -378,10 +382,13 @@ mod tests {
 
         run_migrations(&url, &cfg).await?;
         assert_schema_compatible(&db).await?;
+        // INVARIANT: keep the schema filter — `information_schema` spans the
+        // server, so without it a shared instance counts every identity schema.
         let checks = count(
             &db,
             "SELECT COUNT(*) FROM information_schema.CHECK_CONSTRAINTS \
-             WHERE CONSTRAINT_NAME = 'chk_no_self_loop'",
+             WHERE CONSTRAINT_NAME = 'chk_no_self_loop' \
+               AND CONSTRAINT_SCHEMA = DATABASE()",
         )
         .await?;
         assert_eq!(checks, 1, "012 re-run must restore the constraint");

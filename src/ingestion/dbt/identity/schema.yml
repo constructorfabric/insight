@@ -43,3 +43,54 @@ models:
           - not_null
           - accepted_values:
               values: ['UPSERT']
+
+  # --- Resolution projections (views over the identity journal) ---
+
+  - name: account_assignment
+    description: >
+      Current binding of every source account to a canonical person: one row
+      per (source_type, source_id, account_id), from the newest
+      `value_type='id'` observation in the identity journal. A view, so an
+      operator correction is visible as soon as the persons-sync publishes it.
+      Carries `created_at` and the whole account triple so effective-dated
+      assignment and account-keyed consumers stay reachable without a rewrite.
+    columns:
+      - name: source_type
+        description: "Source family the account belongs to (e.g. github, jira)"
+        tests:
+          - not_null
+      - name: source_id
+        description: "Source instance UUID (journal-side tenant/source identity)"
+        tests:
+          - not_null
+      - name: account_id
+        description: "Source-native account id, trimmed"
+        tests:
+          - not_null
+      - name: person_id
+        description: "Canonical person UUID the account is bound to right now"
+        tests:
+          - not_null
+      - name: created_at
+        description: "When the winning binding observation was recorded"
+        tests:
+          - not_null
+
+  - name: person_map
+    description: >
+      email → canonical person, resolved live. The map analytics joins at query
+      time to attribute email-keyed facts to a person. One row per email:
+      claims come from the accounts carrying the address, every address an
+      account ever carried claims it, a contested address resolves to nobody,
+      and excluded (bot) accounts claim nothing. Uniqueness and normalization
+      are asserted by singular tests at error severity — a duplicate row would
+      multiply joined facts and an unnormalized one would match nothing.
+    columns:
+      - name: email
+        description: "Normalized email (lower + trim), unique across the map"
+        tests:
+          - not_null
+      - name: person_id
+        description: "Canonical person UUID the address resolves to"
+        tests:
+          - not_null

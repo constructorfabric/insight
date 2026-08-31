@@ -10,11 +10,12 @@ out at `pytest_sessionfinish`.
 **The gate** (`python3 coverage.py --observed … --spec …`, stdlib only, no
 stand) reads that ledger back and answers two questions:
 
-  1. Did every operation the CATALOGUE names get exercised, by something other
-     than the anonymous sweep? `api/test_gateway.py` calls all 50 operations
-     without a session, so every one has an observation — and a route whose only
-     observed code is 401 was swept and never tested. Counting it as covered is
-     precisely the mistake this gate exists to prevent.
+  1. Did every operation the CATALOGUE names get exercised by something other
+     than a sweep? Two suites call the whole catalogue: `api/test_gateway.py`
+     without a session (401), and `identity/test_request_contracts.py` without
+     the admin grant (403). So every operation has an observation, and one whose
+     only observed codes are those was swept and never tested. Counting it as
+     covered is precisely the mistake this gate exists to prevent.
   2. Did every status code the analytics CONTRACT declares get observed?
 
 Only analytics is gated on its spec, though identity emits its own document
@@ -53,6 +54,18 @@ _HTTP_METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "tr
 #: Server faults are declared for fidelity and cannot be induced deterministically
 #: from outside, so they never count against coverage.
 SERVER_FAULT_FLOOR = 500
+
+#: The statuses a CATALOGUE-WIDE SWEEP stamps on operations it never tested:
+#: `test_gateway.py` calls every operation anonymously (401), and the identity
+#: suite calls every admin-gated one without the grant (403). An operation
+#: observed at nothing else was swept, not tested.
+#:
+#: INVARIANT: membership is "some sweep produces this on every operation it
+#: touches", NOT "this status is a refusal". 404 and 400 are refusals no sweep
+#: produces — they are earned per route, and several operations are exercised
+#: only through them by design (`POST /v1/resolution/detach` at 404, `merge` at
+#: 400). Adding either would report those as gaps and block the merge queue.
+REFUSALS = frozenset({401, 403})
 
 #: Excluded on every analytics route. 429 only — nothing rate-limits this stand.
 #:
@@ -341,8 +354,9 @@ class CatalogueReport:
     """Which catalogued operations were genuinely exercised.
 
     "Genuinely" is the whole content of this report. `api/test_gateway.py`
-    sweeps every operation anonymously, so presence in the ledger proves nothing
-    — an operation whose only observed status is 401 was swept and never tested.
+    sweeps every operation anonymously and `identity/test_admin.py` sweeps every
+    admin-gated one without the grant, so presence in the ledger proves nothing —
+    an operation observed only at a refusal was swept and never tested.
     """
 
     catalogue: Sequence[Operation]
@@ -357,7 +371,7 @@ class CatalogueReport:
             codes = folded.get(operation.key)
             if not codes:
                 self.unobserved.append(operation.key)
-            elif codes <= {401}:
+            elif codes <= REFUSALS:
                 self.swept_only.append(operation.key)
             else:
                 self.exercised.append(operation.key)
@@ -484,8 +498,9 @@ def violations(catalogue: CatalogueReport, spec: SpecReport | None) -> list[str]
         for label in catalogue.unobserved
     ]
     out += [
-        f"SWEPT ONLY: {label} was called anonymously and never with a session, so the "
-        "only thing proven about it is that the edge refuses it"
+        f"SWEPT ONLY: {label} was only ever refused — by the anonymous sweep, the "
+        "admin-gate sweep, or both — so nothing is proven about what it does when it "
+        "answers"
         for label in catalogue.swept_only
     ]
     if spec is not None:
@@ -531,7 +546,7 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
         "# Stand API coverage",
         "",
         f"**Gate: {verdict}.** {len(catalogue.exercised)}/{len(catalogue.catalogue)} catalogued "
-        f"operations exercised with a session"
+        f"operations answered something other than a refusal"
         + (f" · {len(catalogue.swept_only)} swept only" if catalogue.swept_only else "")
         + (f" · {len(catalogue.unobserved)} never called" if catalogue.unobserved else ""),
     ]
@@ -542,8 +557,8 @@ def render(catalogue: CatalogueReport, spec: SpecReport | None) -> str:
         )
     lines += [
         "",
-        "_Blocking: a catalogued operation never called, or called only by the anonymous "
-        "sweep, or a documented operation no test exercises. Per-status-code coverage is "
+        "_Blocking: a catalogued operation never called, or only ever refused, or a "
+        "documented operation no test exercises. Per-status-code coverage is "
         "reported, not enforced._",
         "",
     ]

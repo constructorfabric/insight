@@ -624,6 +624,34 @@ impl SessionManager {
         Ok(rotated == 1)
     }
 
+    /// Store re-fetched session roles (`POST /auth/refresh`), guarded on the
+    /// session still existing — an unguarded `HSET` after a concurrent revoke
+    /// would resurrect a TTL-less hash (see [`Self::store_idp_refresh`]).
+    /// The linked JWT is untouched; it converges at its next reissue.
+    ///
+    /// # Errors
+    /// Fails on a Redis error.
+    pub async fn update_session_roles(
+        &self,
+        session_id: &str,
+        roles: &[String],
+    ) -> anyhow::Result<()> {
+        const STORE_LUA: &str = r"
+            if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+            redis.call('HSET', KEYS[1], 'roles', ARGV[1])
+            return 1
+        ";
+        let json = serde_json::to_string(roles).context("serialize session roles")?;
+        let mut conn = self.conn.clone();
+        let _: i64 = redis::Script::new(STORE_LUA)
+            .key(session_key(session_id))
+            .arg(json)
+            .invoke_async(&mut conn)
+            .await
+            .context("store session roles (guarded)")?;
+        Ok(())
+    }
+
     // ── Background workers (G5 refresher, janitor) ─────────────────────────
 
     /// Try to take (or renew) a leader lock. `SET key holder NX PX ttl` wins a

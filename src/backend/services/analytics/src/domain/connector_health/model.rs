@@ -86,9 +86,10 @@ pub(crate) struct LastSync {
     pub job_id: String,
     pub status: SyncStatus,
     pub started_at: Option<DateTime<Utc>>,
-    /// The axis the ledger orders jobs along. Used to sort within a band and
-    /// never serialised — the page has no use for a job's creation time.
-    pub job_created_at: Option<DateTime<Utc>>,
+    /// The axis the ledger orders jobs along — the mover's own last-update
+    /// stamp for the job. Used to sort within a band and never serialised: the
+    /// page states when a sync started, which is a different fact.
+    pub job_updated_at: Option<DateTime<Utc>>,
     pub duration_ms: Option<u64>,
     pub records_reported: Option<u64>,
 }
@@ -125,7 +126,7 @@ impl ConnectorSummary {
     /// When this connector was last heard from, for ordering inside a band.
     fn last_activity(&self) -> Option<DateTime<Utc>> {
         let sync = self.last_sync.as_ref()?;
-        sync.started_at.or(sync.job_created_at)
+        sync.started_at.or(sync.job_updated_at)
     }
 }
 

@@ -26,6 +26,10 @@ class UnreadableWork(ValueError):
     """The tick's own instructions could not be read."""
 
 
+class UnfilteredListing(RuntimeError):
+    """The mover served a listing it did not apply the watermark to."""
+
+
 class Connector(NamedTuple):
     name: str
     #: Absent for a connector the controller manages but the mover has no
@@ -110,6 +114,21 @@ def run(stream: Any) -> int:
         watermark = ledger.watermark()
         closed = ledger.closed_job_ids(watermark)
         entries, truncated = mover.sync_jobs(plan.as_listing_stamp(watermark))
+
+        # INVARIANT: an ignored filter is a failed read, not a noisy one. The
+        # mover answers 200 and drops a parameter it does not recognise, so the
+        # listing restarts at the beginning of history — and neither of the two
+        # things that follow is survivable. Every terminal job below the
+        # watermark would be recorded again every tick, because the closed-job
+        # read is bounded by that same watermark and so cannot filter them out.
+        # And a capped pass would stop short of current jobs while still
+        # sealing, leaving the page dated as freshly checked on stale facts.
+        unfiltered = plan.unfiltered_count(entries, watermark)
+        if unfiltered:
+            raise UnfilteredListing(
+                f"{unfiltered} entry(ies) came back older than the watermark "
+                "the listing was handed; it is not filtering on it"
+            )
         if truncated:
             incomplete = True
             _log(

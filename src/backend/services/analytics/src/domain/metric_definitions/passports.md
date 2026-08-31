@@ -250,7 +250,7 @@ this file and the registry disagree.
 - Reads: code_lines_added
 - Formula: sum(code_lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
+- Notes: Lines added to files classified as code — tests, configuration, and documentation excluded. A commit whose diff was never collected has no classification, so its commit-level size stays out. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
 ## git.default_branch_code_lines — Code lines that reached the default branch
 
@@ -274,7 +274,7 @@ this file and the registry disagree.
 - Reads: lines_added
 - Formula: sum(lines_added)
 - Shape: integer, higher_is_better, unit lines
-- Notes: Lines added across all files, split by file category: code, tests, configuration, documentation. Each change counts once: when the same content reaches a repository in more than one commit, the lines belong to the commit that introduced them first.
+- Notes: Lines added, attributed by file category when file changes are available; a commit whose diff was never collected contributes its commit-level size as Unknown. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
 ## git.default_branch_lines_added — Lines added that reached the default branch
 
@@ -306,7 +306,7 @@ this file and the registry disagree.
 - Reads: lines_removed
 - Formula: sum(lines_removed)
 - Shape: integer, neutral, unit lines
-- Notes: Lines removed across all reported file changes, with file-category, repository, and source breakdowns available. Each change counts once: when the same removal reaches a repository in more than one commit, the lines belong to the commit that made it first.
+- Notes: Lines removed, attributed by file category when file changes are available; a commit whose diff was never collected contributes its commit-level size as Unknown. Each change counts once: when the same change content appears in more than one commit, the lines belong to the first such commit.
 
 ## git.default_branch_lines_removed — Lines removed that reached the default branch
 

@@ -233,8 +233,7 @@ fn invalid(detail: &str) -> CanonicalError {
         .create()
 }
 
-#[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
-fn read_err(e: anyhow::Error) -> CanonicalError {
+fn read_err(e: impl std::fmt::Display) -> CanonicalError {
     tracing::error!(error = %e, "visibility check failed");
     CanonicalError::internal("failed to evaluate visibility").create()
 }

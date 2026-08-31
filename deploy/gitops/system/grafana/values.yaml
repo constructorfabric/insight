@@ -4,7 +4,12 @@
 ##
 ## Chart: grafana/grafana   (https://grafana.github.io/helm-charts)
 ## Pin in Makefile: GRAFANA_VERSION
-## Release: `grafana` in namespace `insight-infra`.
+## Release: `grafana` in the infra namespace (inventory `namespaces.infra`,
+## `insight-infra` by default).
+##
+## The `${NS_*}` placeholders below are the namespaces of the datasource
+## releases, resolved by scripts/render-system-values.sh before helm reads
+## the file (see system/README.md § Values layout).
 ##
 ## Per-env overrides go in environments/<env>/grafana-values.yaml
 ## (ingress host, OIDC, admin secret).
@@ -24,6 +29,14 @@
 #      uid-bearing provisioning on restart and crash-loops grafana.
 # Anything worth keeping lives in git, not in grafana.db. The admin
 # password is re-applied from the Secret on each start, so it stays stable.
+# An env where people also author dashboards in the UI can keep them by
+# enabling a PVC in its overlay — paired with Recreate, or problem 1 above
+# returns (problem 2 cannot: every provisioned datasource now has a uid):
+#   deploymentStrategy: { type: Recreate, rollingUpdate: null }
+#   persistence: { enabled: true, size: 10Gi }
+# (rollingUpdate: null is required on an existing install — server-side
+# apply keeps the old rollingUpdate block otherwise, and the API forbids
+# it alongside Recreate.)
 persistence:
   enabled: false
 
@@ -33,10 +46,35 @@ persistence:
 initChownData:
   enabled: false
 
-# Loki wired as the default datasource so Explore works out of the box.
-# Fixed uid so provisioned dashboards can reference it. Tempo/Mimir get
-# added here in the tracing/metrics phases; `derivedFields` will then map
-# `trace_id` → a Tempo link for log↔trace correlation.
+# The ClickHouse SQL datasource plugin (#2888). Space-separated pin — the
+# image's run.sh passes "id version" to `grafana cli plugins install`.
+plugins:
+  - grafana-clickhouse-datasource 4.21.1
+
+# Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
+# by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
+# from the insight-db-creds key `clickhouse-grafana-password`. Seal the SAME
+# value here as `grafana-clickhouse-creds` (key CLICKHOUSE_GRAFANA_PASSWORD,
+# ns insight-infra) — `make system-grafana` applies any
+# environments/<env>/sealed-secrets/insight-infra/grafana*-sealedsecret.yaml.
+# Optional: without it Grafana still runs, only the ClickHouse datasource
+# fails to authenticate.
+envFromSecrets:
+  - name: grafana-clickhouse-creds
+    optional: true
+
+# Loki wired as the default datasource so Explore works out of the box,
+# VictoriaMetrics as the PromQL datasource for metrics, Tempo as the trace
+# store, ClickHouse as the direct-SQL datasource. Fixed uids so provisioned
+# dashboards can reference them on any environment. Loki's `derivedFields`
+# turn a `trace_id` in a JSON log line into a Tempo link (log → trace
+# correlation).
+# INVARIANT: helm REPLACES lists — a per-env overlay that touches
+# `datasources` must restate every entry below, and the uids (`loki`, `vm`,
+# `tempo`, `clickhouse`) must stay what they are or every provisioned
+# dashboard panel goes dark. Overlays go through the same ${NS_*}
+# substitution as this file, so restated entries keep the placeholders
+# instead of hardcoding a namespace.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -45,10 +83,52 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://loki.insight-infra.svc.cluster.local:3100
+        url: http://loki.${NS_MONITORING}.svc.cluster.local:3100
         isDefault: true
         jsonData:
           maxLines: 1000
+          # `$$` because datasource provisioning expands $VAR env refs —
+          # Grafana needs to receive the literal `${__value.raw}`.
+          derivedFields:
+            - name: TraceID
+              datasourceUid: tempo
+              matcherRegex: '"trace_id"\s*:\s*"([0-9a-fA-F]+)"'
+              url: '$${__value.raw}'
+              urlDisplayLabel: Trace
+
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.${NS_MONITORING}.svc.cluster.local:3200
+        isDefault: false
+
+      - name: VictoriaMetrics
+        uid: vm
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428
+        isDefault: false
+        jsonData:
+          timeInterval: "30s"
+          httpMethod: POST
+
+      # Direct SQL over the native protocol as the SELECT-only `grafana`
+      # user (#2888). Single `$`: provisioning expands the env ref, which
+      # envFromSecrets above injects from grafana-clickhouse-creds.
+      - name: ClickHouse
+        uid: clickhouse
+        type: grafana-clickhouse-datasource
+        access: proxy
+        isDefault: false
+        jsonData:
+          host: clickhouse.${NS_INFRA}.svc.cluster.local
+          port: 9000
+          protocol: native
+          secure: false
+          username: grafana
+        secureJsonData:
+          password: $CLICKHOUSE_GRAFANA_PASSWORD
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
 # Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over

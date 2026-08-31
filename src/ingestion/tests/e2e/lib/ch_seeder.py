@@ -13,6 +13,7 @@ bronze/silver layer (cpt-bronze-to-api-e2e-dod-yaml-bronze-seed).
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -210,6 +211,12 @@ class CHSeeder:
                     return float(value)
                 except ValueError as e:
                     raise SeederError(f"column {col!r} ({ch_type}): bad float {value!r}") from e
+        # A record-valued field (a connector's `raw_data` payload) lands in a
+        # String column; clickhouse-connect will not serialize a mapping, so
+        # state it as the JSON the destination writes. Keys sorted, matching what
+        # the connector builds the payload from.
+        if isinstance(value, dict) and base == "String":
+            return json.dumps(value, sort_keys=True, separators=(",", ":"))
         # String / Array / JSON: pass through. clickhouse-connect accepts
         # str→JSON, list→Array, str→String as-is.
         return value

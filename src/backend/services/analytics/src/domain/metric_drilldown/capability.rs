@@ -24,6 +24,7 @@ struct CapabilityRow {
 pub(super) struct EvidenceInputRow {
     pub(super) input_role: String,
     pub(super) measure_key: String,
+    pub(super) alias_collapse: String,
     pub(super) evidence_granularity: Option<String>,
     pub(super) evidence_presentation: Option<String>,
     pub(super) source_key: String,

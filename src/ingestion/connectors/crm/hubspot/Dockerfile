@@ -7,8 +7,10 @@ RUN pip install --no-cache-dir /airbyte/integration_code
 # CVE-2026-33231, CVE-2026-54293) but only uses it in the file-based
 # unstructured parser, which this connector never loads; defusedxml is
 # nltk 3.10's added runtime dependency. poetry/dulwich are base-image build
-# tooling unused at runtime (CVE-2026-34591, CVE-2026-42305).
-RUN pip install --no-cache-dir --no-deps nltk==3.10.0 defusedxml==0.7.1 \
+# tooling unused at runtime (CVE-2026-34591, CVE-2026-42305). cryptography
+# arrives with the base image's keyring stack (SecretStorage); its wheel
+# bundles OpenSSL, and 50.0.1 is the first built against 4.0.2 (CVE-2026-63072).
+RUN pip install --no-cache-dir --no-deps nltk==3.10.0 defusedxml==0.7.1 cryptography==50.0.1 \
     && pip uninstall -y poetry dulwich
 
 RUN useradd --create-home --no-log-init --shell /bin/bash airbyte_user

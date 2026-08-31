@@ -3,6 +3,8 @@
 # Sourceable; NO top-level CLI.
 #
 # Public surface:
+#   argo_cron_workflow_name              CONNECTOR TENANT
+#   argo_cron_workflow_name_full_tenant  CONNECTOR TENANT
 #   argo_render_cronworkflow CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
 #                            INSIGHT_SOURCE_ID DBT_SELECT ENRICH_IMAGE
 #   argo_apply_cronworkflow  CONNECTOR CONNECTION_NAME SCHEDULE TENANT \
@@ -23,15 +25,69 @@ ARGO_SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 ARGO_PY_DIR="$( cd "${ARGO_SCRIPT_DIR}/../python" && pwd )"
 ARGO_TPL_DIR="$( cd "${ARGO_SCRIPT_DIR}/../templates" && pwd )"
 
+# WORKAROUND: Argo rejects a CronWorkflow whose name exceeds 52 characters — it
+# appends `-<10-digit unix timestamp>` per scheduled Workflow, which must fit a
+# 63-character DNS label. The controller rejects it only after a successful
+# apply, so the object exists, carries a SpecError condition and never
+# schedules. A 36-character UUID tenant would leave 10 for the connector slug.
+ARGO_CRON_TENANT_CHARS=8
+ARGO_CRON_NAME_MAX_CHARS=52
+
+# INVARIANT: a DNS-1123 name segment ends alphanumeric; truncation can leave a
+# separator at the tail.
+argo_cron_workflow_name() {
+  local connector="$1" tenant="$2"
+  local tenant_prefix="${tenant:0:${ARGO_CRON_TENANT_CHARS}}"
+  while [[ "$tenant_prefix" == *[-.] ]]; do
+    tenant_prefix="${tenant_prefix%?}"
+  done
+
+  local name="${connector}-${tenant_prefix}-sync"
+  if (( ${#name} > ARGO_CRON_NAME_MAX_CHARS )); then
+    printf 'CronWorkflow name %s is %s characters; Argo accepts at most %s. Shorten the connector slug.\n' \
+      "$name" "${#name}" "${ARGO_CRON_NAME_MAX_CHARS}" >&2
+    return 1
+  fi
+  printf '%s' "$name"
+}
+
+# An installation may still hold a CronWorkflow named with the whole tenant id.
+# It schedules independently of the bounded-name object, so both existing would
+# sync the connector twice per window.
+argo_cron_workflow_name_full_tenant() {
+  local connector="$1" tenant="$2"
+  printf '%s-%s-sync' "$connector" "$tenant"
+}
+
+_argo_delete_cronworkflow_named() {
+  local name="$1"
+  local del_out
+  # Pin the namespace explicitly. The rendered CronWorkflow lives in
+  # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
+  # falls back to the current context's default, and `--ignore-not-found`
+  # then silently no-ops when contexts disagree — leaving the orphan in
+  # place while the reconcile cascade believes it cleaned up.
+  if ! del_out="$(kubectl -n "${INSIGHT_NAMESPACE}" \
+        delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
+    printf '%s: kubectl delete failed: %s\n' \
+      "$name" "$del_out" >&2
+    return 1
+  fi
+  printf '%s\n' "$del_out"
+}
+
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-cron-workflow:p1
 argo_render_cronworkflow() {
   local connector="$1" connection_name="$2" schedule="$3" tenant="$4"
   local insight_source_id="$5" dbt_select="$6" enrich_image="$7"
+  local cron_name
+  cron_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return 1
   python3 "${ARGO_PY_DIR}/render_cronworkflow.py" \
     --connector "$connector" \
     --connection-name "$connection_name" \
     --schedule "$schedule" \
     --tenant "$tenant" \
+    --cron-name "$cron_name" \
     --insight-source-id "$insight_source_id" \
     --dbt-select "$dbt_select" \
     --enrich-image "$enrich_image" \
@@ -52,24 +108,30 @@ argo_apply_cronworkflow() {
     return 1
   fi
   printf '%s\n' "$apply_out"
+
+  # INVARIANT: exit 2 means the apply succeeded but the legacy full-tenant
+  # CronWorkflow was not removed — both schedule the sync until it is gone.
+  local bounded_name full_tenant_name
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return 1
+  full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
+  if [[ "${full_tenant_name}" != "${bounded_name}" ]]; then
+    _argo_delete_cronworkflow_named "${full_tenant_name}" >/dev/null || return 2
+  fi
 }
 
 argo_delete_cronworkflow() {
   local connector="$1" tenant="$2"
-  local name="${connector}-${tenant}-sync"
-  local del_out
-  # Pin the namespace explicitly. The rendered CronWorkflow lives in
-  # `metadata.namespace: ${INSIGHT_NAMESPACE}`; kubectl without `-n`
-  # falls back to the current context's default, and `--ignore-not-found`
-  # then silently no-ops when contexts disagree — leaving the orphan in
-  # place while the reconcile cascade believes it cleaned up.
-  if ! del_out="$(kubectl -n "${INSIGHT_NAMESPACE}" \
-        delete cronworkflow.argoproj.io/"${name}" --ignore-not-found 2>&1)"; then
-    printf '%s: kubectl delete failed: %s\n' \
-      "$name" "$del_out" >&2
-    return 1
+  local bounded_name full_tenant_name rc=0
+  full_tenant_name="$(argo_cron_workflow_name_full_tenant "$connector" "$tenant")"
+  _argo_delete_cronworkflow_named "${full_tenant_name}" || rc=1
+
+  # A name over the cap was never applied, so there is nothing to remove under
+  # it — removal still has to clear the full-tenant object above.
+  bounded_name="$(argo_cron_workflow_name "$connector" "$tenant")" || return "$rc"
+  if [[ "${bounded_name}" != "${full_tenant_name}" ]]; then
+    _argo_delete_cronworkflow_named "${bounded_name}" || rc=1
   fi
-  printf '%s\n' "$del_out"
+  return "$rc"
 }
 
 # @cpt-begin:cpt-insightspec-algo-reconcile-render-sync-trigger:p1

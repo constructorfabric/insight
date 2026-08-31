@@ -52,7 +52,11 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "identity-resolution",
+        ));
 
     host_router.merge(api)
 }
@@ -122,6 +126,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/provision",
         axum::routing::post(handlers::internal_provision_person),
     );
+    let router = router.route(
+        "/internal/persons/active-roles",
+        axum::routing::get(handlers::internal_person_active_roles),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
@@ -136,6 +144,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(handlers::resolve_profile)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/v1/profiles/batch")
+        .operation_id("identity_resolution.profiles.batch")
+        .summary("Resolve visible profiles by canonical person id")
+        .authenticated()
+        .no_license_required()
+        .json_request::<profile::BatchProfilesRequest>(openapi, "Canonical people to resolve")
+        .json_response_with_schema::<profile::BatchProfilesResponse>(
+            openapi,
+            StatusCode::OK,
+            "Visible profiles",
+        )
+        .standard_errors(openapi)
+        .handler(handlers::batch_profiles)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/me")

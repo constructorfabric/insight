@@ -1,0 +1,124 @@
+# Insight Previews — gears-rust host config.
+#
+# Usage: previews --config config/insight.yaml
+#
+# Auth is ENABLED on the api-gateway host: the upstream
+# `cf-gears-oidc-authn-plugin` verifies the ES256 gateway JWT against the
+# authenticator's JWKS (resolved via OIDC discovery on the issuer) and maps its
+# claims into the SecurityContext (sub -> subject_id, tenant_id ->
+# subject_tenant_id, sub_type -> subject_type, roles -> token_scopes). Same
+# authenticated system-gear set as the identity-resolution host. A request
+# without a valid gateway JWT gets 401 — no auth_disabled path.
+#
+# The plugin's verification config (jwt.trusted_issuers, expected_audience,
+# http_client.custom_ca_certificate_paths) is nested/list-shaped and supplied by
+# the deployment's config layer (Helm — #2373), not APP__ env.
+
+server:
+  home_dir: "~/.insight"
+
+logging:
+  default:
+    console_level: info
+
+gears:
+  api-gateway:
+    config:
+      # Consumers reach previews at <host>:8085.
+      bind_addr: "0.0.0.0:8085"
+      enable_docs: true
+      cors_enabled: true
+      openapi:
+        title: "Insight Previews API"
+        # Kept in step with api::openapi_info() — the two describe the same
+        # surface and should not disagree.
+        version: "1.0.0"
+        description: "Preview experiments API"
+      # Auth ENABLED: the oidc-authn-plugin verifies the ES256 gateway JWT and
+      # maps its claims into the SecurityContext. No auth_disabled path.
+      auth_disabled: false
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/previews-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "hyperspot"
+
+  # Downstream gateway-JWT verification. The deployment supplies the real
+  # issuer + self-signed CA (dev/e2e) via the config layer; the placeholders
+  # below (`.invalid`, never resolvable) fail closed.
+  oidc-authn-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 50
+      jwt:
+        supported_algorithms: ["ES256"]
+        clock_skew_leeway: 60s
+        require_audience: true
+        expected_audience:
+          - "internal-services"
+        trusted_issuers:
+          - issuer: "https://gateway.invalid"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          subject_type: "sub_type"
+          token_scopes: "roles"
+        required_claims: []
+      http_client:
+        request_timeout: 5s
+        # Dev/e2e self-signed CA injected per deploy:
+        #   custom_ca_certificate_paths: ["/certs/ca.pem"]
+      # Client-credentials exchange is unused here but required config;
+      # discovery_url must name a trusted issuer, never fetched.
+      s2s_oauth:
+        discovery_url: "https://gateway.invalid"
+        default_subject_type: "service"
+        token_cache:
+          ttl: 300s
+          max_entries: 100
+
+  authz-resolver:
+    config:
+      vendor: "hyperspot"
+
+  static-authz-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "hyperspot"
+
+  single-tenant-tr-plugin:
+    config:
+      vendor: "hyperspot"
+      priority: 20
+
+  previews:
+    config:
+      # The ONE namespace experiments live in; the service never touches
+      # another. The namespace itself + RBAC land with the deploy wiring
+      # (#2373).
+      namespace: "insight-previews"
+      # The shared Gateway an experiment's HTTPRoute attaches to.
+      gateway_name: "insight"
+      gateway_namespace: "insight-infra"
+      # Target listener on the Gateway (e.g. "https"). Empty = all listeners.
+      gateway_section_name: ""
+      # The single preview host. Injected per-deployment via
+      # APP__gears__previews__config__route_host; empty fails create closed.
+      route_host: ""
+      # Prefix experiments serve under; /exp/<name> is prefix-stripped to /.
+      base_path: "/exp"
+      # Guardrails: cap on live experiments and the TTL window.
+      max_experiments: 10
+      default_ttl_days: 7
+      max_ttl_days: 30
+      sweep_interval_secs: 300

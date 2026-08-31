@@ -14,6 +14,7 @@ sources:
         evidence_granularity: source_summary
       - key: active_day
         evidence_granularity: derived_population
+        alias_collapse: max
       - key: cost_usd
         evidence_granularity: source_summary
       - key: accepted_edit_actions
@@ -56,6 +57,7 @@ sources:
             - { key: lines_removed, label: Lines removed, type: number }
       - key: commit_day
         evidence_granularity: derived_population
+        alias_collapse: max
       - key: commit_change_size
         evidence_granularity: event
         evidence_presentation: *commit_row
@@ -221,8 +223,10 @@ sources:
         evidence_granularity: derived_population
       - key: chat_active_day
         evidence_granularity: source_summary
+        alias_collapse: max
       - key: meeting_free_day
         evidence_granularity: derived_population
+        alias_collapse: min
       - key: focus_hours
         evidence_granularity: derived_population
       - key: working_hours
@@ -1025,9 +1029,10 @@ metrics:
     description: Lines added to code files
     explanation: >-
       Lines added to files classified as code — tests, configuration, and
-      documentation excluded. Each change counts once: when the same content
-      reaches a repository in more than one commit, the lines belong to the
-      commit that introduced them first.
+      documentation excluded. A commit whose diff was never collected has no
+      classification, so its commit-level size stays out. Each change counts
+      once: when the same change content appears in more than one commit, the
+      lines belong to the first such commit.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -1103,10 +1108,11 @@ metrics:
     short_label: Lines +
     description: All lines added, by file category
     explanation: >-
-      Lines added across all files, split by file category: code, tests,
-      configuration, documentation. Each change counts once: when the same
-      content reaches a repository in more than one commit, the lines belong
-      to the commit that introduced them first.
+      Lines added, attributed by file category when file changes are
+      available; a commit whose diff was never collected contributes its
+      commit-level size as Unknown. Each change counts once: when the same
+      change content appears in more than one commit, the lines belong to the
+      first such commit.
     unit: lines
     format: integer
     direction: higher_is_better
@@ -1210,10 +1216,11 @@ metrics:
     short_label: Lines −
     description: All lines removed, by file category
     explanation: >-
-      Lines removed across all reported file changes, with file-category,
-      repository, and source breakdowns available. Each change counts once:
-      when the same removal reaches a repository in more than one commit, the
-      lines belong to the commit that made it first.
+      Lines removed, attributed by file category when file changes are
+      available; a commit whose diff was never collected contributes its
+      commit-level size as Unknown. Each change counts once: when the same
+      change content appears in more than one commit, the lines belong to the
+      first such commit.
     unit: lines
     format: integer
     direction: neutral

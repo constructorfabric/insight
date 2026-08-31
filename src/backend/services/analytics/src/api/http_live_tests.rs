@@ -95,6 +95,8 @@ fn build_state_with_ch(
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config: GearConfig::default(),
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     }
@@ -151,10 +153,8 @@ fn app_with_identity_and_ch(
 ) -> Router {
     let openapi = OpenApiRegistryImpl::new();
     let state = Arc::new(build_state_with_ch(db, identity, ch));
-    let api = super::build_operations(Router::new(), &openapi)
+    super::register_routes(Router::new(), &openapi, state)
         .layer(from_fn_with_state(tenant, inject_host_context))
-        .layer(axum::Extension(state));
-    Router::new().merge(api)
 }
 
 /// Loopback identity serving `POST /v1/visible-persons` — answers with the
@@ -728,6 +728,39 @@ async fn metric_results_answers_200_with_generic_error_views_when_clickhouse_is_
     result.map_err(Into::into)
 }
 
+/// Creates the identity relations a person-entity read joins, and maps one
+/// e-mail to one person. Both must exist or the read fails outright — dbt owns
+/// them in a deployment, so a live test has to stand them up itself.
+async fn seed_identity_relations(
+    ch: &insight_clickhouse::Client,
+    email: &str,
+    person_id: Uuid,
+) -> anyhow::Result<()> {
+    ch.query("CREATE DATABASE IF NOT EXISTS identity")
+        .execute()
+        .await?;
+    ch.query(
+        "CREATE TABLE IF NOT EXISTS identity.person_map (email String, person_id UUID) \
+         ENGINE = MergeTree ORDER BY email",
+    )
+    .execute()
+    .await?;
+    ch.query(
+        "CREATE TABLE IF NOT EXISTS identity.account_assignment \
+         (source_type String, source_id UUID, account_id String, person_id UUID, \
+          created_at DateTime64(6)) \
+         ENGINE = MergeTree ORDER BY (source_type, source_id, account_id)",
+    )
+    .execute()
+    .await?;
+    ch.query(&format!(
+        "INSERT INTO identity.person_map VALUES ('{email}', '{person_id}')"
+    ))
+    .execute()
+    .await?;
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires live MariaDB + ClickHouse (INTEGRATION_TESTS_MARIADB_URL / _CLICKHOUSE_URL)"]
 async fn metric_results_mixes_data_and_error_views_in_one_response() -> TestResult {
@@ -747,24 +780,32 @@ async fn metric_results_mixes_data_and_error_views_in_one_response() -> TestResu
     ch.query("CREATE DATABASE IF NOT EXISTS insight")
         .execute()
         .await?;
+    // The serving contract this build reads: `entity_id` is the SOURCE identity
+    // and the runtime resolves it through the identity relations while it
+    // serves, so the fixture seeds an e-mail and a map row rather than a
+    // pre-resolved person id.
     ch.query(&format!(
         "CREATE TABLE {relation} (tenant_id UUID, source_key String, entity_type String, \
-         entity_id UUID, metric_date Date, measure_key String, observed_at DateTime64(3), \
+         entity_id String, account_source_type String, account_source_id String, \
+         account_id String, metric_date Date, measure_key String, observed_at DateTime64(3), \
          value Float64, subject_key Nullable(String), \
          dimensions Array(Tuple(key String, value String, label Nullable(String)))) \
          ENGINE = MergeTree ORDER BY (tenant_id, metric_date)"
     ))
     .execute()
     .await?;
+    // Per-suffix so parallel runs never contend for one e-mail in the shared map.
+    let person_email = format!("person-{suffix}@example.test");
     ch.query(&format!(
-        "INSERT INTO {relation} SELECT '{tenant}', 'test_{suffix}', 'person', '{person}', \
+        "INSERT INTO {relation} SELECT '{tenant}', 'test_{suffix}', 'person', '{person_email}', \
+         '', '', '', \
          toDate('2026-07-05') + number, 'value_count', now64(3), toFloat64(number + 1), NULL, [] \
          FROM numbers(3)",
         tenant = fixture.tenant_id,
-        person = VISIBLE_PERSON,
     ))
     .execute()
     .await?;
+    seed_identity_relations(&ch, &person_email, VISIBLE_PERSON).await?;
 
     let identity = spawn_identity(&[VISIBLE_PERSON]).await?;
     let result: anyhow::Result<()> = async {
@@ -1020,13 +1061,13 @@ fn app_with_usage_collection_off(db: DatabaseConnection, tenant: Uuid) -> Router
         identity,
         anthropic: dead_anthropic(),
         ai_calls: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_generations: Arc::new(tokio::sync::Semaphore::new(1)),
+        report_artifacts: Arc::new(tokio::sync::Semaphore::new(1)),
         config,
         external_links: crate::domain::external_links::ExternalSourceRegistry::default(),
     });
-    let api = super::build_operations(Router::new(), &openapi)
+    super::register_routes(Router::new(), &openapi, state)
         .layer(from_fn_with_state(tenant, inject_host_context))
-        .layer(axum::Extension(state));
-    Router::new().merge(api)
 }
 
 /// One SDK v2 beacon carrying a single page view.

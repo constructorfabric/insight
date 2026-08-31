@@ -10,6 +10,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +85,9 @@ pub struct GearConfig {
     /// AI-assist configuration.
     pub ai_assist: AiAssistConfig,
 
+    /// Synchronous report generation configuration.
+    pub reports: ReportsConfig,
+
     pub external_sources: Vec<ExternalSourceConfig>,
 }
 
@@ -102,6 +106,7 @@ impl Default for GearConfig {
             metric_catalog: MetricCatalogConfig::default(),
             usage: UsageConfig::default(),
             ai_assist: AiAssistConfig::default(),
+            reports: ReportsConfig::default(),
             external_sources: Vec::new(),
         }
     }
@@ -125,6 +130,38 @@ pub struct MetricCatalogConfig {
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
     pub enforce_tenant_scope: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ReportsConfig {
+    pub temp_dir: PathBuf,
+    pub max_batch_cells: usize,
+    pub max_total_cells: u64,
+    pub max_generated_bytes: usize,
+    pub max_xlsx_spool_bytes: usize,
+    pub request_timeout_secs: u64,
+    pub capacity_wait_secs: u64,
+    pub max_concurrent_generations: usize,
+    pub max_concurrent_artifacts: usize,
+    pub writer_channel_batches: usize,
+}
+
+impl Default for ReportsConfig {
+    fn default() -> Self {
+        Self {
+            temp_dir: PathBuf::from("/app/data/reports"),
+            max_batch_cells: 100_000,
+            max_total_cells: 6_000_000,
+            max_generated_bytes: 25 * 1024 * 1024,
+            max_xlsx_spool_bytes: 90 * 1024 * 1024,
+            request_timeout_secs: 120,
+            capacity_wait_secs: 2,
+            max_concurrent_generations: 2,
+            max_concurrent_artifacts: 2,
+            writer_channel_batches: 1,
+        }
+    }
 }
 
 /// Whether this instance records how the product is used.

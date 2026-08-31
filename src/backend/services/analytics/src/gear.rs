@@ -46,6 +46,12 @@ impl Default for AnalyticsApiGear {
 impl Gear for AnalyticsApiGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: GearConfig = ctx.config()?;
+        validate_reports_config(&cfg.reports)?;
+        let report_temp_dir = cfg.reports.temp_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::domain::reports::temp::prepare_temp_dir(&report_temp_dir)
+        })
+        .await??;
         let external_links = ExternalSourceRegistry::new(&cfg.external_sources)?;
         tracing::info!("starting analytics gear");
 
@@ -96,6 +102,12 @@ impl Gear for AnalyticsApiGear {
             std::time::Duration::from_secs(cfg.ai_assist.request_timeout_secs),
         )?;
         let ai_calls = Arc::new(tokio::sync::Semaphore::new(cfg.ai_assist.max_concurrent));
+        let report_generations = Arc::new(tokio::sync::Semaphore::new(
+            cfg.reports.max_concurrent_generations,
+        ));
+        let report_artifacts = Arc::new(tokio::sync::Semaphore::new(
+            cfg.reports.max_concurrent_artifacts,
+        ));
 
         let state = api::AppState {
             db,
@@ -103,6 +115,8 @@ impl Gear for AnalyticsApiGear {
             identity,
             anthropic,
             ai_calls,
+            report_generations,
+            report_artifacts,
             config: cfg,
             external_links,
         };
@@ -248,6 +262,31 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
             )
         })?;
     }
+    validate_reports_config(&cfg.reports)?;
+    Ok(())
+}
+
+fn validate_reports_config(cfg: &crate::config::ReportsConfig) -> anyhow::Result<()> {
+    crate::domain::reports::temp::validate_temp_dir_path(&cfg.temp_dir)
+        .map_err(|message| anyhow::anyhow!("gears.analytics.config.reports.temp_dir {message}"))?;
+    for (name, value) in [
+        ("max_batch_cells", cfg.max_batch_cells),
+        ("max_generated_bytes", cfg.max_generated_bytes),
+        ("max_xlsx_spool_bytes", cfg.max_xlsx_spool_bytes),
+        ("max_concurrent_generations", cfg.max_concurrent_generations),
+        ("max_concurrent_artifacts", cfg.max_concurrent_artifacts),
+        ("writer_channel_batches", cfg.writer_channel_batches),
+    ] {
+        if value == 0 {
+            anyhow::bail!("gears.analytics.config.reports.{name} must be at least 1");
+        }
+    }
+    if cfg.max_total_cells == 0 {
+        anyhow::bail!("gears.analytics.config.reports.max_total_cells must be at least 1");
+    }
+    if cfg.request_timeout_secs == 0 || cfg.capacity_wait_secs == 0 {
+        anyhow::bail!("gears.analytics.config.reports request timeouts must be at least 1");
+    }
     Ok(())
 }
 
@@ -349,5 +388,22 @@ mod tests {
     fn check_config_errs_on_empty_clickhouse_url() {
         let c = cfg(json!({ "database_url": "mysql://h/db", "clickhouse_url": "" }));
         assert!(check_config(&c).is_err());
+    }
+
+    #[test]
+    fn check_config_rejects_unsafe_or_unbounded_report_storage() {
+        for reports in [
+            json!({ "temp_dir": "/" }),
+            json!({ "temp_dir": "/app/.." }),
+            json!({ "max_xlsx_spool_bytes": 0 }),
+        ] {
+            let c = cfg(json!({
+                "database_url": "mysql://h/db",
+                "clickhouse_url": "http://h",
+                "reports": reports,
+            }));
+
+            assert!(check_config(&c).is_err(), "should reject: {reports}");
+        }
     }
 }

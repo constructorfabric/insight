@@ -30,6 +30,7 @@ socket.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime
@@ -42,16 +43,21 @@ from source_claude_team_invoices.stripe_chain import (
     CHAIN_OK,
     StripeChainError,
     build_records,
+    line_projection_id,
     read_bootstrap,
     unique_key_parts,
 )
+
+logger = logging.getLogger("airbyte")
 
 STRIPE_VERSION = "2026-06-24.dahlia"
 BOOTSTRAP_HOST = "https://invoicedata.stripe.com"
 STRIPE_API = "https://api.stripe.com/v1"
 
-# The one key in the stream's state blob.
+# The two keys in the stream's state blob: the index of chained invoices, and
+# the shape of the line rows it stands for.
 STATE_ENRICHED = "enriched"
+STATE_PROJECTION = "line_projection"
 
 PER_PAGE = 12
 # Bounds on the two cursor walks, far above any real history. They guard
@@ -171,14 +177,28 @@ class InvoiceLines(Stream, CheckpointMixin):
         invoice's row that the listing cannot supply — it comes from the lines.
         Nothing here is a credential: the ephemeral key and the hosted URL that
         carries it are never written to state.
+
+        The projection marker rides along so the next run can tell whether the
+        rows this index stands for still carry the columns bronze now expects.
         """
-        return {STATE_ENRICHED: {**self._known, **self._learned}}
+        return {STATE_ENRICHED: {**self._known, **self._learned}, STATE_PROJECTION: line_projection_id()}
 
     @state.setter
     def state(self, value: Mapping[str, Any]) -> None:
-        stored = value.get(STATE_ENRICHED) if isinstance(value, Mapping) else None
-        self._known = dict(stored) if isinstance(stored, Mapping) else {}
         self._learned = {}
+        stored = value.get(STATE_ENRICHED) if isinstance(value, Mapping) else None
+        marker = value.get(STATE_PROJECTION) if isinstance(value, Mapping) else None
+        if stored and marker != line_projection_id():
+            # The index says these invoices need no chain, but it was written for
+            # a narrower line row: skipping them would leave the columns added
+            # since empty for good, because only a chain emits a line row.
+            logger.info(
+                "line projection changed since this state was written — chaining %s known invoice(s) once more",
+                len(stored),
+            )
+            self._known = {}
+            return
+        self._known = dict(stored) if isinstance(stored, Mapping) else {}
 
     def _remember(self, record: Mapping[str, Any]) -> None:
         """Record what a completed chain found, so the next sync can skip it.

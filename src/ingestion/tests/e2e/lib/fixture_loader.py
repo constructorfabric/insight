@@ -164,6 +164,19 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
                 raise FixtureError(f"{path}: bronze.{table}[{idx}]: {e}") from e
             if not isinstance(merged, dict):
                 raise FixtureError(f"{path}: bronze.{table}[{idx}] did not resolve to a record")
+            stated_payload = "raw_data" in merged
+            merged = _with_derived_payload(merged, schema)
+            if (
+                not stated_payload
+                and "raw_data" in schema.get("properties", {})
+                and not merged.get("raw_data")
+            ):
+                raise FixtureError(
+                    f"{path}: bronze.{table}[{idx}] derived an empty raw_data — the models of a "
+                    "source that hands over its whole report row read the payload, not the "
+                    "columns, so this row yields no field history at all. State `raw_data: null` "
+                    "if a payload-less row is what the case is about."
+                )
             try:
                 resolved.append(schema_validator.pad_and_validate(merged, schema, table=table))
             except schema_validator.SchemaError as e:
@@ -188,6 +201,47 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         identity_aliases=identity_aliases,
         identity_accounts=identity_accounts,
     )
+
+
+#: Columns that are the warehouse's framing rather than the source's payload.
+#: The connector builds `raw_data` from the report row and adds these alongside
+#: it, so a fixture's payload must leave them out too.
+_PAYLOAD_FRAMING = frozenset({"raw_data", "tenant_id", "source_id", "unique_key"})
+
+
+def _with_derived_payload(record: dict, schema: dict) -> dict:
+    """Fill a declared `raw_data` from the record's own fields.
+
+    A source that hands over its whole report row carries it in `raw_data`, and
+    the models that matter read the payload rather than the columns — bamboohr's
+    snapshot versions on it and its field history is derived from its keys. A
+    fixture stating only the columns yields no history and nothing downstream of
+    it, while every column still looks right.
+
+    Three spellings, three meanings:
+      * key absent   — derive the payload from the record. The columns and the
+                       payload stay in lockstep however a test overrides them.
+      * key a map    — derive, then lay the stated keys over the result. This is
+                       how a fixture adds a field the connector collects but no
+                       column holds; replacing the derived keys instead would
+                       reintroduce the drift this exists to prevent.
+      * key null     — the row deliberately carries no payload, the shape a
+                       source emitted before it began collecting every field.
+    """
+    if "raw_data" not in schema.get("properties", {}):
+        return record
+    stated = record.get("raw_data")
+    if "raw_data" in record and stated is None:
+        return record
+    if stated is not None and not isinstance(stated, dict):
+        return record
+
+    derived = {
+        key: value
+        for key, value in sorted(record.items())
+        if value is not None and key not in _PAYLOAD_FRAMING and not key.startswith("_airbyte_")
+    }
+    return {**record, "raw_data": {**derived, **(stated or {})}}
 
 
 def _find_schemas_dir(test_path: Path) -> Path:

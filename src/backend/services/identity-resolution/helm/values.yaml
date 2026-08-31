@@ -20,6 +20,17 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# OpenTelemetry export. Off by default; the umbrella overrides these via
+# APP__opentelemetry__* env vars when `global.observability.otlp.endpoint` is set.
+opentelemetry:
+  metrics:
+    enabled: false
+  tracing:
+    enabled: false
+  exporter:
+    kind: otlp_grpc # otlp_grpc | otlp_http
+    endpoint: "" # e.g. http://alloy.insight-infra.svc.cluster.local:4317
+
 # Pre-provisioned Secret carrying the gears-rust host's leaf-config overrides
 # (injected via envFrom; they override the mounted config ConfigMap):
 #   APP__gears__identity_resolution__config__database_url

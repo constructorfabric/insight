@@ -10,6 +10,7 @@ const FAMILY_NAMES: Record<string, string> = {
   git: "Development · Git",
   tasks: "Development · Delivery",
   collab: "Collaboration",
+  ci: "CI",
   wiki: "Knowledge / Wiki",
   ai: "AI",
 };
@@ -33,7 +34,7 @@ export interface MetricFamily<T> {
  * after them, so a newly-added family appears rather than disappearing.
  */
 export function byFamily<T extends { metric_key: string }>(
-  metrics: readonly T[],
+  metrics: readonly T[]
 ): MetricFamily<T>[] {
   const known = Object.keys(FAMILY_NAMES);
   const grouped = new Map<string, T[]>();

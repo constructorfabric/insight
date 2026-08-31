@@ -81,8 +81,12 @@ describe("the ingestion lens", () => {
   it("is admin-only: bronze rows carry no tenant to scope it by", () => {
     const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
     expect(item?.adminOnly).toBe(true);
-    expect(manageItemsFor(false).some((i) => i.id === "ingestion")).toBe(false);
-    expect(manageItemsFor(true).some((i) => i.id === "ingestion")).toBe(true);
+    const shows = (isAdmin: boolean) =>
+      manageItemsFor({ isAdmin, canManagePreviews: false }).some(
+        (i) => i.id === "ingestion",
+      );
+    expect(shows(false)).toBe(false);
+    expect(shows(true)).toBe(true);
   });
 
   it("is its own lens, beside connector health rather than inside it", () => {
@@ -98,15 +102,33 @@ describe("the ingestion lens", () => {
 });
 
 describe("manageItemsFor", () => {
-  it("gives an admin the full pane", () => {
-    expect(manageItemsFor(true)).toEqual(MANAGE_ITEMS);
+  it("gives a viewer passing every gate the full pane", () => {
+    expect(
+      manageItemsFor({ isAdmin: true, canManagePreviews: true }),
+    ).toEqual(MANAGE_ITEMS);
   });
 
-  it("drops exactly the admin-only surfaces for everyone else", () => {
-    const visible = manageItemsFor(false);
+  it("drops exactly the gated surfaces for everyone else", () => {
+    const visible = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: false,
+    });
 
     expect(visible.map((i) => i.id)).not.toContain("identities");
-    expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
+    expect(visible.map((i) => i.id)).not.toContain("previews");
+    expect(visible).toEqual(
+      MANAGE_ITEMS.filter((i) => !i.adminOnly && !i.previewsGated),
+    );
+  });
+
+  it("gates previews independently of admin-ness", () => {
+    const previewsOnly = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: true,
+    });
+
+    expect(previewsOnly.map((i) => i.id)).toContain("previews");
+    expect(previewsOnly.map((i) => i.id)).not.toContain("identities");
   });
 });
 

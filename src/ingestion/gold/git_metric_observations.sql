@@ -4,14 +4,16 @@ SELECT
     tenant_id,
     source_key,
     entity_type,
-    -- entity_id arrives ALREADY canonical from evidence (resolved once per
-    -- build); '' marks a row identity could not resolve, which stays out of
-    -- every serving relation and is counted by identity_resolution_coverage.
     entity_id,
+    -- The read-time resolution key: rows only merge within one account
+    -- binding, or a bot's contributions would ride a human's summary row.
+    account_source_type,
+    account_source_id,
+    account_id,
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
-    toNullable({{ collapsed_value('contribution', max_keys=['commit_day']) }}) AS value,
+    toNullable(sum(contribution)) AS value,
     CAST(NULL AS Nullable(String)) AS subject_key,
     dimensions
 FROM {{ ref('git_metric_evidence') }}
@@ -26,9 +28,7 @@ WHERE measure_key NOT IN (
     'pr_review_to_merge_hours',
     'pr_approval_to_merge_hours'
 )
-  AND entity_id != ''
--- One person's several source accounts collapse into one canonical row.
-GROUP BY tenant_id, source_key, entity_type, entity_id, metric_date, measure_key, dimensions
+GROUP BY tenant_id, source_key, entity_type, entity_id, account_source_type, account_source_id, account_id, metric_date, measure_key, dimensions
 
 UNION ALL
 
@@ -36,10 +36,10 @@ SELECT
     tenant_id,
     source_key,
     entity_type,
-    -- entity_id arrives ALREADY canonical from evidence (resolved once per
-    -- build); '' marks a row identity could not resolve, which stays out of
-    -- every serving relation and is counted by identity_resolution_coverage.
     entity_id,
+    account_source_type,
+    account_source_id,
+    account_id,
     metric_date,
     CAST(NULL AS Nullable(DateTime64(3))) AS observed_at,
     measure_key,
@@ -58,4 +58,3 @@ WHERE measure_key IN (
     'pr_review_to_merge_hours',
     'pr_approval_to_merge_hours'
 )
-  AND entity_id != ''

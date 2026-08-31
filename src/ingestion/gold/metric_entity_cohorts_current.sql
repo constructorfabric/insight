@@ -1,7 +1,5 @@
 {{ config(
-    materialized='table',
-    engine='MergeTree',
-    order_by=['tenant_id', 'entity_type', 'cohort_key', 'entity_id'],
+    materialized='view',
     schema=var('gold_database'),
     alias='metric_entity_cohorts_current',
     tags=['gold']
@@ -9,27 +7,21 @@
 
 -- Canonical cohort membership: one row per (tenant, person, cohort_key).
 --
--- `entity_id` IS the canonical person id, matching the observation relations,
--- so the peer compiler joins one key and needs no collapsing of its own. HR
--- rows whose email identity cannot resolve are absent — with entity_id being
--- the person id there is no identity to serve them under, and a peer pool is
--- exactly where a guessed identity would do damage.
+-- `entity_id` IS the canonical person id, because a cohort is a set of people,
+-- not of accounts: two HR records of one person must not put them in a peer
+-- pool twice, and a pool size that counted accounts would open the disclosure
+-- guard on fewer people than it claims.
 --
--- CONTESTED MEMBERSHIP: two HR emails of one person can name different org
--- units. Such a person is EXCLUDED (`uniqExact(cohort_id) = 1`) rather than
--- tie-broken — an arbitrary winner would silently compare them against the
--- wrong team's percentiles. The guard lives here, at the grain it applies to,
--- not in every query that reads this view.
+-- SAFETY: a person whose HR records name different org units is EXCLUDED
+-- (`uniqExact(cohort_id) = 1`), not tie-broken — an arbitrary winner compares
+-- them against the wrong team's percentiles.
 --
--- A TABLE, materialized in the same gold build as the observation relations:
--- as a view it resolved against the LIVE identity map on every peer request,
--- so after an identity sync and before the next gold rebuild its entity_id
--- could disagree with the observations' — missing targets and wrong peer
--- membership. One build, one resolution snapshot, everywhere.
-
--- `resolved_cohort_id`, NOT `cohort_id`: an aggregate alias that shadows the
--- source column makes ClickHouse read it as an aggregate inside an aggregate
--- (ILLEGAL_AGGREGATION, code 184). Renamed back one level out.
+-- INVARIANT: a view over the live map, resolving in the same query the
+-- observations do, so both sides of a peer comparison always agree.
+--
+-- WORKAROUND: `resolved_cohort_id`, not `cohort_id` — an aggregate alias
+-- shadowing the source column reads as an aggregate inside an aggregate
+-- (ILLEGAL_AGGREGATION, code 184).
 SELECT
     tenant_id,
     entity_type,
@@ -47,13 +39,13 @@ FROM (
     SELECT
         assumeNotNull(people.tenant_id) AS tenant_id,
         'person' AS entity_type,
-        {{ canonical_entity_id() }},
+        toString(person_map.person_id) AS entity_id,
         'org_unit' AS cohort_key,
         people.cohort_id AS cohort_id
     FROM (
         SELECT
             workspace_id AS tenant_id,
-            lower(assumeNotNull(email)) AS entity_id,
+            {{ normalized_email('assumeNotNull(email)') }} AS email,
             -- The org cohort is keyed by department NAME, matching what the rest of
             -- the serving path calls `org_unit_id` (insight.people projects
             -- `argMax(department)` under that name, and the frontend round-trips the
@@ -72,18 +64,20 @@ FROM (
           AND workspace_id != ''
         ORDER BY
             tenant_id,
-            entity_id,
+            email,
             coalesce(parseDateTimeBestEffortOrNull(toString(valid_from)), toDateTime('1970-01-01')) DESC,
             unique_key DESC
-        LIMIT 1 BY tenant_id, entity_id
+        LIMIT 1 BY tenant_id, email
     ) AS people
-    {{ resolved_person_id_join('people') }}
+    -- INNER: an HR record whose email identity cannot resolve has no person to
+    -- be a peer of, and a peer pool is exactly where a guessed identity would
+    -- do damage.
+    INNER JOIN {{ ref('person_map') }} AS person_map
+        ON person_map.email = people.email
     WHERE people.tenant_id IS NOT NULL
       AND people.tenant_id != ''
-      AND people.entity_id IS NOT NULL
-      AND people.entity_id != ''
+      AND people.email != ''
       AND people.cohort_id IS NOT NULL
-      AND {{ resolved_only() }}
     ) AS resolved
     GROUP BY tenant_id, entity_type, entity_id, cohort_key
     HAVING uniqExact(cohort_id) = 1

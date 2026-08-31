@@ -68,6 +68,51 @@ impl EvidenceGranularity {
     }
 }
 
+/// How one person's several source identities combine for a measure.
+///
+/// * `Sum` — additive work: two accounts' commits are that person's commits.
+/// * `Max` — a per-day flag: two accounts active on one day is still one day.
+/// * `Min` — an inverse flag: a day is meeting-free only if every account was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AliasCollapse {
+    #[default]
+    Sum,
+    Max,
+    Min,
+}
+
+impl AliasCollapse {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Max => "max",
+            Self::Min => "min",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sum" => Some(Self::Sum),
+            "max" => Some(Self::Max),
+            "min" => Some(Self::Min),
+            _ => None,
+        }
+    }
+
+    pub fn needs_pre_collapse(self) -> bool {
+        !matches!(self, Self::Sum)
+    }
+
+    pub fn aggregate_fn(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Max => "max",
+            Self::Min => "min",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricOrigin {
@@ -298,6 +343,7 @@ pub struct MetricInput {
     pub observation: ObservationSource,
     pub source_key: String,
     pub measure_key: String,
+    pub alias_collapse: AliasCollapse,
 }
 
 impl MetricDefinition {
@@ -321,6 +367,25 @@ impl MetricDefinition {
             | ComputationSpec::Stddev { value }
             | ComputationSpec::DistinctCount { value } => &value.observation,
             ComputationSpec::Ratio { numerator, .. } => &numerator.observation,
+        }
+    }
+}
+
+impl ComputationSpec {
+    pub fn inputs(&self) -> Vec<&MetricInput> {
+        match self {
+            Self::Sum { value }
+            | Self::Median { value }
+            | Self::Percentile { value, .. }
+            | Self::Stddev { value }
+            | Self::DistinctCount { value } => {
+                vec![value]
+            }
+            Self::Ratio {
+                numerator,
+                denominator,
+                ..
+            } => vec![numerator, denominator],
         }
     }
 }

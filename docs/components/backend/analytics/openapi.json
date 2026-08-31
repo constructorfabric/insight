@@ -62,6 +62,17 @@
       },
       "BreakdownValueDto": {
         "properties": {
+          "compare_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BreakdownWindowValueDto",
+                "description": "This group's reading over `compare_to`; absent when no comparison window\nwas asked for."
+              }
+            ]
+          },
           "dimensions": {
             "items": {
               "$ref": "#/components/schemas/MetricDimensionDto"
@@ -70,6 +81,13 @@
           },
           "entity_id": {
             "type": "string"
+          },
+          "present": {
+            "description": "Whether this group has any observation inside the primary period.\nPresent only on a windowed response, where the group set spans every\nwindow and a reader has to know which of them each group belongs to.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "value": {
             "format": "double",
@@ -82,6 +100,25 @@
         "required": [
           "entity_id",
           "dimensions"
+        ],
+        "type": "object"
+      },
+      "BreakdownWindowValueDto": {
+        "description": "One group's reading over the comparison window.\n\n`value` and `present` are independent: a ratio over a group that IS in the\nwindow reads NULL whenever its denominator is zero, so absence cannot be\ninferred from the value. A reader that wants what a standalone request over\nthat window would have returned keeps the rows with `present` and renders\ntheir `value` as it stands, NULL included.",
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "value": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "present"
         ],
         "type": "object"
       },
@@ -1814,6 +1851,17 @@
       },
       "MetricResultsRequest": {
         "properties": {
+          "compare_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricResultsPeriod",
+                "description": "A second window answered alongside `period` in the same response — the\nrange a delta or a half-against-half comparison is measured against.\nCarried by the `period` and `breakdown` views only; every other view\nkind answers over `period` alone."
+              }
+            ]
+          },
           "entity": {
             "$ref": "#/components/schemas/MetricResultsEntity"
           },
@@ -2158,6 +2206,14 @@
       },
       "PeriodValueDto": {
         "properties": {
+          "compare_to": {
+            "description": "The same reading over `compare_to`. Omitted both when no comparison\nwindow was asked for and when the entity has no value in it — the two\nare not distinguished on the wire, and a reader that asked knows which\ncase it is in.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "entity_id": {
             "type": "string"
           },
@@ -2230,6 +2286,234 @@
           "system_prompt"
         ],
         "type": "object"
+      },
+      "ReportCell": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "double",
+            "type": "number"
+          }
+        ]
+      },
+      "ReportColumnDataType": {
+        "enum": [
+          "text",
+          "date",
+          "number"
+        ],
+        "type": "string"
+      },
+      "ReportColumnMetadata": {
+        "properties": {
+          "data_type": {
+            "$ref": "#/components/schemas/ReportColumnDataType"
+          },
+          "format": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricFormat"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "data_type"
+        ],
+        "type": "object"
+      },
+      "ReportExportFormat": {
+        "enum": [
+          "csv",
+          "xlsx"
+        ],
+        "type": "string"
+      },
+      "ReportExportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ReportExportFormat"
+          },
+          "granularity": {
+            "$ref": "#/components/schemas/ReportGranularity"
+          },
+          "metric_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReportSubject"
+          }
+        },
+        "required": [
+          "subject",
+          "period",
+          "granularity",
+          "metric_keys",
+          "format"
+        ],
+        "type": "object"
+      },
+      "ReportGranularity": {
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "quarter",
+          "year"
+        ],
+        "type": "string"
+      },
+      "ReportPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "ReportPreviewResponse": {
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnMetadata"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRow"
+            },
+            "type": "array"
+          },
+          "total_rows": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "total_rows"
+        ],
+        "type": "object"
+      },
+      "ReportRecipe": {
+        "additionalProperties": false,
+        "properties": {
+          "granularity": {
+            "$ref": "#/components/schemas/ReportGranularity"
+          },
+          "metric_keys": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "period": {
+            "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/ReportSubject"
+          }
+        },
+        "required": [
+          "subject",
+          "period",
+          "granularity",
+          "metric_keys"
+        ],
+        "type": "object"
+      },
+      "ReportRow": {
+        "items": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/components/schemas/ReportCell"
+            }
+          ]
+        },
+        "type": "array"
+      },
+      "ReportSubject": {
+        "oneOf": [
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 1000,
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "people"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "tenant"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "RollupValueDto": {
         "properties": {
@@ -6140,6 +6424,209 @@
           }
         ],
         "summary": "Run a saved query"
+      }
+    },
+    "/v1/reports/export": {
+      "post": {
+        "operationId": "analytics_api.reports.export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportExportRequest"
+              }
+            }
+          },
+          "description": "Report export recipe",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "text/csv": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete metric report export",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment filename",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export a metric report"
+      }
+    },
+    "/v1/reports/preview": {
+      "post": {
+        "operationId": "analytics_api.reports.preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRecipe"
+              }
+            }
+          },
+          "description": "Report recipe",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportPreviewResponse"
+                }
+              }
+            },
+            "description": "Report preview"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Preview a metric report"
       }
     },
     "/v1/usage/config": {

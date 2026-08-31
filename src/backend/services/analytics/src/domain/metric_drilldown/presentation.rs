@@ -346,6 +346,7 @@ fn humanize_field_name(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::metric_definitions::definition::AliasCollapse;
 
     use crate::config::{ExternalSourceConfig, ExternalSourceProvider};
     use crate::domain::metric_definitions::EvidencePresentation;
@@ -435,6 +436,7 @@ mod tests {
             },
             vec![EvidenceInput {
                 role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
                 presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
             }],
@@ -492,6 +494,7 @@ mod tests {
             },
             vec![EvidenceInput {
                 role: MetricInputRole::Value,
+                alias_collapse: AliasCollapse::Sum,
                 measure_key: value.measure_key,
                 presentation: presentation_spec,
             }],

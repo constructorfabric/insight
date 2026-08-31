@@ -99,7 +99,7 @@ def _i(method: str, suffix: str) -> Operation:
     return Operation(method=method, path=identity_path(suffix), service="identity")
 
 
-#: analytics — 22 operations.
+#: analytics — 26 operations.
 ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", "/v1/queries"),
     _a("POST", "/v1/queries"),
@@ -109,6 +109,8 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("POST", f"/v1/queries/{SOME_ID}/run"),
     _a("GET", "/v1/metric-definitions"),
     _a("POST", "/v1/metric-results"),
+    _a("POST", "/v1/reports/preview"),
+    _a("POST", "/v1/reports/export"),
     _a("POST", "/v1/metric-drilldown"),
     # The only operation here that does not answer JSON — it serves CSV or
     # XLSX. It is catalogued all the same: the edge refuses an anonymous caller
@@ -146,11 +148,12 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
-#: identity-resolution — 26 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 29 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/profiles"),
+    _i("POST", "/v1/profiles/batch"),
     _i("GET", "/v1/me"),
     _i("GET", "/v1/persons"),
     # The operator correction surface. `source` stays the literal `github` in
@@ -213,7 +216,7 @@ _ADMIN_GATED_SUFFIXES: Final[tuple[str, ...]] = (
     f"/v1/visibility/{SOME_ID}",
 )
 
-#: The 21 identity operations behind `require_admin`, which resolves the caller
+#: The 22 identity operations behind `require_admin`, which resolves the caller
 #: from the gateway JWT and requires an active `admin` row in `person_roles` —
 #: it never reads the `insight-admin` REALM role. The seed grants that row to
 #: exactly one persona, the admin operator; every other persona is refused.

@@ -104,36 +104,40 @@ global:
   # analytics metric-catalog fallback + identity-resolution's bootstrap-admin
   # seed. Empty (default) = no default anywhere; a missing tenant fails closed.
   tenantDefaultId: ""
-# ═══════════════════════════════════════════════════════════════════════════
-#  OBSERVABILITY — logs & traces EMISSION (the product contract)
-# ═══════════════════════════════════════════════════════════════════════════
-#
-# Insight ALWAYS emits structured JSON to stdout — that is the product
-# contract and is not toggleable. WHETHER it ALSO exports OTLP, and WHERE,
-# is driven entirely by `otlp.endpoint`:
-#
-#   endpoint: ""   — stdout only. No OTEL_* vars are published; whoever
-#                    runs the cluster collects stdout (the host's own node
-#                    agent, or the Loki/Alloy/Grafana stack installed via
-#                    the deploy pipeline's system layer). SAFE DEFAULT for
-#                    a drop into an unknown existing cluster.
-#   endpoint: set  — services additionally export OTLP there: the
-#                    in-cluster Alloy for a self-hosted stack
-#                    (http://alloy.insight-infra.svc.cluster.local:4317),
-#                    or the customer's own collector.
-#
-# The umbrella NEVER installs the collector stack — like Airbyte and Argo
-# it is separate releases, driven by the deploy pipeline (inventory
-# toggles; see deploy/gitops/system/README.md). This block only governs what
-# services EMIT. The values are published into the `{release}-platform`
-# ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars, so every pod that does
-# `envFrom` picks them up uniformly — no per-service wiring.
-observability:
-  logs:
-    level: info # debug|info|warn|error — default level for all services
-  otlp:
-    endpoint: "" # empty = stdout only; set = services export OTLP here
-    protocol: grpc # grpc | http/protobuf
+  # ═════════════════════════════════════════════════════════════════════════
+  #  OBSERVABILITY — logs & traces EMISSION (the product contract)
+  # ═════════════════════════════════════════════════════════════════════════
+  #
+  # Insight ALWAYS emits structured JSON to stdout — that is the product
+  # contract and is not toggleable. WHETHER it ALSO exports OTLP, and WHERE,
+  # is driven entirely by `otlp.endpoint`:
+  #
+  #   endpoint: ""   — stdout only. No OTEL_* vars are published; whoever
+  #                    runs the cluster collects stdout (the host's own node
+  #                    agent, or the Loki/Alloy/Grafana stack installed via
+  #                    the deploy pipeline's system layer). SAFE DEFAULT for
+  #                    a drop into an unknown existing cluster.
+  #   endpoint: set  — services additionally export OTLP there: the
+  #                    in-cluster Alloy for a self-hosted stack
+  #                    (http://alloy.insight-infra.svc.cluster.local:4317),
+  #                    or the customer's own collector. Gears services then
+  #                    export OTel metrics and traces too.
+  #
+  # The umbrella NEVER installs the collector stack — like Airbyte and Argo
+  # it is separate releases, driven by the deploy pipeline (inventory
+  # toggles; see deploy/gitops/system/README.md). This block only governs what
+  # services EMIT. The values are published into the `{release}-platform`
+  # ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars (plus the gears-rust
+  # dialect, APP__opentelemetry__*), so every pod that does `envFrom` picks
+  # them up uniformly. Lives under `global` so the service subcharts can hash
+  # it into a pod-template annotation and roll on change (a top-level
+  # `observability:` block is still honoured, but cannot roll pods).
+  observability:
+    logs:
+      level: info # debug|info|warn|error — default level for all services
+    otlp:
+      endpoint: "" # empty = stdout only; set = services export OTLP here
+      protocol: grpc # grpc | http/protobuf
 # ═══════════════════════════════════════════════════════════════════════════
 #  EXTERNAL — Airbyte (installed as a separate Helm release)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -191,14 +195,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.27.10.44-f28c8fa" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.31.08.42-5d8124d" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.27.10.44-f28c8fa" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.31.08.42-5d8124d" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -703,6 +707,39 @@ identityResolution:
   # Gateway-JWT verification (NGINX_BFF R1) — same wiring as analytics: the
   # oidc-authn-plugin resolves the authenticator's JWKS via OIDC discovery
   # over https on `issuer` and trusts its CA from the authn-tls cert Secret.
+  gateway:
+    issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
+    audience: "internal-services"
+    caCertSecret: "insight-authenticator-authn-tls-cert"
+    caCertPaths:
+      - /etc/insight/authn-ca/ca.crt
+# ─── Previews (preview-experiment provisioning, epic #1981) ──────────────
+# Manages preview experiments: one FE build per experiment, served under
+# /exp/<name> as a Deployment/Service/HTTPRoute trio in a dedicated namespace
+# — Kubernetes is the only store, and the subchart's Role/RoleBinding confine
+# the service to that namespace. Reached through the gateway at /api/previews.
+# Structurally inert until the stand sets `experiments.routeHost` (creates
+# fail closed without it) and the shared Gateway's `allowedRoutes` admits the
+# experiments namespace (bootstrap/<env>/gateway.yaml in gitops).
+previews:
+  deploy: true
+  replicaCount: 1 # the subchart refuses more: the TTL sweep has no leader election
+  image:
+    repository: ghcr.io/constructorfabric/insight-previews
+    tag: "" # MUST be set (e.g. "0.1.0")
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  experiments:
+    # Single source for every place the experiments namespace appears (gear
+    # config, Namespace object, Role/RoleBinding) — see the subchart values.
+    namespace: insight-previews
+    # The single preview host experiments serve under (e.g.
+    # preview.example.com). Per-stand; empty refuses every create.
+    routeHost: ""
+  # Gateway-JWT verification (NGINX_BFF R1) — same wiring as
+  # identityResolution.gateway above.
   gateway:
     issuer: 'https://{{ .Release.Name }}-authenticator.{{ .Release.Namespace }}.svc.cluster.local:8443'
     audience: "internal-services"

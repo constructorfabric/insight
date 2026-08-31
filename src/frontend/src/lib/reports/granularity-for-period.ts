@@ -1,10 +1,8 @@
 import { differenceInCalendarDays, parseISO } from "date-fns";
 
 import type { DateRange } from "@/api/period-to-date-range";
-import type { ReportGranularity } from "@/lib/reports/rollup";
+import type { ReportGranularity } from "@/api/reports-client";
 
-// The shortest a rolling window of each grain can be, so every period preset
-// admits its own grain: February makes a month 28 days and a quarter 89.
 const MIN_PERIOD_DAYS: Record<ReportGranularity, number> = {
   day: 1,
   week: 7,
@@ -41,22 +39,24 @@ function periodDays(range: DateRange): number {
   return differenceInCalendarDays(parseISO(range.to), parseISO(range.from)) + 1;
 }
 
-export function granularityFitsPeriod(
+function granularityFitsPeriod(
   granularity: ReportGranularity,
-  range: DateRange,
+  range: DateRange
 ): boolean {
   return periodDays(range) >= MIN_PERIOD_DAYS[granularity];
 }
 
 function coarsestGranularity(range: DateRange): ReportGranularity {
   return (
-    COARSEST_FIRST.find((grain) => granularityFitsPeriod(grain, range)) ?? "day"
+    COARSEST_FIRST.find((granularity) =>
+      granularityFitsPeriod(granularity, range)
+    ) ?? "day"
   );
 }
 
 export function clampGranularity(
   granularity: ReportGranularity,
-  range: DateRange,
+  range: DateRange
 ): ReportGranularity {
   return granularityFitsPeriod(granularity, range)
     ? granularity
@@ -65,8 +65,9 @@ export function clampGranularity(
 
 export function periodTooShortReason(
   granularity: ReportGranularity,
-  range: DateRange,
+  range: DateRange
 ): string | null {
   if (granularityFitsPeriod(granularity, range)) return null;
+
   return `A ${SPLIT_NAME[granularity]} split needs a period of at least ${PERIOD_NAME[granularity]} — pick ${SPLIT_NAME[coarsestGranularity(range)]} or finer`;
 }

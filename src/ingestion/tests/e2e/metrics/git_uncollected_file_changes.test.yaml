@@ -1,0 +1,166 @@
+spec_version: 1
+description: >-
+  A commit whose file changes never reached the warehouse still reports the
+  size its source gave. alice has two commits, one with a file-change row and
+  one without; both sizes reach Lines added / Lines removed, while Code lines
+  counts only the commit whose file grain is known. bob's single commit changed
+  nothing, so his size reads zero rather than absent — the two cases a blank
+  cell used to share. carol draws the boundary from the other side: her second
+  commit's change WAS collected and then lost the content dedup, which is not
+  the same thing as never arriving.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+    - $ref: templates/people.yaml#/templates/bob
+    - $ref: templates/people.yaml#/templates/carol
+  bronze_github.branches:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
+  bronze_github.commits:
+    # alice: one commit the file-change stream reached, one it did not.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-alice-detailed, sha: sha-alice-detailed, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-alice-uncollected, sha: sha-alice-uncollected, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 20, deletions: 2, is_in_default_branch: true}
+    # bob: a commit that changed nothing, and no file-change row to say so.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-bob-empty, sha: sha-bob-empty, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 0, deletions: 0, is_in_default_branch: true}
+    # carol: the same content twice. The later commit's own stats exceed the
+    # file change it carries, so a fallback that keyed on the DEDUPLICATED set
+    # would hand it that difference as an uncollected size.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-first, sha: sha-carol-first, committed_date: "2026-10-01T09:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 10, deletions: 1, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-carol-repeat, sha: sha-carol-repeat, committed_date: "2026-10-01T15:00:00Z", author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 25, deletions: 1, is_in_default_branch: true}
+  bronze_github.file_changes:
+    # Only alice's first commit. `.rs` under src/ classifies as code, so Code
+    # lines reads off this row alone.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-alice-detailed, sha: sha-alice-detailed, filename: src/detailed.rs, additions: 10, deletions: 1}
+    # Both of carol's commits carry a change with the same object ids, so the
+    # later one loses the content dedup — collected, then deduplicated away.
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-first, sha: sha-carol-first, filename: src/shared.rs, additions: 10, deletions: 1, pre_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5, post_image_oid: fffffffffffffffffffffffffffffffffffffff6}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-carol-repeat, sha: sha-carol-repeat, filename: src/shared.rs, additions: 10, deletions: 1, pre_image_oid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee5, post_image_oid: fffffffffffffffffffffffffffffffffffffff6}
+
+cases:
+  - name: A commit with no file changes still reports its own size
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: period}
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [category]}
+          - metric_key: git.lines_removed
+            views:
+              - {view: period}
+          - metric_key: git.code_lines
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+
+      # Both commits count, and both sizes now count with them.
+      - metric: git.commits
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 2}
+      - metric: git.lines_added
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 30}
+      - metric: git.lines_removed
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 3}
+
+      # The file grain is known for one commit and unknown for the other, and
+      # the breakdown says which is which instead of dropping the unknown half.
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 10}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: category, value: __unknown__}}
+        equal: {value: 20}
+
+      # Code lines needs the category, so it counts only the known half.
+      - metric: git.code_lines
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 10}
+
+  - name: A commit that changed nothing reports zero, not an absent value
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [bob@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: period}
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+          - metric_key: git.lines_removed
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - metric: git.commits
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 1}
+      - metric: git.lines_added
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 0}
+      - metric: git.lines_removed
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 0}
+
+  - name: A commit that lost the content dedup is not treated as uncollected
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [carol@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: period}
+          - metric_key: git.lines_added
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [category]}
+    expect:
+      - assert: "status == 200"
+
+      # Both commits count. Only the first one's content does: the second
+      # carries the same object ids, so its lines belong to the commit that
+      # introduced them.
+      - metric: git.commits
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 2}
+      - metric: git.lines_added
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 10}
+      - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: carol@example.com, dimensions: {key: category, value: code}}
+        equal: {value: 10}
+
+      # The reason this case exists: the second commit's file change WAS
+      # collected, so it is not an uncollected diff however the dedup ruled on
+      # it, and no `__unknown__` grain may appear for it.
+      - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'category' && d.value == '__unknown__') && v.entity_id == 'carol@example.com')"

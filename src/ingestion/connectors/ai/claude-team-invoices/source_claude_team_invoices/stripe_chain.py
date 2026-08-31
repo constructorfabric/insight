@@ -11,6 +11,7 @@ rules are exercised without a network call.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -273,6 +274,17 @@ _EMPTY_LINE: Mapping[str, Any] = {
     "period_start_ts": None,
     "period_end_ts": None,
 }
+
+
+def line_projection_id() -> str:
+    """A digest of the fields a line row carries.
+
+    Derived from the field set rather than declared beside it: a run that skips
+    the chain reuses the line rows an earlier run wrote, so a changed set means
+    those rows are missing a column and only a chain can fill it. Hand-numbering
+    that would put the invalidation one forgotten bump away from silence.
+    """
+    return hashlib.sha256(",".join(sorted(_EMPTY_LINE)).encode()).hexdigest()[:12]
 
 
 class UrlFormatDrift(RuntimeError):

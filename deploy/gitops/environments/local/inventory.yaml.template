@@ -17,6 +17,8 @@ protected: false              # true → `make deploy` requires
 namespaces:
   services: insight           # L3 app subcharts
   infra:    insight-infra     # L2 shared stateful
+  previews: insight-previews  # preview experiments (#1981); feeds the
+                              # Gateway allowedRoutes + the previews chart
   # Controller namespaces accept upstream-chart defaults; uncomment
   # only to override.
   # envoyGateway:  envoy-gateway-system
@@ -47,11 +49,17 @@ system:
   airbyte:         true
   argoWorkflows:   true
   # Observability (LGTM). Off for local dev — flip on to self-host
-  # Loki/Alloy/Grafana, and point the umbrella's observability.otlp.endpoint
-  # (environments/<env>/values.yaml) at this stack's Alloy. See
-  # system/README.md "Observability".
+  # VictoriaMetrics/Loki/Tempo/Alloy/Grafana, and point the umbrella's
+  # global.observability.otlp.endpoint (environments/<env>/values.yaml) at this
+  # stack's Alloy. See system/README.md "Observability".
+  victoriametrics: false
   loki:            false
+  tempo:           false
   alloy:           false
+  # Infra metrics (kubelet/cAdvisor + kube-state-metrics → VictoriaMetrics).
+  # Needs victoriametrics on.
+  kubeStateMetrics: false
+  alloyMetrics:     false
   grafana:         false
 
 # ─── Secrets (drives `make seal`) ──────────────────────────────────────

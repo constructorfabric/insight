@@ -13,6 +13,8 @@ name: OpenAPI Specs
 #   • identity-resolution — the offline `identity-resolution openapi`
 #     subcommand (no MariaDB, no ClickHouse; see api::openapi_document),
 #     same shape as analytics.
+#   • previews — the offline `previews openapi` subcommand (no cluster;
+#     see api::openapi_document), same shape as analytics.
 
 on:
   # Deliberately NO `paths:` filter — this is meant to be a required status
@@ -32,6 +34,10 @@ on:
       - ".github/workflows/openapi-specs.yml"
   workflow_dispatch:
 
+# Drift gates only read the checkout and build from it — no write-back.
+permissions:
+  contents: read
+
 # A new push obsoletes any run still in flight for the same ref.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -46,6 +52,7 @@ jobs:
       authenticator: ${{ steps.all.outputs.all || steps.filter.outputs.authenticator || steps.filter.outputs.shared_backend }}
       identity_resolution: ${{ steps.all.outputs.all || steps.filter.outputs.identity_resolution || steps.filter.outputs.shared_backend }}
       git_cli_proxy: ${{ steps.all.outputs.all || steps.filter.outputs.git_cli_proxy || steps.filter.outputs.shared_backend }}
+      previews: ${{ steps.all.outputs.all || steps.filter.outputs.previews || steps.filter.outputs.shared_backend }}
       generated_models: ${{ steps.all.outputs.all || steps.filter.outputs.generated_models }}
     timeout-minutes: 60
     steps:
@@ -69,6 +76,9 @@ jobs:
             git_cli_proxy:
               - 'src/backend/services/git-cli-proxy/**'
               - 'docs/components/backend/git-cli-proxy/openapi.json'
+            previews:
+              - 'src/backend/services/previews/**'
+              - 'docs/components/backend/previews/openapi.json'
             shared_backend:
               - 'src/backend/libs/**'
               - 'src/backend/plugins/**'
@@ -203,6 +213,45 @@ jobs:
           rc=${PIPESTATUS[0]}
           if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat identity_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$rc" -ne 0 ]; then echo "::error::Identity Resolution OpenAPI spec drift — $IDENTITY_SPEC is stale. Regenerate: (cd src/backend && cargo run -p identity-resolution --bin identity-resolution -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $IDENTITY_SPEC --live-file dump.json"; fi
+          exit "$rc"
+
+  # ─── previews — offline emit via the `openapi` subcommand ─────────────────
+  previews:
+    needs: changes
+    if: needs.changes.outputs.previews == 'true'
+    name: Previews OpenAPI spec drift gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: src/backend -> target
+          key: previews-openapi
+          save-if: ${{ github.event_name == 'push' }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Generate the OpenAPI doc offline and drift-check it
+        env:
+          PREVIEWS_SPEC: docs/components/backend/previews/openapi.json
+        run: |
+          # `previews openapi` builds offline and prints the doc; a build
+          # failure here should abort loudly under the runner's default `set -e`.
+          (cd src/backend && cargo run --quiet -p previews --bin previews -- openapi) > previews.openapi.live.json
+          # Relax errexit from here: we capture the drift-check rc ourselves,
+          # write the committed-vs-generated diff to the step summary, and emit a
+          # friendly ::error:: before exiting non-zero.
+          set +e
+          python3 scripts/ci/openapi_spec.py check --file "$PREVIEWS_SPEC" --live-file previews.openapi.live.json | tee previews_openapi_drift.txt
+          rc=${PIPESTATUS[0]}
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then { echo '```'; cat previews_openapi_drift.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::Previews OpenAPI spec drift — $PREVIEWS_SPEC is stale. Regenerate: (cd src/backend && cargo run -p previews --bin previews -- openapi) > dump.json && python3 scripts/ci/openapi_spec.py update --file $PREVIEWS_SPEC --live-file dump.json"; fi
           exit "$rc"
 
   # ─── the models generated FROM those documents ────────────────────────────

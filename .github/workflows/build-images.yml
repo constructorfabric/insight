@@ -72,6 +72,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       identity_resolution: ${{ steps.filter.outputs.identity_resolution }}
       git_cli_proxy: ${{ github.event_name != 'merge_group' && steps.filter.outputs.git_cli_proxy == 'true' }}
+      previews: ${{ github.event_name != 'merge_group' && steps.filter.outputs.previews == 'true' }}
       frontend: ${{ github.event_name != 'merge_group' && steps.filter.outputs.frontend == 'true' }}
       toolbox: ${{ github.event_name != 'merge_group' && steps.filter.outputs.toolbox == 'true' }}
       seed: ${{ github.event_name != 'merge_group' && steps.filter.outputs.seed == 'true' }}
@@ -158,6 +159,13 @@ jobs:
               # must republish this image (same for analytics above).
               - 'src/backend/libs/insight-clickhouse/**'
               # The shared entrypoint is baked into the image too.
+              - 'src/backend/docker-entrypoint.sh'
+              - 'src/backend/Cargo.toml'
+              - 'src/backend/Cargo.lock'
+            previews:
+              - '.github/workflows/build-images.yml'
+              - 'src/backend/services/previews/**'
+              # The shared entrypoint is baked into the image.
               - 'src/backend/docker-entrypoint.sh'
               - 'src/backend/Cargo.toml'
               - 'src/backend/Cargo.lock'
@@ -945,6 +953,120 @@ jobs:
         run: |
           echo '- `${{ env.IMAGE_PREFIX }}/insight-identity-resolution:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
 
+  # ─── Previews (preview-experiment provisioning, epic #1981) ───────────────
+  # Not in the e2e compose rig, so no e2e-prebuilt export path.
+  backend-previews:
+    needs: changes
+    if: |
+      needs.changes.outputs.previews == 'true'
+      || (github.event_name == 'workflow_dispatch' && !inputs.frontend_only)
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJson(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # don't leave the token in .git/config
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: needs.changes.outputs.should_push == 'true'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        id: build
+        with:
+          context: src/backend
+          file: src/backend/services/previews/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/insight-previews,push-by-digest=true,name-canonical=true,push=${{ needs.changes.outputs.should_push == 'true' }}
+          cache-from: type=gha,scope=previews-${{ matrix.arch }}
+          cache-to: ${{ needs.changes.outputs.should_push == 'true' && format('type=gha,mode=max,scope=previews-{0},ignore-error=true', matrix.arch) || '' }}
+      - name: Export digest
+        if: needs.changes.outputs.should_push == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.changes.outputs.should_push == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-previews-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-previews:
+    needs: [changes, backend-previews]
+    if: |
+      always()
+      && needs.backend-previews.result != 'skipped'
+      && needs.changes.outputs.should_push == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Require the platform builds to have passed
+        if: needs.backend-previews.result != 'success'
+        run: |
+          echo "::error::backend-previews finished '${{ needs.backend-previews.result }}' — nothing to merge."
+          exit 1
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-previews-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/insight-previews
+          tags: |
+            type=raw,value=${{ needs.changes.outputs.build_tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fail on a fixable critical before any tag points here
+        uses: ./.github/actions/image-cve-gate
+        with:
+          image: ${{ env.IMAGE_PREFIX }}/insight-previews
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}/insight-previews@sha256:%s ' *)
+      - name: Inspect manifest digest
+        id: inspect
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.IMAGE_PREFIX }}/insight-previews:${{ needs.changes.outputs.build_tag }} \
+            --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_PREFIX }}/insight-previews
+          subject-digest: ${{ steps.inspect.outputs.digest }}
+          push-to-registry: true
+      # Copy-pastable pushed ref on the run's Summary page (#1994).
+      - name: Report pushed image
+        run: |
+          echo '- `${{ env.IMAGE_PREFIX }}/insight-previews:${{ needs.changes.outputs.build_tag }}`' >> "$GITHUB_STEP_SUMMARY"
+
   # ─── Frontend build ────────────────────────────────────────────────────────
   # Per-arch on native runners so `pnpm build` never runs under QEMU. The image
   # is `insight-frontend` — a package created and owned by THIS repository.
@@ -1568,6 +1690,7 @@ jobs:
       - merge-gateway
       - merge-identity-resolution
       - merge-git-cli-proxy
+      - merge-previews
       - merge-frontend
       - merge-toolbox
       - merge-image
@@ -1591,6 +1714,7 @@ jobs:
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
+      && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
     runs-on: ubuntu-latest
@@ -1675,6 +1799,7 @@ jobs:
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
           GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
+          PREVIEWS: ${{ needs.changes.outputs.previews }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -1705,6 +1830,7 @@ jobs:
                   src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity-resolution/helm/Chart.yaml \
                   src/backend/services/git-cli-proxy/helm/Chart.yaml \
+                  src/backend/services/previews/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml
 
           if git diff --staged --quiet; then
@@ -1765,6 +1891,7 @@ jobs:
       - merge-gateway
       - merge-identity-resolution
       - merge-git-cli-proxy
+      - merge-previews
       - merge-frontend
       - merge-toolbox
       - merge-seed
@@ -1780,6 +1907,7 @@ jobs:
       && (needs.merge-gateway.result       == 'success' || needs.merge-gateway.result       == 'skipped')
       && (needs.merge-identity-resolution.result == 'success' || needs.merge-identity-resolution.result == 'skipped')
       && (needs.merge-git-cli-proxy.result == 'success' || needs.merge-git-cli-proxy.result == 'skipped')
+      && (needs.merge-previews.result      == 'success' || needs.merge-previews.result      == 'skipped')
       && (needs.merge-frontend.result      == 'success' || needs.merge-frontend.result      == 'skipped')
       && (needs.merge-toolbox.result       == 'success' || needs.merge-toolbox.result       == 'skipped')
       && (needs.merge-seed.result          == 'success' || needs.merge-seed.result          == 'skipped')
@@ -1792,6 +1920,7 @@ jobs:
         || needs.changes.outputs.gateway      == 'true'
         || needs.changes.outputs.identity_resolution == 'true'
         || needs.changes.outputs.git_cli_proxy == 'true'
+        || needs.changes.outputs.previews     == 'true'
         || needs.changes.outputs.frontend     == 'true'
         || needs.changes.outputs.toolbox      == 'true'
         || needs.changes.outputs.seed         == 'true'
@@ -1871,6 +2000,7 @@ jobs:
           GATEWAY: ${{ needs.changes.outputs.gateway }}
           IDENTITY_RESOLUTION: ${{ needs.changes.outputs.identity_resolution }}
           GIT_CLI_PROXY: ${{ needs.changes.outputs.git_cli_proxy }}
+          PREVIEWS: ${{ needs.changes.outputs.previews }}
           FRONTEND: ${{ needs.changes.outputs.frontend }}
         run: .github/workflows/scripts/bump-service-appversions.sh
 
@@ -1927,6 +2057,7 @@ jobs:
             src/backend/services/gateway/helm/Chart.yaml \
             src/backend/services/identity-resolution/helm/Chart.yaml \
             src/backend/services/git-cli-proxy/helm/Chart.yaml \
+            src/backend/services/previews/helm/Chart.yaml \
             src/frontend/helm/Chart.yaml \
             | grep -Ev '^(---|null)$' \
             | sort -V | tail -1)
@@ -2022,6 +2153,7 @@ jobs:
                   src/backend/services/gateway/helm/Chart.yaml \
                   src/backend/services/identity-resolution/helm/Chart.yaml \
                   src/backend/services/git-cli-proxy/helm/Chart.yaml \
+                  src/backend/services/previews/helm/Chart.yaml \
                   src/frontend/helm/Chart.yaml \
                   deploy/gitops/.insight-version
           # Sample gitops starter under docs/deploy — pin moves with the

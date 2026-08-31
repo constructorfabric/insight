@@ -1,5 +1,5 @@
 name: claude-team-invoices
-version: "0.7.0"
+version: "0.8.0"
 type: cdk
 schedule: "0 4 * * *" # daily at 04:00 UTC — invoices are monthly; a daily pass keeps a new one within a day
 workflow: sync
@@ -11,7 +11,7 @@ images:
     name: source-claude-team-invoices-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-claude-team-invoices-insight:2026.08.27.09.49-d2853d6"
+    image: "ghcr.io/constructorfabric/source-claude-team-invoices-insight:2026.08.28.11.56-8d05a28"
 dbt_select: "tag:claude-team-invoices+"
 connection:
   # Its own namespace, though it is the same vendor through the same proxy: dbt

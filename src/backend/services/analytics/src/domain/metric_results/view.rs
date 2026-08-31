@@ -40,3 +40,18 @@ pub enum MetricResultViewKind {
     Rollup,
     Histogram,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Bucket;
+
+    #[test]
+    fn public_bucket_rejects_internal_report_granularities() {
+        for value in [r#""quarter""#, r#""year""#] {
+            assert!(
+                serde_json::from_str::<Bucket>(value).is_err(),
+                "should reject: {value}"
+            );
+        }
+    }
+}

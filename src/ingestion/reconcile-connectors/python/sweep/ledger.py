@@ -118,7 +118,7 @@ class Ledger:
         ever — and three inputs produce one: a connection deleted while a job
         was running (the mover drops the job, so its last recorded word stays
         provisional), a status word a later mover release adds (stored as
-        `unknown`, which is deliberately non-terminal), and a creation stamp the
+        `unknown`, which is deliberately non-terminal), and an update stamp the
         column cannot hold. Once the start is pinned and more jobs than one tick
         may read sit above it, the newest syncs stop being read at all and the
         page freezes on stale data with only a log line to say so.
@@ -131,12 +131,12 @@ class Ledger:
             f"    greatest(oldest_open, newest - INTERVAL {LOOKBACK_DAYS} DAY), "
             "    newest)) AS watermark "
             "FROM (SELECT countIf(open) AS open_count, "
-            "             min(if(open, job_created_at, NULL)) AS oldest_open, "
-            "             max(job_created_at) AS newest "
-            "      FROM (SELECT job_created_at, "
+            "             min(if(open, job_updated_at, NULL)) AS oldest_open, "
+            "             max(job_updated_at) AS newest "
+            "      FROM (SELECT job_updated_at, "
             f"                   status NOT IN ({_OPEN_EXCLUDED}) AS open "
             f"            FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
-            "              AND job_created_at IS NOT NULL "
+            "              AND job_updated_at IS NOT NULL "
             "            ORDER BY job_id, ts DESC LIMIT 1 BY job_id))"
         )
         if not rows:
@@ -153,7 +153,7 @@ class Ledger:
         """
         window = ""
         if since is not None:
-            window = f" AND job_created_at >= {_quote(since)}"
+            window = f" AND job_updated_at >= {_quote(since)}"
         rows = self._select(
             f"SELECT DISTINCT job_id FROM {TABLE} "
             f"WHERE event = '{SYNC_COMPLETED}' "
@@ -176,13 +176,13 @@ class Ledger:
         if watermark is None:
             return []
         return self._select(
-            "SELECT job_id, connector, toString(job_created_at) AS created FROM ("
-            "  SELECT job_id, connector, job_created_at, status "
+            "SELECT job_id, connector, toString(job_updated_at) AS updated FROM ("
+            "  SELECT job_id, connector, job_updated_at, status "
             f"  FROM {TABLE} WHERE event = '{SYNC_COMPLETED}' "
-            "    AND job_created_at IS NOT NULL "
+            "    AND job_updated_at IS NOT NULL "
             "  ORDER BY job_id, ts DESC LIMIT 1 BY job_id) "
             f"WHERE status NOT IN ({_OPEN_EXCLUDED}) "
-            f"  AND job_created_at < {_quote(watermark)}"
+            f"  AND job_updated_at < {_quote(watermark)}"
         )
 
     def insert(self, rows: Iterable[dict[str, Any]]) -> int:

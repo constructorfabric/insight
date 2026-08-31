@@ -60,6 +60,7 @@ mod m20260805_000001_semantic_definition_core;
 mod m20260806_000001_metric_custom_observation_sql;
 mod m20260810_000001_metric_definition_subject;
 mod m20260810_000002_metric_definition_tags;
+mod m20260811_000001_metric_source_measure_alias_collapse;
 pub mod m20260822_000001_feedback;
 pub mod m20260822_000002_ai_assist;
 mod m20260823_000001_ratio_denominator_aggregation;
@@ -136,6 +137,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260806_000001_metric_custom_observation_sql::Migration),
             Box::new(m20260810_000001_metric_definition_subject::Migration),
             Box::new(m20260810_000002_metric_definition_tags::Migration),
+            Box::new(m20260811_000001_metric_source_measure_alias_collapse::Migration),
             Box::new(m20260822_000001_feedback::Migration),
             Box::new(m20260822_000002_ai_assist::Migration),
             Box::new(m20260823_000001_ratio_denominator_aggregation::Migration),

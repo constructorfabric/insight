@@ -18,9 +18,25 @@ from __future__ import annotations
 import pytest
 from insight_stand import Manifest, PersonaSession, identity_path
 
-from ..schemas import ProblemDocument, Profile
+from ..schemas import BatchProfilesResponse, ProblemDocument, Profile
 
 PROFILES = identity_path("/v1/profiles")
+PROFILE_BATCH = identity_path("/v1/profiles/batch")
+
+
+@pytest.mark.reliability
+def test_batch_profiles_returns_the_visible_requested_person(
+    lead_session: PersonaSession, stand_manifest: Manifest
+) -> None:
+    person = stand_manifest.fixture("dev_lead")
+
+    response = lead_session.client.post(
+        PROFILE_BATCH, json_body={"person_ids": [person.uuid]}
+    )
+
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+    profiles = response.parse(BatchProfilesResponse).profiles
+    assert [str(profile.person_id) for profile in profiles] == [person.uuid]
 
 
 @pytest.mark.reliability

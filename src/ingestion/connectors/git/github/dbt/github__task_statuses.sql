@@ -7,10 +7,17 @@
 ) }}
 
 -- Per-source status dimension; unioned into `silver.class_task_statuses` via
--- `union_by_tag`. GitHub has no status field and no lifecycle categories: an
--- issue is open or closed, and a closure states a reason. The pair is the
--- status, and which lifecycle category each pair means is an operator's
--- decision, not the vendor's — so every row here comes from the binding.
+-- `union_by_tag`. GitHub states no lifecycle category anywhere, so which
+-- category a value means is an operator's decision, not the vendor's — every
+-- row here comes from the binding.
+--
+-- Two independent status families, deliberately not merged. The issue's own
+-- lifecycle is open or closed and a closure states a reason: that pair is the
+-- status. A Projects V2 board additionally has its own status column, one
+-- field per board, which is where an `in_progress` category can come from. An
+-- issue can carry both; they are separate fields with separate bindings, and
+-- which one wins for a measure is the `precedence` column's job, not this
+-- model's.
 --
 -- INVARIANT: a value observed in history with no binding must NOT default to a
 -- category. It is left out, the coverage test names it, and the build fails —
@@ -36,7 +43,11 @@ FROM (
         canonical_value
     FROM {{ source('config', 'task_value_map') }} FINAL
     WHERE data_source = 'github'
-      AND field_id = 'state'
+      -- Two field families reach this dimension, and they stay separate: the
+      -- issue's own open/closed `state`, and one status field per Projects V2
+      -- board. A board's value key already carries the board, so both families
+      -- key on `value_id` alone and cannot collide.
+      AND (field_id = 'state' OR startsWith(field_id, 'project_status:'))
       AND is_deleted = 0
       AND valid_from <= now64(3)
     ORDER BY valid_from DESC, recorded_at DESC

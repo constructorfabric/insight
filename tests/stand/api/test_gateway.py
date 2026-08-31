@@ -46,7 +46,7 @@ def test_operation_is_refused_without_a_session(
     status-only assertion and still break the product.
 
     Validating rather than spot-checking two keys is what makes that cheap
-    enough to do 45 times — `ProblemDocument` also forbids undeclared fields, so
+    enough to do it on every catalogued operation — `ProblemDocument` also forbids undeclared fields, so
     an envelope that quietly grows or loses one fails here.
     """
     response = api_client.request(
@@ -75,7 +75,7 @@ def test_the_refusal_names_the_way_back_in(api_client: ApiClient) -> None:
     """The 401 tells a client what to do about it, not just that it failed.
 
     Asserted once rather than per operation: the gateway writes the same document
-    for everything it fronts, so 45 copies would restate one fact. What the sweep
+    for everything it fronts, so a copy per operation would restate one fact. What the sweep
     above proves is that every route reaches THIS behaviour.
     """
     response = api_client.get(ALL_OPERATIONS[0].path)

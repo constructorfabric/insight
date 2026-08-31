@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
 insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
@@ -64,6 +65,7 @@ utoipa = { version = "5.5", features = ["chrono", "uuid"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
@@ -78,6 +80,7 @@ csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+opentelemetry = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]
@@ -90,3 +93,5 @@ clickhouse = { workspace = true, features = ["test-util"] }
 # Paused-time `#[tokio::test]` for the semaphore acquire-timeout refusals —
 # the 2 s acquire window elapses instantly instead of being slept through.
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3.27"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }

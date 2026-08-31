@@ -2,8 +2,8 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use crate::domain::metric_definitions::definition::{
-    MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
-    ObservationSource,
+    AliasCollapse, MetricBase, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+    ObservationRelation, ObservationSource,
 };
 use crate::domain::metric_definitions::{
     ComputationSpec, EvidenceColumnType, EvidenceDetailColumn, EvidencePresentation,
@@ -25,6 +25,7 @@ pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
         ),
         source_key: "git".to_owned(),
         measure_key: measure_key.to_owned(),
+        alias_collapse: AliasCollapse::Sum,
     }
 }
 
@@ -52,9 +53,18 @@ pub(super) fn commit_presentation() -> EvidencePresentation {
 }
 
 pub(super) fn commit_input(role: MetricInputRole, measure_key: &str) -> EvidenceInput {
+    collapsing_commit_input(role, measure_key, AliasCollapse::Sum)
+}
+
+pub(super) fn collapsing_commit_input(
+    role: MetricInputRole,
+    measure_key: &str,
+    alias_collapse: AliasCollapse,
+) -> EvidenceInput {
     EvidenceInput {
         role,
         measure_key: measure_key.to_owned(),
+        alias_collapse,
         presentation: commit_presentation(),
     }
 }
@@ -91,6 +101,7 @@ pub(super) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> Evidenc
 
 pub(super) fn row() -> EvidenceQueryRow {
     EvidenceQueryRow {
+            entity_id: "person@example.com".to_owned(),
             role: "value".to_owned(),
             metric_date: "2026-07-01".to_owned(),
             observed_at: "2026-07-01 10:00:00".to_owned(),

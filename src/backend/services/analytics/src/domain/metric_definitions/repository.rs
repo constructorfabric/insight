@@ -9,9 +9,10 @@ use crate::domain::metric_definitions::error_code::{MetricSchemaErrorCode, Schem
 use crate::domain::metric_definitions::evidence_presentation::StoredPresentation;
 
 use crate::domain::metric_definitions::definition::{
-    ComputationSpec, CustomObservationSql, MetricBase, MetricComputation, MetricDefinition,
-    MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationRelation,
-    ObservationSource, RatioDenominatorAggregation, SourceKind, ValueTransform,
+    AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricComputation,
+    MetricDefinition, MetricDirection, MetricFormat, MetricInput, MetricInputRole,
+    ObservationRelation, ObservationSource, RatioDenominatorAggregation, SourceKind,
+    ValueTransform,
 };
 
 #[derive(Debug, FromQueryResult)]
@@ -44,6 +45,7 @@ struct InputRow {
     metric_definition_id: Uuid,
     input_role: String,
     measure_key: String,
+    measure_alias_collapse: String,
     measure_enabled: bool,
     measure_schema_status: String,
     source_key: String,
@@ -264,6 +266,7 @@ async fn fetch_input_rows(
             i.metric_definition_id AS metric_definition_id, \
             i.input_role AS input_role, \
             m.measure_key AS measure_key, \
+            m.alias_collapse AS measure_alias_collapse, \
             m.is_enabled AS measure_enabled, \
             m.schema_status AS measure_schema_status, \
             s.source_key AS source_key, \
@@ -335,6 +338,16 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
             continue;
         }
 
+        let Some(alias_collapse) = AliasCollapse::from_db(&row.measure_alias_collapse) else {
+            tracing::error!(
+                measure_key = %row.measure_key,
+                alias_collapse = %row.measure_alias_collapse,
+                "corrupt metric definition input"
+            );
+            *entry = ClassifiedInputs::Corrupt;
+            continue;
+        };
+
         if !row.measure_enabled
             || !row.source_enabled
             || schema_status_blocks(&row.measure_schema_status)
@@ -350,6 +363,7 @@ fn classify_inputs(rows: Vec<InputRow>) -> HashMap<Uuid, ClassifiedInputs> {
                 observation,
                 source_key: row.source_key,
                 measure_key: row.measure_key,
+                alias_collapse,
             });
         }
     }
@@ -915,6 +929,7 @@ mod tests {
             metric_definition_id: definition_id,
             input_role: role.to_owned(),
             measure_key: "accepted_lines".to_owned(),
+            measure_alias_collapse: "sum".to_owned(),
             measure_enabled: enabled,
             measure_schema_status: status.to_owned(),
             source_key: "ai_usage".to_owned(),
@@ -1169,6 +1184,7 @@ mod tests {
             ),
             source_key: "ai_usage".to_owned(),
             measure_key: "accepted_lines".to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         };
         assert!(one_input("ai.x", &[], MetricInputRole::Value).is_err());
         assert!(one_input("ai.x", std::slice::from_ref(&input), MetricInputRole::Value).is_ok());
@@ -1185,6 +1201,7 @@ mod tests {
             ),
             source_key: "ci".to_owned(),
             measure_key: "run_duration_min".to_owned(),
+            alias_collapse: AliasCollapse::Sum,
         };
 
         let mut row = definition_row("ci.run_duration_min_p90", None, true, "ok");

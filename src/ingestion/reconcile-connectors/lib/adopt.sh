@@ -273,12 +273,16 @@ for x in json.load(sys.stdin): print(x)')
       -o jsonpath='{.metadata.annotations.insight\.cyberfabric\.com/source-id}' 2>/dev/null || true)"
     [[ -n "${source_id_label}" ]] || source_id_label="main"
     # ADOPT_DRY_RUN guarded above (would_call branch).
-    if argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
-                                "${source_id_label}" "${dbt_select}" \
-                                "${enrich_image}" >/dev/null 2>&1; then
-      log_line INFO "${name}: created Argo CronWorkflow ${name}-${tenant}-sync"
+    local apply_rc=0
+    argo_apply_cronworkflow "${name}" "${conn_name}" "${schedule}" "${tenant}" \
+                            "${source_id_label}" "${dbt_select}" \
+                            "${enrich_image}" >/dev/null 2>&1 || apply_rc=$?
+    if [[ "${apply_rc}" -eq 0 ]]; then
+      log_line INFO "${name}: created Argo CronWorkflow $(argo_cron_workflow_name "${name}" "${tenant}")"
+    elif [[ "${apply_rc}" -eq 2 ]]; then
+      log_line ERROR "${name}: created Argo CronWorkflow but failed to remove legacy CronWorkflow $(argo_cron_workflow_name_full_tenant "${name}" "${tenant}")"
+      return 1
     else
-      # ADOPT_DRY_RUN guarded above (would_call branch).
       log_line ERROR "${name}: failed to create/update Argo CronWorkflow"
       return 1
     fi

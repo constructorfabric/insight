@@ -14,6 +14,10 @@ use toolkit_canonical_errors::resource_error;
 #[resource_error("gts.cf.insight.analytics_api.metric.v1~")]
 pub struct MetricError;
 
+/// Resource namespace for `/v1/reports*`.
+#[resource_error("gts.cf.insight.analytics_api.report.v1~")]
+pub struct ReportError;
+
 /// Resource namespace for `/v1/queries*` (saved-query CRUD + run, #1965).
 #[resource_error("gts.cf.insight.analytics_api.saved_query.v1~")]
 pub struct SavedQueryError;

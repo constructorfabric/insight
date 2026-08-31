@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from source_claude_team_invoices import stripe_chain as chain_module
 from source_claude_team_invoices.stripe_chain import (
     CATEGORY_OVERUSAGE,
     CATEGORY_SUBSCRIPTIONS,
@@ -141,6 +142,20 @@ def test_a_line_naming_no_tier_carries_absence_not_an_empty_string(pricing: Mapp
     assert price_details(dict(SUBSCRIPTION_LINE, pricing=pricing)) == PriceRef(None, None), (
         f"should be absent: {pricing!r}"
     )
+
+
+def test_the_projection_digest_covers_every_field_a_line_row_carries() -> None:
+    """`_EMPTY_LINE` is what the digest is taken from, and what an invoice's own row
+    fills in for the fields it has no line for. A column added to `shape_line` and
+    not to it would leave the digest unmoved — so the re-chain that column needs
+    would not happen — and would leave that column off the invoice's own row.
+
+    `invoice_key` is the one field outside the set on purpose: `line_row` pops it
+    before the row is emitted, so it reaches neither bronze nor the digest.
+    """
+    shaped = set(shape_line(SUBSCRIPTION_LINE, "in_1ABC")) - {"invoice_key"}
+
+    assert shaped == set(chain_module._EMPTY_LINE), "one of the two declarations gained a field the other lacks"
 
 
 def test_category_comes_from_the_parent_not_the_description() -> None:

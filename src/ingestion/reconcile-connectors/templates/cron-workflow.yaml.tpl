@@ -8,6 +8,8 @@
 #                              schedule; precedence resolved by caller
 #                              (Secret annotation > descriptor.schedule > default)
 #   ${TENANT}               — tenant slug
+#   ${CRON_NAME}            — object name, from lib/argo.sh:argo_cron_workflow_name
+#                              (Argo caps a CronWorkflow name at 52 characters)
 #   ${INSIGHT_SOURCE_ID}    — secret annotation insight.cyberfabric.com/source-id
 #   ${DATA_SOURCE}          — `jira` for the jira-enrich path, else the
 #                              connector slug (the pipeline branches on it)
@@ -33,7 +35,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
-  name: ${CONNECTOR}-${TENANT}-sync
+  name: ${CRON_NAME}
   namespace: ${INSIGHT_NAMESPACE}
   labels:
     app.kubernetes.io/name: insight-reconcile

@@ -36,7 +36,7 @@ export interface MetricTimeseriesTableProps {
   onVerticalOverflow?: (overflows: boolean) => void;
   onEvidence?: (
     metricKey: string,
-    columnKey: string,
+    columnKey: string | null,
     bucketStart: string | null
   ) => void;
 }

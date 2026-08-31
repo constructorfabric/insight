@@ -22,10 +22,11 @@ use super::error::ProfileError;
 use super::gate::{require_caller, require_service};
 use crate::domain::login_bootstrap;
 use crate::domain::profile::{
-    ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person, assemble_profile,
-    latest_values,
+    BatchProfilesRequest, ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person,
+    assemble_profile, latest_values,
 };
-use crate::infra::db::{persons_repo, resolution_repo, subchart_repo};
+use crate::domain::profile_batch::{self, BatchProfilesError};
+use crate::infra::db::{persons_repo, resolution_repo, roles_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
@@ -101,6 +102,34 @@ pub async fn resolve_profile(
             .create())
         }
     }
+}
+
+pub async fn batch_profiles(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    CanonicalJson(req): CanonicalJson<BatchProfilesRequest>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    let tenant = ctx.subject_tenant_id();
+    let caller = require_caller(&ctx)?;
+
+    let response = profile_batch::resolve_batch_profiles(
+        &state.db,
+        tenant,
+        caller,
+        req,
+        &state.config.org_chart_source_type,
+        state.config.visibility_policy,
+    )
+    .await
+    .map_err(batch_profile_read_error)?;
+
+    Ok(Json(response))
+}
+
+#[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
+fn batch_profile_read_error(error: BatchProfilesError) -> CanonicalError {
+    tracing::error!(%error, "batch profile read failed");
+    CanonicalError::internal("profile assembly failed").create()
 }
 
 /// Narrow `candidate_ids` down to the ones `caller` can see (current state —
@@ -376,6 +405,60 @@ fn person_response(external_id: &str, person_id: Uuid) -> InternalPersonResponse
         insight_source_type: "person",
         insight_source_id: person_id,
     }
+}
+
+/// Query params for `GET /internal/persons/active-roles`.
+#[derive(Debug, serde::Deserialize)]
+pub struct InternalActiveRolesQuery {
+    person_id: Uuid,
+}
+
+/// Wire shape of the internal active-roles response: `{ person_id, roles }`.
+#[derive(Debug, Serialize)]
+struct InternalActiveRolesResponse {
+    person_id: Uuid,
+    roles: Vec<String>,
+}
+
+/// `GET /internal/persons/active-roles?person_id=...` — SERVICE-ONLY read of
+/// the ACTIVE role names a person holds in the caller's tenant; the
+/// authenticator mints them into the JWT at login and `/auth/refresh`. An
+/// empty list is a real answer, never an error. Tenant-scoped and fail-closed
+/// like `by-roster-email`; raw route, out of the generated OpenAPI.
+pub async fn internal_person_active_roles(
+    Extension(state): Extension<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Query(query): Query<InternalActiveRolesQuery>,
+) -> Result<impl IntoResponse, CanonicalError> {
+    require_service(&ctx)?;
+
+    if query.person_id.is_nil() {
+        return Err(ProfileError::invalid_argument()
+            .with_field_violation("person_id", "person_id must not be nil", "REQUIRED")
+            .create());
+    }
+    let tenant = ctx.subject_tenant_id();
+    if tenant.is_nil() {
+        return Err(ProfileError::failed_precondition()
+            .with_precondition_violation(
+                "tenant_id",
+                "reading role grants needs the caller's tenant",
+                "tenant_unresolved",
+            )
+            .create());
+    }
+
+    let roles = roles_repo::active_roles_of_person(&state.db, tenant, query.person_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "internal active-roles lookup failed");
+            CanonicalError::internal("lookup failed").create()
+        })?;
+
+    Ok(Json(InternalActiveRolesResponse {
+        person_id: query.person_id,
+        roles: roles.into_iter().map(|role| role.name).collect(),
+    }))
 }
 
 /// Query params for `GET /internal/persons/by-email-override`.
@@ -881,6 +964,22 @@ mod tests {
         assert_eq!(
             json["insight_source_id"],
             "00000000-0000-0000-0000-000000000001"
+        );
+        Ok(())
+    }
+
+    /// The authenticator mints these values into the JWT roles claim verbatim.
+    #[test]
+    fn internal_active_roles_wire_shape() -> anyhow::Result<()> {
+        let body = InternalActiveRolesResponse {
+            person_id: Uuid::from_u128(1),
+            roles: vec!["admin".to_owned(), "previews-admin".to_owned()],
+        };
+        let json = serde_json::to_value(&body)?;
+        assert_eq!(json["person_id"], "00000000-0000-0000-0000-000000000001");
+        assert_eq!(
+            json["roles"],
+            serde_json::json!(["admin", "previews-admin"])
         );
         Ok(())
     }

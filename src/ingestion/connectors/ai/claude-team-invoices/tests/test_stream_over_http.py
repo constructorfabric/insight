@@ -18,7 +18,9 @@ from typing import Any
 import pytest
 import requests_mock as rm_module
 from source_claude_team_invoices import streams as streams_module
+from source_claude_team_invoices import stripe_chain as chain_module
 from source_claude_team_invoices.streams import BOOTSTRAP_HOST, STRIPE_API, STRIPE_VERSION, InvoiceLines
+from source_claude_team_invoices.stripe_chain import line_projection_id
 
 CONFIG = {
     "proxy_url": "https://proxy.example/",
@@ -219,7 +221,8 @@ def test_a_sync_remembers_what_the_chain_found_so_the_next_one_can_skip_it(
 def test_a_remembered_invoice_costs_no_stripe_request(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """The saving, asserted by request count rather than by how long a run took."""
     stream.state = {
-        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}}
+        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}},
+        "line_projection": line_projection_id(),
     }
     listing = http.get(INVOICES_URL, json={"invoices": [wrapper_invoice()], "next_page": None})
 
@@ -232,9 +235,56 @@ def test_a_remembered_invoice_costs_no_stripe_request(stream: InvoiceLines, http
     assert records[0]["invoice_id"] == INVOICE_ID
 
 
+def test_a_state_from_a_narrower_line_row_chains_again(
+    stream: InvoiceLines, http: rm_module.Mocker, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The state a release before the new columns wrote carries no marker at all.
+
+    Its index says these invoices need no chain, and only a chain emits a line
+    row — so honouring it would leave every column added since empty for good.
+    """
+    stream.state = {
+        "enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID, "period_start_ts": 1, "period_end_ts": 2}}
+    }
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+
+    with caplog.at_level(logging.INFO):
+        records = list(stream.read_records(sync_mode="incremental"))
+
+    assert any(r.netloc == "invoicedata.stripe.com" for r in http.request_history), "the chain ran again"
+    assert len(records) == 2, "its own row and its line row"
+    assert "line projection changed" in caplog.text, "an operator can see why a full pass happened"
+
+
+def test_the_extra_pass_happens_once_and_not_on_every_later_sync(stream: InvoiceLines, http: rm_module.Mocker) -> None:
+    """The state a re-chain writes has to carry the marker, or the pass repeats forever."""
+    stream.state = {"enriched": {f"{ACCT},_entEXAMPLE": {"invoice_id": INVOICE_ID}}}
+    register_chain(http, [{"data": [subscription_line()], "has_more": False}])
+    list(stream.read_records(sync_mode="incremental"))
+    carried = stream.state
+
+    assert carried["line_projection"] == line_projection_id()
+
+    next_run = InvoiceLines(CONFIG)
+    next_run.state = carried
+    records = list(next_run.read_records(sync_mode="incremental"))
+
+    stripe_calls = [r for r in http.request_history if r.netloc == "invoicedata.stripe.com"]
+    assert len(stripe_calls) == 1, "the chain ran on the upgrade pass and not again"
+    assert [r["chain_status"] for r in records] == ["ok"], "the second run emits its own row alone"
+
+
+def test_the_marker_follows_the_line_fields_rather_than_a_hand_written_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A forgotten bump is the failure this replaces, so nothing is bumped by hand."""
+    before = line_projection_id()
+    monkeypatch.setitem(chain_module._EMPTY_LINE, "a_new_line_column", None)
+
+    assert line_projection_id() != before
+
+
 def test_an_empty_state_chains_everything(stream: InvoiceLines, http: rm_module.Mocker) -> None:
     """The first sync after a deploy carries nothing, so it behaves as before."""
-    assert stream.state == {"enriched": {}}
+    assert stream.state == {"enriched": {}, "line_projection": line_projection_id()}
     register_chain(http, [{"data": [subscription_line()], "has_more": False}])
 
     records = list(stream.read_records(sync_mode="incremental"))
@@ -254,7 +304,7 @@ def test_a_failed_chain_is_not_remembered_and_is_tried_again(
         records = list(stream.read_records(sync_mode="incremental"))
 
     assert [r["chain_status"] for r in records] == ["failed"]
-    assert stream.state == {"enriched": {}}
+    assert stream.state == {"enriched": {}, "line_projection": line_projection_id()}
 
 
 def test_state_carries_no_credential(stream: InvoiceLines, http: rm_module.Mocker) -> None:

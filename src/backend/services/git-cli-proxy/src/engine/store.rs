@@ -576,6 +576,20 @@ impl RepoStore {
         if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
             return Ok(meta.generation);
         }
+        // INVARIANT: meta.json is the publish marker — an entry without it was
+        // never published and must read as absent, or a fetch runs forever
+        // against whatever a crash left in repo.git and every request 500s.
+        if git_dir.is_dir() && RepoMeta::load(&entry_dir).is_none() {
+            match std::fs::remove_dir_all(&entry_dir) {
+                Ok(()) => {
+                    self.drift.lock().await.remove(&key.dir_name());
+                    tracing::warn!(dir = %key.dir_name(), "removed an entry without readable metadata; re-cloning");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, dir = %key.dir_name(), "could not remove a metadata-less entry; it stays unserveable");
+                }
+            }
+        }
         if git_dir.is_dir() {
             self.fetch(key, &entry_dir, &git_dir, creds).await
         } else {
@@ -1270,7 +1284,10 @@ impl RepoStore {
             self.tmp_counter.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&evicted)?;
-        let filter_to = format!("--filter-to={}", evicted.display());
+        // WORKAROUND: git uses --filter-to as a pack base name, not a
+        // directory — packs land as `<value>-<sha>.pack` siblings of it.
+        // Pointing the base inside the directory keeps them collectable.
+        let filter_to = format!("--filter-to={}", evicted.join("pack").display());
 
         remove_promisor_markers(&git_dir);
         let repacked = self
@@ -2405,6 +2422,39 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_metadata_less_entry_is_recloned_not_fetched() {
+        // meta.json is written last, so an entry without it was never
+        // published. Routing it to fetch runs git against whatever a crash
+        // left in repo.git and answers 500 on every request until a restart
+        // sweeps the entry; refresh must apply the startup sweep's rule.
+        let f = fixture("meta-less-heal");
+        let k = key(&f);
+        drop(open_until_ready(&f, &k, refresh()).await);
+
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        if let Err(e) = std::fs::remove_file(entry_dir.join("meta.json")) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::remove_dir_all(&git_dir) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::create_dir_all(git_dir.join("objects")) {
+            panic!("stage: {e}");
+        }
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        assert!(
+            guard.git_dir().join("HEAD").is_file(),
+            "the entry must come back as a working clone"
+        );
+        assert!(
+            RepoMeta::load(&entry_dir).is_some(),
+            "the re-clone must publish fresh metadata"
+        );
+    }
+
+    #[tokio::test]
     async fn the_index_is_counted_by_the_entry_accounting() {
         let f = fixture("index-accounting");
         let k = key(&f);
@@ -2467,6 +2517,30 @@ pub(crate) mod tests {
             after.size_bytes,
             dir_size(&entry_dir.join("repo.git")),
             "accounting must match the disk after a purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_purge_leaves_nothing_behind_in_the_staging_dir() {
+        // The evicted pack must land inside the per-purge directory the
+        // repack deletes. Left beside it, the packs accumulate in tmp/ until
+        // the next restart — invisible to the reclaim planner, which only
+        // walks repos/, so the budget never sees the loss.
+        let (f, k, _) = entry_with_fetched_blobs("purge-staging").await;
+        f.store.purge_if_drifted(&k).await;
+
+        let tmp = f.root.join("cache").join("tmp");
+        let leftovers: Vec<String> = std::fs::read_dir(&tmp)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            leftovers.is_empty(),
+            "a purge must collect everything it staged: {leftovers:?}"
         );
     }
 

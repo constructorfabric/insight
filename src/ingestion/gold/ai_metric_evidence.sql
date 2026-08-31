@@ -1,33 +1,21 @@
 {{ metric_evidence_table() }}
 
--- Resolution happens HERE, once per gold build: evidence carries BOTH keys —
--- `entity_id` is the canonical person id (or '' when identity does not know
--- the email: those rows stay for coverage but reach no serving relation), and
--- `source_entity_id` keeps the source-native email for provenance. Everything
--- downstream (observations, cohorts, coverage, drilldown) reads THIS snapshot,
--- so one identity mapping answers for the whole build.
+-- Keyed by the source identity through `normalized_email()`, not by person:
+-- the analytics runtime resolves through `identity.person_map` while it serves.
+-- An unresolvable row stays and starts counting the moment it resolves.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
-    -- Null-proof under EITHER join_use_nulls setting (models differ): the
-    -- condition is non-Nullable via coalesce, and person_id is read only on
-    -- the matched branch, so entity_id is a plain String fit for the sort key.
-    if(
-        coalesce(identity_map.email, '') != '',
-        toString(assumeNotNull(identity_map.person_id)),
-        ''
-    ) AS entity_id,
-    src.entity_id AS source_entity_id,
+    {{ normalized_email('src.entity_id') }} AS entity_id,
+    -- No account-keyed facts here; '' leaves the account join unmatched.
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     src.metric_date,
     src.observed_at,
     src.measure_key,
-    -- Account-qualified: several source-day record_ids (date:measure:dims
-    -- hash) are identical across one person's accounts once entity_id is
-    -- canonical, and both the evidence uniqueness grain and the drilldown
-    -- cursor need one row per record key. Hashed, not the raw email — the id
-    -- reaches the client and stays opaque.
-    concat(src.record_id, ':', hex(sipHash64(src.entity_id))) AS record_id,
+    src.record_id,
     src.record_kind,
     src.granularity,
     src.record_label,
@@ -42,7 +30,7 @@ WITH
 ai_dev_usage_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
+        {{ normalized_email('email') }} AS entity_id,
         day AS metric_date,
         CAST(
             [
@@ -68,7 +56,7 @@ ai_dev_usage_source AS (
 ai_assistant_usage_source AS (
     SELECT
         insight_tenant_id AS tenant_id,
-        lower(email) AS entity_id,
+        {{ normalized_email('email') }} AS entity_id,
         day AS metric_date,
         surface,
         CAST(
@@ -178,4 +166,3 @@ WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
-{{ resolved_person_id_join('src') }}

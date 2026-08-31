@@ -287,18 +287,20 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
         equal: {value: 50}
+      # erin's second commit reports 50 added lines and no file change, so its
+      # size counts here but not in the category-scoped code_lines above.
       - metric: git.lines_added
         view: period
         find: {entity_id: erin@example.com}
-        equal: {value: 50}
+        equal: {value: 100}
       - metric: git.lines_added
         view: peer
         find: {entity_id: erin@example.com}
-        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
+        equal: {target_value: 100, p25: 20, median: 30, p75: 40, min: 10, max: 100, n: 5}
       - metric: git.lines_added
         view: timeseries
         find: {entity_id: erin@example.com}
-        contains: {points: {bucket_start: "2026-10-01", value: 50}}
+        contains: {points: {bucket_start: "2026-10-01", value: 100}}
       - metric: git.lines_added
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: category, value: code}}

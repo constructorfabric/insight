@@ -1,23 +1,21 @@
 {{ metric_evidence_table() }}
 
--- Resolution happens HERE, once per gold build: evidence carries BOTH keys —
--- `entity_id` is the canonical person id (or '' when identity does not know
--- the email: those rows stay for coverage but reach no serving relation), and
--- `source_entity_id` keeps the source-native email for provenance.
+-- Keyed by the source identity through `normalized_email()`, not by person:
+-- the analytics runtime resolves through `identity.person_map` while it serves.
+-- An unresolvable row stays and starts counting the moment it resolves.
 SELECT
     src.tenant_id,
     src.source_key,
     src.entity_type,
-    if(
-        coalesce(identity_map.email, '') != '',
-        toString(assumeNotNull(identity_map.person_id)),
-        ''
-    ) AS entity_id,
-    src.entity_id AS source_entity_id,
+    {{ normalized_email('src.entity_id') }} AS entity_id,
+    -- No account-keyed facts here; '' leaves the account join unmatched.
+    '' AS account_source_type,
+    '' AS account_source_id,
+    '' AS account_id,
     src.metric_date,
     src.observed_at,
     src.measure_key,
-    concat(src.record_id, ':', hex(sipHash64(src.entity_id))) AS record_id,
+    src.record_id,
     src.record_kind,
     src.granularity,
     src.record_label,
@@ -340,4 +338,3 @@ WHERE tenant_id IS NOT NULL
   AND entity_id IS NOT NULL
   AND metric_date IS NOT NULL
 ) AS src
-{{ resolved_person_id_join('src') }}

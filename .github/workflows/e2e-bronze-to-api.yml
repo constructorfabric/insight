@@ -7,13 +7,15 @@ name: E2E — Bronze to API
 # defined at src/ingestion/tests/e2e/compose/Dockerfile.runner. The same
 # image is used for local development via src/ingestion/tests/e2e/e2e.sh.
 #
-# This is now the DATA-PATH rig, and only that. The `api` and `identity`
-# lanes retired with the HTTP contract suites they ran: those contracts are
-# asserted against a deployed stand in `e2e-stand.yml` (tests/stand), which
-# crosses a real gateway with a real Keycloak session and can therefore prove
-# the 401/403 behaviour an in-process rig structurally cannot. What is left
-# here is what only this rig can do — bronze → dbt → ClickHouse → analytics
-# response, over fixtures it seeds itself.
+# This is now the DATA-PATH rig, and only that. The HTTP CONTRACT suites the
+# `api` and `identity` lanes ran retired: those contracts are asserted against a
+# deployed stand in `e2e-stand.yml` (tests/stand), which crosses a real gateway
+# with a real Keycloak session and can therefore prove the 401/403 behaviour an
+# in-process rig structurally cannot. What is left here is what only this rig
+# can do — bronze → dbt → ClickHouse → analytics response, over fixtures it
+# seeds itself — in two lanes: the metric fixtures, and identity's own data
+# path (a connector's output reaching the seed, and a correction surviving the
+# seed run after it).
 #
 # Topology: a cheap `changes` job decides whether the diff can reach the data
 # path at all and everything expensive hangs off it; a shared upstream `build`
@@ -436,6 +438,66 @@ jobs:
         if: always()
         run: ./e2e.sh down || true
 
+  # ─── identity data path ───────────────────────────────────────────────────
+  # The half of identity this rig can state and the deployed stand cannot: a
+  # connector's own bronze → dbt → ClickHouse output reaching the persons-seed,
+  # and an operator's correction surviving the seed run that follows it. The
+  # HTTP contracts these files used to assert alongside moved to tests/stand.
+  #
+  # Its own job rather than a fifth leg of the metrics matrix: that matrix's
+  # legs upload `coverage-inputs-metrics-*`, which metric-coverage-gate
+  # downloads as a family and merges last-write-wins. A leg whose session is
+  # not a metrics session has nothing useful to put there, and would be merged
+  # in regardless.
+  e2e-identity:
+    name: identity
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: src/ingestion/tests/e2e
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download runner image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: e2e-runner-image
+          path: src/ingestion/tests/e2e
+
+      - name: Ensure zstd is available
+        run: command -v zstd >/dev/null || (sudo apt-get update && sudo apt-get install -y zstd)
+
+      - name: Load runner image
+        run: zstd -d < runner-image.tar.zst | docker load
+
+      # INVARIANT: pass the DIRECTORY, never an enumerated node list. What this
+      # lane exists to prevent is a test file that sits in the tree without ever
+      # running, and only a directory argument picks up a new one by itself.
+      # (The metrics lane enumerates because its nodes are yaml-derived and a
+      # `-k` substring would leak across shards; neither applies here.)
+      - name: E2E suite — identity
+        run: ./e2e.sh test identity/ --tb=short -q
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: |
+          echo "::group::clickhouse logs"
+          ./e2e.sh logs clickhouse || true
+          echo "::endgroup::"
+          echo "::group::mariadb logs"
+          ./e2e.sh logs mariadb || true
+          echo "::endgroup::"
+
+      - name: Tear down
+        if: always()
+        run: ./e2e.sh down || true
+
   # ─── Gate jobs — pure-Python analysis of the collected artifacts ──────────
   # Each runs after its own lane's suite job (needs), downloads that lane's
   # artifact, and reads plain files. No Docker, no analytics boot.
@@ -494,6 +556,7 @@ jobs:
       - changes
       - build
       - e2e-metrics
+      - e2e-identity
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -512,9 +575,10 @@ jobs:
           BUILD: ${{ needs.build.result }}
           # Matrix aggregate: 'success' only when EVERY shard passed.
           METRICS: ${{ needs.e2e-metrics.result }}
+          IDENTITY: ${{ needs.e2e-identity.result }}
         run: |
           set -euo pipefail
-          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS"
+          echo "changes=$CHANGES relevant=$RELEVANT build=$BUILD metrics=$METRICS identity=$IDENTITY"
 
           # Fail closed. A `changes` job that did not succeed leaves `relevant`
           # empty, which would otherwise read as "irrelevant" and green a
@@ -527,11 +591,11 @@ jobs:
           if [ "$RELEVANT" != "true" ]; then
             echo "nothing on the bronze → dbt → ClickHouse → analytics path changed — nothing to prove."
           else
-            for lane in "build=$BUILD" "metrics=$METRICS"; do
+            for lane in "build=$BUILD" "metrics=$METRICS" "identity=$IDENTITY"; do
               if [ "${lane#*=}" != "success" ]; then
                 echo "::error::${lane%%=*} did not pass (${lane#*=}) — the E2E suite did not fully run for this change."
                 exit 1
               fi
             done
-            echo "E2E suite passed: build + the metrics lane succeeded."
+            echo "E2E suite passed: build + both data-path lanes succeeded."
           fi

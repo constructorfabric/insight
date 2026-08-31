@@ -11,17 +11,25 @@ use chrono::NaiveDate;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-use super::batch::{RankedDimension, RankedGroup, ResolvedGroupLimit};
-use super::builder::build_timeseries_view;
-use super::compiler::{CompiledQuery, TimeseriesQueryRow, compile_timeseries_query};
+use super::batch::{
+    BatchItem, PeriodWideRow, RankedDimension, RankedGroup, ResolvedGroupLimit, demux_period_rows,
+};
+use super::builder::{build_breakdown_view, build_period_view, build_timeseries_view};
+use super::compiler::{
+    BreakdownQueryRow, CompiledQuery, TimeseriesQueryRow, compile_breakdown_query,
+    compile_period_batch_query, compile_timeseries_query,
+};
 use super::dto::MetricResultViewDto;
 use super::dto::MetricViewErrorCode;
 use super::failure::ViewFailure;
-use super::validation::{ValidatedEntitySelection, ValidatedMetricResultsRequest};
+use super::validation::{DateWindow, ValidatedEntitySelection, ValidatedMetricResultsRequest};
 use super::view::Bucket;
+use crate::domain::external_links::ExternalSourceRegistry;
+use crate::domain::metric_definitions::definition::ValueTransform;
 use crate::domain::metric_definitions::definition::{
-    ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition, MetricDirection,
-    MetricFormat, MetricInput, MetricInputRole, ObservationSource,
+    AliasCollapse, ComputationSpec, CustomObservationSql, MetricBase, MetricDefinition,
+    MetricDirection, MetricFormat, MetricInput, MetricInputRole, ObservationSource,
+    RatioDenominatorAggregation,
 };
 
 const URL_VAR: &str = "INTEGRATION_TESTS_CLICKHOUSE_URL";
@@ -68,6 +76,25 @@ fn nullable_date_sql() -> String {
     )
 }
 
+/// Two dimension groups that do NOT overlap in time: `org/a` only in
+/// 2026-08-15..16, `org/b` only in 2026-08-13..14. A standalone request over
+/// either window returns exactly one of them — which is what the windowed
+/// shape has to reproduce.
+fn disjoint_groups_sql() -> String {
+    let row = |repo: &str, day: &str, value: &str, measure: &str| {
+        format!(
+            "SELECT                 '{TENANT}' AS tenant_id,                 'custom_repro' AS source_key,                 'person' AS entity_type,                 '{PERSON}' AS entity_id,                 CAST(toDate('{day}') AS Nullable(Date)) AS metric_date,                 '{measure}' AS measure_key,                 now() AS observed_at,                 toFloat64({value}) AS value,                 CAST(NULL AS Nullable(String)) AS subject_key,                 CAST([('repository', '{repo}', NULL)] AS Array(Tuple(key String, value String, label Nullable(String)))) AS dimensions"
+        )
+    };
+    [
+        row("org/a", "2026-08-15", "10", "repro_value"),
+        row("org/a", "2026-08-16", "0", "repro_denominator"),
+        row("org/b", "2026-08-13", "20", "repro_value"),
+        row("org/b", "2026-08-13", "4", "repro_denominator"),
+    ]
+    .join(" UNION ALL ")
+}
+
 fn nullable_date_metric() -> MetricDefinition {
     MetricDefinition {
         transform: None,
@@ -92,6 +119,7 @@ fn nullable_date_metric() -> MetricDefinition {
                 )),
                 source_key: "custom_repro".to_owned(),
                 measure_key: "repro_value".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
             },
         },
     }
@@ -103,6 +131,7 @@ fn request() -> ValidatedMetricResultsRequest {
         entity: ValidatedEntitySelection::Person { ids: vec![PERSON] },
         from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
         to: NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default(),
+        compare_to: None,
         metrics: Vec::new(),
         enforce_tenant_scope: true,
     }
@@ -127,6 +156,244 @@ async fn fetch_rows<T: DeserializeOwned>(
         .collect()
 }
 
+/// The four observations of `nullable_date_sql` split across two windows:
+/// 2026-08-13..14 carry 1 + 2, and 2026-08-15..16 carry 3 + 4. A windowed
+/// request must read both out of ONE scan of the union.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_period_batch_answers_each_window_from_one_scan() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.compare_to = Some(DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    });
+
+    // The second pass adds a transform, so the batch's projection stage has to
+    // re-select every window's column and not just the primary one.
+    for multiplier in [None, Some(10.0)] {
+        let mut def = nullable_date_metric();
+        def.transform = multiplier.map(|multiplier| ValueTransform {
+            multiplier: Some(multiplier),
+            offset: None,
+            clamp_min: None,
+            clamp_max: None,
+        });
+        let scale = multiplier.unwrap_or(1.0);
+
+        let query = compile_period_batch_query(&[&def], &req, &[]);
+        let rows: Vec<PeriodWideRow> = fetch_rows(&ch, &query)
+            .await
+            .map_err(|e| anyhow::anyhow!("multiplier {multiplier:?}: {e}"))?;
+        let items = vec![BatchItem {
+            metric_index: 0,
+            view_index: 0,
+            def: def.clone(),
+        }];
+        let per_item = demux_period_rows(&items, rows, req.compare_to.is_some())?;
+
+        let MetricResultViewDto::Period { values } =
+            build_period_view(&def, &req, per_item.into_iter().next().unwrap_or_default())
+        else {
+            anyhow::bail!("multiplier {multiplier:?}: expected a period view");
+        };
+        let [ref one] = values[..] else {
+            anyhow::bail!(
+                "multiplier {multiplier:?}: expected one entity, got {}",
+                values.len()
+            );
+        };
+        anyhow::ensure!(
+            one.value == Some(7.0 * scale),
+            "multiplier {multiplier:?}: the primary window must sum 3 + 4, got {:?}",
+            one.value
+        );
+        anyhow::ensure!(
+            one.compare_to == Some(3.0 * scale),
+            "multiplier {multiplier:?}: the comparison window must sum 1 + 2, got {:?}",
+            one.compare_to
+        );
+    }
+    Ok(())
+}
+
+/// A ratio over the disjoint-group fixture: `org/a` lives only in the primary
+/// window and its denominator is zero there, `org/b` only in the extra window.
+/// This is the case a value column cannot express on its own.
+fn disjoint_ratio_metric() -> MetricDefinition {
+    let sql = disjoint_groups_sql();
+    MetricDefinition {
+        transform: None,
+        base: MetricBase {
+            key: "custom.disjoint_ratio".to_owned(),
+            label: "Disjoint ratio".to_owned(),
+            short_label: None,
+            description: None,
+            explanation: None,
+            entity_type: "person".to_owned(),
+            format: MetricFormat::Percent,
+            unit: None,
+            direction: MetricDirection::HigherIsBetter,
+            peer_cohort_key: None,
+            allowed_dimensions: vec!["repository".to_owned()],
+        },
+        spec: ComputationSpec::Ratio {
+            numerator: MetricInput {
+                role: MetricInputRole::Numerator,
+                observation: ObservationSource::Custom(CustomObservationSql::new(sql.clone())),
+                source_key: "custom_repro".to_owned(),
+                measure_key: "repro_value".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
+            },
+            denominator: MetricInput {
+                role: MetricInputRole::Denominator,
+                observation: ObservationSource::Custom(CustomObservationSql::new(sql)),
+                source_key: "custom_repro".to_owned(),
+                measure_key: "repro_denominator".to_owned(),
+                alias_collapse: AliasCollapse::Sum,
+            },
+            scale: 100.0,
+            denominator_aggregation: RatioDenominatorAggregation::Sum,
+        },
+    }
+}
+
+/// The contract a projected window rests on: per group and per window, the
+/// response has to say whether a standalone request over that window would
+/// have returned the group at all — independently of its value.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_breakdown_reports_presence_apart_from_value() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let def = disjoint_ratio_metric();
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.compare_to = Some(DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    });
+    let dimensions = vec!["repository".to_owned()];
+
+    let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
+    let rows: Vec<BreakdownQueryRow> = fetch_rows(&ch, &query).await?;
+    let view = build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())?;
+    let MetricResultViewDto::Breakdown { values, .. } = view else {
+        anyhow::bail!("expected a breakdown view");
+    };
+
+    let group = |repo: &str| {
+        values.iter().find(|value| {
+            value
+                .dimensions
+                .iter()
+                .any(|dimension| dimension.value == repo)
+        })
+    };
+    let Some(a) = group("org/a") else {
+        anyhow::bail!("org/a must be in the combined row set");
+    };
+    let Some(b) = group("org/b") else {
+        anyhow::bail!("org/b must be in the combined row set");
+    };
+
+    // org/a IS in the primary window, and its ratio reads NULL there because
+    // the denominator sums to zero. A reader dropping NULL values would lose a
+    // row that a standalone request returns.
+    anyhow::ensure!(
+        a.present == Some(true) && a.value.is_none(),
+        "org/a must be present in the primary window with a NULL value, got {:?}",
+        (a.present, a.value)
+    );
+    let Some(ref a_window) = a.compare_to else {
+        anyhow::bail!("expected a comparison window for org/a");
+    };
+    anyhow::ensure!(
+        !a_window.present,
+        "org/a has no rows in the comparison window, got present={}",
+        a_window.present
+    );
+
+    // org/b is the mirror image: absent from the primary window, present in
+    // the extra one with a real value.
+    let Some(ref b_window) = b.compare_to else {
+        anyhow::bail!("expected a comparison window for org/b");
+    };
+    anyhow::ensure!(
+        b.present == Some(false),
+        "org/b has no rows in the primary window, got {:?}",
+        b.present
+    );
+    anyhow::ensure!(
+        b_window.present && b_window.value == Some(500.0),
+        "org/b must read 100 * 20 / 4 in the comparison window, got {:?}",
+        (b_window.present, b_window.value)
+    );
+    Ok(())
+}
+
+/// The breakdown's window columns, through the transform projection stage that
+/// re-selects every one of them by name.
+#[tokio::test]
+#[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
+async fn a_windowed_breakdown_transforms_every_window_column() -> anyhow::Result<()> {
+    let Some(ch) = client_or_skip() else {
+        return Ok(());
+    };
+    let mut def = nullable_date_metric();
+    def.base.allowed_dimensions = vec!["tool".to_owned()];
+    def.transform = Some(ValueTransform {
+        multiplier: Some(10.0),
+        offset: None,
+        clamp_min: None,
+        clamp_max: None,
+    });
+    let mut req = request();
+    req.from = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap_or_default();
+    req.to = NaiveDate::from_ymd_opt(2026, 8, 16).unwrap_or_default();
+    req.compare_to = Some(DateWindow {
+        from: NaiveDate::from_ymd_opt(2026, 8, 13).unwrap_or_default(),
+        to: NaiveDate::from_ymd_opt(2026, 8, 14).unwrap_or_default(),
+    });
+    let dimensions = vec!["tool".to_owned()];
+
+    let query = compile_breakdown_query(&def, &req, &dimensions, &[]);
+    let rows: Vec<BreakdownQueryRow> = fetch_rows(&ch, &query).await?;
+
+    let view = build_breakdown_view(&req, &dimensions, rows, &ExternalSourceRegistry::default())?;
+    let MetricResultViewDto::Breakdown { values, .. } = view else {
+        anyhow::bail!("expected a breakdown view");
+    };
+    let [ref one] = values[..] else {
+        anyhow::bail!("expected one dimension group, got {}", values.len());
+    };
+    anyhow::ensure!(
+        one.value == Some(70.0),
+        "the primary window must be the transformed 3 + 4, got {:?}",
+        one.value
+    );
+    let Some(ref window) = one.compare_to else {
+        anyhow::bail!("expected a comparison window");
+    };
+    anyhow::ensure!(
+        window.value == Some(30.0) && window.present,
+        "the comparison window must be present and transformed, got {:?}",
+        (window.value, window.present)
+    );
+    anyhow::ensure!(
+        one.present == Some(true),
+        "the group is observed in the primary window too, got {:?}",
+        one.present
+    );
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires live ClickHouse; set INTEGRATION_TESTS_CLICKHOUSE_URL to enable"]
 async fn timeseries_over_nullable_metric_date_builds_every_bucket() -> anyhow::Result<()> {
@@ -137,7 +404,7 @@ async fn timeseries_over_nullable_metric_date_builds_every_bucket() -> anyhow::R
     let req = request();
 
     for bucket in [Bucket::Day, Bucket::Week, Bucket::Month] {
-        let query = compile_timeseries_query(&def, &req, bucket, &[], &[], None);
+        let query = compile_timeseries_query(&def, &req, bucket.into(), &[], &[], None);
         let rows: Vec<TimeseriesQueryRow> = fetch_rows(&ch, &query)
             .await
             .map_err(|e| anyhow::anyhow!("bucket {bucket:?}: {e}"))?;
@@ -190,7 +457,7 @@ async fn capped_timeseries_over_nullable_metric_date_builds() -> anyhow::Result<
     let query = compile_timeseries_query(
         &def,
         &req,
-        Bucket::Day,
+        Bucket::Day.into(),
         &dimensions,
         &[],
         Some(&group_limit),

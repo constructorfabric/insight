@@ -30,6 +30,7 @@ mod m20260724_000013_persons_email_any_tenant_idx;
 mod m20260724_000014_account_person_map_datetime;
 mod m20260817_000015_drop_account_person_map;
 mod m20260817_000016_drop_dbup_ledger;
+mod m20260831_000017_previews_admin_role;
 
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::ConnectionTrait;
@@ -56,6 +57,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260724_000014_account_person_map_datetime::Migration),
             Box::new(m20260817_000015_drop_account_person_map::Migration),
             Box::new(m20260817_000016_drop_dbup_ledger::Migration),
+            Box::new(m20260831_000017_previews_admin_role::Migration),
         ]
     }
 }
@@ -131,6 +133,7 @@ mod tests {
             (include_str!("sql/014_account_person_map_datetime.sql"), 2),
             (include_str!("sql/015_drop_account_person_map.sql"), 1),
             (include_str!("sql/016_drop_dbup_ledger.sql"), 1),
+            (include_str!("sql/017_previews_admin_role.sql"), 1),
         ];
         for (i, (script, expected)) in cases.iter().enumerate() {
             let stmts = split_statements(script);
@@ -144,6 +147,35 @@ mod tests {
             for stmt in &stmts {
                 assert!(!stmt.contains("--"), "comment leaked into statement");
             }
+        }
+    }
+
+    /// The seeded role ids are stable API; this pins them against edits.
+    #[test]
+    fn seeded_role_ids_and_names_are_stable() {
+        use crate::infra::db::roles_repo::ADMIN_ROLE_ID;
+
+        let admin_hex = ADMIN_ROLE_ID.simple().to_string();
+        for (script, hex, name) in [
+            (
+                include_str!("sql/007_roles.sql"),
+                admin_hex.as_str(),
+                "admin",
+            ),
+            (
+                include_str!("sql/017_previews_admin_role.sql"),
+                "a4d11000000040008000000000000002",
+                "previews-admin",
+            ),
+        ] {
+            assert!(
+                script.to_lowercase().contains(&format!("unhex('{hex}')")),
+                "{name}: the migration must seed UNHEX('{hex}')"
+            );
+            assert!(
+                script.contains(&format!("'{name}'")),
+                "{name}: the migration must seed that role name"
+            );
         }
     }
 

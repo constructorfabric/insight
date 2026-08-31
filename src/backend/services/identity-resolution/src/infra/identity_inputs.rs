@@ -193,31 +193,27 @@ mod tests {
         Ok(())
     }
 
-    /// Live read against a dev ClickHouse. Set `IDENTITY_TEST_CH_URL`,
-    /// `IDENTITY_TEST_CH_DB`, `IDENTITY_TEST_TENANT_ID` (+ optional
-    /// `IDENTITY_TEST_CH_USER` / `IDENTITY_TEST_CH_PASSWORD`) and a port-forward
-    /// to run; skips cleanly otherwise so CI stays green.
-    #[tokio::test]
-    async fn stream_against_dev_clickhouse() -> anyhow::Result<()> {
-        let (Ok(url), Ok(db), Ok(tenant_raw)) = (
-            std::env::var("IDENTITY_TEST_CH_URL"),
-            std::env::var("IDENTITY_TEST_CH_DB"),
-            std::env::var("IDENTITY_TEST_TENANT_ID"),
-        ) else {
-            eprintln!(
-                "skip: set IDENTITY_TEST_CH_URL + IDENTITY_TEST_CH_DB + IDENTITY_TEST_TENANT_ID to run"
-            );
-            return Ok(());
+    #[test]
+    fn a_null_account_id_fails_the_read_rather_than_minting_a_pseudo_account() -> anyhow::Result<()>
+    {
+        let row = InputRow {
+            source_type: "bamboohr".to_owned(),
+            source_id: Uuid::now_v7().to_string(),
+            account_id: None,
+            val_type: "email".to_owned(),
+            val: "person@inputs.test".to_owned(),
+            synced_at: "2026-01-02 03:04:05.678".to_owned(),
+            op_type: "UPSERT".to_owned(),
         };
-        let user = std::env::var("IDENTITY_TEST_CH_USER").unwrap_or_default();
-        let password = std::env::var("IDENTITY_TEST_CH_PASSWORD").unwrap_or_default();
-        let tenant = Uuid::parse_str(tenant_raw.trim())?;
 
-        let reader = ClickHouseIdentityInputsReader::connect(&url, &db, &user, &password);
-        let rows = reader.stream(tenant).await?;
-        assert!(
-            !rows.is_empty(),
-            "dev tenant should have identity_inputs rows"
+        let refused = map_row(row)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+
+        anyhow::ensure!(
+            refused.contains("NULL source_account_id"),
+            "an accountless row must name itself in the failure, not fold into '': {refused:?}"
         );
         Ok(())
     }

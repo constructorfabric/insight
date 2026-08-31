@@ -1,0 +1,59 @@
+[package]
+name = "previews"
+version = "0.1.0"
+description = "Preview experiments — manages the per-experiment FE Deployment/Service/HTTPRoute trio"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# ToolKit host runtime. Same host pattern as `identity-resolution`: routes are
+# served by the `api-gateway` system gear under `toolkit::bootstrap::run_server`,
+# and the `oidc-authn-plugin` verifies the ES256 gateway JWT into the request
+# SecurityContext.
+toolkit = { workspace = true, features = ["bootstrap"] }
+
+# System gears linked for the REST host + auth pipeline. Discovered at link time
+# via inventory; mirrors the identity-resolution host's authenticated set.
+api_gateway = { workspace = true }
+authn-resolver = { workspace = true }
+oidc-authn-plugin = { workspace = true }
+authz-resolver = { workspace = true }
+tenant-resolver = { workspace = true }
+single-tenant-tr-plugin = { workspace = true }
+static-authz-plugin = { workspace = true }
+grpc_hub = { workspace = true }
+gear_orchestrator = { workspace = true }
+types_registry = { workspace = true }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+
+# Experiment record timestamps (created-at / expires-at annotations).
+chrono = { workspace = true }
+# Creator identity (gateway-JWT subject).
+uuid = { workspace = true }
+# Image-tag shape validation (anchored, ASCII-only patterns).
+regex-lite = { workspace = true }
+
+# Kubernetes: the Deployment/Service/HTTPRoute trio IS the experiment store.
+kube = { workspace = true, features = ["client", "rustls-tls", "aws-lc-rs"] }
+k8s-openapi = { workspace = true, features = ["latest"] }
+
+# HTTP surface: SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
+toolkit-security = { workspace = true }
+toolkit-canonical-errors = { workspace = true }
+# utoipa pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
+utoipa = { version = "5.5", features = ["chrono", "uuid"] }

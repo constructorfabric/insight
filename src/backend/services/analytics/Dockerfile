@@ -21,6 +21,7 @@ WORKDIR /build
 # --- Dependency caching layer ---
 COPY Cargo.toml Cargo.lock ./
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
+COPY libs/insight-http-metrics/Cargo.toml ./libs/insight-http-metrics/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
 COPY libs/insight-migration/Cargo.toml ./libs/insight-migration/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
@@ -29,28 +30,33 @@ COPY services/authenticator/Cargo.toml ./services/authenticator/Cargo.toml
 # resolve the workspace even though this image never builds or ships it.
 COPY services/identity-resolution/Cargo.toml ./services/identity-resolution/Cargo.toml
 COPY services/git-cli-proxy/Cargo.toml ./services/git-cli-proxy/Cargo.toml
+COPY services/previews/Cargo.toml ./services/previews/Cargo.toml
 # routegen is a workspace member (build-time CLI); cargo must load its manifest
 # to resolve the workspace even though this image never builds it.
 COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
+    mkdir -p libs/insight-http-metrics/src && echo "" > libs/insight-http-metrics/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
     mkdir -p libs/insight-migration/src && echo "" > libs/insight-migration/src/lib.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
     mkdir -p services/authenticator/src && echo "fn main() {}" > services/authenticator/src/main.rs && \
     mkdir -p services/identity-resolution/src && echo "fn main() {}" > services/identity-resolution/src/main.rs && \
     mkdir -p services/git-cli-proxy/src && echo "fn main() {}" > services/git-cli-proxy/src/main.rs && \
+    mkdir -p services/previews/src && echo "fn main() {}" > services/previews/src/main.rs && \
     mkdir -p tools/routegen/src && echo "fn main() {}" > tools/routegen/src/main.rs
 
 RUN cargo build --release --bin analytics 2>/dev/null || true
 
 # --- Source layer ---
-RUN rm -rf libs/insight-clickhouse/src libs/insight-migration/src services/analytics/src \
+RUN rm -rf libs/insight-clickhouse/src libs/insight-http-metrics/src libs/insight-migration/src services/analytics/src \
+    target/release/deps/insight_http_metrics* target/release/deps/libinsight_http_metrics* \
     target/release/analytics target/release/deps/analytics* \
     target/release/deps/insight_clickhouse* target/release/deps/libinsight_clickhouse* \
     target/release/deps/insight_migration* target/release/deps/libinsight_migration*
 
 COPY libs/insight-clickhouse/src/ ./libs/insight-clickhouse/src/
+COPY libs/insight-http-metrics/src/ ./libs/insight-http-metrics/src/
 COPY libs/insight-migration/src/ ./libs/insight-migration/src/
 COPY services/analytics/src/ ./services/analytics/src/
 COPY services/analytics/config/ ./services/analytics/config/

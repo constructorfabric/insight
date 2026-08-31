@@ -42,10 +42,12 @@ async fn reconcile_source(
         db.execute_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
             "INSERT INTO metric_source_measures \
-                (id, source_id, measure_key, evidence_granularity, evidence_presentation, is_enabled) \
-             VALUES (?, ?, ?, ?, ?, TRUE) \
+                (id, source_id, measure_key, evidence_granularity, alias_collapse, \
+                 evidence_presentation, is_enabled) \
+             VALUES (?, ?, ?, ?, ?, ?, TRUE) \
              ON DUPLICATE KEY UPDATE \
                 evidence_granularity = VALUES(evidence_granularity), \
+                alias_collapse = VALUES(alias_collapse), \
                 evidence_presentation = VALUES(evidence_presentation), \
                 is_enabled = VALUES(is_enabled)",
             [
@@ -53,6 +55,7 @@ async fn reconcile_source(
                 uuid_value(source_id),
                 Value::from(measure.key.as_str()),
                 Value::from(measure.evidence_granularity.as_db()),
+                Value::from(measure.alias_collapse.as_db()),
                 presentation_value(measure.evidence_presentation.as_ref())?,
             ],
         ))

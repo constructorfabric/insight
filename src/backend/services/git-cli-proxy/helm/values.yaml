@@ -35,6 +35,17 @@ resources:
     cpu: "2"
     memory: 8Gi
 
+# OpenTelemetry export. Off by default; the umbrella overrides these via
+# APP__opentelemetry__* env vars when `global.observability.otlp.endpoint` is set.
+opentelemetry:
+  metrics:
+    enabled: false
+  tracing:
+    enabled: false
+  exporter:
+    kind: otlp_grpc # otlp_grpc | otlp_http
+    endpoint: "" # e.g. http://alloy.insight-infra.svc.cluster.local:4317
+
 # Repository cache volume. The app budget below MUST stay under this size:
 # kubelet enforcement is pod eviction, which is a crash, not a mechanism.
 persistence:
