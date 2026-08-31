@@ -357,6 +357,7 @@ pub(crate) fn compile_report_timeseries_query(
         to,
         metrics: Vec::new(),
         enforce_tenant_scope,
+        compare_to: None,
     };
 
     compile_timeseries_query(def, &request, bucket, &[], &[], None)
@@ -2518,7 +2519,7 @@ mod tests {
                 )
             }),
             ("timeseries", |req| {
-                compile_timeseries_query(&sum_metric(), req, Bucket::Week, &[], &[], None)
+                compile_timeseries_query(&sum_metric(), req, Bucket::Week.into(), &[], &[], None)
             }),
             ("rollup", |req| {
                 compile_rollup_query(
