@@ -27,14 +27,6 @@ impl toolkit::api::api_dto::RequestApiDto for ReportRecipe {}
 impl toolkit::api::api_dto::ResponseApiDto for ReportPreviewResponse {}
 
 #[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReportExportRequest {
-    #[serde(flatten)]
-    pub recipe: ReportRecipe,
-    pub format: ReportExportFormat,
-}
-
-#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReportSubject {
     People { ids: Vec<Uuid> },
@@ -58,13 +50,6 @@ pub enum ReportGranularity {
     Year,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportExportFormat {
-    Csv,
-    Xlsx,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,20 +70,5 @@ mod tests {
             r#"{{"subject":{{"type":"tenant","ids":["{PERSON_ID}"]}},"period":{{"from":"2026-01-01","to":"2026-01-31"}},"granularity":"day","metric_keys":["ci.builds"]}}"#
         );
         assert!(serde_json::from_str::<ReportPreviewRequest>(&tenant_with_ids).is_err());
-    }
-
-    #[test]
-    fn export_accepts_only_declared_formats() {
-        let csv = r#"{"subject":{"type":"tenant"},"period":{"from":"2026-01-01","to":"2026-01-31"},"granularity":"month","metric_keys":["ci.builds"],"format":"csv"}"#.to_owned();
-        assert!(serde_json::from_str::<ReportExportRequest>(&csv).is_ok());
-
-        let invalid = csv.replace("\"csv\"", "\"pdf\"");
-        assert!(serde_json::from_str::<ReportExportRequest>(&invalid).is_err());
-
-        let unknown_field = csv.replace(
-            "\"format\":\"csv\"",
-            "\"format\":\"csv\",\"filename\":\"report.csv\"",
-        );
-        assert!(serde_json::from_str::<ReportExportRequest>(&unknown_field).is_err());
     }
 }

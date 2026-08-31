@@ -7,8 +7,6 @@ use super::period::{PlannedPeriod, ReportBucket, enumerate_periods};
 use super::validation::{ReportSubjectSelection, ValidatedReportRecipe};
 
 pub(crate) const METRIC_QUERY_VALUE_LIMIT: usize = 5000;
-const XLSX_MAX_ROWS: u64 = 1_048_576;
-const XLSX_MAX_COLUMNS: u64 = 16_384;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReportPlannerLimits {
@@ -21,12 +19,6 @@ pub(crate) struct ReportSize {
     pub(crate) total_cells: u64,
     pub(crate) worksheet_rows: u64,
     pub(crate) worksheet_columns: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct XlsxDimensions {
-    pub(crate) rows: u32,
-    pub(crate) columns: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,23 +55,6 @@ pub(crate) enum ReportPlanningError {
     SizeOverflow,
     #[error("report batch limits cannot fit one person")]
     BatchLimitTooSmall,
-    #[error("report exceeds XLSX worksheet dimensions")]
-    XlsxDimensionsExceeded,
-}
-
-impl ReportSize {
-    pub(crate) fn xlsx_dimensions(self) -> Result<XlsxDimensions, ReportPlanningError> {
-        if self.worksheet_rows > XLSX_MAX_ROWS || self.worksheet_columns > XLSX_MAX_COLUMNS {
-            return Err(ReportPlanningError::XlsxDimensionsExceeded);
-        }
-
-        let rows = u32::try_from(self.worksheet_rows)
-            .map_err(|_| ReportPlanningError::XlsxDimensionsExceeded)?;
-        let columns = u16::try_from(self.worksheet_columns)
-            .map_err(|_| ReportPlanningError::XlsxDimensionsExceeded)?;
-
-        Ok(XlsxDimensions { rows, columns })
-    }
 }
 
 pub(crate) fn plan_report(

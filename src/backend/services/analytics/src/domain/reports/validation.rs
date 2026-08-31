@@ -9,9 +9,7 @@ use crate::api::error::MetricError;
 use crate::domain::metric_definitions::{MetricDefinition, load_definitions};
 use crate::domain::metric_results::normalize_metric_key;
 
-use super::dto::{
-    ReportExportRequest, ReportGranularity, ReportPreviewRequest, ReportRecipe, ReportSubject,
-};
+use super::dto::{ReportGranularity, ReportPreviewRequest, ReportRecipe, ReportSubject};
 
 const MAX_REPORT_PEOPLE: usize = 1000;
 
@@ -53,14 +51,6 @@ pub async fn validate_preview(
     request: ReportPreviewRequest,
 ) -> Result<ValidatedReportRecipe, CanonicalError> {
     validate_recipe(db, tenant_id, request).await
-}
-
-pub async fn validate_export(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    request: ReportExportRequest,
-) -> Result<ValidatedReportRecipe, CanonicalError> {
-    validate_recipe(db, tenant_id, request.recipe).await
 }
 
 async fn validate_recipe(
