@@ -92,7 +92,8 @@ pods, shipped helm output). Deploy markers come from the
 helm log to Loki via `scripts/push-deploy-log.sh` (best-effort).
 
 **Access (follow-up: auth).** The baseline Grafana ships with no ingress and
-no SSO — reach it via port-forward:
+no SSO — reach it via port-forward (commands assume the default
+`namespaces.infra: insight-infra`; swap in your inventory's value):
 
 ```shell
 kubectl -n insight-infra port-forward svc/grafana 3000:80
@@ -122,9 +123,10 @@ environments/<env>/<svc>-values.yaml                # per-env overlay — create
 Both are passed to `helm upgrade --install` in that order. Missing
 overlay file = base values used as-is.
 
-### Cross-service hostnames — `${NS_*}` placeholders
+### Cross-service hostnames
 
-Neither file reaches helm verbatim: `scripts/render-system-values.sh`
+Cross-service references are written as `${NS_*}` placeholders, and
+neither file reaches helm verbatim: `scripts/render-system-values.sh`
 first resolves the `${NS_*}` placeholders that cross-service references
 use (`http://loki.${NS_LOKI}.svc.cluster.local:3100`, …), writing the
 rendered copies to `.deploy/system-values/` — inspect them there after a
@@ -142,18 +144,21 @@ defaulting to the inventory's `namespaces.infra`:
 
 Service *names* stay literal on purpose — `fullnameOverride` in each
 producer's values pins them, so the name is the contract and only the
-namespace moves. Substitution is `envsubst` with exactly this allowlist
-(plus `NS_INFRA`): every other `$` construct — Grafana provisioning
-`$VAR` / `$$VAR` escapes, `$__auto` in dashboards, `${…}`-shaped strings
-in Alloy configs — passes through byte-identical, so overlays that carry
-full Alloy configs or restated datasource lists can keep using the
-placeholders too.
+namespace moves. Substitution replaces only the exact braced tokens for
+this variable set (plus `NS_INFRA`): every other `$` construct — Grafana
+provisioning `$VAR` / `$$VAR` escapes, `$__auto` in dashboards,
+`${…}`-shaped strings in Alloy configs — passes through byte-identical,
+so overlays that carry full Alloy configs or restated datasource lists
+can keep using the placeholders too.
 
 ## Secret layout
 
 ```
-environments/<env>/sealed-secrets/insight-infra/<svc>-creds-sealedsecret.yaml
+environments/<env>/sealed-secrets/<infra-namespace>/<svc>-creds-sealedsecret.yaml
 ```
+
+(`<infra-namespace>` is the inventory's `namespaces.infra` —
+`insight-infra` by default; the Makefile resolves the directory from it.)
 
 Files are sealed against the cluster's sealed-secrets-controller public
 cert (`environments/<env>/pub-cert.pem`). Source of truth for the

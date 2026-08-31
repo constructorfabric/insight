@@ -677,8 +677,8 @@ endef
 # Helper: render `-f <base> [-f <overlay>]` for system/<svc>/values.yaml and
 # environments/<env>/<svc>-values.yaml. Values are NOT passed to helm verbatim:
 # render-system-values.sh resolves the ${NS_*} producer-namespace placeholders
-# (envsubst with an explicit allowlist — Grafana `$VAR`/`$$VAR` provisioning
-# escapes and any other `$` syntax pass through untouched) into
+# (exact braced tokens only — Grafana `$VAR`/`$$VAR` provisioning escapes and
+# any other `$` syntax pass through untouched) into
 # $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
 _system_ns_env = NS_INFRA=$(NS_INFRA) NS_LOKI=$(NS_LOKI) NS_TEMPO=$(NS_TEMPO) \

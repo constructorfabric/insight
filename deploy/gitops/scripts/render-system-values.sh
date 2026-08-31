@@ -11,10 +11,10 @@
 # environments/<env>/<svc>-values.yaml when present and non-empty) into
 # <out-dir> and prints the `-f <rendered>` arguments for helm.
 #
-# Substitution is envsubst with an EXPLICIT allowlist: only the NS_* variables
-# below are replaced. Every other `$` construct passes through byte-identical —
-# Grafana provisioning `$VAR` / `$$VAR` escapes, dashboard `$__auto` intervals,
-# and anything `${…}`-shaped inside Alloy configs.
+# Substitution replaces ONLY the exact braced tokens for the NS_* variables
+# below. Every other `$` construct passes through byte-identical — Grafana
+# provisioning `$VAR` / `$$VAR` escapes, dashboard `$__auto` intervals, bare
+# `$NS_*` text, and anything `${…}`-shaped inside Alloy configs.
 
 set -euo pipefail
 
@@ -24,17 +24,18 @@ OUT_DIR=${3:?usage: render-system-values.sh <svc> <env> <out-dir>}
 
 NS_VARS=(NS_INFRA NS_LOKI NS_TEMPO NS_VICTORIAMETRICS NS_KUBE_STATE_METRICS NS_CLICKHOUSE NS_REDPANDA)
 
-command -v envsubst >/dev/null 2>&1 \
-  || { echo "render-system-values: envsubst not found (install gettext)" >&2; exit 1; }
-
-ALLOWLIST=""
+SED_ARGS=()
 for v in "${NS_VARS[@]}"; do
+  val=${!v:-}
   # An empty namespace renders `svc..svc.cluster.local` — refuse rather
   # than hand helm a values file with a broken FQDN.
-  [ -n "${!v:-}" ] \
+  [ -n "$val" ] \
     || { echo "render-system-values: \$$v is empty — inventory not readable?" >&2; exit 1; }
-  export "${v?}"
-  ALLOWLIST+="\${$v} "
+  # A DNS-1123 label is also what keeps the value inert inside the sed
+  # expression below.
+  [[ $val =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] \
+    || { echo "render-system-values: \$$v='$val' is not a DNS-1123 label" >&2; exit 1; }
+  SED_ARGS+=(-e "s/[\$]{$v}/$val/g")
 done
 
 BASE="system/$SVC/values.yaml"
@@ -44,7 +45,7 @@ mkdir -p "$OUT_DIR"
 
 render() {
   local src=$1 dst=$2
-  envsubst "$ALLOWLIST" < "$src" > "$dst"
+  sed "${SED_ARGS[@]}" < "$src" > "$dst"
   printf ' -f %s' "$dst"
 }
 
