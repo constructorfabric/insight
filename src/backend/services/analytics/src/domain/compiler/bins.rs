@@ -1,4 +1,4 @@
-//! Renders a histogram read: how many of an entity's own observations fall in
+//! Renders a bins read: how many of an entity's own observations fall in
 //! each bin of that entity's range.
 //!
 //! Binning is fixed-width arithmetic over each entity's exact minimum and
@@ -102,11 +102,11 @@ mod tests {
     use crate::domain::compiler::sql::QueryParam;
 
     #[test]
-    fn a_histogram_bins_each_entitys_own_values_over_its_own_range() {
+    fn a_bins_read_bins_each_entitys_own_values_over_its_own_range() {
         let compiled = compile(
             &metric(percentile("pr_size", 0.5)),
             &[sized_measure("pr_size")],
-            &query(ViewKind::Histogram),
+            &query(ViewKind::Bins),
         );
 
         assert_eq!(
@@ -164,11 +164,7 @@ mod tests {
         let mut metric = metric(percentile("pr_size", 0.5));
         metric.transform = Some(percent_of_total());
 
-        let compiled = compile(
-            &metric,
-            &[sized_measure("pr_size")],
-            &query(ViewKind::Histogram),
-        );
+        let compiled = compile(&metric, &[sized_measure("pr_size")], &query(ViewKind::Bins));
 
         assert!(compiled.sql.contains(
             "        assumeNotNull(if((100.0 * (lines_added)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (lines_added))))) AS event_value"
@@ -177,16 +173,16 @@ mod tests {
     }
 
     #[test]
-    fn a_metric_that_folds_no_per_row_value_has_no_histogram() {
+    fn a_metric_that_folds_no_per_row_value_has_no_bins_read() {
         assert_eq!(
             compile_err(
                 &metric(direct("prs_merged")),
                 &[measure("prs_merged", None)],
-                &query(ViewKind::Histogram)
+                &query(ViewKind::Bins)
             ),
             CompileError::UnsupportedView {
                 metric: "git.merge_rate".to_owned(),
-                view: "histogram",
+                view: "bins",
                 reason: "it needs a percentile computation, which is the only one taken over the measure's own per-row values",
             }
         );
@@ -198,7 +194,7 @@ mod tests {
             compile_err(
                 &metric(percentile("prs_merged", 0.5)),
                 &[measure("prs_merged", None)],
-                &query(ViewKind::Histogram)
+                &query(ViewKind::Bins)
             ),
             CompileError::PercentileWithoutValue {
                 metric: "git.merge_rate".to_owned(),

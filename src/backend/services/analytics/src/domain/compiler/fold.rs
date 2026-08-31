@@ -189,7 +189,7 @@ impl<'a> Fold<'a> {
             }
             FoldKind::Aggregate(_) | FoldKind::Ratio { .. } => Err(CompileError::UnsupportedView {
                 metric: metric.key.clone(),
-                view: "histogram",
+                view: "bins",
                 reason: "it needs a percentile computation, which is the only one taken over the measure's own per-row values",
             }),
         }

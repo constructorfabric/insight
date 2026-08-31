@@ -1,4 +1,4 @@
-//! Renders a rollup read: one value per combination of the dimensions the
+//! Renders a combined-split read: one value per combination of the dimensions the
 //! request names, folded over every entity the scope admits.
 //!
 //! The row carries no entity — it carries how many entities contributed to it
@@ -11,13 +11,13 @@ use std::fmt::Write;
 use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::field_catalog::model::CatalogDataset;
 
-use super::cap::{
-    CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
-};
-use super::dimensions::rollup_dimension_select_group;
+use super::dimensions::combined_split_dimension_select_group;
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
-use super::request::{MetricQuery, RollupView};
+use super::group_cap::{
+    CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
+};
+use super::request::{CombinedSplitView, MetricQuery};
 use super::sql::{CompiledMeasureQuery, QueryParam, ReadScope, from_clause, read_predicates};
 
 pub(super) fn compile(
@@ -25,11 +25,11 @@ pub(super) fn compile(
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
-    view: &RollupView,
+    view: &CombinedSplitView,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     if view.dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
-            selection: "the rollup dimensions".to_owned(),
+            selection: "the combined-split dimensions".to_owned(),
         });
     }
 
@@ -49,7 +49,7 @@ fn compile_uncapped(
     query: &MetricQuery,
     dimensions: &[String],
 ) -> Result<CompiledMeasureQuery, CompileError> {
-    let (select, group) = rollup_dimension_select_group(fold.grain, dimensions)?;
+    let (select, group) = combined_split_dimension_select_group(fold.grain, dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
     let inner = uncapped_sql(dataset, fold, &read, &select, &group);
 
@@ -157,12 +157,12 @@ mod tests {
         query, ratio, text,
     };
     use crate::domain::compiler::request::{
-        GroupLimit, RankedDimension, RankedGroup, RollupView, ViewKind,
+        CombinedSplitView, GroupLimit, RankedDimension, RankedGroup, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
 
     fn view(dimensions: &[&str], group_limit: Option<GroupLimit>) -> ViewKind {
-        ViewKind::Rollup(RollupView {
+        ViewKind::CombinedSplit(CombinedSplitView {
             dimensions: dimensions.iter().map(|key| (*key).to_owned()).collect(),
             group_limit,
         })
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn an_uncapped_rollup_reports_every_group_and_who_contributed_to_it() {
+    fn an_uncapped_combined_split_reports_every_group_and_who_contributed_to_it() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_rollup_ranks_each_scanned_row_before_it_folds_anything() {
+    fn a_capped_combined_split_ranks_each_scanned_row_before_it_folds_anything() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_rollup_transforms_the_folded_value_in_its_final_stage() {
+    fn a_capped_combined_split_transforms_the_folded_value_in_its_final_stage() {
         let mut metric = metric(direct("prs_merged"));
         metric.transform = Some(percent_of_total());
 
@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rollup_naming_no_dimension_is_rejected() {
+    fn a_combined_split_naming_no_dimension_is_rejected() {
         assert_eq!(
             compile_err(
                 &metric(direct("prs_merged")),
@@ -367,7 +367,7 @@ mod tests {
                 &query(view(&[], None))
             ),
             CompileError::EmptySelection {
-                selection: "the rollup dimensions".to_owned(),
+                selection: "the combined-split dimensions".to_owned(),
             }
         );
     }
@@ -389,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn a_ratio_rollup_binds_its_fold_after_the_scan_it_ranks() {
+    fn a_ratio_combined_split_binds_its_fold_after_the_scan_it_ranks() {
         let merged = measure(
             "prs_merged",
             Some("{ field: state, op: eq, value: merged }"),

@@ -1,4 +1,4 @@
-//! Renders a peer read: each target's own value beside the spread of the pool
+//! Renders a comparison read: each target's own value beside the spread of the pool
 //! it is compared against.
 //!
 //! A cohort names its members by person reference while a dataset keys its
@@ -21,7 +21,9 @@ use crate::domain::field_catalog::model::CatalogDataset;
 
 use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
-use super::request::{EntityScope, MetricQuery, PeerMember, PeerPopulation, PeerView};
+use super::request::{
+    ComparisonMember, ComparisonPopulation, ComparisonView, EntityScope, MetricQuery,
+};
 use super::sql::{
     CompiledMeasureQuery, QueryParam, ReadScope, from_clause, placeholders, read_predicates,
 };
@@ -41,20 +43,20 @@ pub(super) fn compile(
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
-    view: &PeerView,
+    view: &ComparisonView,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     if view.targets.is_empty() {
         return Err(CompileError::EmptySelection {
-            selection: "the peer targets".to_owned(),
+            selection: "the comparison targets".to_owned(),
         });
     }
 
     let mut params = Vec::new();
     let head = match &view.population {
-        PeerPopulation::DeclaredCohort { cohort_key } => {
+        ComparisonPopulation::DeclaredCohort { cohort_key } => {
             declare_cohort_ctes(metric, query, view, cohort_key, &mut params)?
         }
-        PeerPopulation::Tenant => tenant_targets_cte(view, &mut params),
+        ComparisonPopulation::Tenant => tenant_targets_cte(view, &mut params),
     };
 
     let pool = pool_cte(&view.pool, &mut params)?;
@@ -65,8 +67,8 @@ pub(super) fn compile(
     sql.push_str(&pool);
     sql.push_str(&member_values);
     match &view.population {
-        PeerPopulation::DeclaredCohort { .. } => push_cohort_distribution(&mut sql, &carried),
-        PeerPopulation::Tenant => push_tenant_distribution(&mut sql, &carried),
+        ComparisonPopulation::DeclaredCohort { .. } => push_cohort_distribution(&mut sql, &carried),
+        ComparisonPopulation::Tenant => push_tenant_distribution(&mut sql, &carried),
     }
     params.push(QueryParam::UInt(query.row_limit));
 
@@ -79,7 +81,7 @@ pub(super) fn compile(
 fn declare_cohort_ctes(
     metric: &MetricDefinition,
     query: &MetricQuery,
-    view: &PeerView,
+    view: &ComparisonView,
     cohort_key: &str,
     params: &mut Vec<QueryParam>,
 ) -> Result<String, CompileError> {
@@ -138,7 +140,7 @@ fn push_cohort_scope(
     params.push(QueryParam::Text(cohort_key.to_owned()));
 }
 
-fn tenant_targets_cte(view: &PeerView, params: &mut Vec<QueryParam>) -> String {
+fn tenant_targets_cte(view: &ComparisonView, params: &mut Vec<QueryParam>) -> String {
     params.extend(view.targets.iter().cloned().map(QueryParam::Text));
 
     format!(
@@ -150,11 +152,14 @@ fn tenant_targets_cte(view: &PeerView, params: &mut Vec<QueryParam>) -> String {
 /// The caller's identity resolution as a bound relation: one row per
 /// (person, identity) pair, so a person with several identities folds their
 /// rows together and an identity is never attributed twice.
-fn pool_cte(pool: &[PeerMember], params: &mut Vec<QueryParam>) -> Result<String, CompileError> {
+fn pool_cte(
+    pool: &[ComparisonMember],
+    params: &mut Vec<QueryParam>,
+) -> Result<String, CompileError> {
     let pairs: usize = pool.iter().map(|member| member.identities.len()).sum();
     if pairs == 0 {
         return Err(CompileError::EmptySelection {
-            selection: "the peer pool".to_owned(),
+            selection: "the comparison pool".to_owned(),
         });
     }
 
@@ -173,7 +178,7 @@ fn pool_cte(pool: &[PeerMember], params: &mut Vec<QueryParam>) -> Result<String,
 
 /// The metric folded once per pool member. The pool join is what narrows this
 /// read to the population, so the request's own entity scope is not a
-/// predicate here — a peer read answers about a target by comparing it to
+/// predicate here — a comparison read answers about a target by comparing it to
 /// people the target did not select.
 fn member_values_cte(
     dataset: &CatalogDataset,
@@ -308,7 +313,7 @@ mod tests {
         compile, compile_err, direct, lines, measure, metric, percent_of_total, query, text,
     };
     use crate::domain::compiler::request::{
-        EntityScope, PeerMember, PeerPopulation, PeerView, ViewKind,
+        ComparisonMember, ComparisonPopulation, ComparisonView, EntityScope, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
     use crate::domain::definitions::definition::MetricDefinition;
@@ -320,38 +325,38 @@ mod tests {
         }
     }
 
-    fn pool() -> Vec<PeerMember> {
+    fn pool() -> Vec<ComparisonMember> {
         vec![
-            PeerMember {
+            ComparisonMember {
                 person_ref: "person-1".to_owned(),
                 identities: vec![
                     "one@example.com".to_owned(),
                     "one.alt@example.com".to_owned(),
                 ],
             },
-            PeerMember {
+            ComparisonMember {
                 person_ref: "person-2".to_owned(),
                 identities: vec!["two@example.com".to_owned()],
             },
         ]
     }
 
-    fn view(population: PeerPopulation) -> ViewKind {
-        ViewKind::Peer(PeerView {
+    fn view(population: ComparisonPopulation) -> ViewKind {
+        ViewKind::Comparison(ComparisonView {
             population,
             targets: vec!["person-1".to_owned()],
             pool: pool(),
         })
     }
 
-    fn declared() -> PeerPopulation {
-        PeerPopulation::DeclaredCohort {
+    fn declared() -> ComparisonPopulation {
+        ComparisonPopulation::DeclaredCohort {
             cohort_key: "org_unit".to_owned(),
         }
     }
 
     #[test]
-    fn a_declared_cohort_peer_read_folds_the_pool_and_takes_its_spread_in_one_statement() {
+    fn a_declared_cohort_comparison_read_folds_the_pool_and_takes_its_spread_in_one_statement() {
         let compiled = compile(
             &cohort_metric(),
             &[measure("prs_merged", None)],
@@ -452,7 +457,7 @@ mod tests {
         let compiled = compile(
             &cohort_metric(),
             &[measure("prs_merged", None)],
-            &query(view(PeerPopulation::Tenant)),
+            &query(view(ComparisonPopulation::Tenant)),
         );
 
         assert!(compiled.sql.starts_with(&lines(&[
@@ -552,12 +557,12 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_read_of_a_cohort_the_metric_does_not_declare_is_rejected() {
+    fn a_comparison_read_of_a_cohort_the_metric_does_not_declare_is_rejected() {
         assert_eq!(
             compile_err(
                 &cohort_metric(),
                 &[measure("prs_merged", None)],
-                &query(view(PeerPopulation::DeclaredCohort {
+                &query(view(ComparisonPopulation::DeclaredCohort {
                     cohort_key: "tenure_band".to_owned(),
                 }))
             ),
@@ -569,9 +574,9 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_read_with_no_target_or_no_resolved_identity_is_rejected() {
+    fn a_comparison_read_with_no_target_or_no_resolved_identity_is_rejected() {
         let mut no_targets = query(view(declared()));
-        if let ViewKind::Peer(view) = &mut no_targets.view {
+        if let ViewKind::Comparison(view) = &mut no_targets.view {
             view.targets.clear();
         }
         assert_eq!(
@@ -581,12 +586,12 @@ mod tests {
                 &no_targets
             ),
             CompileError::EmptySelection {
-                selection: "the peer targets".to_owned(),
+                selection: "the comparison targets".to_owned(),
             }
         );
 
         let mut no_identities = query(view(declared()));
-        if let ViewKind::Peer(view) = &mut no_identities.view {
+        if let ViewKind::Comparison(view) = &mut no_identities.view {
             for member in &mut view.pool {
                 member.identities.clear();
             }
@@ -598,7 +603,7 @@ mod tests {
                 &no_identities
             ),
             CompileError::EmptySelection {
-                selection: "the peer pool".to_owned(),
+                selection: "the comparison pool".to_owned(),
             }
         );
     }

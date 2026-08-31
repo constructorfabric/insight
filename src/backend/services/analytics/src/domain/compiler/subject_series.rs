@@ -1,4 +1,4 @@
-//! Renders a timeseries read: one value per entity per bucket, plus the window
+//! Renders a subject-series read: one value per entity per bucket, plus the window
 //! total the same pipeline produces.
 //!
 //! The total is a second grouping set rather than a second statement, so a
@@ -13,13 +13,13 @@ use std::fmt::Write;
 use crate::domain::definitions::definition::{MeasureDefinition, MetricDefinition};
 use crate::domain::field_catalog::model::CatalogDataset;
 
-use super::cap::{
-    CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
-};
 use super::dimensions::dimension_select_group;
 use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query, transform_in_place};
-use super::request::{Bucket, MetricQuery, TimeseriesView};
+use super::group_cap::{
+    CAPPED_RANK_COLUMNS, GroupCap, UNCAPPED_RANK_COLUMNS, ranked_scan_ctes, raw_dimension_select,
+};
+use super::request::{Bucket, MetricQuery, SubjectSeriesView};
 use super::sql::{
     CompiledMeasureQuery, QueryParam, ReadScope, bucket_expr, from_clause, read_predicates,
 };
@@ -29,7 +29,7 @@ pub(super) fn compile(
     metric: &MetricDefinition,
     fold: &Fold<'_>,
     query: &MetricQuery,
-    view: &TimeseriesView,
+    view: &SubjectSeriesView,
 ) -> Result<CompiledMeasureQuery, CompileError> {
     let Some(limit) = &view.group_limit else {
         return compile_uncapped(dataset, metric, fold, query, &view.dimensions);
@@ -37,7 +37,7 @@ pub(super) fn compile(
 
     if view.dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
-            selection: "the capped timeseries dimensions".to_owned(),
+            selection: "the capped subject-series dimensions".to_owned(),
         });
     }
 
@@ -178,15 +178,15 @@ mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
         compile, compile_err, direct, labelled_measure, lines, metric, percent_of_total,
-        plain_timeseries, query, text,
+        plain_subject_series, query, text,
     };
     use crate::domain::compiler::request::{
-        DimensionFilter, GroupLimit, RankedDimension, RankedGroup, TimeseriesView, ViewKind,
+        DimensionFilter, GroupLimit, RankedDimension, RankedGroup, SubjectSeriesView, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
 
     fn view(dimensions: &[&str], group_limit: Option<GroupLimit>) -> ViewKind {
-        ViewKind::Timeseries(TimeseriesView {
+        ViewKind::SubjectSeries(SubjectSeriesView {
             dimensions: dimensions.iter().map(|key| (*key).to_owned()).collect(),
             group_limit,
         })
@@ -215,11 +215,11 @@ mod tests {
     }
 
     #[test]
-    fn an_undimensioned_timeseries_reports_one_series_per_entity_beside_its_total() {
+    fn an_undimensioned_subject_series_reports_one_series_per_entity_beside_its_total() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
-            &query(plain_timeseries()),
+            &query(plain_subject_series()),
         );
 
         assert_eq!(
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dimensioned_timeseries_splits_each_entity_into_one_series_per_group() {
+    fn a_dimensioned_subject_series_splits_each_entity_into_one_series_per_group() {
         let mut request = query(view(&["repository", "source"], None));
         request.dimension_filters = vec![DimensionFilter {
             key: "source".to_owned(),
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_timeseries_ranks_each_scanned_row_before_it_folds_any_bucket() {
+    fn a_capped_subject_series_ranks_each_scanned_row_before_it_folds_any_bucket() {
         let compiled = compile(
             &metric(direct("prs_merged")),
             &[labelled_measure("prs_merged")],
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn a_capped_timeseries_transforms_the_folded_value_in_its_final_stage() {
+    fn a_capped_subject_series_transforms_the_folded_value_in_its_final_stage() {
         let mut metric = metric(direct("prs_merged"));
         metric.transform = Some(percent_of_total());
 
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timeseries_by_a_dimension_the_measure_does_not_declare_is_rejected() {
+    fn a_subject_series_by_a_dimension_the_measure_does_not_declare_is_rejected() {
         for group_limit in [None, Some(cap(true))] {
             assert_eq!(
                 compile_err(
@@ -440,7 +440,7 @@ mod tests {
                 &query(view(&[], Some(cap(true))))
             ),
             CompileError::EmptySelection {
-                selection: "the capped timeseries dimensions".to_owned(),
+                selection: "the capped subject-series dimensions".to_owned(),
             }
         );
     }

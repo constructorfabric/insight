@@ -3,10 +3,10 @@
 //! A metric is a computation over measures plus a post-aggregation transform,
 //! so the statement this writes is a measure read whose value column is the
 //! computation and whose outer projection is the transform. Every view kind
-//! emits the row shape the metric-result builders already decode: a period
-//! read emits `(entity_id, value)`, a timeseries read emits one row per bucket
-//! plus the range total the same aggregation pipeline produces, and the
-//! grouped, binned, and peer views each emit their own.
+//! emits the row shape the metric-result builders already decode: a
+//! subject-total read emits `(entity_id, value)`, a subject-series read emits
+//! one row per bucket plus the range total the same aggregation pipeline
+//! produces, and the split, binned, and comparison views each emit their own.
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -18,7 +18,7 @@ use super::error::CompileError;
 use super::fold::{Fold, ScopedRead, bounded_query};
 use super::request::{MetricQuery, ViewKind};
 use super::sql::{CompiledMeasureQuery, ReadScope, from_clause};
-use super::{breakdown, histogram, peer, rollup, timeseries};
+use super::{bins, combined_split, comparison, subject_series, subject_split};
 
 pub fn compile_metric_query(
     catalog: &FieldCatalog,
@@ -30,9 +30,9 @@ pub fn compile_metric_query(
     let dataset = fold.dataset(catalog)?;
 
     match &query.view {
-        ViewKind::Period => {
+        ViewKind::SubjectTotal => {
             let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-            let inner = period_sql(dataset, fold.grain, &read);
+            let inner = subject_total_sql(dataset, fold.grain, &read);
             Ok(bounded_query(
                 metric.transform.as_ref(),
                 read.params,
@@ -40,17 +40,25 @@ pub fn compile_metric_query(
                 inner,
             ))
         }
-        ViewKind::Timeseries(view) => timeseries::compile(dataset, metric, &fold, query, view),
-        ViewKind::Breakdown(view) => {
-            breakdown::compile(dataset, metric, &fold, query, &view.dimensions)
+        ViewKind::SubjectSeries(view) => {
+            subject_series::compile(dataset, metric, &fold, query, view)
         }
-        ViewKind::Rollup(view) => rollup::compile(dataset, metric, &fold, query, view),
-        ViewKind::Histogram => histogram::compile(dataset, metric, &fold, query),
-        ViewKind::Peer(view) => peer::compile(dataset, metric, &fold, query, view),
+        ViewKind::SubjectSplit(view) => {
+            subject_split::compile(dataset, metric, &fold, query, &view.dimensions)
+        }
+        ViewKind::CombinedSplit(view) => {
+            combined_split::compile(dataset, metric, &fold, query, view)
+        }
+        ViewKind::Bins => bins::compile(dataset, metric, &fold, query),
+        ViewKind::Comparison(view) => comparison::compile(dataset, metric, &fold, query, view),
     }
 }
 
-fn period_sql(dataset: &CatalogDataset, measure: &MeasureDefinition, read: &ScopedRead) -> String {
+fn subject_total_sql(
+    dataset: &CatalogDataset,
+    measure: &MeasureDefinition,
+    read: &ScopedRead,
+) -> String {
     let mut sql = String::from("SELECT\n");
     let _ = writeln!(sql, "    {} AS entity_id,", measure.entity);
     let _ = writeln!(sql, "    {} AS value", read.value);
@@ -67,7 +75,7 @@ mod tests {
     use super::*;
     use crate::domain::compiler::fixtures::{
         compile, compile_err, direct, lines, measure, metric, percent_of_total, percentile,
-        plain_timeseries, query, ratio, sized_measure, text,
+        plain_subject_series, query, ratio, sized_measure, text,
     };
     use crate::domain::compiler::request::{Bucket, DimensionFilter, EntityScope};
     use crate::domain::compiler::sql::QueryParam;
@@ -81,7 +89,7 @@ mod tests {
         );
         let mut metric = metric(direct("prs_merged"));
         metric.transform = Some(percent_of_total());
-        let mut query = query(ViewKind::Period);
+        let mut query = query(ViewKind::SubjectTotal);
         query.entity_scope = EntityScope::Identities(vec!["dev@example.com".to_owned()]);
 
         let compiled = compile(&metric, &[merged], &query);
@@ -132,7 +140,7 @@ mod tests {
         );
         let mut metric = metric(ratio("prs_merged", "prs_closed"));
         metric.transform = Some(percent_of_total());
-        let mut query = query(plain_timeseries());
+        let mut query = query(plain_subject_series());
         query.bucket = Bucket::Week;
 
         let compiled = compile(&metric, &[merged, closed], &query);
@@ -187,7 +195,7 @@ mod tests {
         let compiled = compile(
             &metric(ratio("prs_merged", "prs_opened")),
             &[merged, opened],
-            &query(ViewKind::Period),
+            &query(ViewKind::SubjectTotal),
         );
 
         assert!(
@@ -221,7 +229,7 @@ mod tests {
         let compiled = compile(
             &metric(ratio("lines_merged", "prs_reviewed")),
             &[merged, reviewed],
-            &query(ViewKind::Period),
+            &query(ViewKind::SubjectTotal),
         );
 
         assert!(
@@ -239,9 +247,9 @@ mod tests {
     fn a_percentile_ranks_the_measures_row_values_in_every_view() {
         let sized = sized_measure("pr_size");
         let cases = [
-            (ViewKind::Period, "GROUP BY entity_id"),
+            (ViewKind::SubjectTotal, "GROUP BY entity_id"),
             (
-                plain_timeseries(),
+                plain_subject_series(),
                 "GROUP BY GROUPING SETS ((entity_id, toDate(closed_on)), (entity_id))",
             ),
         ];
@@ -266,20 +274,20 @@ mod tests {
     }
 
     #[test]
-    fn a_period_read_carries_no_bucket_and_a_timeseries_read_carries_a_total_row() {
+    fn a_subject_total_read_carries_no_bucket_and_a_subject_series_read_carries_a_total_row() {
         let sized = sized_measure("pr_size");
         let metric = metric(direct("pr_size"));
 
-        let period = compile(
+        let subject_total = compile(
             &metric,
             std::slice::from_ref(&sized),
-            &query(ViewKind::Period),
+            &query(ViewKind::SubjectTotal),
         );
-        let timeseries = compile(&metric, &[sized], &query(plain_timeseries()));
+        let subject_series = compile(&metric, &[sized], &query(plain_subject_series()));
 
-        assert!(!period.sql.contains("bucket_start"));
-        assert!(!period.sql.contains("is_total"));
-        assert!(!period.sql.contains("GROUPING SETS"));
+        assert!(!subject_total.sql.contains("bucket_start"));
+        assert!(!subject_total.sql.contains("is_total"));
+        assert!(!subject_total.sql.contains("GROUPING SETS"));
 
         for column in [
             "AS bucket_start,",
@@ -288,14 +296,14 @@ mod tests {
             "AS remainder,",
             "AS group_label",
         ] {
-            assert!(timeseries.sql.contains(column), "{column}");
+            assert!(subject_series.sql.contains(column), "{column}");
         }
         assert!(
-            timeseries
+            subject_series
                 .sql
                 .contains("toUInt8(grouping(toDate(closed_on))) AS is_total,")
         );
-        assert_eq!(period.params, timeseries.params);
+        assert_eq!(subject_total.params, subject_series.params);
     }
 
     #[test]
@@ -304,7 +312,7 @@ mod tests {
         let mut metric = metric(direct("pr_size"));
         metric.transform = Some(Transform::default());
 
-        let compiled = compile(&metric, &[sized], &query(ViewKind::Period));
+        let compiled = compile(&metric, &[sized], &query(ViewKind::SubjectTotal));
 
         assert!(compiled.sql.starts_with("SELECT\n    author_email"));
         assert!(!compiled.sql.contains("EXCEPT"));
@@ -343,7 +351,7 @@ mod tests {
             let mut metric = metric(direct("pr_size"));
             metric.transform = Some(transform);
 
-            let compiled = compile(&metric, &[sized], &query(ViewKind::Period));
+            let compiled = compile(&metric, &[sized], &query(ViewKind::SubjectTotal));
 
             assert!(compiled.sql.contains(expected), "{}", compiled.sql);
         }
@@ -359,7 +367,7 @@ mod tests {
             "prs_closed",
             Some("{ field: state, op: in, value: [merged, closed] }"),
         );
-        let mut query = query(plain_timeseries());
+        let mut query = query(plain_subject_series());
         query.bucket = Bucket::Month;
         query.entity_scope =
             EntityScope::Identities(vec!["a@example.com".to_owned(), "b@example.com".to_owned()]);
@@ -390,7 +398,7 @@ mod tests {
             compile_err(
                 &metric(direct("prs_merged")),
                 &[sized_measure("pr_size")],
-                &query(ViewKind::Period)
+                &query(ViewKind::SubjectTotal)
             ),
             CompileError::MeasureNotFound {
                 metric: "git.merge_rate".to_owned(),
@@ -435,7 +443,7 @@ mod tests {
                 compile_err(
                     &metric(computation),
                     &[numerator.clone(), denominator],
-                    &query(ViewKind::Period)
+                    &query(ViewKind::SubjectTotal)
                 ),
                 CompileError::RatioInputsDisagree {
                     metric: "git.merge_rate".to_owned(),
@@ -454,7 +462,7 @@ mod tests {
             compile_err(
                 &metric(percentile("prs_merged", 0.5)),
                 &[measure("prs_merged", None)],
-                &query(ViewKind::Period)
+                &query(ViewKind::SubjectTotal)
             ),
             CompileError::PercentileWithoutValue {
                 metric: "git.merge_rate".to_owned(),
@@ -474,7 +482,7 @@ mod tests {
             compile_err(
                 &metric(direct("tag_size")),
                 &[orphan],
-                &query(ViewKind::Period)
+                &query(ViewKind::SubjectTotal)
             ),
             CompileError::UnknownDataset {
                 measure: "tag_size".to_owned(),
@@ -494,7 +502,7 @@ mod tests {
             "prs_closed",
             Some("{ field: state, op: eq, value: closed }"),
         );
-        let mut query = query(plain_timeseries());
+        let mut query = query(plain_subject_series());
         query.entity_scope = EntityScope::Identities(vec![injection.to_owned()]);
         query.dimension_filters = vec![DimensionFilter {
             key: "repository".to_owned(),

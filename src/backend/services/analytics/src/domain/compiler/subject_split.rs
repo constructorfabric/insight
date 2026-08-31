@@ -1,4 +1,4 @@
-//! Renders a breakdown read: one value per entity per combination of the
+//! Renders a subject-split read: one value per entity per combination of the
 //! dimensions the request names.
 //!
 //! The row shape is the period row widened by a `dim_{index}_value` /
@@ -26,13 +26,13 @@ pub(super) fn compile(
 ) -> Result<CompiledMeasureQuery, CompileError> {
     if dimensions.is_empty() {
         return Err(CompileError::EmptySelection {
-            selection: "the breakdown dimensions".to_owned(),
+            selection: "the subject-split dimensions".to_owned(),
         });
     }
 
     let (select, group) = dimension_select_group(fold.grain, dimensions)?;
     let read = fold.scoped_read(dataset, metric, &ReadScope::of_metric(query))?;
-    let inner = breakdown_sql(dataset, fold, &read, &select, &group);
+    let inner = subject_split_sql(dataset, fold, &read, &select, &group);
 
     Ok(bounded_query(
         metric.transform.as_ref(),
@@ -42,7 +42,7 @@ pub(super) fn compile(
     ))
 }
 
-fn breakdown_sql(
+fn subject_split_sql(
     dataset: &CatalogDataset,
     fold: &Fold<'_>,
     read: &ScopedRead,
@@ -69,17 +69,19 @@ mod tests {
         compile, compile_err, direct, labelled_measure, lines, metric, percent_of_total, query,
         text,
     };
-    use crate::domain::compiler::request::{BreakdownView, DimensionFilter, EntityScope, ViewKind};
+    use crate::domain::compiler::request::{
+        DimensionFilter, EntityScope, SubjectSplitView, ViewKind,
+    };
     use crate::domain::compiler::sql::QueryParam;
 
     fn view(dimensions: &[&str]) -> ViewKind {
-        ViewKind::Breakdown(BreakdownView {
+        ViewKind::SubjectSplit(SubjectSplitView {
             dimensions: dimensions.iter().map(|key| (*key).to_owned()).collect(),
         })
     }
 
     #[test]
-    fn a_breakdown_groups_each_entity_by_every_named_dimension() {
+    fn a_subject_split_groups_each_entity_by_every_named_dimension() {
         let measure = labelled_measure("prs_merged");
         let mut request = query(view(&["repository", "source"]));
         request.entity_scope = EntityScope::Identities(vec!["dev@example.com".to_owned()]);
@@ -167,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn a_breakdown_naming_no_dimension_is_rejected() {
+    fn a_subject_split_naming_no_dimension_is_rejected() {
         assert_eq!(
             compile_err(
                 &metric(direct("prs_merged")),
@@ -175,13 +177,13 @@ mod tests {
                 &query(view(&[]))
             ),
             CompileError::EmptySelection {
-                selection: "the breakdown dimensions".to_owned(),
+                selection: "the subject-split dimensions".to_owned(),
             }
         );
     }
 
     #[test]
-    fn a_breakdown_by_a_dimension_the_measure_does_not_declare_is_rejected() {
+    fn a_subject_split_by_a_dimension_the_measure_does_not_declare_is_rejected() {
         assert_eq!(
             compile_err(
                 &metric(direct("prs_merged")),

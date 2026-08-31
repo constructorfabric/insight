@@ -64,7 +64,7 @@ pub(super) fn dimension_select_group(
 /// orders by the same keys it groups by. The label is not one of them, so each
 /// group reports the label its latest row carries, broken by the label itself
 /// so the pick is total.
-pub(super) fn rollup_dimension_select_group(
+pub(super) fn combined_split_dimension_select_group(
     measure: &MeasureDefinition,
     keys: &[String],
 ) -> Result<(String, String), CompileError> {

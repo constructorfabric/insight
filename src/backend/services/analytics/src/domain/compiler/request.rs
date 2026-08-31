@@ -1,6 +1,6 @@
 //! What a caller asks a measure for: the tenancy and entity scope to read
 //! under, the inclusive date window, the time grain, and the dimension
-//! narrowing and breakdown. Everything here is already resolved — the compiler
+//! narrowing and split. Everything here is already resolved — the compiler
 //! translates, it does not look anything up.
 
 use chrono::NaiveDate;
@@ -53,29 +53,29 @@ pub struct MeasureQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViewKind {
     /// One value per entity over the whole window; the bucket is not read.
-    Period,
+    SubjectTotal,
     /// One value per entity per bucket, plus the window total per entity.
-    Timeseries(TimeseriesView),
+    SubjectSeries(SubjectSeriesView),
     /// One value per entity per combination of the named dimensions.
-    Breakdown(BreakdownView),
+    SubjectSplit(SubjectSplitView),
     /// One value per combination of the named dimensions, folded over every
     /// entity the scope admits.
-    Rollup(RollupView),
+    CombinedSplit(CombinedSplitView),
     /// Per-entity bin counts over the measure's per-row values.
-    Histogram,
+    Bins,
     /// One row per target: the target's own value beside its peers' spread.
-    Peer(PeerView),
+    Comparison(ComparisonView),
 }
 
 impl ViewKind {
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Period => "period",
-            Self::Timeseries(_) => "timeseries",
-            Self::Breakdown(_) => "breakdown",
-            Self::Rollup(_) => "rollup",
-            Self::Histogram => "histogram",
-            Self::Peer(_) => "peer",
+            Self::SubjectTotal => "subject_total",
+            Self::SubjectSeries(_) => "subject_series",
+            Self::SubjectSplit(_) => "subject_split",
+            Self::CombinedSplit(_) => "combined_split",
+            Self::Bins => "bins",
+            Self::Comparison(_) => "comparison",
         }
     }
 }
@@ -83,15 +83,15 @@ impl ViewKind {
 /// Dimension keys of the metric's grain measure, in the order their
 /// `dim_{index}_value` / `dim_{index}_label` columns take.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BreakdownView {
+pub struct SubjectSplitView {
     pub dimensions: Vec<String>,
 }
 
-/// A timeseries is grouped by bucket before anything else, so a broken-down
+/// A subject series is grouped by bucket before anything else, so a split
 /// one reports a series per dimension combination rather than one series. It
 /// carries no dimensions when the whole entity is the series.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TimeseriesView {
+pub struct SubjectSeriesView {
     pub dimensions: Vec<String>,
     /// Keeps only the named groups, with every other group folded into one
     /// remainder series. Absent means every group is reported. A cap needs a
@@ -100,7 +100,7 @@ pub struct TimeseriesView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RollupView {
+pub struct CombinedSplitView {
     pub dimensions: Vec<String>,
     /// Keeps only the named groups, with every other group folded into one
     /// remainder row. Absent means every group is reported.
@@ -138,17 +138,17 @@ pub struct RankedDimension {
 /// its rows by source identity, so the caller resolves each pool member's
 /// identities and the compiled read joins the two.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerView {
-    pub population: PeerPopulation,
+pub struct ComparisonView {
+    pub population: ComparisonPopulation,
     /// Person references the view answers for.
     pub targets: Vec<String>,
     /// Every person the read may evaluate, with their resolved identities.
     /// A target absent from the pool reads no value of its own.
-    pub pool: Vec<PeerMember>,
+    pub pool: Vec<ComparisonMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PeerPopulation {
+pub enum ComparisonPopulation {
     /// Peers are the members of the target's own declared cohort, read from
     /// the cohort relation.
     DeclaredCohort { cohort_key: String },
@@ -157,19 +157,19 @@ pub enum PeerPopulation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerMember {
+pub struct ComparisonMember {
     pub person_ref: String,
     pub identities: Vec<String>,
 }
 
-/// What a caller asks a metric for. A metric owns its own breakdown vocabulary
+/// What a caller asks a metric for. A metric owns its own split vocabulary
 /// through the measures it composes, so a metric read is never grouped by a
 /// measure dimension it does not declare — it narrows by one and folds the
 /// rest away, or groups by the ones the view names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetricQuery {
     pub tenant_id: String,
-    /// A peer read takes its entities from its pool, so this narrows every
+    /// A comparison read takes its entities from its pool, so this narrows every
     /// view but that one.
     pub entity_scope: EntityScope,
     /// Inclusive, compared against the measure's event time taken as a date.

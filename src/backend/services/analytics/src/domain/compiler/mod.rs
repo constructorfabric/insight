@@ -6,33 +6,33 @@
 //!
 //! A measure read emits the observation row shape the metric-result builders
 //! already consume — `entity_id`, `metric_date`, `value`, and, when a
-//! breakdown is asked for, `dimension_value` / `dimension_label`. A metric
+//! split is asked for, `dimension_value` / `dimension_label`. A metric
 //! read emits the result row shape of the view it serves, one module per view.
 //! Either way a view assembles from either executor's rows.
 //!
-//! One read is not a view: [`ranking`] decides which dimension groups a capped
+//! One read is not a view: [`group_ranking`] decides which dimension groups a capped
 //! read keeps, and runs before the view that consumes its answer.
 
 #![allow(dead_code)] // tests are this module's only callers in the crate
 
-mod breakdown;
-mod cap;
+mod bins;
+mod combined_split;
+mod comparison;
 mod dimensions;
 pub mod error;
 #[cfg(test)]
 mod fixtures;
 mod fold;
-mod histogram;
+mod group_cap;
+pub mod group_ranking;
 pub mod measure;
 pub mod metric;
-mod peer;
-pub mod ranking;
 pub mod request;
-mod rollup;
 mod sql;
+mod subject_series;
+mod subject_split;
 #[cfg(test)]
 mod test_catalog;
-mod timeseries;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -49,12 +49,12 @@ mod product_tests {
     use crate::domain::field_catalog::product_catalog;
 
     use super::error::CompileError;
+    use super::group_ranking::compile_group_ranking_query;
     use super::metric::compile_metric_query;
-    use super::ranking::compile_group_ranking_query;
     use super::request::{
-        BreakdownView, Bucket, EntityScope, GroupLimit, GroupRankingQuery, MetricQuery, PeerMember,
-        PeerPopulation, PeerView, RankedDimension, RankedGroup, RollupView, TimeseriesView,
-        ViewKind,
+        Bucket, CombinedSplitView, ComparisonMember, ComparisonPopulation, ComparisonView,
+        EntityScope, GroupLimit, GroupRankingQuery, MetricQuery, RankedDimension, RankedGroup,
+        SubjectSeriesView, SubjectSplitView, ViewKind,
     };
     use super::sql::CompiledMeasureQuery;
 
@@ -114,18 +114,18 @@ mod product_tests {
         }
     }
 
-    fn peer_view(cohort_key: &str) -> ViewKind {
-        ViewKind::Peer(PeerView {
-            population: PeerPopulation::DeclaredCohort {
+    fn comparison_view(cohort_key: &str) -> ViewKind {
+        ViewKind::Comparison(ComparisonView {
+            population: ComparisonPopulation::DeclaredCohort {
                 cohort_key: cohort_key.to_owned(),
             },
             targets: vec!["person-1".to_owned()],
             pool: vec![
-                PeerMember {
+                ComparisonMember {
                     person_ref: "person-1".to_owned(),
                     identities: vec!["one@example.com".to_owned()],
                 },
-                PeerMember {
+                ComparisonMember {
                     person_ref: "person-2".to_owned(),
                     identities: vec!["two@example.com".to_owned()],
                 },
@@ -155,8 +155,8 @@ mod product_tests {
         }
     }
 
-    fn timeseries(dimensions: Vec<String>, group_limit: Option<GroupLimit>) -> ViewKind {
-        ViewKind::Timeseries(TimeseriesView {
+    fn subject_series(dimensions: Vec<String>, group_limit: Option<GroupLimit>) -> ViewKind {
+        ViewKind::SubjectSeries(SubjectSeriesView {
             dimensions,
             group_limit,
         })
@@ -165,29 +165,29 @@ mod product_tests {
     /// Every view the metric's computation and grain admit, one request each.
     fn supported_views(shipped: &Shipped, metric: &MetricDefinition) -> Vec<ViewKind> {
         let grain = shipped.grain(metric);
-        let mut views = vec![ViewKind::Period, timeseries(Vec::new(), None)];
+        let mut views = vec![ViewKind::SubjectTotal, subject_series(Vec::new(), None)];
 
         if let Some(binding) = grain.dimensions.first() {
             let dimensions = vec![binding.key.clone()];
-            views.push(timeseries(dimensions.clone(), None));
-            views.push(timeseries(dimensions.clone(), Some(group_cap())));
-            views.push(ViewKind::Breakdown(BreakdownView {
+            views.push(subject_series(dimensions.clone(), None));
+            views.push(subject_series(dimensions.clone(), Some(group_cap())));
+            views.push(ViewKind::SubjectSplit(SubjectSplitView {
                 dimensions: dimensions.clone(),
             }));
-            views.push(ViewKind::Rollup(RollupView {
+            views.push(ViewKind::CombinedSplit(CombinedSplitView {
                 dimensions: dimensions.clone(),
                 group_limit: None,
             }));
-            views.push(ViewKind::Rollup(RollupView {
+            views.push(ViewKind::CombinedSplit(CombinedSplitView {
                 group_limit: Some(group_cap()),
                 dimensions,
             }));
         }
         if matches!(metric.computation, Computation::Percentile { .. }) {
-            views.push(ViewKind::Histogram);
+            views.push(ViewKind::Bins);
         }
         if let Some(cohort_key) = &metric.cohort_key {
-            views.push(peer_view(cohort_key));
+            views.push(comparison_view(cohort_key));
         }
 
         views
@@ -239,7 +239,7 @@ mod product_tests {
         let shipped = shipped();
 
         for metric in &shipped.metrics {
-            let compiled = shipped.compile(metric, ViewKind::Histogram);
+            let compiled = shipped.compile(metric, ViewKind::Bins);
 
             if matches!(metric.computation, Computation::Percentile { .. }) {
                 assert!(compiled.is_ok(), "metric `{}`", metric.key);
@@ -247,10 +247,7 @@ mod product_tests {
                 assert!(
                     matches!(
                         compiled,
-                        Err(CompileError::UnsupportedView {
-                            view: "histogram",
-                            ..
-                        })
+                        Err(CompileError::UnsupportedView { view: "bins", .. })
                     ),
                     "metric `{}`: {compiled:?}",
                     metric.key
@@ -260,11 +257,11 @@ mod product_tests {
     }
 
     #[test]
-    fn a_peer_read_names_the_cohort_the_metric_declares() {
+    fn a_comparison_read_names_the_cohort_the_metric_declares() {
         let shipped = shipped();
 
         for metric in &shipped.metrics {
-            let compiled = shipped.compile(metric, peer_view("not_a_declared_cohort"));
+            let compiled = shipped.compile(metric, comparison_view("not_a_declared_cohort"));
 
             assert!(
                 matches!(compiled, Err(CompileError::UndeclaredCohort { .. })),
@@ -281,12 +278,12 @@ mod product_tests {
 
         for metric in &shipped.metrics {
             for view in [
-                timeseries(dimensions.clone(), None),
-                timeseries(dimensions.clone(), Some(group_cap())),
-                ViewKind::Breakdown(BreakdownView {
+                subject_series(dimensions.clone(), None),
+                subject_series(dimensions.clone(), Some(group_cap())),
+                ViewKind::SubjectSplit(SubjectSplitView {
                     dimensions: dimensions.clone(),
                 }),
-                ViewKind::Rollup(RollupView {
+                ViewKind::CombinedSplit(CombinedSplitView {
                     dimensions: dimensions.clone(),
                     group_limit: None,
                 }),
