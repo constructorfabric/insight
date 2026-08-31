@@ -23,6 +23,25 @@ use crate::domain::profile::SAFE_PROFILE_ATTRIBUTE_TYPES;
 use crate::domain::provenance::UNCONFIRMED_MINT_REASONS;
 use crate::domain::resolution::EXCLUDED_PERSON;
 
+#[derive(Debug, thiserror::Error)]
+pub enum BatchProfileReadError {
+    #[error("batch profile query failed")]
+    Database(#[from] sea_orm::DbErr),
+    #[error("batch profile row decoding failed: {0}")]
+    RowDecode(String),
+    #[error("batch profile row contains an invalid person id")]
+    InvalidPersonId(#[from] uuid::Error),
+}
+
+impl From<sea_orm::TryGetError> for BatchProfileReadError {
+    fn from(error: sea_orm::TryGetError) -> Self {
+        match error {
+            sea_orm::TryGetError::DbErr(error) => Self::Database(error),
+            sea_orm::TryGetError::Null(column) => Self::RowDecode(column),
+        }
+    }
+}
+
 /// Resolve the set of `person_id`s whose CURRENT email (latest observation per
 /// source instance) equals `email` within the tenant.
 ///
@@ -416,7 +435,7 @@ pub async fn persons_in_tenant(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     person_ids: &[Uuid],
-) -> anyhow::Result<Vec<Uuid>> {
+) -> Result<Vec<Uuid>, BatchProfileReadError> {
     if person_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -571,7 +590,7 @@ pub async fn current_profile_observations(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     person_ids: &[Uuid],
-) -> anyhow::Result<HashMap<Uuid, Vec<persons::Model>>> {
+) -> Result<HashMap<Uuid, Vec<persons::Model>>, BatchProfileReadError> {
     if person_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -775,7 +794,7 @@ pub async fn current_parents_for_children(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     child_person_ids: &[Uuid],
-) -> anyhow::Result<Vec<OrgChartParentEdge>> {
+) -> Result<Vec<OrgChartParentEdge>, BatchProfileReadError> {
     if child_person_ids.is_empty() {
         return Ok(Vec::new());
     }

@@ -4,6 +4,7 @@ pub mod login_bootstrap;
 pub mod observation_slot;
 pub mod person_card;
 pub mod profile;
+pub mod profile_batch;
 pub mod provenance;
 pub mod resolution;
 pub mod review_queue;
