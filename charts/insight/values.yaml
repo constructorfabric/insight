@@ -212,6 +212,21 @@ ingestion:
   airbyteSync:
     pollIntervalSeconds: 30
     idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
+  # jira-enrich (templates/ingestion/tt-enrich-jira-run.yaml). Phase 1 of the
+  # binary holds the whole reference set in memory — field metadata, every
+  # issue snapshot, and the last known value of each field it must diff
+  # against — before the first row is written, so its peak scales with the
+  # size of the Jira corpus rather than with the run's backlog. An instance
+  # whose journal has outgrown the default OOM-kills in that phase, having
+  # written nothing; raise the limit here rather than editing the template.
+  jiraEnrich:
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
   # Data-quality checks: a CronWorkflow runs the dbt check catalog (the
   # `data_quality` selector — tests tagged data_quality, not every dbt test) on
   # a schedule, independent of the per-connector pipeline. See
