@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -121,8 +121,12 @@ export function MetricEvidenceDialog({
   }
   // INVARIANT: the needle the server was asked for, not the one being typed —
   // it is part of the query key, and a key per keystroke is a request per
-  // keystroke.
-  const needle = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS);
+  // keystroke. Emptying the box takes effect at once: the debounce exists to
+  // delay ASKING, and a cleared search — including the one a metric change
+  // performs above — must not leave the previous needle in flight.
+  const typed = search.trim();
+  const debounced = useDebouncedValue(typed, SEARCH_DEBOUNCE_MS);
+  const needle = typed === "" ? "" : debounced;
   const view = useMemo(
     () => ({
       ...(sort ? { sort } : {}),
@@ -142,6 +146,11 @@ export function MetricEvidenceDialog({
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
+    // A new order or a new needle is a new query key. Without this the table —
+    // and the search box in the header above it — is replaced by a spinner on
+    // every header click and every pause in typing, which loses the caret
+    // mid-word.
+    placeholderData: keepPreviousData,
     enabled:
       sessionScope != null &&
       selection != null &&
@@ -176,7 +185,6 @@ export function MetricEvidenceDialog({
   }, [query.data?.pages]);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
   const pageLimitReached = (query.data?.pages.length ?? 0) >= 50 && hasNextPage;
-  const canLoadMore = hasNextPage && !pageLimitReached;
   // The server orders and narrows the rows. Until the first page says it does,
   // the controls that ask it to are inert rather than misleading.
   const narrowsRows =
@@ -436,7 +444,10 @@ export function MetricEvidenceDialog({
                   {recordCount({
                     loaded: rows.length,
                     filtered: needle !== "",
-                    partial: canLoadMore || query.isFetchNextPageError,
+                    // At the paging cap there are still matches nobody read,
+                    // so the count is least complete exactly where dropping
+                    // the qualifier would claim it was whole.
+                    partial: hasNextPage || query.isFetchNextPageError,
                   })}
                 </p>
               </div>
@@ -529,7 +540,7 @@ function recordCount({
   filtered: boolean;
   partial: boolean;
 }): string {
-  const noun = loaded === 1 && !filtered ? "record" : "records";
+  const noun = loaded === 1 ? "record" : "records";
   const matching = filtered ? " matching" : "";
   return `${formatMetricNumber(loaded, "integer")}${matching} ${noun}${partial ? " so far" : ""}`;
 }

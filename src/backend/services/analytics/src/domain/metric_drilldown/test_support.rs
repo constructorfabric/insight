@@ -15,6 +15,7 @@ use super::dto::{
     EvidenceInput, EvidencePlan, EvidenceQueryRow, MetricDrilldownEntity, MetricDrilldownFilter,
     MetricDrilldownPeriod, MetricDrilldownSelection, ValidatedMetricDrilldown,
 };
+use super::presentation::presentation_columns;
 use super::sort::MetricDrilldownSort;
 
 pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
@@ -153,8 +154,17 @@ pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
     ValidatedMetricDrilldown {
         tenant_id: TEST_TENANT,
         enforce_tenant_scope: true,
-        fingerprint: selection_fingerprint(Uuid::nil(), &selection)
-            .unwrap_or_else(|error| panic!("selection fingerprint must build: {error}")),
+        fingerprint: selection_fingerprint(
+            Uuid::nil(),
+            &selection,
+            &presentation_columns(
+                &plan,
+                &selection.filters,
+                &selection.display_dimensions,
+                &selection.entity,
+            ),
+        )
+        .unwrap_or_else(|error| panic!("selection fingerprint must build: {error}")),
         selection,
         from: NaiveDate::from_ymd_opt(2026, 7, 1)
             .unwrap_or_else(|| panic!("valid test start date")),

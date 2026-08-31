@@ -3,6 +3,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { keepPreviousData } from "@tanstack/react-query";
+
 import { AnalyticsApiError } from "@/api/analytics-client";
 import type { EvidenceDialogState } from "@/components/metric-evidence-context";
 import { MetricEvidenceDialog } from "@/components/metric-evidence-dialog";
@@ -14,14 +16,20 @@ const mocks = vi.hoisted(() => ({
   downloadMetricDrilldown: vi.fn(),
   tableProps: null as Record<string, unknown> | null,
   declaredDimensions: new Map<string, ReadonlySet<string>>(),
+  held: null as string | null,
 }));
 
-vi.mock("@tanstack/react-query", () => ({
-  useInfiniteQuery: (options: Record<string, unknown>) => {
-    mocks.queryOptions = options;
-    return mocks.query;
-  },
-}));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@tanstack/react-query")>();
+  return {
+    ...original,
+    useInfiniteQuery: (options: Record<string, unknown>) => {
+      mocks.queryOptions = options;
+      return mocks.query;
+    },
+  };
+});
 
 // Which dimensions a metric will accept. Most of these tests declare none, so
 // the selection they assert on is the caller's own; the export test below
@@ -33,8 +41,10 @@ vi.mock("@/queries/metric-definitions", () => ({
   }),
 }));
 
+// Identity by default; a test that cares about the debounce WINDOW pins
+// `held` to the value the debounce is still carrying.
 vi.mock("@/hooks/use-debounced-value", () => ({
-  useDebouncedValue: <T,>(value: T) => value,
+  useDebouncedValue: <T,>(value: T) => (mocks.held as T | null) ?? value,
 }));
 
 vi.mock("@/auth/use-auth", () => ({
@@ -216,6 +226,7 @@ describe("MetricEvidenceDialog", () => {
     mocks.downloadMetricDrilldown.mockReset().mockResolvedValue(undefined);
     mocks.tableProps = null;
     mocks.declaredDimensions = new Map();
+    mocks.held = null;
   });
 
   it("loads, orders, paginates, exports, and closes evidence", async () => {
@@ -892,6 +903,32 @@ describe("MetricEvidenceDialog", () => {
     it("counts the records it is showing", () => {
       renderDialog();
       expect(screen.getByText("3 records")).toBeInTheDocument();
+    });
+
+    // A new order is a new query key, and a key change is a pending query. The
+    // rows and the search box have to survive it, or the caret is lost
+    // mid-word and the scroll position with it.
+    it("keeps the rows on screen while a new order is fetched", () => {
+      renderDialog();
+      expect(mocks.queryOptions?.placeholderData).toBe(keepPreviousData);
+    });
+
+    // The debounce delays ASKING. A cleared box is not an ask, and leaving the
+    // old needle in flight makes "Clear search" do nothing for 400 ms.
+    it("drops the needle the moment the box is cleared", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+
+      await user.type(
+        screen.getByRole("searchbox", { name: "Search records" }),
+        "add"
+      );
+      expect(await requested()).toMatchObject({ search: "add" });
+
+      mocks.held = "add";
+      await user.clear(screen.getByRole("searchbox", { name: "Search records" }));
+
+      expect(await requested()).not.toHaveProperty("search");
     });
 
     // INVARIANT: the server narrows. Hiding rows the client already holds

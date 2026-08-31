@@ -20,8 +20,8 @@ use crate::domain::metric_drilldown::{
     MetricDrilldownExportRequest, MetricDrilldownRequest, MetricDrilldownResponse,
     MetricDrilldownRow, ValidatedMetricDrilldown, build_export, build_response, compile_query,
     decode_evidence_rows, evidence_unavailable, export_filename, export_internal, export_limit,
-    parse_person_entity, parse_person_ids, presentation, validate_export_request, validate_request,
-    verify_evidence_snapshot, with_evidence_query_limits,
+    parse_person_entity, parse_person_ids, presentation, presents_person, validate_export_request,
+    validate_request, verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_person_ids;
 
@@ -54,7 +54,7 @@ pub async fn query_metric_drilldown(
     let rows = fetch_rows(&state, &req, &log_comment).await?;
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
-    let names = roster_names(&state, &req).await;
+    let names = roster_names(&state, &req).await?;
     let response = build_response(&req, rows, &names, &state.external_links)?;
     tracing::info!(
         duration_ms = started.elapsed().as_millis(),
@@ -93,7 +93,7 @@ pub async fn export_metric_drilldown(
     let evidence = collect_export_rows(&state, &validated, deadline).await?;
     let exported_rows = evidence.len();
 
-    let names = roster_names(&state, &validated).await;
+    let names = roster_names(&state, &validated).await?;
     let (columns, rows) = presentation(
         &evidence,
         &validated.plan,
@@ -124,29 +124,50 @@ pub async fn export_metric_drilldown(
 
 /// Who each row belongs to, in the words the reader knows them by.
 ///
-/// A roster is the only selection that shows the column, so it is the only one
-/// that pays for the lookup. Naming nobody is a table with an empty column, not
-/// a failed read — and an id in a `Who` cell is not an answer to "who", least
-/// of all in an exported file.
+/// Gated on the column actually being presented, not on the shape of the
+/// entity: a roster read of a ratio metric shows no `Who`, and would otherwise
+/// pay for a full identity scan per page for a map nothing reads.
+///
+/// The identity rows failing to answer names nobody rather than failing the
+/// read — an empty column, not an error. Being unable to ASK is different, and
+/// answers 429 like any other read this endpoint cannot find capacity for.
 async fn roster_names(
     state: &AppState,
     validated: &ValidatedMetricDrilldown,
-) -> BTreeMap<String, String> {
-    if !matches!(
-        validated.selection.entity,
-        MetricDrilldownEntity::Persons { .. }
-    ) {
-        return BTreeMap::new();
+) -> Result<BTreeMap<String, String>, CanonicalError> {
+    if !presents_person(validated) {
+        return Ok(BTreeMap::new());
     }
     let Ok(ids) = parse_person_ids(&validated.selection.entity) else {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     };
 
-    person_names::lookup(&state.ch, validated.tenant_id, &ids)
-        .await
+    // INVARIANT: the permit is held across the awaited lookup below — the hold
+    // is this endpoint's share of MAX_CONCURRENT_QUERIES, which the identity
+    // scan belongs to as much as the evidence read does.
+    let _permit = acquire_query_permit().await?;
+    let names = tokio::time::timeout(
+        QUERY_TIMEOUT,
+        person_names::lookup_bounded(
+            &state.ch,
+            validated.tenant_id,
+            &ids,
+            with_evidence_query_limits,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        tracing::warn!(
+            people = ids.len(),
+            "naming a roster exceeded the execution time limit"
+        );
+        std::collections::HashMap::new()
+    });
+
+    Ok(names
         .into_iter()
         .filter_map(|(id, name)| Some((id.to_string(), person_name(&name)?)))
-        .collect()
+        .collect())
 }
 
 fn person_name(name: &person_names::PersonName) -> Option<String> {

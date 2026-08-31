@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 
 import { AnalyticsApiError } from "@/api/analytics-client";
 import {
@@ -139,6 +139,9 @@ function Records({
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
+    // Re-ordering re-reads rows already on screen; without this the table
+    // blanks to a spinner on every header click.
+    placeholderData: keepPreviousData,
     enabled: sessionScope != null && selection != null,
     // A busy drilldown answers 429, and asking again immediately is what made
     // it busy.
@@ -154,6 +157,17 @@ function Records({
   const columns = query.data?.pages[0]?.columns ?? [];
   const pageLimitReached =
     (query.data?.pages.length ?? 0) >= MAX_PAGES && query.hasNextPage;
+
+  // `personsEvidenceSelection` refuses two different scopes. A scope with
+  // nobody in it has no records, and telling its reader to narrow it is the
+  // opposite of the truth.
+  if (!state.members.length) {
+    return (
+      <p className="text-muted-foreground p-5 text-sm">
+        No records in this window.
+      </p>
+    );
+  }
 
   if (!selection) {
     return (

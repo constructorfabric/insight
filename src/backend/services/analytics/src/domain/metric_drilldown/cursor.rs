@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::EvidenceRelation;
 
-use super::dto::{EvidenceQueryRow, MetricDrilldownSelection};
+use super::dto::{EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownSelection};
 use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
 
 /// Bumped when the ordering key changes: an older cursor addresses a page this
@@ -44,11 +44,21 @@ struct EvidenceSnapshotRow {
     snapshot_id: String,
 }
 
+/// What a cursor is bound to.
+///
+/// INVARIANT: the presented columns are in here, not just the selection the
+/// caller sent. The ordering key's SQL is decided by a column's declared TYPE —
+/// a number sorts numerically and replays through a cast, a string sorts
+/// zero-padded and replays as text. That declaration lives in the metric
+/// catalog, which no snapshot pins, so a change to it while a walk is in
+/// flight would otherwise leave the cursor looking valid and comparing against
+/// a differently-shaped key.
 pub(super) fn selection_fingerprint(
     tenant_id: Uuid,
     selection: &MetricDrilldownSelection,
+    columns: &[MetricDrilldownColumn],
 ) -> Result<String, CanonicalError> {
-    let bytes = serde_json::to_vec(&(tenant_id, selection)).map_err(|_| config_error())?;
+    let bytes = serde_json::to_vec(&(tenant_id, selection, columns)).map_err(|_| config_error())?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 

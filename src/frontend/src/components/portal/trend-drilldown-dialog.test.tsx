@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { keepPreviousData } from "@tanstack/react-query";
+
 import { AnalyticsApiError } from "@/api/analytics-client";
 import {
   TrendDrilldownDialog,
@@ -15,12 +17,17 @@ const mocks = vi.hoisted(() => ({
   tableProps: null as Record<string, unknown> | null,
 }));
 
-vi.mock("@tanstack/react-query", () => ({
-  useInfiniteQuery: (options: Record<string, unknown>) => {
-    mocks.queryOptions = options;
-    return mocks.query;
-  },
-}));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@tanstack/react-query")>();
+  return {
+    ...original,
+    useInfiniteQuery: (options: Record<string, unknown>) => {
+      mocks.queryOptions = options;
+      return mocks.query;
+    },
+  };
+});
 
 vi.mock("@/auth/use-auth", () => ({
   useAuth: () => ({
@@ -158,6 +165,22 @@ describe("TrendDrilldownDialog", () => {
     expect(await requested()).toMatchObject({
       sort: { key: "ref", direction: "asc" },
     });
+  });
+
+  it("keeps the rows on screen while a new order is fetched", () => {
+    renderDialog();
+    expect(mocks.queryOptions?.placeholderData).toBe(keepPreviousData);
+  });
+
+  // A scope with nobody in it has no records; telling its reader to narrow it
+  // is the opposite of the truth.
+  it("says an empty scope is empty, not that it is too wide", () => {
+    renderDialog({ ...state, members: [] });
+
+    expect(screen.getByText("No records in this window.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/more than one table can stand behind/)
+    ).not.toBeInTheDocument();
   });
 
   it("stops paging at the cap rather than growing without end", () => {

@@ -2084,10 +2084,19 @@ fn collapsed_observation_from(
 }
 
 /// SAFETY: backslash first — it escapes in ClickHouse literals, so handling
-/// quotes alone would let `x\\` swallow the closing quote. Keys are
-/// `snake_case` by CHECK constraint, so this guards a future key shape.
+/// quotes alone would let `x\\` swallow the closing quote. `?` last: the driver
+/// binds by scanning the raw query text with no regard for quoting, so a `?`
+/// inside a literal would take a bound parameter and shift every later one.
+/// Keys are `snake_case` by CHECK constraint and by `is_column_key`, so this
+/// guards a future key shape rather than a current one.
 pub(crate) fn sql_string_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+    format!(
+        "'{}'",
+        value
+            .replace('\\', "\\\\")
+            .replace('\'', "''")
+            .replace('?', "??")
+    )
 }
 
 /// Every input of a batch with its alias-collapse rule, deduplicated by

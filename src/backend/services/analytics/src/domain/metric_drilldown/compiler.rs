@@ -7,14 +7,13 @@ use crate::domain::metric_definitions::definition::{MetricInputRole, RatioDenomi
 
 use super::cursor::CursorKey;
 use super::dto::{
-    EvidenceInput, EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownColumnType,
-    MetricDrilldownEntity, MetricDrilldownFilter, ValidatedMetricDrilldown,
+    EvidenceInput, EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownEntity,
+    MetricDrilldownFilter, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
 use super::presentation::presentation_columns;
 use super::sort::{
-    ColumnSql, MetricDrilldownSort, MetricDrilldownSortDirection, PERSON_KEY, empty_flag,
-    ratio_column_sql, value_column_sql,
+    MetricDrilldownSort, MetricDrilldownSortDirection, PERSON_KEY, column_sql, empty_flag,
 };
 
 /// Person evidence is keyed by the source identity, so a person's rows are the
@@ -26,10 +25,12 @@ pub fn compile_query(
     if matches!(req.plan.definition.spec, ComputationSpec::Ratio { .. }) {
         return compile_ratio_query(req);
     }
-    Ok(compile_value_query(req))
+    compile_value_query(req)
 }
 
-fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) {
+fn compile_value_query(
+    req: &ValidatedMetricDrilldown,
+) -> Result<(String, Vec<String>), CanonicalError> {
     let (database, table) = req.plan.relation.table_ref();
     let mut params = Vec::new();
     let measures = req
@@ -50,7 +51,7 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
         &req.selection.display_dimensions,
         &req.selection.entity,
     );
-    let order = OrderKey::build(&columns, &req.selection.sort, value_column_sql);
+    let order = OrderKey::build(&columns, &req.selection.sort, false)?;
     let person = person_projection(&req.selection.entity, &columns, &mut params);
     params.extend([
         req.tenant_id.to_string(),
@@ -69,7 +70,7 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
     let search = search_predicate(
         req.selection.search.as_deref(),
         &columns,
-        value_column_sql,
+        false,
         &mut params,
     );
     let cursor = order.cursor_predicate(
@@ -112,7 +113,7 @@ fn compile_value_query(req: &ValidatedMetricDrilldown) -> (String, Vec<String>) 
         sort_source = order.source(),
         projection = order.projection(),
     );
-    (sql, params)
+    Ok((sql, params))
 }
 
 /// The `person` column's identity resolution, and nothing more: a selection
@@ -211,7 +212,7 @@ fn compile_ratio_query(
         &req.selection.display_dimensions,
         &req.selection.entity,
     );
-    let order = OrderKey::build(&columns, &req.selection.sort, ratio_column_sql);
+    let order = OrderKey::build(&columns, &req.selection.sort, true)?;
     let mut params = vec![
         numerator.measure_key.clone(),
         denominator.measure_key.clone(),
@@ -229,12 +230,7 @@ fn compile_ratio_query(
     let filter_sql = filter_predicate(&req.selection.filters, &mut params);
     // Both terms read the aggregates the subquery emits, so both wait for the
     // outer level rather than joining the filters inside.
-    let search = search_predicate(
-        req.selection.search.as_deref(),
-        &columns,
-        ratio_column_sql,
-        &mut params,
-    );
+    let search = search_predicate(req.selection.search.as_deref(), &columns, true, &mut params);
     let cursor = order.cursor_predicate(
         req.cursor.as_ref(),
         "role, metric_date, observed_at, source_key, measure_key, record_id, record_kind, subject_key, entity_id",
@@ -416,8 +412,6 @@ fn filter_predicate(filters: &[MetricDrilldownFilter], params: &mut Vec<String>)
     sql
 }
 
-type ColumnResolver = fn(&str, MetricDrilldownColumnType) -> Option<ColumnSql>;
-
 /// The sorted cell, bound once. The flag, the key, the cursor comparison and
 /// the ORDER BY all read it, and the fallback expression behind it is long
 /// enough that repeating it would dominate the query text.
@@ -443,35 +437,29 @@ struct OrderKey {
 }
 
 impl OrderKey {
+    /// INVARIANT: an unresolved sort has no ordering key to fall back on. A
+    /// constant one would still be replayed against a cursor minted by a real
+    /// key, and the two leading tuple elements would decide the comparison
+    /// before the tiebreakers were reached — serving a page twice or dropping
+    /// the rest of the result set, silently. Validation refuses such a sort
+    /// first, so reaching here is a fault, not a degradation.
     fn build(
         columns: &[MetricDrilldownColumn],
         sort: &MetricDrilldownSort,
-        resolve: ColumnResolver,
-    ) -> Self {
-        let direction = sort.direction;
-        // Validation refuses a sort the query cannot compile, so an unresolved
-        // key here means the metric changed shape under a live selection. The
-        // tiebreakers alone still produce a total, pageable order.
-        let Some(sql) = columns
+        ratio: bool,
+    ) -> Result<Self, CanonicalError> {
+        let sql = columns
             .iter()
             .find(|column| column.key == sort.key)
-            .and_then(|column| resolve(&column.key, column.r#type))
-        else {
-            return Self {
-                source: "''".to_owned(),
-                flag: "toUInt8(0)".to_owned(),
-                key: "''".to_owned(),
-                binding: "?",
-                direction,
-            };
-        };
-        Self {
-            flag: empty_flag(SORT_SOURCE, direction),
+            .and_then(|column| column_sql(&column.key, column.r#type, ratio))
+            .ok_or_else(config_error)?;
+        Ok(Self {
+            flag: empty_flag(SORT_SOURCE, sort.direction),
             key: sql.order_key(SORT_SOURCE),
             binding: sql.cursor_binding(),
             source: sql.as_text().to_owned(),
-            direction,
-        }
+            direction: sort.direction,
+        })
     }
 
     /// The `WITH` term the rest of the key reads through.
@@ -536,14 +524,14 @@ impl OrderKey {
 fn search_predicate(
     search: Option<&str>,
     columns: &[MetricDrilldownColumn],
-    resolve: ColumnResolver,
+    ratio: bool,
     params: &mut Vec<String>,
 ) -> Option<String> {
     let needle = search?;
     let mut matches = Vec::new();
     for column in columns
         .iter()
-        .filter_map(|column| resolve(&column.key, column.r#type))
+        .filter_map(|column| column_sql(&column.key, column.r#type, ratio))
     {
         params.push(needle.to_owned());
         matches.push(format!(

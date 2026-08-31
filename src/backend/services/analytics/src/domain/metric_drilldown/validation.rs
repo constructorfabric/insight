@@ -5,7 +5,8 @@ use uuid::Uuid;
 use crate::api::error::MetricError;
 use crate::domain::metric_definitions::definition::{AliasCollapse, MetricInputRole};
 use crate::domain::metric_definitions::{
-    EvidenceGranularity, MetricDefinition, StoredPresentation, load_definitions_with_ids,
+    ComputationSpec, EvidenceGranularity, MetricDefinition, StoredPresentation,
+    load_definitions_with_ids,
 };
 use crate::domain::metric_results::{normalize_key, normalize_metric_key};
 
@@ -17,12 +18,13 @@ use super::cursor::{
 use super::dto::{
     DEFAULT_PAGE_LIMIT, EvidenceInput, EvidencePlan, MAX_DISPLAY_DIMENSIONS, MAX_ENTITY_PERSONS,
     MAX_EXPORT_ROWS, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_PAGE_LIMIT,
-    MAX_PERIOD_DAYS, MAX_SEARCH_BYTES, MetricDrilldownEntity, MetricDrilldownExportRequest,
-    MetricDrilldownFilter, MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection,
+    MAX_PERIOD_DAYS, MAX_SEARCH_BYTES, MetricDrilldownColumn, MetricDrilldownColumnType,
+    MetricDrilldownEntity, MetricDrilldownExportRequest, MetricDrilldownFilter,
+    MetricDrilldownPeriod, MetricDrilldownRequest, MetricDrilldownSelection,
     ValidatedMetricDrilldown,
 };
 use super::presentation::presentation_columns;
-use super::sort::MetricDrilldownSort;
+use super::sort::{MetricDrilldownSort, column_sql};
 
 struct CommonRequest {
     metric_key: String,
@@ -150,6 +152,29 @@ pub(crate) fn parse_person_ids(
     Ok(parsed)
 }
 
+/// The entity in its canonical form: person ids parsed and re-rendered, a
+/// roster sorted and deduplicated, an unsupported shape refused.
+fn normalize_entity(
+    entity: MetricDrilldownEntity,
+) -> Result<MetricDrilldownEntity, CanonicalError> {
+    match entity {
+        MetricDrilldownEntity::Person { id } => {
+            let (_, person_id) = parse_person_entity(&MetricDrilldownEntity::Person { id })?;
+            Ok(MetricDrilldownEntity::Person {
+                id: person_id.to_string(),
+            })
+        }
+        MetricDrilldownEntity::Persons { .. } => Ok(MetricDrilldownEntity::Persons {
+            ids: parse_person_ids(&entity)?
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+        }),
+        MetricDrilldownEntity::Tenant {} => Ok(MetricDrilldownEntity::Tenant {}),
+        MetricDrilldownEntity::Unknown => invalid("entity.type", "unsupported entity type"),
+    }
+}
+
 async fn validate_common(
     db: &DatabaseConnection,
     ch: &insight_clickhouse::Client,
@@ -169,24 +194,7 @@ async fn validate_common(
         cursor,
     } = request;
     let metric_key = normalize_metric_key("metric_key", &metric_key)?;
-    let entity = match entity {
-        MetricDrilldownEntity::Person { id } => {
-            let (_, person_id) = parse_person_entity(&MetricDrilldownEntity::Person { id })?;
-            MetricDrilldownEntity::Person {
-                id: person_id.to_string(),
-            }
-        }
-        MetricDrilldownEntity::Persons { .. } => MetricDrilldownEntity::Persons {
-            ids: parse_person_ids(&entity)?
-                .into_iter()
-                .map(|id| id.to_string())
-                .collect(),
-        },
-        MetricDrilldownEntity::Tenant {} => MetricDrilldownEntity::Tenant {},
-        MetricDrilldownEntity::Unknown => {
-            return invalid("entity.type", "unsupported entity type");
-        }
-    };
+    let entity = normalize_entity(entity)?;
     let entity_type = entity.entity_type();
     if limit == 0 || limit > max_limit {
         return invalid("limit", format!("limit must be between 1 and {max_limit}"));
@@ -216,7 +224,12 @@ async fn validate_common(
     let display_dimensions = normalize_display_dimensions(&definition, display_dimensions)?;
     let plan = load_evidence_plan(db, definition_id, definition).await?;
     let snapshot_id = evidence_snapshot_id(ch, &plan.relation).await?;
-    let sort = normalize_sort(&plan, &filters, &display_dimensions, &entity, sort)?;
+    // One column set answers three questions — what may be sorted, what the
+    // cursor is bound to, and what the compiler reads — so they cannot drift
+    // apart between here and the query.
+    let columns = presentation_columns(&plan, &filters, &display_dimensions, &entity);
+    let ratio = matches!(plan.definition.spec, ComputationSpec::Ratio { .. });
+    let sort = normalize_sort(&columns, sort)?;
     let search = normalize_search(search)?;
     let selection = MetricDrilldownSelection {
         metric_key,
@@ -230,18 +243,17 @@ async fn validate_common(
         sort,
         search,
     };
-    let fingerprint = selection_fingerprint(tenant_id, &selection)?;
-    let cursor = match cursor {
-        Some(value) => {
-            let envelope = decode_cursor(&value)?;
-            verify_evidence_snapshot(ch, &plan.relation, &envelope.snapshot_id).await?;
-            if envelope.fingerprint != fingerprint {
-                return invalid("cursor", "cursor does not match the metric selection");
-            }
-            Some(envelope.key)
-        }
-        None => None,
-    };
+    let fingerprint = selection_fingerprint(tenant_id, &selection, &columns)?;
+    let cursor = resume_from(
+        ch,
+        cursor,
+        &plan,
+        &fingerprint,
+        &columns,
+        &selection.sort,
+        ratio,
+    )
+    .await?;
     Ok(ValidatedMetricDrilldown {
         selection,
         tenant_id,
@@ -258,21 +270,58 @@ async fn validate_common(
     })
 }
 
+/// The page a cursor addresses, or nothing where the caller asked for the
+/// first one.
+async fn resume_from(
+    ch: &insight_clickhouse::Client,
+    cursor: Option<String>,
+    plan: &EvidencePlan,
+    fingerprint: &str,
+    columns: &[MetricDrilldownColumn],
+    sort: &MetricDrilldownSort,
+    ratio: bool,
+) -> Result<Option<super::cursor::CursorKey>, CanonicalError> {
+    let Some(value) = cursor else {
+        return Ok(None);
+    };
+    let envelope = decode_cursor(&value)?;
+    verify_evidence_snapshot(ch, &plan.relation, &envelope.snapshot_id).await?;
+    if envelope.fingerprint != fingerprint {
+        return invalid("cursor", "cursor does not match the metric selection");
+    }
+
+    // A cursor is bytes the caller holds. Its key is replayed through the
+    // sorted column's own cast, and ClickHouse answers a value that will not
+    // cast by refusing the QUERY — so it is refused here, as the malformed
+    // cursor it is.
+    let fits = column_sql(&sort.key, sort_column_type(columns, &sort.key), ratio)
+        .is_some_and(|sql| sql.accepts_cursor_key(&envelope.key.sort_value));
+    if !fits {
+        return invalid("cursor", "cursor is malformed");
+    }
+
+    Ok(Some(envelope.key))
+}
+
+fn sort_column_type(columns: &[MetricDrilldownColumn], key: &str) -> MetricDrilldownColumnType {
+    columns
+        .iter()
+        .find(|column| column.key == key)
+        .map_or(MetricDrilldownColumnType::String, |column| column.r#type)
+}
+
 /// A sort the query cannot compile is refused rather than silently ignored: a
 /// client that believes it asked for one order and is served another has no way
 /// to tell.
 fn normalize_sort(
-    plan: &EvidencePlan,
-    filters: &[MetricDrilldownFilter],
-    display_dimensions: &[String],
-    entity: &MetricDrilldownEntity,
+    columns: &[MetricDrilldownColumn],
     sort: Option<MetricDrilldownSort>,
 ) -> Result<MetricDrilldownSort, CanonicalError> {
     let Some(sort) = sort else {
         return Ok(MetricDrilldownSort::newest_first());
     };
     let key = normalize_key("sort.key", &sort.key)?;
-    let sortable = presentation_columns(plan, filters, display_dimensions, entity)
+    let sortable = columns
         .iter()
         .any(|column| column.key == key && column.sortable);
     if !sortable {
@@ -452,9 +501,13 @@ mod tests {
         }
     }
 
+    fn columns_for(entity: &MetricDrilldownEntity) -> Vec<MetricDrilldownColumn> {
+        presentation_columns(&commit_plan(), &[], &[], entity)
+    }
+
     #[test]
     fn a_selection_that_names_no_order_gets_the_newest_records_first() {
-        let sort = normalize_sort(&commit_plan(), &[], &[], &one_person(), None)
+        let sort = normalize_sort(&columns_for(&one_person()), None)
             .unwrap_or_else(|error| panic!("the default order must resolve: {error}"));
 
         assert_eq!(sort, MetricDrilldownSort::newest_first());
@@ -464,12 +517,9 @@ mod tests {
     #[test]
     fn a_sort_the_query_cannot_compile_is_refused_rather_than_ignored() {
         let refused = normalize_sort(
-            &commit_plan(),
-            &[],
-            &[],
-            &MetricDrilldownEntity::Persons {
+            &columns_for(&MetricDrilldownEntity::Persons {
                 ids: vec!["person".to_owned()],
-            },
+            }),
             Some(MetricDrilldownSort {
                 key: "person".to_owned(),
                 direction: MetricDrilldownSortDirection::Asc,
@@ -478,10 +528,7 @@ mod tests {
         assert!(refused.is_err(), "the who column is shown, not sorted");
 
         let unknown = normalize_sort(
-            &commit_plan(),
-            &[],
-            &[],
-            &one_person(),
+            &columns_for(&one_person()),
             Some(MetricDrilldownSort {
                 key: "nothing".to_owned(),
                 direction: MetricDrilldownSortDirection::Asc,
@@ -493,10 +540,7 @@ mod tests {
     #[test]
     fn a_declared_column_sorts_under_its_own_key() {
         let sort = normalize_sort(
-            &commit_plan(),
-            &[],
-            &[],
-            &one_person(),
+            &columns_for(&one_person()),
             Some(MetricDrilldownSort {
                 key: " Repository ".to_owned(),
                 direction: MetricDrilldownSortDirection::Asc,

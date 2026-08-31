@@ -119,6 +119,19 @@ impl ColumnSql {
             MetricDrilldownColumnType::String | MetricDrilldownColumnType::Date => "?",
         }
     }
+
+    /// Whether a replayed cursor key can re-enter this column's comparison.
+    ///
+    /// SAFETY: the cast in `cursor_binding` is ClickHouse's, and it refuses the
+    /// whole QUERY rather than the value — a cursor whose key does not fit
+    /// would be answered with a server error instead of a refusal. A cursor is
+    /// caller-held bytes, so this is checked before it is bound.
+    pub(super) fn accepts_cursor_key(&self, key: &str) -> bool {
+        match self.r#type {
+            MetricDrilldownColumnType::Number => key.parse::<f64>().is_ok_and(f64::is_finite),
+            MetricDrilldownColumnType::String | MetricDrilldownColumnType::Date => true,
+        }
+    }
 }
 
 /// Blank cells land last whichever way the column is sorted, and this flag is
@@ -128,7 +141,25 @@ pub(super) fn empty_flag(source: &str, direction: MetricDrilldownSortDirection) 
         MetricDrilldownSortDirection::Asc => "=",
         MetricDrilldownSortDirection::Desc => "!=",
     };
-    format!("toUInt8(trimBoth({source}) {comparison} '')")
+    format!(
+        "toUInt8({blank} {comparison} '')",
+        blank = blank_test(source)
+    )
+}
+
+/// Is this cell blank, by the same rule the row projection applies?
+///
+/// INVARIANT: ClickHouse `trimBoth` takes spaces alone, while `visible_value`
+/// trims by Rust's `str::trim`. Folding the other ASCII whitespace to a space
+/// first makes the two agree on the forms a record actually carries — a commit
+/// subject of nothing but newlines reads blank on screen, so it has to read
+/// blank to the order as well. Whitespace beyond ASCII still parts them.
+fn blank_test(source: &str) -> String {
+    let mut folded = source.to_owned();
+    for whitespace in ["\\t", "\\n", "\\r", "\\v", "\\f"] {
+        folded = format!("replaceAll({folded}, '{whitespace}', ' ')");
+    }
+    format!("trimBoth({folded})")
 }
 
 /// Digits sort as digits: `300` before `2958`, the way the reader reads them.
@@ -142,10 +173,19 @@ fn natural_order(text: &str) -> String {
     )
 }
 
-/// How a column of the non-ratio query is read off the evidence row. `None` is
-/// a column the query cannot order or search by, and the validator refuses a
-/// sort naming it.
-pub(super) fn value_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
+/// How a presented column is read off the row. `None` is a column the query
+/// cannot order or search by, and the validator refuses a sort naming it.
+///
+/// One resolver for both query shapes: the validator and the compiler ask the
+/// same question, and a second implementation is a second answer.
+pub(super) fn column_sql(
+    key: &str,
+    r#type: MetricDrilldownColumnType,
+    ratio: bool,
+) -> Option<ColumnSql> {
+    if ratio {
+        return ratio_column_sql(key);
+    }
     let sql = match key {
         PERSON_KEY | NUMERATOR_KEY | DENOMINATOR_KEY => return None,
         DATE_KEY => ColumnSql::projected(
@@ -163,8 +203,7 @@ pub(super) fn value_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> 
 
 /// A ratio row is two aggregates over a day, so the day and the two numbers are
 /// everything it has to be ordered by.
-pub(super) fn ratio_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> Option<ColumnSql> {
-    let _ = r#type;
+fn ratio_column_sql(key: &str) -> Option<ColumnSql> {
     let sql = match key {
         DATE_KEY => ColumnSql::projected(
             MetricDrilldownColumnType::Date,
@@ -186,11 +225,7 @@ pub(super) fn ratio_column_sql(key: &str, r#type: MetricDrilldownColumnType) -> 
 /// Whether the query can order by a column at all — the one answer the
 /// presented column carries and the validator refuses a sort against.
 pub(super) fn is_sortable(key: &str, r#type: MetricDrilldownColumnType, ratio: bool) -> bool {
-    if ratio {
-        ratio_column_sql(key, r#type).is_some()
-    } else {
-        value_column_sql(key, r#type).is_some()
-    }
+    column_sql(key, r#type, ratio).is_some()
 }
 
 /// INVARIANT: mirrors `project_row` — the details map first, the dimension of
@@ -198,9 +233,10 @@ pub(super) fn is_sortable(key: &str, r#type: MetricDrilldownColumnType, ratio: b
 fn detail_text(key: &str) -> String {
     let literal = sql_string_literal(key);
     format!(
-        "if(trimBoth(evidence.details[{literal}]) != '', \
+        "if({present} != '', \
            evidence.details[{literal}], \
            {dimension})",
+        present = blank_test(&format!("evidence.details[{literal}]")),
         dimension = dimension_text(&literal),
     )
 }
@@ -219,7 +255,7 @@ mod tests {
     use super::*;
 
     fn text(key: &str) -> ColumnSql {
-        value_column_sql(key, MetricDrilldownColumnType::String)
+        column_sql(key, MetricDrilldownColumnType::String, false)
             .unwrap_or_else(|| panic!("{key} must be readable"))
     }
 
@@ -227,11 +263,11 @@ mod tests {
     fn a_column_the_query_cannot_read_refuses_to_produce_sql() {
         for key in [PERSON_KEY, NUMERATOR_KEY, DENOMINATOR_KEY] {
             assert!(
-                value_column_sql(key, MetricDrilldownColumnType::String).is_none(),
+                column_sql(key, MetricDrilldownColumnType::String, false).is_none(),
                 "should refuse: {key}"
             );
         }
-        assert!(ratio_column_sql("repository", MetricDrilldownColumnType::String).is_none());
+        assert!(column_sql("repository", MetricDrilldownColumnType::String, true).is_none());
     }
 
     #[test]
@@ -258,7 +294,7 @@ mod tests {
 
     #[test]
     fn a_number_column_re_enters_the_cursor_as_a_number() {
-        let number = value_column_sql(VALUE_KEY, MetricDrilldownColumnType::Number)
+        let number = column_sql(VALUE_KEY, MetricDrilldownColumnType::Number, false)
             .unwrap_or_else(|| panic!("value must be readable"));
         assert_eq!(number.cursor_binding(), "toFloat64(?)");
         assert_eq!(text(DATE_KEY).cursor_binding(), "?");
@@ -268,6 +304,29 @@ mod tests {
     fn the_emptiness_flag_turns_over_with_the_direction() {
         assert!(empty_flag("cell", MetricDrilldownSortDirection::Asc).contains("= ''"));
         assert!(empty_flag("cell", MetricDrilldownSortDirection::Desc).contains("!= ''"));
+    }
+
+    // A forged cursor is caller-held bytes; the cast that replays it is
+    // ClickHouse's, and it refuses the query rather than the value.
+    #[test]
+    fn a_cursor_key_that_cannot_re_enter_the_comparison_is_refused() {
+        let number = column_sql(VALUE_KEY, MetricDrilldownColumnType::Number, false)
+            .unwrap_or_else(|| panic!("value must be readable"));
+        assert!(number.accepts_cursor_key("12.5"));
+        assert!(!number.accepts_cursor_key("x"));
+        assert!(!number.accepts_cursor_key(""));
+        assert!(!number.accepts_cursor_key("inf"));
+        assert!(text(DATE_KEY).accepts_cursor_key("anything at all"));
+    }
+
+    // A commit subject of nothing but newlines renders blank, so it has to
+    // sort with the blanks rather than among the filled.
+    #[test]
+    fn whitespace_beyond_the_space_still_reads_blank() {
+        let sql = empty_flag("cell", MetricDrilldownSortDirection::Asc);
+        for whitespace in ["\\t", "\\n", "\\r"] {
+            assert!(sql.contains(whitespace), "should fold {whitespace}: {sql}");
+        }
     }
 
     #[test]

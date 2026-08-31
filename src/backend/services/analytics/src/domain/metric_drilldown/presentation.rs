@@ -95,6 +95,19 @@ fn present(
     Ok((columns, projected_rows))
 }
 
+/// Whether this selection presents the `person` column — the one read that has
+/// to resolve names, and so the only one that should pay for it.
+pub(crate) fn presents_person(req: &ValidatedMetricDrilldown) -> bool {
+    presentation_columns(
+        &req.plan,
+        &req.selection.filters,
+        &req.selection.display_dimensions,
+        &req.selection.entity,
+    )
+    .iter()
+    .any(|column| column.key == PERSON_KEY)
+}
+
 /// INVARIANT: the query compiler builds its ORDER BY and its search from this
 /// same list, so a column the reader sees is a column the query can name.
 pub(super) fn presentation_columns(
@@ -112,7 +125,11 @@ pub(super) fn presentation_columns(
     } else {
         declared_columns(plan)
     };
-    let display_dimensions = if ratio { &[] } else { display_dimensions };
+    // Both sources of dimension columns drop together for a ratio: the outer
+    // aggregate carries no cell the query can order or search, so a column
+    // rendered from it would answer neither.
+    let display_dimensions: &[String] = if ratio { &[] } else { display_dimensions };
+    let filters: &[MetricDrilldownFilter] = if ratio { &[] } else { filters };
 
     let mut columns = Vec::new();
     // A roster's records come from many people, and which one is the first
@@ -396,9 +413,10 @@ mod tests {
     use crate::domain::metric_definitions::EvidencePresentation;
     use crate::domain::metric_definitions::{EvidenceGranularity, RatioDenominatorAggregation};
     use crate::domain::metric_drilldown::cursor::decode_cursor;
+    use crate::domain::metric_drilldown::cursor::selection_fingerprint;
     use crate::domain::metric_drilldown::dto::EvidenceInput;
     use crate::domain::metric_drilldown::test_support::{
-        commit_input, commit_presentation, input, plan, row, validated,
+        TEST_TENANT, commit_input, commit_presentation, input, plan, row, validated,
     };
 
     fn one_person() -> MetricDrilldownEntity {
@@ -420,6 +438,23 @@ mod tests {
                 value: value.clone(),
             },
             vec![commit_input(MetricInputRole::Value, &value.measure_key)],
+        )
+    }
+
+    fn ratio_plan() -> EvidencePlan {
+        let numerator = input(MetricInputRole::Numerator, "focus_hours");
+        let denominator = input(MetricInputRole::Denominator, "work_hours");
+        plan(
+            ComputationSpec::Ratio {
+                numerator: numerator.clone(),
+                denominator: denominator.clone(),
+                scale: 100.0,
+                denominator_aggregation: RatioDenominatorAggregation::Sum,
+            },
+            vec![
+                commit_input(MetricInputRole::Numerator, &numerator.measure_key),
+                commit_input(MetricInputRole::Denominator, &denominator.measure_key),
+            ],
         )
     }
 
@@ -456,6 +491,71 @@ mod tests {
             rows[0].values["lines_added"].is_i64(),
             "line counts are whole lines, not floats: {:?}",
             rows[0].values["lines_added"]
+        );
+    }
+
+    // The ordering key's SQL is decided by a column's declared TYPE, and no
+    // snapshot pins the catalog that declares it. A cursor that survived such
+    // a change would compare against a differently-shaped key.
+    #[test]
+    fn the_cursor_is_bound_to_the_shape_of_the_columns_it_was_issued_over() {
+        let request = validated(commit_plan());
+        let columns = presentation_columns(
+            &request.plan,
+            &request.selection.filters,
+            &request.selection.display_dimensions,
+            &request.selection.entity,
+        );
+        let mut retyped = columns.clone();
+        for column in &mut retyped {
+            if column.key == "ref" {
+                column.r#type = MetricDrilldownColumnType::Number;
+            }
+        }
+
+        let before = selection_fingerprint(TEST_TENANT, &request.selection, &columns)
+            .unwrap_or_else(|error| panic!("fingerprint must build: {error}"));
+        let after = selection_fingerprint(TEST_TENANT, &request.selection, &retyped)
+            .unwrap_or_else(|error| panic!("fingerprint must build: {error}"));
+
+        assert_ne!(before, after);
+    }
+
+    // Only the read that shows the column pays for resolving names.
+    #[test]
+    fn a_ratio_roster_presents_no_one_and_so_names_no_one() {
+        let mut roster = validated(commit_plan());
+        roster.selection.entity = a_roster();
+        assert!(presents_person(&roster));
+
+        let mut ratio = validated(ratio_plan());
+        ratio.selection.entity = a_roster();
+        assert!(!presents_person(&ratio));
+
+        assert!(!presents_person(&validated(commit_plan())));
+    }
+
+    // A ratio row is two aggregates over a day; the outer query carries no cell
+    // a dimension column could be ordered or searched by, from either source.
+    #[test]
+    fn a_ratio_presents_no_dimension_column_from_either_source() {
+        let filters = vec![MetricDrilldownFilter {
+            dimension: "repository".to_owned(),
+            values: vec!["org/repo".to_owned()],
+        }];
+        let columns = presentation_columns(
+            &ratio_plan(),
+            &filters,
+            &["category".to_owned()],
+            &one_person(),
+        );
+
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["date", "numerator", "denominator"]
         );
     }
 
