@@ -21,8 +21,7 @@ use crate::infra::registry::Registry;
 pub struct AppState {
     /// Kubernetes access, scoped to the one configured namespace.
     pub cluster: Cluster,
-    /// Registry read access for tag listing; `None` when no credential is
-    /// configured (`GET /v1/images` then answers `configured: false`).
+    /// `None` when tag listing is disabled (empty registry URL).
     pub registry: Option<Registry>,
     pub config: GearConfig,
     /// Serializes create admission (count-then-create); see the INVARIANT at
@@ -102,8 +101,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .json_response_with_schema::<images::ImageListResponse>(
             openapi,
             StatusCode::OK,
-            "The preview- tags of the FE image repository, or an explicit \
-             unconfigured answer when the service holds no registry credential",
+            "The preview- tags of the FE image repository; configured=false \
+             when tag listing is disabled",
         )
         .standard_errors(openapi)
         .handler(images::list_images)

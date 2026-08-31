@@ -46,9 +46,8 @@ spec:
         - name: previews
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # gears-rust host: structural config from the mounted ConfigMap.
-          # The one credential (the registry read token) rides a Secret-backed
-          # env override, never the ConfigMap.
+          # gears-rust host: structural config from the mounted ConfigMap; the
+          # registry token is the one Secret-backed env override.
           command: ["/app/previews"]
           args: ["-c", "/app/config/insight.yaml"]
           {{- if .Values.experiments.registryTokenSecret }}

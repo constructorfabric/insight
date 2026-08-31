@@ -127,8 +127,8 @@ data:
           route_host: {{ .Values.experiments.routeHost | quote }}
           base_path: {{ .Values.experiments.basePath | quote }}
           max_experiments: {{ .Values.experiments.maxExperiments }}
-          # The registry token is a credential and NEVER rides this ConfigMap;
-          # it arrives as a Secret-backed env override (see deployment.yaml).
+          # The registry token is a credential; it rides a Secret-backed env
+          # override, never this ConfigMap.
           registry_url: {{ .Values.experiments.registryUrl | quote }}
           default_ttl_days: {{ .Values.experiments.defaultTtlDays }}
           max_ttl_days: {{ .Values.experiments.maxTtlDays }}

@@ -25,15 +25,13 @@ export interface Experiment {
 
 export interface ExperimentListResponse {
   experiments: Experiment[];
-  /** How many experiments count against the cap (expired ones do not). */
+  /** Experiments counting against the cap; expired ones do not. */
   liveCount: number;
-  /** The server's live-experiment cap; a create at the cap is refused. */
   cap: number;
 }
 
-/** The registry tags the create form can offer. */
 export interface ImageListResponse {
-  /** False when the server holds no registry credential; `tags` is empty. */
+  /** False when tag listing is disabled server-side; `tags` is empty. */
   configured: boolean;
   tags: string[];
 }
@@ -43,7 +41,7 @@ export interface CreateExperimentRequest {
   name: string;
   /** FE image tag — the server validates (`preview-…` or a CI build tag). */
   tag: string;
-  /** Days until expiry — the server defaults and caps it when omitted. */
+  /** Days until expiry; server default when omitted. */
   ttlDays?: number;
 }
 

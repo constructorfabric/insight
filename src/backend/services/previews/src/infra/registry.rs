@@ -1,11 +1,10 @@
-//! OCI registry read access: list the tags of the fixed FE image repository
-//! (`/v2/<repo>/tags/list`, `Link`-header pagination). Read-only — nothing
-//! here can push or delete.
+//! OCI registry read access: list the tags of the FE image repository.
 
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, LINK};
+use reqwest::StatusCode;
+use reqwest::header::{AUTHORIZATION, HeaderValue, LINK, WWW_AUTHENTICATE};
 
 use crate::domain::objects::IMAGE_REPOSITORY;
 
@@ -13,51 +12,48 @@ const REGISTRY_TIMEOUT: Duration = Duration::from_secs(10);
 const PAGE_SIZE: usize = 1000;
 const MAX_PAGES: usize = 20;
 
-/// A client for the one registry the FE image repository lives in, carrying
-/// the read credential on every request.
 pub struct Registry {
     http: reqwest::Client,
     base_url: String,
+    static_bearer: Option<HeaderValue>,
 }
 
 impl Registry {
-    /// Build the client. Fails when the token cannot form a header value.
     pub fn connect(base_url: &str, token: &str) -> anyhow::Result<Self> {
-        let mut bearer = HeaderValue::from_str(&format!("Bearer {token}"))
-            .context("registry token is not a valid header value")?;
-        bearer.set_sensitive(true);
-
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, bearer);
+        let static_bearer = if token.is_empty() {
+            None
+        } else {
+            Some(bearer(token)?)
+        };
         let http = reqwest::Client::builder()
             .timeout(REGISTRY_TIMEOUT)
-            .default_headers(headers)
             .build()
             .context("registry http client")?;
 
         Ok(Self {
             http,
             base_url: base_url.trim_end_matches('/').to_owned(),
+            static_bearer,
         })
     }
 
-    /// Every tag of the FE image repository, following pagination up to
-    /// [`MAX_PAGES`]; a repository larger than that is truncated and logged.
+    /// All tags, following `Link` pagination; past [`MAX_PAGES`] the rest is
+    /// dropped and logged.
     pub async fn list_tags(&self) -> anyhow::Result<Vec<String>> {
         let mut url = format!(
             "{}/v2/{}/tags/list?n={PAGE_SIZE}",
             self.base_url,
             repository_path()
         );
+        let mut auth = self.static_bearer.clone();
 
         let mut tags = Vec::new();
         for _ in 0..MAX_PAGES {
-            let response = self
-                .http
-                .get(&url)
-                .send()
-                .await
-                .context("registry tags request")?;
+            let mut response = self.get(&url, auth.as_ref()).await?;
+            if response.status() == StatusCode::UNAUTHORIZED && auth.is_none() {
+                auth = Some(self.anonymous_bearer(&response).await?);
+                response = self.get(&url, auth.as_ref()).await?;
+            }
             let status = response.status();
             if !status.is_success() {
                 return Err(anyhow!("registry answered {status} listing tags"));
@@ -83,25 +79,90 @@ impl Registry {
         );
         Ok(tags)
     }
+
+    async fn get(
+        &self,
+        url: &str,
+        auth: Option<&HeaderValue>,
+    ) -> anyhow::Result<reqwest::Response> {
+        let mut request = self.http.get(url);
+        if let Some(auth) = auth {
+            request = request.header(AUTHORIZATION, auth);
+        }
+        request.send().await.context("registry request")
+    }
+
+    /// Even public repositories answer 401 anonymously; the challenge names
+    /// the endpoint that mints a pull token with no credential.
+    async fn anonymous_bearer(&self, refused: &reqwest::Response) -> anyhow::Result<HeaderValue> {
+        let challenge = refused
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| anyhow!("registry 401 without a bearer challenge"))?;
+        let token_url = token_url(challenge, repository_path())
+            .ok_or_else(|| anyhow!("registry challenge names no token endpoint"))?;
+
+        let minted: MintedToken = self
+            .http
+            .get(&token_url)
+            .send()
+            .await
+            .context("registry token request")?
+            .error_for_status()
+            .context("registry token endpoint")?
+            .json()
+            .await
+            .context("registry token body")?;
+        bearer(&minted.token)
+    }
 }
 
-/// The tags-list body of the OCI distribution spec; `tags` is null for an
-/// empty repository on some registries.
+fn bearer(token: &str) -> anyhow::Result<HeaderValue> {
+    let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
+        .context("registry token is not a valid header value")?;
+    value.set_sensitive(true);
+    Ok(value)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MintedToken {
+    token: String,
+}
+
+/// `Bearer realm="…",service="…"` →
+/// `{realm}?service={service}&scope=repository:{repo}:pull`.
+fn token_url(challenge: &str, repo: &str) -> Option<String> {
+    let params = challenge.strip_prefix("Bearer ")?;
+    let realm = challenge_field(params, "realm")?;
+    let service = challenge_field(params, "service").unwrap_or_default();
+    Some(format!(
+        "{realm}?service={service}&scope=repository:{repo}:pull"
+    ))
+}
+
+fn challenge_field(params: &str, name: &str) -> Option<String> {
+    params.split(',').find_map(|part| {
+        part.trim()
+            .strip_prefix(name)?
+            .strip_prefix("=\"")?
+            .strip_suffix('"')
+            .map(str::to_owned)
+    })
+}
+
+/// WORKAROUND: some registries serve `tags: null` for an empty repository.
 #[derive(Debug, serde::Deserialize)]
 struct TagsPage {
     tags: Option<Vec<String>>,
 }
 
-/// The repository path within the registry: [`IMAGE_REPOSITORY`] minus its
-/// registry-host segment.
 fn repository_path() -> &'static str {
     IMAGE_REPOSITORY
         .split_once('/')
         .map_or(IMAGE_REPOSITORY, |(_host, path)| path)
 }
 
-/// The follow-up URL out of an OCI `Link` header (`<url>; rel="next"`),
-/// resolved against the registry base when the URL is host-relative.
 fn next_page_url(link: Option<&str>, base_url: &str) -> Option<String> {
     let target = link?
         .split(',')
@@ -122,6 +183,36 @@ mod tests {
     #[test]
     fn the_repository_path_drops_the_registry_host() {
         assert_eq!(repository_path(), "constructorfabric/insight-frontend");
+    }
+
+    #[test]
+    fn the_token_endpoint_comes_from_the_bearer_challenge() {
+        for (case, challenge, expected) in [
+            (
+                "ghcr-shaped challenge",
+                "Bearer realm=\"https://registry.example.com/token\",service=\"registry.example.com\",scope=\"repository:example/app:pull\"",
+                Some(
+                    "https://registry.example.com/token?service=registry.example.com&scope=repository:example/app:pull"
+                        .to_owned(),
+                ),
+            ),
+            (
+                "no service",
+                "Bearer realm=\"https://registry.example.com/token\"",
+                Some(
+                    "https://registry.example.com/token?service=&scope=repository:example/app:pull"
+                        .to_owned(),
+                ),
+            ),
+            ("basic challenge", "Basic realm=\"registry\"", None),
+            ("no realm", "Bearer service=\"registry.example.com\"", None),
+        ] {
+            assert_eq!(
+                token_url(challenge, "example/app"),
+                expected,
+                "for: {case}"
+            );
+        }
     }
 
     #[test]

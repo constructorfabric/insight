@@ -47,8 +47,8 @@ class ImageListResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    configured: bool = Field(..., description='False when the service holds no registry read credential; `tags` is\nthen empty and the create form keeps free-text entry.')
-    tags: list[str] = Field(..., description='The `preview-…` tags of the fixed FE image repository, deduped and\nsorted.')
+    configured: bool = Field(..., description='False when tag listing is disabled server-side; `tags` is then empty.')
+    tags: list[str] = Field(..., description="The repository's `preview-…` tags, deduped and sorted.")
 
 
 class Problem(BaseModel):
@@ -90,6 +90,6 @@ class ExperimentListResponse(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    cap: int = Field(..., description='The configured live-experiment cap; a create at the cap is refused.', ge=0)
+    cap: int = Field(..., ge=0)
     experiments: list[ExperimentResponse]
-    liveCount: int = Field(..., description='How many experiments count against the cap (expired ones do not).', ge=0)
+    liveCount: int = Field(..., description='Experiments counting against the cap; expired ones do not.', ge=0)

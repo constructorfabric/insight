@@ -36,12 +36,10 @@ pub struct GearConfig {
     pub max_ttl_days: u32,
     /// How often the TTL sweep looks for expired experiments.
     pub sweep_interval_secs: u64,
-    /// Base URL of the OCI registry holding the FE image repository; read
-    /// only for tag listing.
+    /// OCI registry for tag listing; empty disables `GET /v1/images`.
     pub registry_url: String,
-    /// Bearer credential for the tag listing (for GHCR, the base64-encoded
-    /// read token). Empty means listing is unconfigured and `GET /v1/images`
-    /// answers `configured: false`.
+    /// Bearer credential, needed only for a private repository (for GHCR,
+    /// the base64-encoded read token); empty lists anonymously.
     pub registry_token: String,
 }
 

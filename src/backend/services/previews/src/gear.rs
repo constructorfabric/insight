@@ -43,7 +43,7 @@ impl Gear for PreviewsGear {
             config.sweep_interval_secs,
         ));
 
-        let registry = if config.registry_token.is_empty() {
+        let registry = if config.registry_url.is_empty() {
             None
         } else {
             Some(Registry::connect(

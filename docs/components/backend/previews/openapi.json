@@ -32,7 +32,6 @@
         "description": "List wrapper for `GET /v1/experiments`.",
         "properties": {
           "cap": {
-            "description": "The configured live-experiment cap; a create at the cap is refused.",
             "minimum": 0,
             "type": "integer"
           },
@@ -43,7 +42,7 @@
             "type": "array"
           },
           "liveCount": {
-            "description": "How many experiments count against the cap (expired ones do not).",
+            "description": "Experiments counting against the cap; expired ones do not.",
             "minimum": 0,
             "type": "integer"
           }
@@ -111,11 +110,11 @@
         "description": "Body of `GET /v1/images`.",
         "properties": {
           "configured": {
-            "description": "False when the service holds no registry read credential; `tags` is\nthen empty and the create form keeps free-text entry.",
+            "description": "False when tag listing is disabled server-side; `tags` is then empty.",
             "type": "boolean"
           },
           "tags": {
-            "description": "The `preview-…` tags of the fixed FE image repository, deduped and\nsorted.",
+            "description": "The repository's `preview-…` tags, deduped and sorted.",
             "items": {
               "type": "string"
             },
@@ -483,7 +482,7 @@
                 }
               }
             },
-            "description": "The preview- tags of the FE image repository, or an explicit unconfigured answer when the service holds no registry credential"
+            "description": "The preview- tags of the FE image repository; configured=false when tag listing is disabled"
           },
           "400": {
             "content": {

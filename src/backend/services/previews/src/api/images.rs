@@ -1,4 +1,4 @@
-//! Image-tag listing surface — the registry tags the create form can offer.
+//! Image-tag listing surface.
 
 use std::sync::Arc;
 
@@ -18,11 +18,9 @@ use crate::domain::experiment::preview_tags;
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageListResponse {
-    /// False when the service holds no registry read credential; `tags` is
-    /// then empty and the create form keeps free-text entry.
+    /// False when tag listing is disabled server-side; `tags` is then empty.
     pub configured: bool,
-    /// The `preview-…` tags of the fixed FE image repository, deduped and
-    /// sorted.
+    /// The repository's `preview-…` tags, deduped and sorted.
     pub tags: Vec<String>,
 }
 impl toolkit::api::api_dto::ResponseApiDto for ImageListResponse {}

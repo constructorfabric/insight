@@ -67,9 +67,8 @@ impl toolkit::api::api_dto::ResponseApiDto for ExperimentResponse {}
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentListResponse {
     pub experiments: Vec<ExperimentResponse>,
-    /// How many experiments count against the cap (expired ones do not).
+    /// Experiments counting against the cap; expired ones do not.
     pub live_count: usize,
-    /// The configured live-experiment cap; a create at the cap is refused.
     pub cap: usize,
 }
 impl toolkit::api::api_dto::ResponseApiDto for ExperimentListResponse {}
