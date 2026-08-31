@@ -1,6 +1,13 @@
 import { useTranslation } from "react-i18next";
 
 import type { Gear } from "@/api/gear-roadmap-client";
+import { AssigneeLinks } from "@/components/portal/gear-delivery/parts";
+import { RecordLink } from "@/components/record-link";
+import {
+  NO_METRIC_VALUE,
+  formatMetricNumber,
+  formatMetricValue,
+} from "@/lib/format";
 
 /** What one scheduled bar stands for, shown on hover. */
 export function GearBarCard({
@@ -31,9 +38,9 @@ export function GearBarCard({
             {t("gear_roadmap.items.remaining")}
           </dt>
           <dd className="tabular-nums">
-            {gear?.remaining_man_days?.toFixed(0) ?? "—"}
+            {formatMetricNumber(gear?.remaining_man_days, "integer")}
             {gear?.effort_man_days
-              ? ` / ${gear.effort_man_days.toFixed(0)}`
+              ? ` / ${formatMetricNumber(gear.effort_man_days, "integer")}`
               : ""}
           </dd>
 
@@ -41,9 +48,7 @@ export function GearBarCard({
             {t("gear_roadmap.items.impl")}
           </dt>
           <dd className="tabular-nums">
-            {typeof gear?.status_percent === "number"
-              ? `${gear.status_percent}%`
-              : "—"}
+            {formatMetricValue(gear?.status_percent, "percent")}
           </dd>
 
           <dt className="text-muted-foreground">
@@ -52,46 +57,30 @@ export function GearBarCard({
           <dd className="tabular-nums">
             <span
               className={
-                gear?.placement === "overdue" ? "text-destructive" : undefined
+                gear?.placement.kind === "overdue" ? "text-destructive" : undefined
               }
             >
-              {gear?.milestone ?? "—"}
+              {gear?.milestone ?? NO_METRIC_VALUE}
             </span>
           </dd>
 
           <dt className="text-muted-foreground">
             {t("gear_roadmap.items.assignees")}
           </dt>
-          <dd className="flex flex-wrap gap-x-2">
-            {(gear?.assignee_urls ?? []).length === 0
-              ? (gear?.assignees.join(", ") || "—")
-              : gear?.assignee_urls?.map((assignee) =>
-                  assignee.url ? (
-                    <a
-                      key={assignee.login}
-                      href={assignee.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline underline-offset-2"
-                    >
-                      {assignee.login}
-                    </a>
-                  ) : (
-                    <span key={assignee.login}>{assignee.login}</span>
-                  ),
-                )}
+          <dd>
+            <AssigneeLinks
+              logins={gear?.assignees ?? []}
+              links={gear?.assignee_urls}
+            />
           </dd>
         </dl>
 
         {gear?.issue_url ? (
-          <a
-            href={gear.issue_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs underline underline-offset-2"
-          >
-            {t("gear_roadmap.gantt.open_issue", { number: gear.number })}
-          </a>
+          <span className="text-xs">
+            <RecordLink href={gear.issue_url}>
+              {t("gear_roadmap.gantt.open_issue", { number: gear.number })}
+            </RecordLink>
+          </span>
         ) : null}
       </div>
   );

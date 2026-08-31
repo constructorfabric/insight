@@ -5,6 +5,8 @@ import { RoadmapGrid } from "@/components/portal/gear-delivery/roadmap-grid";
 import { GearSchedule } from "@/components/portal/gear-delivery/schedule";
 import { GearSummary } from "@/components/portal/gear-delivery/summary";
 import { Badge } from "@/components/ui/badge";
+import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import type { GearRoadmap } from "@/api/gear-roadmap-client";
 import type { BoardLensConfig } from "@/lib/portal/lens-configs";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
@@ -15,7 +17,7 @@ import { useGearRoadmap } from "@/queries/gear-roadmap";
  */
 export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
   const { t } = useTranslation();
-  const { data } = useGearRoadmap();
+  const { data, isPending, isError } = useGearRoadmap();
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -33,20 +35,30 @@ export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
         ) : null}
       </header>
 
-      <Board board={config.board} />
+      {isPending ? <CenteredSpinner /> : null}
+      {isError || (!isPending && !data) ? (
+        <p role="alert">{t("gear_roadmap.load_failed")}</p>
+      ) : null}
+      {data ? <Board board={config.board} roadmap={data} /> : null}
     </div>
   );
 }
 
-function Board({ board }: { board: BoardLensConfig["board"] }) {
+function Board({
+  board,
+  roadmap,
+}: {
+  board: BoardLensConfig["board"];
+  roadmap: GearRoadmap;
+}) {
   switch (board) {
     case "gear-table":
-      return <GearsTable />;
+      return <GearsTable roadmap={roadmap} />;
     case "gear-roadmap":
-      return <RoadmapGrid />;
+      return <RoadmapGrid roadmap={roadmap} />;
     case "gear-schedule":
-      return <GearSchedule />;
+      return <GearSchedule roadmap={roadmap} />;
     case "gear-summary":
-      return <GearSummary />;
+      return <GearSummary roadmap={roadmap} />;
   }
 }

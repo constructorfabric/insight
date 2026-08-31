@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
 
 use super::forecast::{Lane, ScheduleItem, schedule};
-use super::milestone::{Milestone, Placement, YearMonth};
+use super::milestone::{Milestone, Placement as MonthPlacement, YearMonth};
 use super::model::{Commitment, Gear};
 use super::progress::LadderStep;
 use crate::domain::external_links::ExternalSourceRegistry;
@@ -34,13 +36,25 @@ pub(crate) struct GearDto {
     pub(crate) effort_man_days: Option<f64>,
     pub(crate) remaining_man_days: Option<f64>,
     pub(crate) milestone: Option<String>,
-    pub(crate) placement: String,
-    pub(crate) slot: Option<usize>,
+    pub(crate) placement: Placement,
     pub(crate) assignees: Vec<String>,
     pub(crate) closed: bool,
     /// Absent when no configured external source claims the gear's repository.
     pub(crate) issue_url: Option<String>,
     pub(crate) assignee_urls: Vec<AssigneeLink>,
+}
+
+/// Where a gear sits against the month window. Only `slot` carries an index,
+/// so no other state can claim one.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum Placement {
+    Slot { slot: usize },
+    Overdue,
+    Future,
+    Backlog,
+    Unrecognized,
+    None,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -79,9 +93,11 @@ pub(crate) fn build(
 
     let items: Vec<ScheduleItem<'_>> = gears.iter().filter_map(schedule_item).collect();
 
+    let sources = source_by_login(gears);
+
     let lanes = schedule(&items, today)
         .into_iter()
-        .map(|lane| lane_dto(lane, gears, links))
+        .map(|lane| lane_dto(lane, &sources, links))
         .collect::<Vec<_>>();
 
     GearRoadmapResponse {
@@ -90,7 +106,7 @@ pub(crate) fn build(
         window_months: WINDOW_MONTHS,
         gears: gears
             .iter()
-            .map(|gear| gear_dto(gear, window_start, links))
+            .map(|gear| gear_dto(gear, window_start, links, &sources))
             .collect(),
         lanes,
     }
@@ -108,11 +124,11 @@ fn schedule_item(gear: &Gear) -> Option<ScheduleItem<'_>> {
     })
 }
 
-fn lane_dto(lane: Lane, gears: &[Gear], links: &ExternalSourceRegistry) -> LaneDto {
+fn lane_dto(lane: Lane, sources: &HashMap<&str, &str>, links: &ExternalSourceRegistry) -> LaneDto {
     let assignee_url = lane
         .assignee
         .as_deref()
-        .and_then(|login| account_href(login, gears, links));
+        .and_then(|login| account_href(login, sources, links));
 
     LaneDto {
         assignee: lane.assignee,
@@ -129,9 +145,12 @@ fn lane_dto(lane: Lane, gears: &[Gear], links: &ExternalSourceRegistry) -> LaneD
     }
 }
 
-fn gear_dto(gear: &Gear, window_start: YearMonth, links: &ExternalSourceRegistry) -> GearDto {
-    let (placement, slot) = placement_of(gear, window_start);
-
+fn gear_dto(
+    gear: &Gear,
+    window_start: YearMonth,
+    links: &ExternalSourceRegistry,
+    sources: &HashMap<&str, &str>,
+) -> GearDto {
     GearDto {
         number: gear.number,
         title: gear.title.clone(),
@@ -144,8 +163,7 @@ fn gear_dto(gear: &Gear, window_start: YearMonth, links: &ExternalSourceRegistry
         effort_man_days: gear.effort_man_days,
         remaining_man_days: gear.remaining_man_days(),
         milestone: milestone_label(gear.milestone.as_ref()),
-        placement,
-        slot,
+        placement: placement_of(gear, window_start),
         assignees: gear.assignees.clone(),
         closed: gear.closed,
         issue_url: issue_url(gear, links),
@@ -154,20 +172,34 @@ fn gear_dto(gear: &Gear, window_start: YearMonth, links: &ExternalSourceRegistry
             .iter()
             .map(|login| AssigneeLink {
                 login: login.clone(),
-                url: links.account_href(GIT_PROVIDER, &gear.source_id, login),
+                url: account_href(login, sources, links),
             })
             .collect(),
     }
 }
 
-/// The lane carries a login, not a source, so the account page is resolved
-/// through a gear the person is on — that is where the source is recorded.
-fn account_href(login: &str, gears: &[Gear], links: &ExternalSourceRegistry) -> Option<String> {
-    let gear = gears
-        .iter()
-        .find(|gear| gear.assignees.iter().any(|entry| entry == login))?;
+/// A login is recorded per gear, not per person, so the source it belongs to is
+/// indexed once rather than searched for again per lane.
+fn source_by_login(gears: &[Gear]) -> HashMap<&str, &str> {
+    let mut sources = HashMap::new();
 
-    links.account_href(GIT_PROVIDER, &gear.source_id, login)
+    for gear in gears {
+        for login in &gear.assignees {
+            sources
+                .entry(login.as_str())
+                .or_insert(gear.source_id.as_str());
+        }
+    }
+
+    sources
+}
+
+fn account_href(
+    login: &str,
+    sources: &HashMap<&str, &str>,
+    links: &ExternalSourceRegistry,
+) -> Option<String> {
+    links.account_href(GIT_PROVIDER, sources.get(login)?, login)
 }
 
 fn issue_url(gear: &Gear, links: &ExternalSourceRegistry) -> Option<String> {
@@ -182,21 +214,21 @@ fn issue_url(gear: &Gear, links: &ExternalSourceRegistry) -> Option<String> {
         .record
 }
 
-fn placement_of(gear: &Gear, window_start: YearMonth) -> (String, Option<usize>) {
+fn placement_of(gear: &Gear, window_start: YearMonth) -> Placement {
     let Some(milestone) = gear.milestone.as_ref() else {
-        return ("none".to_owned(), None);
+        return Placement::None;
     };
 
     let month = match milestone {
         Milestone::Due(month) => *month,
-        Milestone::Backlog => return ("backlog".to_owned(), None),
-        Milestone::Unrecognized(_) => return ("unrecognized".to_owned(), None),
+        Milestone::Backlog => return Placement::Backlog,
+        Milestone::Unrecognized(_) => return Placement::Unrecognized,
     };
 
     match month.placement(window_start, WINDOW_MONTHS) {
-        Placement::Overdue => ("overdue".to_owned(), None),
-        Placement::Slot(slot) => ("slot".to_owned(), Some(slot)),
-        Placement::Future => ("future".to_owned(), None),
+        MonthPlacement::Overdue => Placement::Overdue,
+        MonthPlacement::Slot(slot) => Placement::Slot { slot },
+        MonthPlacement::Future => Placement::Future,
     }
 }
 
@@ -225,7 +257,9 @@ fn commitment_label(commitment: Commitment) -> &'static str {
 mod tests {
     use chrono::NaiveDate;
 
-    use super::{CAPACITY_MAN_DAYS_PER_PERSON, GearRoadmapResponse, WINDOW_MONTHS, build};
+    use super::{
+        CAPACITY_MAN_DAYS_PER_PERSON, GearRoadmapResponse, Placement, WINDOW_MONTHS, build,
+    };
     use crate::domain::external_links::ExternalSourceRegistry;
     use crate::domain::gear_roadmap::model::{Gear, GearRow};
 
@@ -259,16 +293,17 @@ mod tests {
     fn a_milestone_before_the_window_is_overdue_not_backlog() {
         let response = build_for_test(&[gear(1, "30.05", "Todo")], today());
 
-        assert_eq!(response.gears[0].placement, "overdue");
-        assert_eq!(response.gears[0].slot, None);
+        assert!(matches!(response.gears[0].placement, Placement::Overdue));
     }
 
     #[test]
     fn a_milestone_inside_the_window_carries_its_slot() {
         let response = build_for_test(&[gear(1, "30.09", "Todo")], today());
 
-        assert_eq!(response.gears[0].placement, "slot");
-        assert_eq!(response.gears[0].slot, Some(1));
+        assert!(matches!(
+            response.gears[0].placement,
+            Placement::Slot { slot: 1 }
+        ));
     }
 
     #[test]

@@ -310,6 +310,17 @@ export type LensEntry =
   | TenantLensConfig
   | BoardLensConfig;
 
+/**
+ * True for every entry that carries no metric sections. The registry is
+ * discriminated by shape rather than by a tag, so the sites that walk it for
+ * measure keys ask here instead of each listing the shapes it knows.
+ */
+export function lensCarriesNoMetrics(
+  entry: LensEntry,
+): entry is LensRoadmap | TenantLensConfig | BoardLensConfig {
+  return "comingSoon" in entry || "entity" in entry || "board" in entry;
+}
+
 /** The registry entry for a direction's lens — a config, a roadmap note, or nothing. */
 export function lensEntry(dir: string, lens: string): LensEntry | undefined {
   return DIRECTION_LENSES[dir]?.[lens];
@@ -387,8 +398,7 @@ export function sectionMetricKeys(config: LensConfig): string[] {
         // Cards derive from every configured direction Overview lens (design O4).
         for (const lenses of Object.values(DIRECTION_LENSES)) {
           const overview = lenses["Overview"];
-          if (!overview || "comingSoon" in overview || "board" in overview)
-            continue;
+          if (!overview || lensCarriesNoMetrics(overview)) continue;
           for (const sec of overview.sections) {
             if (sec.kind === "headline")
               for (const k of sec.metrics) keys.add(k);
@@ -1261,8 +1271,7 @@ export function directionMetricKeys(dir: string): string[] {
   for (const entry of Object.values(DIRECTION_LENSES[dir] ?? {})) {
     // ComingSoon entries contribute nothing; tenant lenses fetch their own
     // tenant-entity collection and must stay out of the person grid.
-    if ("comingSoon" in entry || "entity" in entry || "board" in entry)
-      continue;
+    if (lensCarriesNoMetrics(entry)) continue;
     for (const k of sectionMetricKeys(entry)) keys.add(k);
   }
   return [...keys];

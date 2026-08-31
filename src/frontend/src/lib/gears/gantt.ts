@@ -1,11 +1,11 @@
+import { addMonths, differenceInCalendarDays, format, startOfMonth } from "date-fns";
+
 import type { GearLane } from "@/api/gear-roadmap-client";
 
 const MS_PER_DAY = 86_400_000;
 
 export interface GanttBar {
   gearNumber: number;
-  offsetDays: number;
-  lengthDays: number;
   start: string;
   end: string;
 }
@@ -42,12 +42,25 @@ export function buildGantt(lanes: GearLane[]): GanttChart {
       assigneeUrl: lane.assignee_url ?? null,
       bars: lane.spans.map((span) => ({
         gearNumber: span.gear_number,
-        offsetDays: dayNumber(span.start) - first,
-        lengthDays: dayNumber(span.end) - dayNumber(span.start) + 1,
         start: span.start,
         end: span.end,
       })),
     })),
+  };
+}
+
+export interface BarGeometry {
+  offsetDays: number;
+  lengthDays: number;
+}
+
+/** Where a bar sits on the track, in days from the chart's first day. */
+export function barGeometry(bar: GanttBar, chartStart: string): BarGeometry {
+  const start = dayNumber(bar.start);
+
+  return {
+    offsetDays: start - dayNumber(chartStart),
+    lengthDays: dayNumber(bar.end) - start + 1,
   };
 }
 
@@ -59,24 +72,31 @@ export interface MonthTick {
 export function monthTicks(start: string, totalDays: number): MonthTick[] {
   if (start === "" || totalDays <= 0) return [];
 
-  const first = dayNumber(start);
+  const first = utcDate(start);
   const ticks: MonthTick[] = [];
-  const cursor = new Date(first * MS_PER_DAY);
-  cursor.setUTCDate(1);
 
-  for (;;) {
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-    const offsetDays = Math.floor(cursor.getTime() / MS_PER_DAY) - first;
+  for (let month = addMonths(startOfMonth(first), 1); ; month = addMonths(month, 1)) {
+    const offsetDays = differenceInCalendarDays(month, first);
     if (offsetDays >= totalDays) return ticks;
 
-    ticks.push({
-      label: cursor.toISOString().slice(0, 7),
-      offsetDays,
-    });
+    ticks.push({ label: format(month, "yyyy-MM"), offsetDays });
   }
 }
 
-function dayNumber(date: string): number {
+/** Months of the window, `yyyy-MM`, starting at the window's own first month. */
+export function monthLabels(windowStart: string, months: number): string[] {
+  const first = utcDate(`${windowStart}-01`);
+
+  return Array.from({ length: months }, (_, index) =>
+    format(addMonths(first, index), "yyyy-MM"),
+  );
+}
+
+function utcDate(date: string): Date {
+  return new Date(`${date}T00:00:00Z`);
+}
+
+export function dayNumber(date: string): number {
   return Math.floor(Date.parse(`${date}T00:00:00Z`) / MS_PER_DAY);
 }
 

@@ -13,12 +13,12 @@ const BASE =
  * so an unreadable title stays visible instead of vanishing.
  */
 export type GearPlacement =
-  | "overdue"
-  | "slot"
-  | "future"
-  | "backlog"
-  | "unrecognized"
-  | "none";
+  | { kind: "slot"; slot: number }
+  | { kind: "overdue" }
+  | { kind: "future" }
+  | { kind: "backlog" }
+  | { kind: "unrecognized" }
+  | { kind: "none" };
 
 /** The board's own commitment vocabulary; `unstated` means the field is unset. */
 export type GearCommitment = "committed" | "planned" | "unstated";
@@ -42,8 +42,7 @@ export interface Gear {
   effort_man_days?: number | null;
   remaining_man_days?: number | null;
   milestone?: string | null;
-  placement: GearPlacement | string;
-  slot?: number | null;
+  placement: GearPlacement;
   assignees: string[];
   closed: boolean;
   /** Absent when no configured source claims the gear's repository. */

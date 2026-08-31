@@ -11,7 +11,7 @@ function gear(overrides: Partial<Gear>): Gear {
     title: "CORE - Example Module",
     subsystem: "CORE",
     commitment: "committed",
-    placement: "none",
+    placement: { kind: "none" },
     assignees: [],
     closed: false,
     ...overrides,
@@ -20,7 +20,7 @@ function gear(overrides: Partial<Gear>): Gear {
 
 describe("buildRoadmap", () => {
   it("keeps an overdue gear out of the later column", () => {
-    const rows = buildRoadmap([gear({ placement: "overdue" })], WINDOW_MONTHS);
+    const rows = buildRoadmap([gear({ placement: { kind: "overdue" } })], WINDOW_MONTHS);
 
     expect(rows[0].overdue).toHaveLength(1);
     expect(rows[0].later).toHaveLength(0);
@@ -28,7 +28,7 @@ describe("buildRoadmap", () => {
 
   it("places a scheduled gear in its own month slot", () => {
     const rows = buildRoadmap(
-      [gear({ placement: "slot", slot: 2 })],
+      [gear({ placement: { kind: "slot", slot: 2 } })],
       WINDOW_MONTHS,
     );
 
@@ -40,10 +40,10 @@ describe("buildRoadmap", () => {
   it("collects backlog, future and unreadable milestones as later work", () => {
     const rows = buildRoadmap(
       [
-        gear({ number: 1, placement: "backlog" }),
-        gear({ number: 2, placement: "future" }),
-        gear({ number: 3, placement: "unrecognized" }),
-        gear({ number: 4, placement: "none" }),
+        gear({ number: 1, placement: { kind: "backlog" } }),
+        gear({ number: 2, placement: { kind: "future" } }),
+        gear({ number: 3, placement: { kind: "unrecognized" } }),
+        gear({ number: 4, placement: { kind: "none" } }),
       ],
       WINDOW_MONTHS,
     );
@@ -54,9 +54,9 @@ describe("buildRoadmap", () => {
   it("groups by subsystem and sorts gears without one last", () => {
     const rows = buildRoadmap(
       [
-        gear({ subsystem: null, placement: "backlog" }),
-        gear({ subsystem: "OSS", placement: "backlog" }),
-        gear({ subsystem: "BSS", placement: "backlog" }),
+        gear({ subsystem: null, placement: { kind: "backlog" } }),
+        gear({ subsystem: "OSS", placement: { kind: "backlog" } }),
+        gear({ subsystem: "BSS", placement: { kind: "backlog" } }),
       ],
       WINDOW_MONTHS,
     );

@@ -9,7 +9,7 @@ function gear(overrides: Partial<Gear>): Gear {
     title: "CORE - Example Module",
     subsystem: "CORE",
     commitment: "committed",
-    placement: "none",
+    placement: { kind: "none" },
     assignees: [],
     closed: false,
     ...overrides,

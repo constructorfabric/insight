@@ -1,36 +1,36 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Gear } from "@/api/gear-roadmap-client";
+import type { Gear, GearRoadmap } from "@/api/gear-roadmap-client";
 import { GearBarCard } from "@/components/portal/gear-delivery/bar-card";
 import {
   PreviewCard,
   PreviewCardContent,
   PreviewCardTrigger,
 } from "@/components/ui/preview-card";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
-import { buildGantt, monthTicks, type GanttLane } from "@/lib/gears/gantt";
+import {
+  barGeometry,
+  buildGantt,
+  monthTicks,
+  type GanttBar,
+  type GanttLane,
+} from "@/lib/gears/gantt";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
-import { useGearRoadmap } from "@/queries/gear-roadmap";
 
 const DAY_WIDTH_PX = 4;
 const LANE_LABEL_WIDTH = "11rem";
 const MIN_BAR_LABEL_DAYS = 14;
 
-export function GearSchedule() {
+export function GearSchedule({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useGearRoadmap();
 
-  const chart = useMemo(() => buildGantt(data?.lanes ?? []), [data]);
+  const chart = useMemo(() => buildGantt(roadmap.lanes), [roadmap]);
   const gears = useMemo(
-    () => new Map((data?.gears ?? []).map((gear) => [gear.number, gear])),
-    [data],
+    () => new Map((roadmap.gears).map((gear) => [gear.number, gear])),
+    [roadmap],
   );
   const ticks = useMemo(() => monthTicks(chart.start, chart.totalDays), [chart]);
 
-  if (isPending) return <CenteredSpinner />;
-  if (isError || !data)
-    return <p role="alert">{t("gear_roadmap.load_failed")}</p>;
   if (chart.totalDays === 0)
     return (
       <p className="text-sm text-muted-foreground">
@@ -44,7 +44,7 @@ export function GearSchedule() {
     <section className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
         {t("gear_roadmap.gantt.explainer", {
-          capacity: data.capacity_man_days_per_person,
+          capacity: roadmap.capacity_man_days_per_person,
           start: chart.start,
           days: chart.totalDays,
         })}
@@ -104,10 +104,8 @@ export function GearSchedule() {
                   <Bar
                     key={bar.gearNumber}
                     gear={gears.get(bar.gearNumber)}
-                    offsetDays={bar.offsetDays}
-                    lengthDays={bar.lengthDays}
-                    start={bar.start}
-                    end={bar.end}
+                    bar={bar}
+                    chartStart={chart.start}
                   />
                 ))}
               </div>
@@ -148,19 +146,16 @@ function LaneName({ lane }: { lane: GanttLane }) {
 
 function Bar({
   gear,
-  offsetDays,
-  lengthDays,
-  start,
-  end,
+  bar,
+  chartStart,
 }: {
   gear: Gear | undefined;
-  offsetDays: number;
-  lengthDays: number;
-  start: string;
-  end: string;
+  bar: GanttBar;
+  chartStart: string;
 }) {
   const tone = subsystemTone(gear?.subsystem ?? null);
   const label = gear?.title ?? "";
+  const { offsetDays, lengthDays } = barGeometry(bar, chartStart);
 
   return (
     <PreviewCard>
@@ -184,7 +179,7 @@ function Bar({
         }
       />
       <PreviewCardContent side="top" className="border bg-popover shadow-lg">
-        <GearBarCard gear={gear} start={start} end={end} />
+        <GearBarCard gear={gear} start={bar.start} end={bar.end} />
       </PreviewCardContent>
     </PreviewCard>
   );

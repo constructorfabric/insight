@@ -19,28 +19,30 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import type { GearRoadmap } from "@/api/gear-roadmap-client";
+import {
+  AssigneeLinks,
+  ShareBar,
+} from "@/components/portal/gear-delivery/parts";
+import { RecordLink } from "@/components/record-link";
+import { NO_METRIC_VALUE, formatMetricNumber } from "@/lib/format";
 import { UNGROUPED } from "@/lib/gears/roadmap-grid";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
-import { useGearRoadmap } from "@/queries/gear-roadmap";
 
 const ALL = "__all__";
 
-export function GearsTable() {
+export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useGearRoadmap();
   const [query, setQuery] = useState("");
   const [chosen, setChosen] = useState(ALL);
 
-  const all = useMemo(() => data?.gears ?? [], [data]);
+  const all = useMemo(() => roadmap.gears, [roadmap]);
   const subsystems = useMemo(() => countBySubsystem(all), [all]);
   const gears = useMemo(
     () => filterGears(all, query, chosen),
     [all, query, chosen],
   );
 
-  if (isPending) return <CenteredSpinner />;
-  if (isError) return <p role="alert">{t("gear_roadmap.load_failed")}</p>;
 
   return (
     <section className="flex flex-col gap-3">
@@ -119,21 +121,11 @@ export function GearsTable() {
               <TableRow key={gear.number}>
                 <TableCell className="max-w-96">
                   <span className="flex items-center gap-2">
-                    {gear.issue_url ? (
-                      <a
-                        href={gear.issue_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="truncate font-medium underline underline-offset-2"
-                        title={gear.title}
-                      >
+                    <span className="truncate font-medium" title={gear.title}>
+                      <RecordLink href={gear.issue_url ?? undefined}>
                         {gear.title}
-                      </a>
-                    ) : (
-                      <span className="truncate font-medium" title={gear.title}>
-                        {gear.title}
-                      </span>
-                    )}
+                      </RecordLink>
+                    </span>
                     {gear.commitment === "committed" ? (
                       <Badge variant="secondary" className="font-normal">
                         {t("gear_roadmap.committed")}
@@ -143,7 +135,7 @@ export function GearsTable() {
                 </TableCell>
                 <TableCell>
                   {gear.subsystem === null || gear.subsystem === undefined ? (
-                    <span className="text-muted-foreground">—</span>
+                    <span className="text-muted-foreground">{NO_METRIC_VALUE}</span>
                   ) : (
                     <span
                       className={`rounded px-1.5 py-0.5 text-xs font-medium ${
@@ -155,25 +147,25 @@ export function GearsTable() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Percent value={gear.design_percent} />
+                  <ShareBar value={gear.design_percent} width="w-10" />
                 </TableCell>
                 <TableCell>
-                  <Percent value={gear.sdk_percent} />
+                  <ShareBar value={gear.sdk_percent} width="w-10" />
                 </TableCell>
                 <TableCell>
-                  <Percent value={gear.status_percent} />
+                  <ShareBar value={gear.status_percent} width="w-10" />
                 </TableCell>
                 <TableCell className="text-end tabular-nums">
-                  {days(gear.effort_man_days)}
+                  {formatMetricNumber(gear.effort_man_days, "integer")}
                 </TableCell>
                 <TableCell className="text-end tabular-nums">
-                  {days(gear.remaining_man_days)}
+                  {formatMetricNumber(gear.remaining_man_days, "integer")}
                 </TableCell>
                 <TableCell>
                   <Milestone gear={gear} />
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                  <Assignees gear={gear} />
+                  <AssigneeLinks logins={gear.assignees} links={gear.assignee_urls} />
                 </TableCell>
               </TableRow>
             ))}
@@ -186,10 +178,10 @@ export function GearsTable() {
 
 function Milestone({ gear }: { gear: Gear }) {
   if (gear.milestone === null || gear.milestone === undefined) {
-    return <span className="text-muted-foreground">—</span>;
+    return <span className="text-muted-foreground">{NO_METRIC_VALUE}</span>;
   }
 
-  if (gear.placement === "overdue") {
+  if (gear.placement.kind === "overdue") {
     return (
       <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive tabular-nums">
         {gear.milestone}
@@ -200,56 +192,6 @@ function Milestone({ gear }: { gear: Gear }) {
   return (
     <span className="text-xs tabular-nums text-muted-foreground">
       {gear.milestone}
-    </span>
-  );
-}
-
-function Assignees({ gear }: { gear: Gear }) {
-  const links = gear.assignee_urls ?? [];
-
-  if (links.length === 0) {
-    return <>{gear.assignees.join(", ") || "—"}</>;
-  }
-
-  return (
-    <span className="flex flex-wrap gap-x-2">
-      {links.map((assignee) =>
-        assignee.url ? (
-          <a
-            key={assignee.login}
-            href={assignee.url}
-            target="_blank"
-            rel="noreferrer"
-            className="underline underline-offset-2"
-          >
-            {assignee.login}
-          </a>
-        ) : (
-          <span key={assignee.login}>{assignee.login}</span>
-        ),
-      )}
-    </span>
-  );
-}
-
-function Percent({ value }: { value: number | null | undefined }) {
-  if (typeof value !== "number") {
-    return <span className="text-muted-foreground">—</span>;
-  }
-
-  return (
-    <span className="flex items-center gap-2">
-      <span className="h-1.5 w-10 overflow-hidden rounded-full bg-muted">
-        <span
-          className={`block h-full rounded-full ${
-            value === 100 ? "bg-emerald-600/70" : "bg-primary/70"
-          }`}
-          style={{ width: `${value}%` }}
-        />
-      </span>
-      <span className="text-xs tabular-nums text-muted-foreground">
-        {value}%
-      </span>
     </span>
   );
 }
@@ -284,8 +226,4 @@ function filterGears(gears: Gear[], query: string, chosen: string): Gear[] {
       gear.assignees.some((login) => login.toLowerCase().includes(needle))
     );
   });
-}
-
-function days(value: number | null | undefined): string {
-  return typeof value === "number" ? value.toFixed(0) : "—";
 }

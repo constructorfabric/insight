@@ -20,7 +20,10 @@ export function summariseBySubsystem(gears: Gear[]): SubsystemSummary[] {
 
   for (const gear of gears) {
     const key = gear.subsystem ?? UNGROUPED;
-    groups.set(key, [...(groups.get(key) ?? []), gear]);
+    const members = groups.get(key);
+
+    if (members) members.push(gear);
+    else groups.set(key, [gear]);
   }
 
   return [...groups.entries()]

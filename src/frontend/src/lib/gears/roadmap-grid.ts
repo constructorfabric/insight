@@ -20,10 +20,10 @@ export function buildRoadmap(
     const row = rows.get(key) ?? emptyRow(key, windowMonths);
     rows.set(key, row);
 
-    if (gear.placement === "overdue") {
+    if (gear.placement.kind === "overdue") {
       row.overdue.push(gear);
-    } else if (gear.placement === "slot" && typeof gear.slot === "number") {
-      row.slots[gear.slot]?.push(gear);
+    } else if (gear.placement.kind === "slot") {
+      row.slots[gear.placement.slot]?.push(gear);
     } else {
       row.later.push(gear);
     }

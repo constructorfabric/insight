@@ -1,29 +1,24 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Gear } from "@/api/gear-roadmap-client";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import type { Gear, GearRoadmap } from "@/api/gear-roadmap-client";
+import { monthLabels } from "@/lib/gears/gantt";
 import { buildRoadmap } from "@/lib/gears/roadmap-grid";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
-import { useGearRoadmap } from "@/queries/gear-roadmap";
 
 const COMMITTED_GLYPH = "◆";
 const PLANNED_GLYPH = "◇";
 
-export function RoadmapGrid() {
+export function RoadmapGrid({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useGearRoadmap();
 
   const rows = useMemo(
-    () => buildRoadmap(data?.gears ?? [], data?.window_months ?? 0),
-    [data],
+    () => buildRoadmap(roadmap.gears, roadmap.window_months),
+    [roadmap],
   );
 
-  if (isPending) return <CenteredSpinner />;
-  if (isError || !data)
-    return <p role="alert">{t("gear_roadmap.load_failed")}</p>;
 
-  const months = monthLabels(data.window_start, data.window_months);
+  const months = monthLabels(roadmap.window_start, roadmap.window_months);
 
   return (
     <section className="flex flex-col gap-3">
@@ -93,21 +88,7 @@ function Cell({ gears, overdue }: { gears: Gear[]; overdue?: boolean }) {
         <ul className="flex flex-col gap-1">
           {gears.map((gear) => (
             <li key={gear.number} className="flex">
-              <span
-                className={`inline-flex min-w-0 items-baseline gap-1 rounded px-1.5 py-0.5 text-xs ${
-                  overdue
-                    ? "bg-destructive/10 text-destructive"
-                    : subsystemTone(gear.subsystem ?? null).chip
-                }`}
-                title={gear.title}
-              >
-                <span aria-hidden="true">
-                  {gear.commitment === "committed"
-                    ? COMMITTED_GLYPH
-                    : PLANNED_GLYPH}
-                </span>
-                <span className="truncate">{gear.title}</span>
-              </span>
+              <Chip gear={gear} overdue={overdue} />
             </li>
           ))}
         </ul>
@@ -116,12 +97,36 @@ function Cell({ gears, overdue }: { gears: Gear[]; overdue?: boolean }) {
   );
 }
 
-function monthLabels(windowStart: string, months: number): string[] {
-  const [year, month] = windowStart.split("-").map(Number);
-  if (!year || !month) return [];
+function Chip({ gear, overdue }: { gear: Gear; overdue?: boolean }) {
+  const shared = {
+    className: `inline-flex min-w-0 items-baseline gap-1 rounded px-1.5 py-0.5 text-xs ${
+      overdue
+        ? "bg-destructive/10 text-destructive"
+        : subsystemTone(gear.subsystem ?? null).chip
+    }`,
+    title: gear.title,
+  };
 
-  return Array.from({ length: months }, (_, index) => {
-    const date = new Date(Date.UTC(year, month - 1 + index, 1));
-    return date.toISOString().slice(0, 7);
-  });
+  const body = (
+    <>
+      <span aria-hidden="true">
+        {gear.commitment === "committed" ? COMMITTED_GLYPH : PLANNED_GLYPH}
+      </span>
+      <span
+        className={`truncate ${gear.issue_url ? "underline underline-offset-2" : ""}`}
+      >
+        {gear.title}
+      </span>
+    </>
+  );
+
+  if (!gear.issue_url) {
+    return <span {...shared}>{body}</span>;
+  }
+
+  return (
+    <a {...shared} href={gear.issue_url} target="_blank" rel="noreferrer">
+      {body}
+    </a>
+  );
 }

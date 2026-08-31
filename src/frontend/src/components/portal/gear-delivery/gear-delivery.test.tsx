@@ -40,8 +40,7 @@ function gear(over: Partial<Gear> = {}): Gear {
     effort_man_days: 30,
     remaining_man_days: 6,
     milestone: "2030-09",
-    placement: "slot",
-    slot: 1,
+    placement: { kind: "slot", slot: 1 },
     assignees: ["dev-one"],
     closed: false,
     issue_url: "https://git.example.test/example-org/example-repo/issues/1",
@@ -75,7 +74,7 @@ beforeEach(() => {
 
 describe("GearSummary", () => {
   it("rolls the board up by subsystem", () => {
-    render(<GearSummary />);
+    render(<GearSummary roadmap={queryState.data!} />);
 
     const row = screen.getByRole("row", { name: /^CORE/ });
 
@@ -84,7 +83,7 @@ describe("GearSummary", () => {
   });
 
   it("totals every subsystem in a row of its own", () => {
-    render(<GearSummary />);
+    render(<GearSummary roadmap={queryState.data!} />);
 
     expect(
       screen.getByRole("row", { name: /All subsystems/ }),
@@ -92,23 +91,16 @@ describe("GearSummary", () => {
   });
 
   it("shows a dash where no gear carries that ladder", () => {
-    render(<GearSummary />);
+    render(<GearSummary roadmap={queryState.data!} />);
 
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
-  it("says so when the board cannot be read", () => {
-    queryState = { isPending: false, isError: true };
-
-    render(<GearSummary />);
-
-    expect(screen.getByRole("alert")).toBeInTheDocument();
-  });
 });
 
 describe("GearsTable", () => {
   it("lists a gear with its estimate and milestone", () => {
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
 
     expect(screen.getByText("CORE - Example Module")).toBeInTheDocument();
     expect(screen.getByText("2030-09")).toBeInTheDocument();
@@ -130,7 +122,7 @@ describe("GearsTable", () => {
       isError: false,
     };
 
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
     await userEvent.type(
       screen.getByRole("searchbox"),
       "dev-two",
@@ -146,15 +138,15 @@ describe("RoadmapGrid", () => {
     queryState = {
       data: roadmap({
         gears: [
-          gear({ number: 1, placement: "overdue", slot: null }),
-          gear({ number: 2, title: "CORE - Later", placement: "backlog" }),
+          gear({ number: 1, placement: { kind: "overdue" } }),
+          gear({ number: 2, title: "CORE - Later", placement: { kind: "backlog" } }),
         ],
       }),
       isPending: false,
       isError: false,
     };
 
-    render(<RoadmapGrid />);
+    render(<RoadmapGrid roadmap={queryState.data!} />);
 
     const overdueColumn = screen.getByRole("columnheader", {
       name: "Overdue",
@@ -165,7 +157,7 @@ describe("RoadmapGrid", () => {
   });
 
   it("labels every month of the window", () => {
-    render(<RoadmapGrid />);
+    render(<RoadmapGrid roadmap={queryState.data!} />);
 
     expect(
       screen.getByRole("columnheader", { name: "2030-08" }),
@@ -174,11 +166,43 @@ describe("RoadmapGrid", () => {
       screen.getByRole("columnheader", { name: "2031-04" }),
     ).toBeInTheDocument();
   });
+
+  it("links a gear to its issue", () => {
+    render(<RoadmapGrid roadmap={queryState.data!} />);
+
+    expect(
+      screen.getByRole("link", { name: "CORE - Example Module" }),
+    ).toHaveAttribute(
+      "href",
+      "https://git.example.test/example-org/example-repo/issues/1",
+    );
+  });
+
+  it("leaves a gear no source claims as plain text, linking the rest", () => {
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({ number: 1 }),
+          gear({ number: 2, title: "CORE - Unclaimed", issue_url: null }),
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+
+    render(<RoadmapGrid roadmap={queryState.data!} />);
+
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link").textContent).toContain(
+      "CORE - Example Module",
+    );
+    expect(screen.getByText("CORE - Unclaimed")).toBeInTheDocument();
+  });
 });
 
 describe("GearSchedule", () => {
   it("links the lane to the account page of the person in it", () => {
-    render(<GearSchedule />);
+    render(<GearSchedule roadmap={queryState.data!} />);
 
     expect(screen.getByRole("link", { name: "dev-one" })).toHaveAttribute(
       "href",
@@ -202,14 +226,14 @@ describe("GearSchedule", () => {
       isError: false,
     };
 
-    render(<GearSchedule />);
+    render(<GearSchedule roadmap={queryState.data!} />);
 
     expect(screen.queryByRole("link", { name: "dev-two" })).toBeNull();
     expect(screen.getByText("dev-two")).toBeInTheDocument();
   });
 
   it("draws one lane per assignee and states the assumed capacity", () => {
-    render(<GearSchedule />);
+    render(<GearSchedule roadmap={queryState.data!} />);
 
     expect(screen.getByRole("link", { name: "dev-one" })).toBeInTheDocument();
     expect(screen.getByText(/1 man-day per calendar day/)).toBeInTheDocument();
@@ -222,7 +246,7 @@ describe("GearSchedule", () => {
       isError: false,
     };
 
-    render(<GearSchedule />);
+    render(<GearSchedule roadmap={queryState.data!} />);
 
     expect(
       screen.getByText("Nothing is left to schedule."),
@@ -231,6 +255,19 @@ describe("GearSchedule", () => {
 });
 
 describe("GearDeliveryView", () => {
+  it("says so when the board cannot be read", () => {
+    queryState = { isPending: false, isError: true };
+
+    render(
+      <GearDeliveryView
+        config={{ title: "Gear delivery", board: "gear-summary" }}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+
   it("opens on the summary pane and states the assumed capacity", () => {
     render(<GearDeliveryView config={{ title: "Gear delivery", board: "gear-summary" }} />);
 
@@ -284,7 +321,7 @@ describe("GearBarCard", () => {
 
 describe("GearSchedule bars", () => {
   it("makes every bar a hoverable control named after its gear", () => {
-    render(<GearSchedule />);
+    render(<GearSchedule roadmap={queryState.data!} />);
 
     expect(
       screen.getByRole("button", { name: "CORE - Example Module" }),
@@ -308,7 +345,7 @@ describe("GearsTable subsystem filter", () => {
   });
 
   it("opens on every subsystem, one control wide", () => {
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
 
     expect(
       screen.getByRole("combobox", { name: "Subsystem" }),
@@ -317,7 +354,7 @@ describe("GearsTable subsystem filter", () => {
 
   it("narrows the table to the chosen subsystem", async () => {
     const user = userEvent.setup();
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
 
     await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
     await user.click(await screen.findByRole("option", { name: /^BSS/ }));
@@ -329,7 +366,7 @@ describe("GearsTable subsystem filter", () => {
 
   it("counts the gears each subsystem holds", async () => {
     const user = userEvent.setup();
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
 
     await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
 
@@ -339,7 +376,7 @@ describe("GearsTable subsystem filter", () => {
 
   it("shows every gear again when the choice is cleared", async () => {
     const user = userEvent.setup();
-    render(<GearsTable />);
+    render(<GearsTable roadmap={queryState.data!} />);
 
     await user.click(screen.getByRole("combobox", { name: "Subsystem" }));
     await user.click(await screen.findByRole("option", { name: /^BSS/ }));

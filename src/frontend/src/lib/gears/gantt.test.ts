@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GearLane } from "@/api/gear-roadmap-client";
-import { buildGantt, monthTicks } from "@/lib/gears/gantt";
+import { barGeometry, buildGantt, monthTicks } from "@/lib/gears/gantt";
 
 const LANES: GearLane[] = [
   {
@@ -25,20 +25,13 @@ describe("buildGantt", () => {
     expect(chart.totalDays).toBe(20);
   });
 
-  it("measures each bar in days from the chart start", () => {
+  it("keeps only the dates, leaving the geometry to the view", () => {
     const chart = buildGantt(LANES);
 
-    expect(chart.lanes[0].bars[0]).toMatchObject({
-      offsetDays: 0,
-      lengthDays: 10,
-    });
-    expect(chart.lanes[0].bars[1]).toMatchObject({
-      offsetDays: 10,
-      lengthDays: 5,
-    });
-    expect(chart.lanes[1].bars[0]).toMatchObject({
-      offsetDays: 5,
-      lengthDays: 15,
+    expect(chart.lanes[0].bars[0]).toEqual({
+      gearNumber: 1,
+      start: "2030-01-01",
+      end: "2030-01-10",
     });
   });
 
@@ -74,13 +67,21 @@ describe("monthTicks", () => {
   });
 })
 
-describe("buildGantt bar dates", () => {
-  it("keeps the dates each bar was scheduled for", () => {
+describe("barGeometry", () => {
+  it("measures a bar in days from the chart start", () => {
     const chart = buildGantt(LANES);
 
-    expect(chart.lanes[0].bars[0]).toMatchObject({
-      start: "2030-01-01",
-      end: "2030-01-10",
+    expect(barGeometry(chart.lanes[0].bars[0], chart.start)).toEqual({
+      offsetDays: 0,
+      lengthDays: 10,
+    });
+    expect(barGeometry(chart.lanes[0].bars[1], chart.start)).toEqual({
+      offsetDays: 10,
+      lengthDays: 5,
+    });
+    expect(barGeometry(chart.lanes[1].bars[0], chart.start)).toEqual({
+      offsetDays: 5,
+      lengthDays: 15,
     });
   });
 });

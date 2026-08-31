@@ -9,19 +9,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import type { GearRoadmap } from "@/api/gear-roadmap-client";
+import { ShareBar } from "@/components/portal/gear-delivery/parts";
+import { NO_METRIC_VALUE, formatMetricNumber } from "@/lib/format";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
 import { summariseBySubsystem } from "@/lib/gears/summary";
-import { useGearRoadmap } from "@/queries/gear-roadmap";
 
-export function GearSummary() {
+export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useGearRoadmap();
 
-  const rows = useMemo(() => summariseBySubsystem(data?.gears ?? []), [data]);
+  const rows = useMemo(() => summariseBySubsystem(roadmap.gears), [roadmap]);
 
-  if (isPending) return <CenteredSpinner />;
-  if (isError) return <p role="alert">{t("gear_roadmap.load_failed")}</p>;
 
   const totals = rows.reduce(
     (sum, row) => ({
@@ -89,26 +87,26 @@ export function GearSummary() {
                   {row.done}
                 </TableCell>
                 <TableCell>
-                  <Meter value={row.donePercent} />
+                  <ShareBar value={row.donePercent} width="w-16" />
                 </TableCell>
                 <TableCell>
-                  <Meter value={row.specReadiness} />
+                  <ShareBar value={row.specReadiness} width="w-16" />
                 </TableCell>
                 <TableCell>
-                  <Meter value={row.sdkReadiness} />
+                  <ShareBar value={row.sdkReadiness} width="w-16" />
                 </TableCell>
                 <TableCell>
-                  <Meter value={row.implReadiness} />
+                  <ShareBar value={row.implReadiness} width="w-16" />
                 </TableCell>
                 <TableCell className="text-end tabular-nums">
-                  {row.effortManDays.toFixed(0)}
+                  {formatMetricNumber(row.effortManDays, "integer")}
                 </TableCell>
                 <TableCell className="text-end tabular-nums">
-                  {row.remainingManDays.toFixed(0)}
+                  {formatMetricNumber(row.remainingManDays, "integer")}
                 </TableCell>
                 <TableCell className="text-end tabular-nums">
                   {row.unestimated === 0 ? (
-                    <span className="text-muted-foreground">—</span>
+                    <span className="text-muted-foreground">{NO_METRIC_VALUE}</span>
                   ) : (
                     row.unestimated
                   )}
@@ -125,10 +123,10 @@ export function GearSummary() {
               </TableCell>
               <TableCell colSpan={4} />
               <TableCell className="text-end tabular-nums">
-                {totals.effort.toFixed(0)}
+                {formatMetricNumber(totals.effort, "integer")}
               </TableCell>
               <TableCell className="text-end tabular-nums">
-                {totals.remaining.toFixed(0)}
+                {formatMetricNumber(totals.remaining, "integer")}
               </TableCell>
               <TableCell className="text-end tabular-nums">
                 {totals.unestimated}
@@ -138,26 +136,5 @@ export function GearSummary() {
         </Table>
       </div>
     </section>
-  );
-}
-
-/** A share as a bar plus its number; a dash where nothing carries a value. */
-function Meter({ value }: { value: number | null }) {
-  if (value === null) {
-    return <span className="text-muted-foreground">—</span>;
-  }
-
-  return (
-    <span className="flex items-center gap-2">
-      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-        <span
-          className="block h-full rounded-full bg-primary/70"
-          style={{ width: `${Math.min(Math.max(value, 0), 100)}%` }}
-        />
-      </span>
-      <span className="tabular-nums text-xs text-muted-foreground">
-        {value.toFixed(0)}%
-      </span>
-    </span>
   );
 }
