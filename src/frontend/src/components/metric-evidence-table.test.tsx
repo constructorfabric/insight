@@ -131,6 +131,14 @@ describe("MetricEvidenceTable", () => {
 
   // A control that does nothing when clicked is worse than a label: the
   // reader spends the click finding out.
+  // Announcing the served order means a click on a header changes nothing on
+  // screen until the rows land; the busy state is what acknowledges it.
+  it("says it is busy while the rows it shows are being replaced", () => {
+    renderTable({ reordering: true });
+
+    expect(screen.getByRole("table")).toHaveAttribute("aria-busy", "true");
+  });
+
   it("leaves a column the server cannot order by as a plain label", () => {
     renderTable({
       columns: [

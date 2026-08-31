@@ -961,25 +961,30 @@ describe("MetricEvidenceDialog", () => {
       renderDialog();
 
       sortBy("value");
-      expect(mocks.tableProps?.sort).toEqual({
-        key: "value",
-        direction: "asc",
-      });
       expect(await requested()).toMatchObject({
         sort: { key: "value", direction: "asc" },
       });
 
       sortBy("value");
-      expect(mocks.tableProps?.sort).toEqual({
-        key: "value",
-        direction: "desc",
+      expect(await requested()).toMatchObject({
+        sort: { key: "value", direction: "desc" },
       });
 
       sortBy("value");
-      // Back to no order of its own: the server's default is what answers,
-      // and what the headers go back to announcing.
-      expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
+      // Back to no order of its own: the server's default is what answers.
       expect(await requested()).not.toHaveProperty("sort");
+    });
+
+    // The rows on screen are still the previous answer while the new one is in
+    // flight, and an arrow that moved ahead of them would describe a table
+    // nobody is looking at.
+    it("keeps the arrow on the order the rows are in until the new ones land", () => {
+      renderDialog({ isFetching: true });
+
+      sortBy("value");
+
+      expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
+      expect(mocks.tableProps?.reordering).toBe(true);
     });
 
     it("says a search matched nothing only once the server has answered", async () => {
@@ -1075,7 +1080,9 @@ describe("MetricEvidenceDialog", () => {
         "add"
       );
       sortBy("value");
-      expect(mocks.tableProps?.sort).toEqual({ key: "value", direction: "asc" });
+      expect(await requested()).toMatchObject({
+        sort: { key: "value", direction: "asc" },
+      });
 
       view.rerender(
         <MetricEvidenceDialog
@@ -1085,12 +1092,10 @@ describe("MetricEvidenceDialog", () => {
         />
       );
 
-      // Back to the server's default, which is what the next request asks
-      // for and what the headers announce.
-      expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
       expect(
         screen.getByRole("searchbox", { name: "Search records" })
       ).toHaveValue("");
+      expect(await requested()).not.toHaveProperty("sort");
       expect(await requested()).not.toHaveProperty("search");
     });
   });

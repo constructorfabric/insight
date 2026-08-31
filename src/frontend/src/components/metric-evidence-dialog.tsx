@@ -189,12 +189,12 @@ export function MetricEvidenceDialog({
   // the controls that ask it to are inert rather than misleading.
   const narrowsRows =
     query.data == null || servesOrderedRows(query.data.pages[0]);
-  // What the headers announce. Asking for no order in particular still gets
-  // one — the server's default — and a header reading "not sorted" over rows
-  // that plainly are is the table disagreeing with itself. The cycle still
-  // turns on `sort`, so the first click on the defaulted column moves it
-  // rather than appearing to do nothing.
-  const shownSort = sort ?? query.data?.pages[0]?.selection?.sort ?? null;
+  // What the headers announce: the order of the rows ON SCREEN, read off the
+  // page that produced them. Never the order just asked for — those rows are
+  // still the previous answer, and an arrow that moved ahead of them would
+  // describe a table nobody is looking at. `sort` stays the client's own, and
+  // only decides where the next click goes.
+  const shownSort = query.data?.pages[0]?.selection?.sort ?? null;
 
   const visiblePeople = useMemo(() => {
     const needle = peopleSearch.trim().toLowerCase();
@@ -522,6 +522,7 @@ export function MetricEvidenceDialog({
               fetchNextPage={fetchNextPage}
               hasNextPage={hasNextPage && !pageLimitReached}
               isFetchingNextPage={isFetchingNextPage}
+              reordering={query.isFetching && !isFetchingNextPage}
               nextPageError={query.isFetchNextPageError}
               pageLimitReached={pageLimitReached}
             />

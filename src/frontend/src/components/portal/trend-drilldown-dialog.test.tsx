@@ -166,7 +166,9 @@ describe("TrendDrilldownDialog", () => {
 
     act(() => onSortChange("ref"));
 
-    expect(mocks.tableProps?.sort).toEqual({ key: "ref", direction: "asc" });
+    // The header keeps announcing the order the rows are in; only the request
+    // moves ahead.
+    expect(mocks.tableProps?.sort).toEqual({ key: "date", direction: "desc" });
     expect(await requested()).toMatchObject({
       sort: { key: "ref", direction: "asc" },
     });

@@ -75,6 +75,7 @@ export function MetricEvidenceTable({
   fetchNextPage,
   hasNextPage,
   isFetchingNextPage,
+  reordering,
   nextPageError,
   pageLimitReached,
 }: {
@@ -86,6 +87,12 @@ export function MetricEvidenceTable({
   fetchNextPage: () => Promise<unknown>;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
+  /**
+   * A read is replacing these rows wholesale. The header keeps announcing the
+   * order the rows are actually in, so this is the only acknowledgement a
+   * click on a column gets until the new rows land.
+   */
+  reordering?: boolean;
   nextPageError: boolean;
   pageLimitReached: boolean;
 }) {
@@ -141,6 +148,7 @@ export function MetricEvidenceTable({
     <div className="relative min-h-0 flex-1">
       <Table
         role="table"
+        aria-busy={reordering ? true : undefined}
         // Counting the header row, which is row 1: `aria-rowindex` below starts
         // the data at 2, so a total of `rows.length` would make the last row
         // "n+1 of n".
@@ -364,7 +372,7 @@ export function MetricEvidenceTable({
           })}
         </TableBody>
       </Table>
-      {isFetchingNextPage ? (
+      {isFetchingNextPage || reordering ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-card/80 p-3">
           <Spinner />
         </div>
