@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpenText, Bug, Megaphone, type LucideIcon } from "lucide-react";
+import { BookOpenText, Bug, Cog, Megaphone, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useViewer } from "@/auth";
@@ -57,6 +57,13 @@ export function AppSidebarFooter({
           screen="/metrics"
           icon={BookOpenText}
           label={t("metric_definitions.nav_label")}
+          onNavigate={onNavigate}
+        />
+        <MenuEntry
+          surface="gear-roadmap"
+          screen="/gears"
+          icon={Cog}
+          label={t("gear_roadmap.nav_label")}
           onNavigate={onNavigate}
         />
         <MenuEntry
@@ -122,7 +129,7 @@ function MenuEntry({
   onNavigate,
 }: {
   surface: string;
-  screen: "/metrics" | "/whats-new";
+  screen: "/metrics" | "/whats-new" | "/gears";
   icon: LucideIcon;
   label: string;
   onNavigate?: () => void;

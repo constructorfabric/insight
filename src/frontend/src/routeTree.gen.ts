@@ -12,11 +12,16 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as CustomMetricsRouteImport } from './routes/custom-metrics'
+import { Route as GearsRouteImport } from './routes/gears'
 import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as PortalRouteImport } from './routes/portal'
 import { Route as PreviewsRouteImport } from './routes/previews'
 import { Route as QueriesRouteImport } from './routes/queries'
 import { Route as WhatsNewRouteImport } from './routes/whats-new'
+import { Route as GearsIndexRouteImport } from './routes/gears.index'
+import { Route as GearsGanttRouteImport } from './routes/gears.gantt'
+import { Route as GearsItemsRouteImport } from './routes/gears.items'
+import { Route as GearsRoadmapRouteImport } from './routes/gears.roadmap'
 import { Route as IcPersonRouteImport } from './routes/ic.$person'
 import { Route as IcPersonIndexRouteImport } from './routes/ic.$person.index'
 import { Route as IcPersonPersonalRouteImport } from './routes/ic.$person.personal'
@@ -35,6 +40,11 @@ const SplatRoute = SplatRouteImport.update({
 const CustomMetricsRoute = CustomMetricsRouteImport.update({
   id: '/custom-metrics',
   path: '/custom-metrics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GearsRoute = GearsRouteImport.update({
+  id: '/gears',
+  path: '/gears',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetricsRoute = MetricsRouteImport.update({
@@ -62,6 +72,26 @@ const WhatsNewRoute = WhatsNewRouteImport.update({
   path: '/whats-new',
   getParentRoute: () => rootRouteImport,
 } as any)
+const GearsIndexRoute = GearsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => GearsRoute,
+} as any)
+const GearsGanttRoute = GearsGanttRouteImport.update({
+  id: '/gantt',
+  path: '/gantt',
+  getParentRoute: () => GearsRoute,
+} as any)
+const GearsItemsRoute = GearsItemsRouteImport.update({
+  id: '/items',
+  path: '/items',
+  getParentRoute: () => GearsRoute,
+} as any)
+const GearsRoadmapRoute = GearsRoadmapRouteImport.update({
+  id: '/roadmap',
+  path: '/roadmap',
+  getParentRoute: () => GearsRoute,
+} as any)
 const IcPersonRoute = IcPersonRouteImport.update({
   id: '/ic/$person',
   path: '/ic/$person',
@@ -87,12 +117,17 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/custom-metrics': typeof CustomMetricsRoute
+  '/gears': typeof GearsRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
   '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
+  '/gears/gantt': typeof GearsGanttRoute
+  '/gears/items': typeof GearsItemsRoute
+  '/gears/roadmap': typeof GearsRoadmapRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
+  '/gears/': typeof GearsIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/ic/$person/': typeof IcPersonIndexRoute
@@ -106,6 +141,10 @@ export interface FileRoutesByTo {
   '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
+  '/gears/gantt': typeof GearsGanttRoute
+  '/gears/items': typeof GearsItemsRoute
+  '/gears/roadmap': typeof GearsRoadmapRoute
+  '/gears': typeof GearsIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/ic/$person': typeof IcPersonIndexRoute
@@ -115,12 +154,17 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/custom-metrics': typeof CustomMetricsRoute
+  '/gears': typeof GearsRouteWithChildren
   '/metrics': typeof MetricsRoute
   '/portal': typeof PortalRoute
   '/previews': typeof PreviewsRoute
   '/queries': typeof QueriesRoute
   '/whats-new': typeof WhatsNewRoute
+  '/gears/gantt': typeof GearsGanttRoute
+  '/gears/items': typeof GearsItemsRoute
+  '/gears/roadmap': typeof GearsRoadmapRoute
   '/ic/$person': typeof IcPersonRouteWithChildren
+  '/gears/': typeof GearsIndexRoute
   '/ic/$person/personal': typeof IcPersonPersonalRoute
   '/ic/$person/team': typeof IcPersonTeamRoute
   '/ic/$person/': typeof IcPersonIndexRoute
@@ -131,12 +175,17 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/custom-metrics'
+    | '/gears'
     | '/metrics'
     | '/portal'
     | '/previews'
     | '/queries'
     | '/whats-new'
+    | '/gears/gantt'
+    | '/gears/items'
+    | '/gears/roadmap'
     | '/ic/$person'
+    | '/gears/'
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/ic/$person/'
@@ -150,6 +199,10 @@ export interface FileRouteTypes {
     | '/previews'
     | '/queries'
     | '/whats-new'
+    | '/gears/gantt'
+    | '/gears/items'
+    | '/gears/roadmap'
+    | '/gears'
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/ic/$person'
@@ -158,12 +211,17 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/custom-metrics'
+    | '/gears'
     | '/metrics'
     | '/portal'
     | '/previews'
     | '/queries'
     | '/whats-new'
+    | '/gears/gantt'
+    | '/gears/items'
+    | '/gears/roadmap'
     | '/ic/$person'
+    | '/gears/'
     | '/ic/$person/personal'
     | '/ic/$person/team'
     | '/ic/$person/'
@@ -173,6 +231,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   CustomMetricsRoute: typeof CustomMetricsRoute
+  GearsRoute: typeof GearsRouteWithChildren
   MetricsRoute: typeof MetricsRoute
   PortalRoute: typeof PortalRoute
   PreviewsRoute: typeof PreviewsRoute
@@ -202,6 +261,13 @@ declare module '@tanstack/react-router' {
       path: '/custom-metrics'
       fullPath: '/custom-metrics'
       preLoaderRoute: typeof CustomMetricsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/gears': {
+      id: '/gears'
+      path: '/gears'
+      fullPath: '/gears'
+      preLoaderRoute: typeof GearsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metrics': {
@@ -239,6 +305,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WhatsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/gears/': {
+      id: '/gears/'
+      path: '/'
+      fullPath: '/gears/'
+      preLoaderRoute: typeof GearsIndexRouteImport
+      parentRoute: typeof GearsRoute
+    }
+    '/gears/gantt': {
+      id: '/gears/gantt'
+      path: '/gantt'
+      fullPath: '/gears/gantt'
+      preLoaderRoute: typeof GearsGanttRouteImport
+      parentRoute: typeof GearsRoute
+    }
+    '/gears/items': {
+      id: '/gears/items'
+      path: '/items'
+      fullPath: '/gears/items'
+      preLoaderRoute: typeof GearsItemsRouteImport
+      parentRoute: typeof GearsRoute
+    }
+    '/gears/roadmap': {
+      id: '/gears/roadmap'
+      path: '/roadmap'
+      fullPath: '/gears/roadmap'
+      preLoaderRoute: typeof GearsRoadmapRouteImport
+      parentRoute: typeof GearsRoute
+    }
     '/ic/$person': {
       id: '/ic/$person'
       path: '/ic/$person'
@@ -270,6 +364,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface GearsRouteChildren {
+  GearsGanttRoute: typeof GearsGanttRoute
+  GearsItemsRoute: typeof GearsItemsRoute
+  GearsRoadmapRoute: typeof GearsRoadmapRoute
+  GearsIndexRoute: typeof GearsIndexRoute
+}
+
+const GearsRouteChildren: GearsRouteChildren = {
+  GearsGanttRoute: GearsGanttRoute,
+  GearsItemsRoute: GearsItemsRoute,
+  GearsRoadmapRoute: GearsRoadmapRoute,
+  GearsIndexRoute: GearsIndexRoute,
+}
+
+const GearsRouteWithChildren = GearsRoute._addFileChildren(GearsRouteChildren)
+
 interface IcPersonRouteChildren {
   IcPersonPersonalRoute: typeof IcPersonPersonalRoute
   IcPersonTeamRoute: typeof IcPersonTeamRoute
@@ -290,6 +400,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   CustomMetricsRoute: CustomMetricsRoute,
+  GearsRoute: GearsRouteWithChildren,
   MetricsRoute: MetricsRoute,
   PortalRoute: PortalRoute,
   PreviewsRoute: PreviewsRoute,

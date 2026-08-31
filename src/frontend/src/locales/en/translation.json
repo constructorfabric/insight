@@ -428,7 +428,7 @@
       "direction_label": "Direction",
       "computation_label": "Computation",
       "scale_label": "Scale",
-      "quantile_label": "Quantile (0\u20131)",
+      "quantile_label": "Quantile (0–1)",
       "peer_cohort_key_label": "Peer cohort key",
       "source_key_label": "Source key",
       "observation_sql_label": "Observation SQL",
@@ -647,5 +647,51 @@
     "send": "Send",
     "sent": "Thanks — your feedback was sent.",
     "failed": "Could not send your feedback. Try again."
+  },
+  "gear_roadmap": {
+    "title": "Gear delivery",
+    "nav_label": "Gear delivery",
+    "capacity_note": "Capacity assumed: {{capacity}} man-day per person per day",
+    "load_failed": "The gear board could not be read.",
+    "committed": "committed",
+    "tabs": {
+      "overview": "Overview",
+      "items": "Gears",
+      "roadmap": "Roadmap",
+      "gantt": "Schedule"
+    },
+    "overview": {
+      "items": "Gears",
+      "done": "Done",
+      "done_share": "Done %",
+      "spec": "Spec",
+      "sdk": "SDK",
+      "impl": "Impl.",
+      "effort": "Estimate (m*d)",
+      "remaining": "Remaining (m*d)",
+      "unestimated": "Unestimated"
+    },
+    "items": {
+      "filter_placeholder": "Filter by gear, subsystem or assignee",
+      "gear": "Gear",
+      "subsystem": "Subsystem",
+      "spec": "Spec",
+      "sdk": "SDK",
+      "impl": "Impl.",
+      "effort": "Estimate (m*d)",
+      "remaining": "Remaining (m*d)",
+      "milestone": "Milestone",
+      "assignees": "Assignees"
+    },
+    "grid": {
+      "legend": "{{committed}} committed   {{planned}} planned, not committed",
+      "overdue": "Overdue",
+      "later": "Later"
+    },
+    "gantt": {
+      "explainer": "Every person is assumed to deliver {{capacity}} man-day per calendar day. {{days}} days from {{start}}.",
+      "unassigned": "Unassigned",
+      "nothing_scheduled": "Nothing is left to schedule."
+    }
   }
 }
