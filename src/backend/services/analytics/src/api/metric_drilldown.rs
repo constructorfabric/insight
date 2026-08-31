@@ -198,12 +198,23 @@ async fn collect_export_rows(
         "metric-drilldown:export:{}",
         validated.plan.definition.key()
     );
-    let rows = tokio::time::timeout_at(
+    // The outer deadline cancels the fetch future, so its own metric never
+    // records — the timeout is this query's terminal outcome, recorded here.
+    let started = Instant::now();
+    let Ok(fetched) = tokio::time::timeout_at(
         deadline,
         fetch_rows(state, validated, QueryKind::DrilldownExport, &log_comment),
     )
     .await
-    .map_err(|_| export_limit("Export exceeded the execution time limit."))??;
+    else {
+        metrics::record_query(
+            QueryKind::DrilldownExport,
+            QueryOutcome::Error,
+            started.elapsed(),
+        );
+        return Err(export_limit("Export exceeded the execution time limit."));
+    };
+    let rows = fetched?;
     verify_evidence_snapshot(&state.ch, &validated.plan.relation, &validated.snapshot_id).await?;
 
     enforce_export_row_limit(rows.len())?;
@@ -330,37 +341,22 @@ async fn fetch_rows_inner(
     })
 }
 
+// INVARIANT: the response classification shares the one classifier the metric
+// label records through, so a message can never map to two different classes.
 fn query_error(message: &str) -> CanonicalError {
-    if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60") {
-        return evidence_unavailable();
+    match ErrorClass::classify(message) {
+        ErrorClass::RelationMissing => evidence_unavailable(),
+        ErrorClass::ResourceExhausted => query_limit_error(),
+        ErrorClass::Timeout | ErrorClass::ParseFailed | ErrorClass::QueryFailed => {
+            CanonicalError::internal("metric evidence query failed").create()
+        }
     }
-    if is_clickhouse_resource_limit(message) {
-        return query_limit_error();
-    }
-    CanonicalError::internal("metric evidence query failed").create()
 }
 
 fn query_limit_error() -> CanonicalError {
     MetricError::resource_exhausted("Metric evidence query exceeded resource limits.")
         .with_quota_violation("metric evidence query", "ClickHouse resource limit reached")
         .create()
-}
-
-fn is_clickhouse_resource_limit(message: &str) -> bool {
-    [
-        "MEMORY_LIMIT_EXCEEDED",
-        "TOO_MANY_SIMULTANEOUS_QUERIES",
-        "TOO_MANY_ROWS_OR_BYTES",
-        "QUOTA_EXCEEDED",
-        "LIMIT_EXCEEDED",
-        "TIMEOUT_EXCEEDED",
-        "Code: 159",
-        "Code: 201",
-        "Code: 202",
-        "Code: 241",
-    ]
-    .iter()
-    .any(|marker| message.contains(marker))
 }
 
 fn export_busy() -> CanonicalError {
@@ -383,21 +379,28 @@ mod tests {
 
     #[test]
     fn query_errors_are_classified() {
-        assert!(is_clickhouse_resource_limit("MEMORY_LIMIT_EXCEEDED"));
-        assert!(is_clickhouse_resource_limit("Code: 241"));
-        assert!(!is_clickhouse_resource_limit("syntax error"));
-        let missing = query_error("UNKNOWN_TABLE");
-        let limited = query_error("QUOTA_EXCEEDED");
-        let internal = query_error("syntax error");
-        assert_eq!(missing.status_code(), axum::http::StatusCode::BAD_REQUEST);
-        assert_eq!(
-            limited.status_code(),
-            axum::http::StatusCode::TOO_MANY_REQUESTS
-        );
-        assert_eq!(
-            internal.status_code(),
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-        );
+        use axum::http::StatusCode;
+
+        let cases = [
+            ("UNKNOWN_TABLE", StatusCode::BAD_REQUEST),
+            ("Code: 60. Table x does not exist", StatusCode::BAD_REQUEST),
+            ("QUOTA_EXCEEDED", StatusCode::TOO_MANY_REQUESTS),
+            (
+                "Code: 241. Memory limit exceeded",
+                StatusCode::TOO_MANY_REQUESTS,
+            ),
+            ("syntax error", StatusCode::INTERNAL_SERVER_ERROR),
+            // A longer code sharing the prefix must not read as missing-relation 60.
+            ("Code: 600. novel", StatusCode::INTERNAL_SERVER_ERROR),
+            ("Code: 60 no period", StatusCode::INTERNAL_SERVER_ERROR),
+        ];
+        for (message, expected) in cases {
+            assert_eq!(
+                query_error(message).status_code(),
+                expected,
+                "wrong classification: {message}"
+            );
+        }
     }
 
     #[test]

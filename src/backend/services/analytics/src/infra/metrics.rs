@@ -63,7 +63,7 @@ impl QueryOutcome {
 // The resource-limit signatures ClickHouse reports when a query is refused
 // rather than broken: memory (241), rows/bytes-to-read (158/307), execution
 // time (159), simultaneous queries (202), quota (201).
-const RESOURCE_LIMIT_MARKERS: [&str; 9] = [
+const RESOURCE_LIMIT_MARKERS: [&str; 11] = [
     "MEMORY_LIMIT_EXCEEDED",
     "TOO_MANY_ROWS_OR_BYTES",
     "TOO_MANY_SIMULTANEOUS_QUERIES",
@@ -71,6 +71,8 @@ const RESOURCE_LIMIT_MARKERS: [&str; 9] = [
     "QUOTA_EXCEEDED",
     "Code: 241.",
     "Code: 159.",
+    "Code: 158.",
+    "Code: 307.",
     "Code: 202.",
     "Code: 201.",
 ];
@@ -179,6 +181,42 @@ mod tests {
         assert_eq!(ErrorClass::Timeout.as_str(), "timeout");
         assert_eq!(ErrorClass::ParseFailed.as_str(), "parse_failed");
         assert_eq!(ErrorClass::QueryFailed.as_str(), "query_failed");
+    }
+
+    #[test]
+    fn classify_maps_ch_messages_to_the_bounded_classes() {
+        for message in [
+            "bad response: Code: 60. DB::Exception: Table x does not exist. (UNKNOWN_TABLE)",
+            "Code: 60. something",
+        ] {
+            assert_eq!(
+                ErrorClass::classify(message),
+                ErrorClass::RelationMissing,
+                "should be relation_missing: {message}"
+            );
+        }
+
+        for message in [
+            "Code: 241. Memory limit exceeded",
+            "DB::Exception: (TIMEOUT_EXCEEDED)",
+            "Code: 158. Too many rows",
+            "Code: 307. Too many bytes",
+        ] {
+            assert_eq!(
+                ErrorClass::classify(message),
+                ErrorClass::ResourceExhausted,
+                "should be resource_exhausted: {message}"
+            );
+        }
+
+        // A longer code that shares a prefix must not match a shorter marker.
+        for message in ["Code: 600. x", "Code: 2410. y", "Code: 60 no period"] {
+            assert_eq!(
+                ErrorClass::classify(message),
+                ErrorClass::QueryFailed,
+                "should be query_failed: {message}"
+            );
+        }
     }
 
     #[test]
