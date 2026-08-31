@@ -1,7 +1,15 @@
 import { useMemo, useState } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 
-import { queryMetricDrilldown } from "@/api/metric-drilldown-client";
+import { AnalyticsApiError } from "@/api/analytics-client";
+import {
+  MAX_EVIDENCE_PERSONS,
+  personsEvidenceSelection,
+  queryMetricDrilldown,
+  type MetricEvidenceSort,
+} from "@/api/metric-drilldown-client";
+import { sessionAuthorizationScope } from "@/auth/session-scope";
+import { useAuth } from "@/auth/use-auth";
 import { MetricEvidenceTable } from "@/components/metric-evidence-table";
 import {
   Dialog,
@@ -20,18 +28,12 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatMetricNumber } from "@/lib/format";
-import {
-  nextSort,
-  visibleEvidenceRows,
-  type EvidenceSort,
-} from "@/lib/metrics/evidence-rows";
-import {
-  mergeMemberRecords,
-  type BucketBreakdownRow,
-} from "@/lib/portal/trend-drilldown";
+import { nextSort } from "@/lib/metrics/evidence-rows";
+import { type BucketBreakdownRow } from "@/lib/portal/trend-drilldown";
 
-/** Most records to ask any one person for before the table stops growing. */
-const PER_PERSON_LIMIT = 200;
+const PAGE_LIMIT = 100;
+/** Where scrolling stops growing the table, as in the metric evidence dialog. */
+const MAX_PAGES = 50;
 
 export interface TrendDrilldownState {
   /** Catalog key, or null for a card derived from another metric's rows. */
@@ -97,11 +99,13 @@ function Body({ state }: { state: TrendDrilldownState }) {
 }
 
 /**
- * The team's records, gathered a person at a time.
+ * The team's records, in one read.
  *
- * These metrics are defined for a person and not for a tenant, so there is no
- * single request that answers "the whole team's merged pull requests" — one
- * per member, joined here, is the request the catalog actually supports.
+ * The roster is the entity: the catalog defines these metrics for a person,
+ * but the drilldown accepts a group of them, so the question "what is this
+ * team total made of" is one request that the server orders, narrows and pages
+ * — not a request per member joined afterwards, which could only ever order
+ * what it had already fetched.
  */
 function Records({
   metricKey,
@@ -110,67 +114,57 @@ function Records({
   metricKey: string;
   state: TrendDrilldownState;
 }) {
-  const [sort, setSort] = useState<EvidenceSort | null>({
-    key: "date",
-    direction: "desc",
-  });
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  const [sort, setSort] = useState<MetricEvidenceSort | null>(null);
 
-  const { loading, failed, truncated, merged } = useQueries({
-    queries: state.members.map((member) => ({
-      queryKey: [
-        "metric-drilldown",
-        "trend",
-        metricKey,
-        member.person_id,
-        state.period.from,
-        state.period.to,
-      ],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        queryMetricDrilldown(
-          {
-            metric_key: metricKey,
-            entity: { type: "person", id: member.person_id },
-            period: state.period,
-            filters: [],
-            display_dimensions: [],
-            limit: PER_PERSON_LIMIT,
-          },
-          signal,
-        ),
-    })),
-    combine: (results) => ({
-      loading: results.some((r) => r.isPending),
-      failed: results.filter((r) => r.isError).length,
-      truncated: results.some((r) => r.data?.next_cursor != null),
-      merged: mergeMemberRecords(
-        results.flatMap((result, index) => {
-          const member = state.members[index];
-          if (!result.data || !member) return [];
-          return [
-            {
-              personId: member.person_id,
-              name: member.name,
-              columns: result.data.columns,
-              rows: result.data.rows,
-            },
-          ];
-        }),
+  const selection = useMemo(
+    () =>
+      personsEvidenceSelection(
+        { metric_key: metricKey, period: state.period, filters: [] },
+        state.members.map((member) => member.person_id),
+        state.period,
       ),
-    }),
+    [metricKey, state.members, state.period],
+  );
+  const view = useMemo(() => (sort ? { sort } : {}), [sort]);
+  const query = useInfiniteQuery({
+    queryKey: ["metric-drilldown", "trend", sessionScope, selection, view],
+    queryFn: ({ pageParam, signal }) => {
+      if (!selection) throw new Error("Metric evidence selection is missing");
+      return queryMetricDrilldown(
+        { ...selection, ...view, cursor: pageParam, limit: PAGE_LIMIT },
+        signal,
+      );
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: sessionScope != null && selection != null,
+    // A busy drilldown answers 429, and asking again immediately is what made
+    // it busy.
+    retry: (failureCount, error) =>
+      failureCount < 1 &&
+      (!(error instanceof AnalyticsApiError) || error.status >= 500),
   });
 
   const rows = useMemo(
-    () =>
-      visibleEvidenceRows({
-        rows: merged.rows,
-        columns: merged.columns,
-        search: "",
-        sort,
-      }),
-    [merged, sort],
+    () => query.data?.pages.flatMap((page) => page.rows) ?? [],
+    [query.data],
   );
+  const columns = query.data?.pages[0]?.columns ?? [];
+  const pageLimitReached =
+    (query.data?.pages.length ?? 0) >= MAX_PAGES && query.hasNextPage;
 
-  if (loading) {
+  if (!selection) {
+    return (
+      <p className="text-muted-foreground p-5 text-sm">
+        This scope holds more than {MAX_EVIDENCE_PERSONS} people, which is more
+        than one table can stand behind. Narrow it and open the chart again.
+      </p>
+    );
+  }
+
+  if (query.isPending) {
     return (
       <div className="flex h-full items-center justify-center">
         <Spinner />
@@ -179,13 +173,12 @@ function Records({
   }
 
   // "No records" is a claim about the data. Only make it when the data was
-  // actually read: if every request failed, what is true is that nothing
-  // could be read.
-  if (failed === state.members.length && failed > 0) {
+  // actually read.
+  if (query.isError && !query.data) {
     return (
-      <p className="text-muted-foreground p-5 text-sm">
-        Nobody in this scope could be read, so nothing is claimed here. Try
-        again in a moment.
+      <p className="text-muted-foreground p-5 text-sm" role="alert">
+        These records could not be read, so nothing is claimed here. Try again
+        in a moment.
       </p>
     );
   }
@@ -200,30 +193,17 @@ function Records({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {failed > 0 ? (
-        <p className="text-muted-foreground px-5 pt-3 text-sm">
-          {failed} of {state.members.length}{" "}
-          {failed === 1 ? "person" : "people"} could not be read; the table
-          below is short by their records.
-        </p>
-      ) : null}
-      {truncated ? (
-        <p className="text-muted-foreground px-5 pt-3 text-sm">
-          Up to {PER_PERSON_LIMIT} records per person are listed; whoever
-          passed that in this window has more than the table shows.
-        </p>
-      ) : null}
       <MetricEvidenceTable
         metricKey={metricKey}
         rows={rows}
-        columns={merged.columns}
+        columns={columns}
         sort={sort}
         onSortChange={(key) => setSort((current) => nextSort(current, key))}
-        fetchNextPage={() => Promise.resolve()}
-        hasNextPage={false}
-        isFetchingNextPage={false}
-        nextPageError={false}
-        pageLimitReached={false}
+        fetchNextPage={query.fetchNextPage}
+        hasNextPage={query.hasNextPage && !pageLimitReached}
+        isFetchingNextPage={query.isFetchingNextPage}
+        nextPageError={query.isFetchNextPageError}
+        pageLimitReached={pageLimitReached}
       />
     </div>
   );

@@ -306,7 +306,8 @@ mod tests {
 
     /// Column keys the drilldown fills from the evidence row rather than from
     /// its details map; a declaration claiming one would be overwritten.
-    const STRUCTURAL_COLUMN_KEYS: &[&str] = &["date", "value", "numerator", "denominator"];
+    const STRUCTURAL_COLUMN_KEYS: &[&str] =
+        &["person", "date", "value", "numerator", "denominator"];
 
     #[test]
     fn every_event_measure_declares_the_columns_its_rows_carry() {

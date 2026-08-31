@@ -12,10 +12,14 @@ use super::error::{config_error, evidence_unavailable, invalid, invalid_error};
 
 /// Bumped when the ordering key changes: an older cursor addresses a page this
 /// shape would not produce, so it is refused.
-const CURSOR_VERSION: u8 = 2;
+const CURSOR_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CursorKey {
+    /// Leads the key because it leads the ORDER BY: blank cells sit past every
+    /// filled one, whichever way the sorted column runs.
+    pub(super) sort_flag: u8,
+    pub(super) sort_value: String,
     pub(super) role: String,
     pub(super) entity_id: String,
     pub(super) metric_date: String,
@@ -134,6 +138,8 @@ pub(super) fn encode_cursor(
         fingerprint: fingerprint.to_owned(),
         snapshot_id: snapshot_id.to_owned(),
         key: CursorKey {
+            sort_flag: row.sort_flag,
+            sort_value: row.sort_value.clone(),
             role: row.role.clone(),
             entity_id: row.entity_id.clone(),
             metric_date: row.metric_date.clone(),

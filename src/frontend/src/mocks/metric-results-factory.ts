@@ -238,7 +238,20 @@ export function buildMetricResultsResponse(
           return view satisfies never;
       }
     });
-    return { ...meta, views } as MetricResult;
+    // Every mock metric carries evidence and its canonical selection: without
+    // both, no surface offers the drilldown at all and mock mode cannot reach
+    // the records dialog.
+    return {
+      ...meta,
+      views,
+      drilldown: { granularity: ["event"] },
+      selection: {
+        metric_key: key,
+        entity: request.entity,
+        period: request.period,
+        filters: metricRequest.filters ?? [],
+      },
+    } as MetricResult;
   });
 
   return { metrics };

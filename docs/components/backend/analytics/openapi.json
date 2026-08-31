@@ -1041,6 +1041,10 @@
           "label": {
             "type": "string"
           },
+          "sortable": {
+            "description": "Whether the query can order by this column. A column the evidence row\ndoes not carry in a form SQL can compare is shown, not sorted.",
+            "type": "boolean"
+          },
           "type": {
             "$ref": "#/components/schemas/MetricDrilldownColumnType"
           }
@@ -1048,7 +1052,8 @@
         "required": [
           "key",
           "label",
-          "type"
+          "type",
+          "sortable"
         ],
         "type": "object"
       },
@@ -1150,6 +1155,22 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricDrilldownSort"
+              }
+            ]
           }
         },
         "required": [
@@ -1228,6 +1249,22 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricDrilldownSort"
+              }
+            ]
           }
         },
         "required": [
@@ -1315,6 +1352,16 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "$ref": "#/components/schemas/MetricDrilldownSort",
+            "description": "Always the effective order, never the caller's omission — a client that\nfinds this field missing is talking to a server that cannot sort at all."
           }
         },
         "required": [
@@ -1322,9 +1369,32 @@
           "entity",
           "period",
           "filters",
-          "display_dimensions"
+          "display_dimensions",
+          "sort"
         ],
         "type": "object"
+      },
+      "MetricDrilldownSort": {
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/MetricDrilldownSortDirection"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownSortDirection": {
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
       },
       "MetricFormat": {
         "enum": [

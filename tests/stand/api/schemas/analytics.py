@@ -356,19 +356,6 @@ class MetricDrilldownPeriod(BaseModel):
     to: str
 
 
-class MetricDrilldownRequest(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    cursor: str | None = None
-    display_dimensions: list[str] | None = None
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter] | None = None
-    limit: int | None = Field(None, ge=0)
-    metric_key: str
-    period: MetricDrilldownPeriod
-
-
 class MetricDrilldownRow(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -377,15 +364,9 @@ class MetricDrilldownRow(BaseModel):
     values: dict[str, Any]
 
 
-class MetricDrilldownSelection(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    display_dimensions: list[str]
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter]
-    metric_key: str
-    period: MetricDrilldownPeriod
+class MetricDrilldownSortDirection(StrEnum):
+    asc = 'asc'
+    desc = 'desc'
 
 
 class MetricFormat(StrEnum):
@@ -1181,29 +1162,16 @@ class MetricDrilldownColumn(BaseModel):
     )
     key: str
     label: str
+    sortable: bool = Field(..., description='Whether the query can order by this column. A column the evidence row\ndoes not carry in a form SQL can compare is shown, not sorted.')
     type: MetricDrilldownColumnType
 
 
-class MetricDrilldownExportRequest(BaseModel):
+class MetricDrilldownSort(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    display_dimensions: list[str] | None = None
-    entity: MetricDrilldownEntity
-    filters: list[MetricDrilldownFilter] | None = None
-    format: MetricDrilldownExportFormat
-    metric_key: str
-    period: MetricDrilldownPeriod
-
-
-class MetricDrilldownResponse(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    columns: list[MetricDrilldownColumn]
-    next_cursor: str | None = None
-    rows: list[MetricDrilldownRow]
-    selection: MetricDrilldownSelection
+    direction: MetricDrilldownSortDirection
+    key: str
 
 
 class MetricRequest(BaseModel):
@@ -1461,6 +1429,48 @@ class MetricDefinitionListResponse(BaseModel):
     metrics: list[MetricDefinitionView]
 
 
+class MetricDrilldownExportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_dimensions: list[str] | None = None
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter] | None = None
+    format: MetricDrilldownExportFormat
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort | None = None
+
+
+class MetricDrilldownRequest(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cursor: str | None = None
+    display_dimensions: list[str] | None = None
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter] | None = None
+    limit: int | None = Field(None, ge=0)
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort | None = None
+
+
+class MetricDrilldownSelection(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_dimensions: list[str]
+    entity: MetricDrilldownEntity
+    filters: list[MetricDrilldownFilter]
+    metric_key: str
+    period: MetricDrilldownPeriod
+    search: str | None = None
+    sort: MetricDrilldownSort = Field(..., description="Always the effective order, never the caller's omission — a client that\nfinds this field missing is talking to a server that cannot sort at all.")
+
+
 class MetricResultViewDto2(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1472,6 +1482,16 @@ class MetricResultViewDto2(BaseModel):
 
 class MetricResultViewDto(RootModel[MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7]):
     root: MetricResultViewDto1 | MetricResultViewDto2 | MetricResultViewDto3 | MetricResultViewDto4 | MetricResultViewDto5 | MetricResultViewDto6 | MetricResultViewDto7
+
+
+class MetricDrilldownResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[MetricDrilldownColumn]
+    next_cursor: str | None = None
+    rows: list[MetricDrilldownRow]
+    selection: MetricDrilldownSelection
 
 
 class MetricResultDto7(BaseModel):

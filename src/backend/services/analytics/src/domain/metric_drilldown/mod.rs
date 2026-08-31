@@ -6,6 +6,7 @@ mod error;
 mod export;
 mod presentation;
 mod query_limits;
+mod sort;
 mod validation;
 
 pub(crate) use capability::load_capabilities;

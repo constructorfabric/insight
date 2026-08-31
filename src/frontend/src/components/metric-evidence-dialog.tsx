@@ -13,6 +13,8 @@ import {
 import {
   downloadMetricDrilldown,
   queryMetricDrilldown,
+  servesOrderedRows,
+  type MetricEvidenceSort,
 } from "@/api/metric-drilldown-client";
 import { AnalyticsApiError } from "@/api/analytics-client";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
@@ -48,11 +50,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  nextSort,
-  visibleEvidenceRows,
-  type EvidenceSort,
-} from "@/lib/metrics/evidence-rows";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { nextSort } from "@/lib/metrics/evidence-rows";
+import { SEARCH_DEBOUNCE_MS } from "@/queries/identity-resolution";
 
 /** A records read taken out of a people list, and whose records they are. */
 interface DrillStep {
@@ -110,12 +110,33 @@ export function MetricEvidenceDialog({
   const selection = activeTarget
     ? withTypeDimension(activeTarget.selection, declared)
     : null;
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<MetricEvidenceSort | null>(null);
+  const activeMetricKey = selection?.metric_key ?? null;
+  const [scopedTo, setScopedTo] = useState(activeMetricKey);
+  if (scopedTo !== activeMetricKey) {
+    setScopedTo(activeMetricKey);
+    setSearch("");
+    setSort(null);
+  }
+  // INVARIANT: the needle the server was asked for, not the one being typed —
+  // it is part of the query key, and a key per keystroke is a request per
+  // keystroke.
+  const needle = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS);
+  const view = useMemo(
+    () => ({
+      ...(sort ? { sort } : {}),
+      ...(needle === "" ? {} : { search: needle }),
+    }),
+    [sort, needle]
+  );
+
   const query = useInfiniteQuery({
-    queryKey: ["metric-drilldown", sessionScope, selection],
+    queryKey: ["metric-drilldown", sessionScope, selection, view],
     queryFn: ({ pageParam, signal }) => {
       if (!selection) throw new Error("Metric evidence selection is missing");
       return queryMetricDrilldown(
-        { ...selection, cursor: pageParam, limit: 100 },
+        { ...selection, ...view, cursor: pageParam, limit: 100 },
         signal
       );
     },
@@ -137,6 +158,7 @@ export function MetricEvidenceDialog({
   const columns = useMemo(() => {
     const columns = query.data?.pages[0]?.columns ?? [];
     const order = new Map([
+      ["person", -1],
       ["ref", 0],
       ["title", 1],
       ["repository", 2],
@@ -155,16 +177,10 @@ export function MetricEvidenceDialog({
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = query;
   const pageLimitReached = (query.data?.pages.length ?? 0) >= 50 && hasNextPage;
   const canLoadMore = hasNextPage && !pageLimitReached;
-
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<EvidenceSort | null>(null);
-  const activeMetricKey = selection?.metric_key ?? null;
-  const [scopedTo, setScopedTo] = useState(activeMetricKey);
-  if (scopedTo !== activeMetricKey) {
-    setScopedTo(activeMetricKey);
-    setSearch("");
-    setSort(null);
-  }
+  // The server orders and narrows the rows. Until the first page says it does,
+  // the controls that ask it to are inert rather than misleading.
+  const narrowsRows =
+    query.data == null || servesOrderedRows(query.data.pages[0]);
 
   const visiblePeople = useMemo(() => {
     const needle = peopleSearch.trim().toLowerCase();
@@ -173,31 +189,6 @@ export function MetricEvidenceDialog({
       ? rows
       : rows.filter((row) => row.name.toLowerCase().includes(needle));
   }, [people, peopleSearch]);
-
-  const narrowed = search.trim() !== "" || sort != null;
-  const visibleRows = useMemo(
-    () => visibleEvidenceRows({ rows, columns, search, sort }),
-    [rows, columns, search, sort]
-  );
-
-  // INVARIANT: narrowing must see every page — the table's scroll-triggered
-  // paging stalls once a search hides most rows.
-  useEffect(() => {
-    if (
-      narrowed &&
-      canLoadMore &&
-      !isFetchingNextPage &&
-      !query.isFetchNextPageError
-    ) {
-      void fetchNextPage();
-    }
-  }, [
-    narrowed,
-    canLoadMore,
-    isFetchingNextPage,
-    query.isFetchNextPageError,
-    fetchNextPage,
-  ]);
 
   const headingRef = useRef<HTMLSpanElement>(null);
   const focusedStep = useRef(drilled);
@@ -252,7 +243,7 @@ export function MetricEvidenceDialog({
     setExporting(true);
     setExportFailure(null);
     try {
-      await downloadMetricDrilldown(exported, format, controller.signal);
+      await downloadMetricDrilldown(exported, format, view, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted) {
         setExportFailure(
@@ -429,6 +420,12 @@ export function MetricEvidenceDialog({
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder="Search records"
                     aria-label="Search records"
+                    disabled={!narrowsRows}
+                    title={
+                      narrowsRows
+                        ? undefined
+                        : "Searching records needs a newer server"
+                    }
                     className="h-8 ps-8"
                   />
                 </div>
@@ -437,11 +434,9 @@ export function MetricEvidenceDialog({
                   className="text-sm text-muted-foreground tabular-nums"
                 >
                   {recordCount({
-                    visible: visibleRows.length,
                     loaded: rows.length,
-                    filtered: search.trim() !== "",
-                    partial:
-                      narrowed && (canLoadMore || query.isFetchNextPageError),
+                    filtered: needle !== "",
+                    partial: canLoadMore || query.isFetchNextPageError,
                   })}
                 </p>
               </div>
@@ -481,53 +476,27 @@ export function MetricEvidenceDialog({
               </Button>
             </div>
           ) : rows.length === 0 ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              No supporting data for this selection
-            </div>
-          ) : visibleRows.length === 0 ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3">
-              {query.isFetchNextPageError ? (
-                // SAFETY: only loaded pages were searched — "no match" would
-                // claim something about records nobody has seen.
-                <>
-                  <p role="alert" className="text-sm text-muted-foreground">
-                    Nothing matched the records loaded so far, and the rest
-                    could not be loaded
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => void fetchNextPage()}
-                    >
-                      Retry
-                    </Button>
-                    <Button variant="ghost" onClick={() => setSearch("")}>
-                      Clear search
-                    </Button>
-                  </div>
-                </>
-              ) : canLoadMore ? (
+            needle === "" ? (
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                No supporting data for this selection
+              </div>
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3">
                 <p className="text-sm text-muted-foreground">
-                  Nothing matched yet — still loading the rest
+                  No records match this search
                 </p>
-              ) : (
-                <>
-                  <p className="text-sm text-muted-foreground">
-                    No records match this search
-                  </p>
-                  <Button variant="outline" onClick={() => setSearch("")}>
-                    Clear search
-                  </Button>
-                </>
-              )}
-            </div>
+                <Button variant="outline" onClick={() => setSearch("")}>
+                  Clear search
+                </Button>
+              </div>
+            )
           ) : (
             <MetricEvidenceTable
               // INVARIANT: remounts per metric — expansion state is the
               // table's and must not carry across.
               key={activeMetricKey}
               metricKey={activeMetricKey}
-              rows={visibleRows}
+              rows={rows}
               columns={columns}
               sort={sort}
               onSortChange={(key) =>
@@ -546,22 +515,23 @@ export function MetricEvidenceDialog({
   );
 }
 
+/**
+ * How much of the answer is on screen. The server narrows and orders the rows,
+ * so what is loaded IS what matched — but only as far as paging has reached,
+ * which is what "so far" says.
+ */
 function recordCount({
-  visible,
   loaded,
   filtered,
   partial,
 }: {
-  visible: number;
   loaded: number;
   filtered: boolean;
   partial: boolean;
 }): string {
-  const noun = visible === 1 && !filtered ? "record" : "records";
-  const count = filtered
-    ? `${formatMetricNumber(visible, "integer")} of ${formatMetricNumber(loaded, "integer")}`
-    : formatMetricNumber(visible, "integer");
-  return `${count} ${noun}${partial ? " so far" : ""}`;
+  const noun = loaded === 1 && !filtered ? "record" : "records";
+  const matching = filtered ? " matching" : "";
+  return `${formatMetricNumber(loaded, "integer")}${matching} ${noun}${partial ? " so far" : ""}`;
 }
 
 /** "5 people", or "2 of 5 people" once a search has narrowed the list. */

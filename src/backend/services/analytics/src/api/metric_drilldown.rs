@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,8 @@ use crate::domain::metric_drilldown::{
     verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_person_ids;
+
+use super::person_names;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(EVIDENCE_QUERY_TIMEOUT_SECS);
 const EXPORT_TIMEOUT: Duration = Duration::from_mins(1);
@@ -51,7 +54,8 @@ pub async fn query_metric_drilldown(
     let rows = fetch_rows(&state, &req, &log_comment).await?;
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
-    let response = build_response(&req, rows, &state.external_links)?;
+    let names = roster_names(&state, &req).await;
+    let response = build_response(&req, rows, &names, &state.external_links)?;
     tracing::info!(
         duration_ms = started.elapsed().as_millis(),
         rows = response.rows.len(),
@@ -89,11 +93,14 @@ pub async fn export_metric_drilldown(
     let evidence = collect_export_rows(&state, &validated, deadline).await?;
     let exported_rows = evidence.len();
 
+    let names = roster_names(&state, &validated).await;
     let (columns, rows) = presentation(
         &evidence,
         &validated.plan,
         &validated.selection.filters,
         &validated.selection.display_dimensions,
+        &validated.selection.entity,
+        &names,
     )?;
     drop(evidence);
 
@@ -113,6 +120,40 @@ pub async fn export_metric_drilldown(
     );
 
     attachment_response(body, content_type, &export_name(&validated, extension))
+}
+
+/// Who each row belongs to, in the words the reader knows them by.
+///
+/// A roster is the only selection that shows the column, so it is the only one
+/// that pays for the lookup. Naming nobody is a table with an empty column, not
+/// a failed read — and an id in a `Who` cell is not an answer to "who", least
+/// of all in an exported file.
+async fn roster_names(
+    state: &AppState,
+    validated: &ValidatedMetricDrilldown,
+) -> BTreeMap<String, String> {
+    if !matches!(
+        validated.selection.entity,
+        MetricDrilldownEntity::Persons { .. }
+    ) {
+        return BTreeMap::new();
+    }
+    let Ok(ids) = parse_person_ids(&validated.selection.entity) else {
+        return BTreeMap::new();
+    };
+
+    person_names::lookup(&state.ch, validated.tenant_id, &ids)
+        .await
+        .into_iter()
+        .filter_map(|(id, name)| Some((id.to_string(), person_name(&name)?)))
+        .collect()
+}
+
+fn person_name(name: &person_names::PersonName) -> Option<String> {
+    [name.display_name.trim(), name.username.trim()]
+        .into_iter()
+        .find(|candidate| !candidate.is_empty())
+        .map(str::to_owned)
 }
 
 // INVARIANT: both drilldown routes authorize the typed entity before validation
@@ -243,7 +284,8 @@ fn export_name(validated: &ValidatedMetricDrilldown, extension: &str) -> String 
             .selection
             .filters
             .iter()
-            .any(|filter| !filter.values.is_empty()),
+            .any(|filter| !filter.values.is_empty())
+            || validated.selection.search.is_some(),
         extension,
     )
 }
@@ -352,6 +394,19 @@ fn query_busy() -> CanonicalError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_person_is_named_by_whichever_name_identity_holds() {
+        assert_eq!(
+            person_name(&person_names::PersonName::named("Ada Example", "ada")).as_deref(),
+            Some("Ada Example")
+        );
+        assert_eq!(
+            person_name(&person_names::PersonName::named("  ", "ada")).as_deref(),
+            Some("ada")
+        );
+        assert_eq!(person_name(&person_names::PersonName::named("", "")), None);
+    }
 
     #[test]
     fn query_errors_are_classified() {

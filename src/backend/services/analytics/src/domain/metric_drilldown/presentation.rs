@@ -12,9 +12,11 @@ use crate::domain::metric_definitions::{EvidenceColumnType, EvidenceDetailColumn
 use super::cursor::encode_cursor;
 use super::dto::{
     EvidencePlan, EvidenceQueryRow, MetricDrilldownColumn, MetricDrilldownColumnType,
-    MetricDrilldownFilter, MetricDrilldownResponse, MetricDrilldownRow, ValidatedMetricDrilldown,
+    MetricDrilldownEntity, MetricDrilldownFilter, MetricDrilldownResponse, MetricDrilldownRow,
+    PersonNames, ValidatedMetricDrilldown,
 };
 use super::error::config_error;
+use super::sort::{PERSON_KEY, is_sortable};
 
 #[derive(Debug, Deserialize)]
 struct EvidenceDimension {
@@ -26,6 +28,7 @@ struct EvidenceDimension {
 pub fn build_response(
     req: &ValidatedMetricDrilldown,
     mut rows: Vec<EvidenceQueryRow>,
+    names: &PersonNames,
     external_links: &ExternalSourceRegistry,
 ) -> Result<MetricDrilldownResponse, CanonicalError> {
     let next_cursor = if rows.len() > req.limit {
@@ -41,6 +44,8 @@ pub fn build_response(
         &req.plan,
         &req.selection.filters,
         &req.selection.display_dimensions,
+        &req.selection.entity,
+        names,
         Some(external_links),
     )?;
     Ok(MetricDrilldownResponse {
@@ -56,8 +61,10 @@ pub fn presentation(
     plan: &EvidencePlan,
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
+    entity: &MetricDrilldownEntity,
+    names: &PersonNames,
 ) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
-    present(rows, plan, filters, display_dimensions, None)
+    present(rows, plan, filters, display_dimensions, entity, names, None)
 }
 
 fn present(
@@ -65,6 +72,8 @@ fn present(
     plan: &EvidencePlan,
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
+    entity: &MetricDrilldownEntity,
+    names: &PersonNames,
     external_links: Option<&ExternalSourceRegistry>,
 ) -> Result<(Vec<MetricDrilldownColumn>, Vec<MetricDrilldownRow>), CanonicalError> {
     let details = rows
@@ -72,24 +81,27 @@ fn present(
         .map(|row| row.details.as_object().ok_or_else(config_error))
         .collect::<Result<Vec<_>, _>>()?;
     let dimensions = presentation_dimensions(rows)?;
-    let columns = presentation_columns(plan, filters, display_dimensions);
+    let columns = presentation_columns(plan, filters, display_dimensions, entity);
 
     let projected_rows = rows
         .iter()
         .zip(details)
         .zip(dimensions)
         .map(|((row, details), dimensions)| {
-            project_row(row, details, &dimensions, &columns, external_links)
+            project_row(row, details, &dimensions, &columns, names, external_links)
         })
         .collect::<Result<Vec<_>, CanonicalError>>()?;
 
     Ok((columns, projected_rows))
 }
 
-fn presentation_columns(
+/// INVARIANT: the query compiler builds its ORDER BY and its search from this
+/// same list, so a column the reader sees is a column the query can name.
+pub(super) fn presentation_columns(
     plan: &EvidencePlan,
     filters: &[MetricDrilldownFilter],
     display_dimensions: &[String],
+    entity: &MetricDrilldownEntity,
 ) -> Vec<MetricDrilldownColumn> {
     // A ratio row is one side of a division, so the records behind its two
     // measures are different things and neither measure's columns describe the
@@ -102,10 +114,18 @@ fn presentation_columns(
     };
     let display_dimensions = if ratio { &[] } else { display_dimensions };
 
-    let mut columns = declared
-        .iter()
-        .map(detail_column)
-        .collect::<Vec<MetricDrilldownColumn>>();
+    let mut columns = Vec::new();
+    // A roster's records come from many people, and which one is the first
+    // thing the reader needs. One person's own drilldown already knows.
+    if !ratio && matches!(entity, MetricDrilldownEntity::Persons { .. }) {
+        columns.push(MetricDrilldownColumn {
+            key: PERSON_KEY.to_owned(),
+            label: "Who".to_owned(),
+            r#type: MetricDrilldownColumnType::String,
+            sortable: false,
+        });
+    }
+    columns.extend(declared.iter().map(detail_column));
     columns.extend(
         dimension_keys(filters, display_dimensions, &declared)
             .into_iter()
@@ -115,6 +135,7 @@ fn presentation_columns(
         key: "date".to_owned(),
         label: "Date".to_owned(),
         r#type: MetricDrilldownColumnType::Date,
+        sortable: true,
     });
 
     if ratio {
@@ -133,7 +154,11 @@ fn presentation_columns(
             key: "value".to_owned(),
             label: "Value".to_owned(),
             r#type: MetricDrilldownColumnType::Number,
+            sortable: true,
         });
+    }
+    for column in &mut columns {
+        column.sortable = column.sortable && is_sortable(&column.key, column.r#type, ratio);
     }
     columns
 }
@@ -182,6 +207,7 @@ fn detail_column(column: &EvidenceDetailColumn) -> MetricDrilldownColumn {
             EvidenceColumnType::Number => MetricDrilldownColumnType::Number,
             EvidenceColumnType::Date => MetricDrilldownColumnType::Date,
         },
+        sortable: true,
     }
 }
 
@@ -190,6 +216,7 @@ fn dimension_column(key: String) -> MetricDrilldownColumn {
         label: humanize_field_name(&key),
         key,
         r#type: MetricDrilldownColumnType::String,
+        sortable: true,
     }
 }
 
@@ -198,6 +225,7 @@ fn input_column(key: &str, plan: &EvidencePlan, role: MetricInputRole) -> Metric
         key: key.to_owned(),
         label: input_label(plan, role),
         r#type: MetricDrilldownColumnType::Number,
+        sortable: true,
     }
 }
 
@@ -206,11 +234,13 @@ fn project_row(
     details: &serde_json::Map<String, serde_json::Value>,
     dimensions: &[EvidenceDimension],
     columns: &[MetricDrilldownColumn],
+    names: &PersonNames,
     external_links: Option<&ExternalSourceRegistry>,
 ) -> Result<MetricDrilldownRow, CanonicalError> {
     let mut values = BTreeMap::new();
     for column in columns {
         let value = match column.key.as_str() {
+            PERSON_KEY => person_value(&row.person_id, names),
             "date" => row.metric_date.clone().into(),
             "value" => serde_json::to_value(row.contribution).map_err(|_| config_error())?,
             "numerator" => serde_json::to_value(row.numerator).map_err(|_| config_error())?,
@@ -311,6 +341,20 @@ fn input_label(plan: &EvidencePlan, role: MetricInputRole) -> String {
         )
 }
 
+/// Who a row belongs to, in the words the reader knows them by.
+///
+/// A person the identity map could not resolve, or could not name, leaves the
+/// cell empty: an id is not an answer to "who", and it would be exported as
+/// one.
+fn person_value(person_id: &str, names: &PersonNames) -> serde_json::Value {
+    names
+        .get(person_id.trim())
+        .filter(|name| !name.trim().is_empty())
+        .map_or(serde_json::Value::Null, |name| {
+            serde_json::Value::from(name.as_str())
+        })
+}
+
 fn visible_value(value: &serde_json::Value) -> bool {
     !value.is_null() && value.as_str().is_none_or(|value| !value.trim().is_empty())
 }
@@ -357,6 +401,18 @@ mod tests {
         commit_input, commit_presentation, input, plan, row, validated,
     };
 
+    fn one_person() -> MetricDrilldownEntity {
+        MetricDrilldownEntity::Person {
+            id: "person".to_owned(),
+        }
+    }
+
+    fn a_roster() -> MetricDrilldownEntity {
+        MetricDrilldownEntity::Persons {
+            ids: vec!["person".to_owned()],
+        }
+    }
+
     fn commit_plan() -> EvidencePlan {
         let value = input(MetricInputRole::Value, "commit_count");
         plan(
@@ -369,8 +425,15 @@ mod tests {
 
     #[test]
     fn declared_columns_lead_in_declaration_order_and_dimensions_follow() {
-        let (columns, rows) = presentation(&[row()], &commit_plan(), &[], &["category".to_owned()])
-            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let (columns, rows) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &["category".to_owned()],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
             columns
                 .iter()
@@ -397,9 +460,99 @@ mod tests {
     }
 
     #[test]
+    fn a_roster_says_who_each_record_belongs_to() {
+        let (roster, _) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &[],
+            &a_roster(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let who = roster
+            .first()
+            .unwrap_or_else(|| panic!("a roster leads with who"));
+        assert_eq!(who.key, "person");
+        assert!(!who.sortable, "the column carries an id, not a name");
+
+        let (single, _) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert!(
+            !single.iter().any(|column| column.key == "person"),
+            "one person's own drilldown already knows whose records these are"
+        );
+    }
+
+    // An id is not an answer to "who", least of all in an exported file.
+    #[test]
+    fn who_reads_as_a_name_or_as_nothing_at_all() {
+        let mut evidence = row();
+        evidence.person_id = "person-1".to_owned();
+        let roster = PersonNames::from([("person-1".to_owned(), "Ada".to_owned())]);
+
+        let (_, rows) = presentation(
+            &[evidence.clone()],
+            &commit_plan(),
+            &[],
+            &[],
+            &a_roster(),
+            &roster,
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert_eq!(rows[0].values["person"], "Ada");
+
+        let (_, unnamed) = presentation(
+            &[evidence],
+            &commit_plan(),
+            &[],
+            &[],
+            &a_roster(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        assert!(unnamed[0].values["person"].is_null());
+    }
+
+    #[test]
+    fn a_column_the_query_cannot_order_by_is_shown_but_not_sortable() {
+        let (columns, _) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &[],
+            &a_roster(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        for column in &columns {
+            assert_eq!(
+                column.sortable,
+                column.key != "person",
+                "every column but who is sortable: {}",
+                column.key
+            );
+        }
+    }
+
+    #[test]
     fn declared_labels_and_types_reach_the_reader() {
-        let (columns, _) = presentation(&[row()], &commit_plan(), &[], &[])
-            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let (columns, _) = presentation(
+            &[row()],
+            &commit_plan(),
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         let lines_added = columns
             .iter()
             .find(|column| column.key == "lines_added")
@@ -415,6 +568,8 @@ mod tests {
             &commit_plan(),
             &[],
             &["repository".to_owned(), "category".to_owned()],
+            &one_person(),
+            &PersonNames::new(),
         )
         .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
@@ -441,8 +596,15 @@ mod tests {
                 presentation: EvidencePresentation::undeclared(EvidenceGranularity::SourceSummary),
             }],
         );
-        let (columns, _) = presentation(&[row()], &plan, &[], &[])
-            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let (columns, _) = presentation(
+            &[row()],
+            &plan,
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
             columns
                 .iter()
@@ -464,8 +626,15 @@ mod tests {
                 commit_input(MetricInputRole::Value, "commit_change_size"),
             ],
         );
-        let (columns, _) = presentation(&[row()], &plan, &[], &[])
-            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let (columns, _) = presentation(
+            &[row()],
+            &plan,
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
             columns
                 .iter()
@@ -499,8 +668,15 @@ mod tests {
                 presentation: presentation_spec,
             }],
         );
-        let (columns, rows) = presentation(&[row()], &plan, &[], &[])
-            .unwrap_or_else(|error| panic!("presentation must build: {error}"));
+        let (columns, rows) = presentation(
+            &[row()],
+            &plan,
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("presentation must build: {error}"));
         assert_eq!(
             columns
                 .last()
@@ -566,8 +742,15 @@ mod tests {
         ratio_row.numerator = Some(6.0);
         ratio_row.denominator = Some(8.0);
         ratio_row.details = serde_json::json!({});
-        let (columns, rows) = presentation(&[ratio_row], &plan, &[], &[])
-            .unwrap_or_else(|error| panic!("ratio presentation must build: {error}"));
+        let (columns, rows) = presentation(
+            &[ratio_row],
+            &plan,
+            &[],
+            &[],
+            &one_person(),
+            &PersonNames::new(),
+        )
+        .unwrap_or_else(|error| panic!("ratio presentation must build: {error}"));
         assert_eq!(
             columns
                 .iter()
@@ -588,6 +771,7 @@ mod tests {
         let response = build_response(
             &request,
             vec![row(), row()],
+            &PersonNames::new(),
             &ExternalSourceRegistry::default(),
         )
         .unwrap_or_else(|error| panic!("response must build: {error}"));
@@ -618,7 +802,7 @@ mod tests {
             web_base_url: "https://code.example.test".to_owned(),
         }])?;
 
-        let response = build_response(&request, vec![evidence], &registry)?;
+        let response = build_response(&request, vec![evidence], &PersonNames::new(), &registry)?;
 
         assert_eq!(
             response.rows[0].links.get("repository").map(String::as_str),
@@ -653,7 +837,7 @@ mod tests {
             web_base_url: "https://code.example.test".to_owned(),
         }])?;
 
-        let response = build_response(&request, vec![evidence], &registry)?;
+        let response = build_response(&request, vec![evidence], &PersonNames::new(), &registry)?;
 
         assert!(response.rows[0].links.contains_key("ref"));
         assert!(!response.rows[0].links.contains_key("title"));
@@ -665,9 +849,29 @@ mod tests {
         let plan = commit_plan();
         let mut invalid_details = row();
         invalid_details.details = serde_json::json!("invalid");
-        assert!(presentation(&[invalid_details], &plan, &[], &[]).is_err());
+        assert!(
+            presentation(
+                &[invalid_details],
+                &plan,
+                &[],
+                &[],
+                &one_person(),
+                &PersonNames::new()
+            )
+            .is_err()
+        );
         let mut invalid_dimensions = row();
         invalid_dimensions.dimensions_json = "invalid".to_owned();
-        assert!(presentation(&[invalid_dimensions], &plan, &[], &[]).is_err());
+        assert!(
+            presentation(
+                &[invalid_dimensions],
+                &plan,
+                &[],
+                &[],
+                &one_person(),
+                &PersonNames::new()
+            )
+            .is_err()
+        );
     }
 }

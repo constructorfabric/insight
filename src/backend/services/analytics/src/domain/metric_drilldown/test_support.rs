@@ -15,6 +15,7 @@ use super::dto::{
     EvidenceInput, EvidencePlan, EvidenceQueryRow, MetricDrilldownEntity, MetricDrilldownFilter,
     MetricDrilldownPeriod, MetricDrilldownSelection, ValidatedMetricDrilldown,
 };
+use super::sort::MetricDrilldownSort;
 
 pub(super) fn input(role: MetricInputRole, measure_key: &str) -> MetricInput {
     MetricInput {
@@ -102,6 +103,9 @@ pub(super) fn plan(spec: ComputationSpec, inputs: Vec<EvidenceInput>) -> Evidenc
 pub(super) fn row() -> EvidenceQueryRow {
     EvidenceQueryRow {
             entity_id: "person@example.com".to_owned(),
+            person_id: String::new(),
+            sort_flag: 0,
+            sort_value: "2026-07-01".to_owned(),
             role: "value".to_owned(),
             metric_date: "2026-07-01".to_owned(),
             observed_at: "2026-07-01 10:00:00".to_owned(),
@@ -143,6 +147,8 @@ pub(super) fn validated(plan: EvidencePlan) -> ValidatedMetricDrilldown {
             values: vec!["org/repo".to_owned()],
         }],
         display_dimensions: vec!["category".to_owned()],
+        sort: MetricDrilldownSort::newest_first(),
+        search: None,
     };
     ValidatedMetricDrilldown {
         tenant_id: TEST_TENANT,

@@ -11,6 +11,7 @@ import {
 import type {
   MetricEvidenceColumn,
   MetricEvidenceRow,
+  MetricEvidenceSort,
 } from "@/api/metric-drilldown-client";
 import { CopyValueButton } from "@/components/copy-value-button";
 import { RecordLink } from "@/components/record-link";
@@ -28,12 +29,12 @@ import {
   cellText,
   evidenceRowKeys,
   summaryLine,
-  type EvidenceSort,
 } from "@/lib/metrics/evidence-rows";
 import { evidenceRefText } from "@/lib/metrics/provider-links";
 import { cn } from "@/lib/utils";
 
 function columnLayout(column: MetricEvidenceColumn) {
+  if (column.key === "person") return { basisRem: 11, grow: 0.5 };
   if (column.key === "ref") return { basisRem: 9, grow: 0 };
   if (column.key === "title") return { basisRem: 24, grow: 4 };
   if (column.key === "type") return { basisRem: 8, grow: 0 };
@@ -80,7 +81,7 @@ export function MetricEvidenceTable({
   metricKey: string | null;
   rows: MetricEvidenceRow[];
   columns: MetricEvidenceColumn[];
-  sort: EvidenceSort | null;
+  sort: MetricEvidenceSort | null;
   onSortChange: (key: string) => void;
   fetchNextPage: () => Promise<unknown>;
   hasNextPage: boolean;
@@ -172,6 +173,18 @@ export function MetricEvidenceTable({
               const layout = columnLayout(column);
               const state = sort?.key === column.key ? sort.direction : null;
               const numeric = column.type === "number";
+              const label = (
+                <span
+                  className={cn(
+                    "min-w-0",
+                    numeric
+                      ? "text-right leading-tight whitespace-normal"
+                      : "truncate"
+                  )}
+                >
+                  {column.label}
+                </span>
+              );
               return (
                 <TableHead
                   role="columnheader"
@@ -193,27 +206,24 @@ export function MetricEvidenceTable({
                     flex: `${layout.grow} 0 ${layout.basisRem}rem`,
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSortChange(column.key)}
-                    className={cn(
-                      "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                      numeric && "flex-row-reverse",
-                      state && "text-foreground"
-                    )}
-                  >
-                    <span
+                  {/* A header the server cannot order by is a label, not a
+                      control that does nothing when clicked. */}
+                  {column.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => onSortChange(column.key)}
                       className={cn(
-                        "min-w-0",
-                        numeric
-                          ? "text-right leading-tight whitespace-normal"
-                          : "truncate"
+                        "group/sort flex min-w-0 items-center gap-1 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                        numeric && "flex-row-reverse",
+                        state && "text-foreground"
                       )}
                     >
-                      {column.label}
-                    </span>
-                    <SortIcon state={state} />
-                  </button>
+                      {label}
+                      <SortIcon state={state} />
+                    </button>
+                  ) : (
+                    label
+                  )}
                 </TableHead>
               );
             })}
