@@ -24,6 +24,9 @@ pub async fn query_comparisons(
         CanonicalError::internal("metric definitions unavailable").create()
     })?;
 
+    // INVARIANT: no tenant-metric gate is needed here — validation refuses a
+    // tenant-grain metric outright, so nothing keyed by the tenant is compared,
+    // and the population itself is disclosed only as aggregates.
     let batch = validate_request(catalog, req)?;
 
     // SAFETY: every target is checked individually before a single read is

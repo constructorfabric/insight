@@ -138,7 +138,7 @@ pub(in crate::domain::metric_query) fn population(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::super::super::catalog::product_metric_catalog;
-    use super::super::super::fixtures::SHIPPED_METRIC;
+    use super::super::super::fixtures::{SHIPPED_METRIC, SHIPPED_TENANT_METRIC};
     use super::super::super::question::{MAX_QUERIES, MAX_SUBJECTS};
     use super::*;
 
@@ -215,6 +215,44 @@ mod tests {
             population(&undeclared, Population::Tenant {}).ok(),
             Some(ValidatedPopulation::Tenant),
             "a tenant population needs no declaration"
+        );
+    }
+
+    /// INVARIANT: `/v1/metric-comparisons` carries no tenant-metric gate of its
+    /// own, and is safe without one only because no tenant-grain metric can be
+    /// compared at all. Both populations are pinned so the refusal cannot be
+    /// narrowed to one of them without this failing.
+    #[test]
+    fn a_tenant_grain_metric_has_no_peers_and_is_refused_under_either_population() {
+        let tenant_metric = catalog()
+            .metric(SHIPPED_TENANT_METRIC)
+            .expect("the metric is shipped")
+            .clone();
+
+        for asked in [Population::Cohort {}, Population::Tenant {}] {
+            let named = format!("{asked:?}");
+
+            let refusal = population(&tenant_metric, asked)
+                .expect_err("a tenant measures no population it sits in");
+
+            assert!(
+                matches!(refusal, QueryError::Unanswerable { .. }),
+                "should refuse: {named} — got {refusal}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_naming_a_tenant_grain_metric_never_reaches_a_read() {
+        let refusal = validate(&query(&serde_json::json!({
+            "metric": SHIPPED_TENANT_METRIC,
+            "population": { "type": "tenant" },
+        })))
+        .expect_err("a tenant-grain metric names no comparison");
+
+        assert!(
+            matches!(refusal, QueryError::Unanswerable { .. }),
+            "{refusal}"
         );
     }
 
