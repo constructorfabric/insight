@@ -131,13 +131,15 @@ fn caps_generated_output_bytes() {
 #[test]
 fn rejects_oversized_cells_and_incomplete_dimensions() {
     let columns = vec![column("Metric", ReportColumnDataType::Text)];
+    let temp_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
     let mut serializer = ReportXlsxSerializer::new(
         &columns,
         XlsxDimensions {
             rows: 3,
             columns: 1,
         },
-        std::env::temp_dir().as_path(),
+        temp_dir.path(),
         usize::MAX,
     )
     .unwrap_or_else(|error| panic!("writer must initialize: {error}"));
@@ -160,6 +162,8 @@ fn rejects_oversized_cells_and_incomplete_dimensions() {
 #[test]
 fn rejects_rows_before_their_estimated_spool_exceeds_the_budget() {
     let columns = vec![column("Text", ReportColumnDataType::Text)];
+    let temp_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
     let header_budget = estimated_text_row_spool_bytes(["Text"].into_iter())
         .unwrap_or_else(|| panic!("header estimate must fit"));
     let row = ReportRow::from(vec![Some(ReportCell::Text("compressible".repeat(32)))]);
@@ -171,7 +175,7 @@ fn rejects_rows_before_their_estimated_spool_exceeds_the_budget() {
             rows: 3,
             columns: 1,
         },
-        std::env::temp_dir().as_path(),
+        temp_dir.path(),
         XLSX_SPOOL_FIXED_BYTES + header_budget + row_budget,
     )
     .unwrap_or_else(|error| panic!("writer must initialize: {error}"));
@@ -211,12 +215,10 @@ fn write_workbook(
     rows: &[ReportRow],
     max_output_bytes: usize,
 ) -> Result<Vec<u8>, ReportXlsxError> {
-    let mut serializer = ReportXlsxSerializer::new(
-        columns,
-        dimensions,
-        std::env::temp_dir().as_path(),
-        usize::MAX,
-    )?;
+    let temp_dir = tempfile::tempdir()
+        .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
+    let mut serializer =
+        ReportXlsxSerializer::new(columns, dimensions, temp_dir.path(), usize::MAX)?;
     serializer.write_rows(rows)?;
     let mut bytes = Vec::new();
     serializer.finish_into(&mut bytes, max_output_bytes)?;

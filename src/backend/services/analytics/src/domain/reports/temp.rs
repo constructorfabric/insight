@@ -67,9 +67,9 @@ mod tests {
 
     #[test]
     fn removes_orphans_without_removing_the_dedicated_directory() {
-        let path = std::env::temp_dir().join(format!("report-temp-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&path)
+        let temp_dir = tempfile::tempdir()
             .unwrap_or_else(|error| panic!("fixture directory must create: {error}"));
+        let path = temp_dir.path().to_path_buf();
         let orphan = path.join(format!("{}.csv", Uuid::new_v4()));
         let unrelated = path.join("keep.txt");
         std::fs::write(&orphan, b"report")
@@ -85,7 +85,5 @@ mod tests {
         assert!(unrelated.exists());
         std::fs::remove_file(unrelated)
             .unwrap_or_else(|error| panic!("unrelated fixture must remove: {error}"));
-        std::fs::remove_dir(path)
-            .unwrap_or_else(|error| panic!("fixture directory must remove: {error}"));
     }
 }

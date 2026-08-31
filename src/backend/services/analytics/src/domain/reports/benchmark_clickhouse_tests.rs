@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -91,17 +91,17 @@ async fn clickhouse_report_generation_benchmark() -> anyhow::Result<()> {
     let run_key = Uuid::new_v4().simple().to_string();
     let log_prefix = format!("report:timeseries:benchmark.{run_key}.");
     let temp_root = benchmark_root();
-    std::fs::create_dir(&temp_root)?;
+    let temp_root_path = temp_root.path();
     let generation_capacity = Arc::new(tokio::sync::Semaphore::new(settings.concurrency));
     let rss_before = current_rss_bytes();
     let rss = RssSampler::start();
-    let temp = TempSampler::start(temp_root.clone());
+    let temp = TempSampler::start(temp_root_path.to_path_buf());
     let started = Instant::now();
 
     let results = join_all((0..settings.concurrency).map(|run| {
         run_case(
             &client,
-            &temp_root,
+            temp_root_path,
             &run_key,
             run,
             settings,
@@ -113,7 +113,6 @@ async fn clickhouse_report_generation_benchmark() -> anyhow::Result<()> {
     let peak_rss = rss.finish();
     let peak_temp_bytes = temp.finish();
     let measurements = results.into_iter().collect::<anyhow::Result<Vec<_>>>()?;
-    std::fs::remove_dir(&temp_root)?;
 
     client.query("SYSTEM FLUSH LOGS").execute().await?;
     let query_summary = query_summary(&client, &log_prefix).await?;
@@ -386,6 +385,9 @@ const fn format_name(format: ReportExportFormat) -> &'static str {
     }
 }
 
-fn benchmark_root() -> PathBuf {
-    std::env::temp_dir().join(format!("analytics-report-clickhouse-{}", Uuid::new_v4()))
+fn benchmark_root() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("analytics-report-clickhouse-")
+        .tempdir()
+        .unwrap_or_else(|error| panic!("benchmark root must create: {error}"))
 }

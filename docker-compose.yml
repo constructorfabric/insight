@@ -254,6 +254,7 @@ services:
       APP__gears__analytics__config__clickhouse_password: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
       APP__gears__analytics__config__identity_url: "http://identity-resolution:8082"
       APP__gears__analytics__config__redis_url: "redis://redis:6379"
+      APP__gears__analytics__config__reports__temp_dir: "/tmp/insight-reports"
       # Explaining a metric with an LLM. Off unless .env.compose turns it on;
       # enabled without a sealing key stops the service at boot, so the two
       # move together.

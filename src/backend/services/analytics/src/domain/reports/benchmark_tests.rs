@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -35,21 +34,18 @@ async fn synthetic_report_generation_benchmark() {
 
     for format in formats {
         let temp_root = benchmark_root(format);
-        std::fs::create_dir(&temp_root)
-            .unwrap_or_else(|error| panic!("benchmark root must create: {error}"));
+        let temp_root_path = temp_root.path();
         let rss_before = current_rss_bytes();
         let rss = RssSampler::start();
-        let temp = TempSampler::start(temp_root.clone());
+        let temp = TempSampler::start(temp_root_path.to_path_buf());
         let started = Instant::now();
         let results = join_all(
-            (0..settings.concurrency).map(|run| run_case(&temp_root, run, settings, format)),
+            (0..settings.concurrency).map(|run| run_case(temp_root_path, run, settings, format)),
         )
         .await;
         let elapsed = started.elapsed();
         let peak_rss = rss.finish();
         let peak_temp_bytes = temp.finish();
-        std::fs::remove_dir(&temp_root)
-            .unwrap_or_else(|error| panic!("benchmark root must remove: {error}"));
         let artifacts = results
             .into_iter()
             .map(|result| result.unwrap_or_else(|error| panic!("benchmark failed: {error}")))
@@ -287,10 +283,12 @@ const fn format_name(format: ReportExportFormat) -> &'static str {
     }
 }
 
-fn benchmark_root(format: ReportExportFormat) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "analytics-report-benchmark-{}-{}",
-        Uuid::new_v4(),
-        format_name(format)
-    ))
+fn benchmark_root(format: ReportExportFormat) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!(
+            "analytics-report-benchmark-{}-",
+            format_name(format)
+        ))
+        .tempdir()
+        .unwrap_or_else(|error| panic!("benchmark root must create: {error}"))
 }

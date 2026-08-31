@@ -336,7 +336,9 @@ mod tests {
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             ),
         ] {
-            let path = std::env::temp_dir().join(format!(
+            let temp_dir = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
+            let path = temp_dir.path().join(format!(
                 "report-download-{}.{}",
                 uuid::Uuid::new_v4(),
                 extension

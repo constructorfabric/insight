@@ -1,8 +1,5 @@
 use std::path::PathBuf;
 
-use tokio::sync::mpsc;
-use uuid::Uuid;
-
 use super::*;
 use crate::domain::reports::columns::{
     PlannedColumn, PlannedColumnSource, ReportColumnDataType, ReportColumnMetadata,
@@ -11,10 +8,12 @@ use crate::domain::reports::dto::{ReportExportFormat, ReportSubject};
 use crate::domain::reports::planner::XlsxDimensions;
 use crate::domain::reports::row::ReportCell;
 use crate::domain::reports::telemetry::ReportTelemetry;
+use tokio::sync::mpsc;
 
 #[tokio::test]
 async fn writer_removes_incomplete_artifact() {
-    let temp_dir = temporary_directory();
+    let temporary_directory = temporary_directory();
+    let temp_dir = temporary_directory.path().to_path_buf();
     let specification = specification(ReportExportFormat::Csv, temp_dir.clone());
     let (sender, receiver) = mpsc::channel(1);
     let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
@@ -31,13 +30,12 @@ async fn writer_removes_incomplete_artifact() {
             .next()
             .is_none()
     );
-    std::fs::remove_dir(&temp_dir)
-        .unwrap_or_else(|error| panic!("temporary directory must remove: {error}"));
 }
 
 #[tokio::test]
 async fn blocking_writer_holds_generation_capacity_until_it_stops() {
-    let temp_dir = temporary_directory();
+    let temporary_directory = temporary_directory();
+    let temp_dir = temporary_directory.path().to_path_buf();
     let specification = specification(ReportExportFormat::Csv, temp_dir.clone());
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
     let permit = std::sync::Arc::clone(&semaphore)
@@ -55,13 +53,12 @@ async fn blocking_writer_holds_generation_capacity_until_it_stops() {
 
     assert!(matches!(result, Err(ReportExportError::WriterStopped)));
     assert_eq!(semaphore.available_permits(), 1);
-    std::fs::remove_dir(&temp_dir)
-        .unwrap_or_else(|error| panic!("temporary directory must remove: {error}"));
 }
 
 #[tokio::test]
 async fn writer_completes_csv_before_exposing_artifact() {
-    let temp_dir = temporary_directory();
+    let temporary_directory = temporary_directory();
+    let temp_dir = temporary_directory.path().to_path_buf();
     let specification = specification(ReportExportFormat::Csv, temp_dir.clone());
     let (sender, receiver) = mpsc::channel(1);
     let task = tokio::task::spawn_blocking(move || write_report(&specification, receiver));
@@ -100,13 +97,16 @@ async fn writer_completes_csv_before_exposing_artifact() {
             .unwrap_or_else(|error| panic!("artifact path must exist: {error}")),
     )
     .unwrap_or_else(|error| panic!("artifact must remove: {error}"));
-    std::fs::remove_dir(&temp_dir)
-        .unwrap_or_else(|error| panic!("temporary directory must remove: {error}"));
 }
 
 #[test]
 fn artifact_drop_removes_unclaimed_file() {
-    let path = std::env::temp_dir().join(format!("report-orphan-{}", Uuid::new_v4()));
+    let fixture = tempfile::NamedTempFile::new()
+        .unwrap_or_else(|error| panic!("artifact must create: {error}"));
+    let (file, path) = fixture
+        .keep()
+        .unwrap_or_else(|error| panic!("artifact must persist: {error}"));
+    drop(file);
     std::fs::write(&path, b"report").unwrap_or_else(|error| panic!("artifact must write: {error}"));
 
     let artifact = ReportArtifact::from_completed(path.clone(), 6);
@@ -117,7 +117,9 @@ fn artifact_drop_removes_unclaimed_file() {
 
 #[test]
 fn writer_rejects_a_temporary_path_that_is_not_a_directory() {
-    let path = std::env::temp_dir().join(format!("reports-export-file-{}", Uuid::new_v4()));
+    let fixture = tempfile::NamedTempFile::new()
+        .unwrap_or_else(|error| panic!("fixture must create: {error}"));
+    let path = fixture.path().to_path_buf();
     std::fs::write(&path, b"not a directory")
         .unwrap_or_else(|error| panic!("fixture must write: {error}"));
     let specification = specification(ReportExportFormat::Csv, path.clone());
@@ -129,7 +131,6 @@ fn writer_rejects_a_temporary_path_that_is_not_a_directory() {
         result,
         Err(ReportExportError::TemporaryDirectory(_))
     ));
-    std::fs::remove_file(path).unwrap_or_else(|error| panic!("fixture must remove: {error}"));
 }
 
 fn specification(format: ReportExportFormat, temp_dir: PathBuf) -> WriterSpecification {
@@ -156,9 +157,6 @@ fn specification(format: ReportExportFormat, temp_dir: PathBuf) -> WriterSpecifi
     }
 }
 
-fn temporary_directory() -> PathBuf {
-    let path = std::env::temp_dir().join(format!("reports-export-test-{}", Uuid::new_v4()));
-    std::fs::create_dir(&path)
-        .unwrap_or_else(|error| panic!("temporary directory must create: {error}"));
-    path
+fn temporary_directory() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap_or_else(|error| panic!("temporary directory must create: {error}"))
 }
