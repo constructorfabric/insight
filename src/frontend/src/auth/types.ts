@@ -38,6 +38,12 @@ export type Session = {
    */
   refreshAt: number;
   /**
+   * The stand-level preview-experiments capability (`experiments_enabled` on
+   * `/auth/me`, insight#2374). False — including on an older authenticator
+   * that omits the field — keeps the whole `/previews` surface absent.
+   */
+  experimentsEnabled: boolean;
+  /**
    * The real principal behind a `__override` view-as session (insight#1941):
    * the authenticator mints the session AS another person and names who is
    * actually signed in here. `null` on normal sessions; non-null drives the
