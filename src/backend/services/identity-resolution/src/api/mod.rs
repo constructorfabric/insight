@@ -122,6 +122,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         "/internal/persons/provision",
         axum::routing::post(handlers::internal_provision_person),
     );
+    let router = router.route(
+        "/internal/persons/active-roles",
+        axum::routing::get(handlers::internal_person_active_roles),
+    );
 
     let router = OperationBuilder::post("/v1/profiles")
         .operation_id("identity_resolution.profiles.resolve")
