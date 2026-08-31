@@ -3845,9 +3845,11 @@
         "type": "string"
       },
       "ServedFrom": {
-        "description": "Where the rows behind this answer came from.",
+        "description": "Where the rows behind this answer came from. `mixed` is one answer some of\nwhose reads were cached and some computed.",
         "enum": [
-          "computed"
+          "cache",
+          "computed",
+          "mixed"
         ],
         "type": "string"
       },

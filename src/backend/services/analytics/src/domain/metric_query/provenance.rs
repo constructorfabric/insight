@@ -61,11 +61,11 @@ mod tests {
         let versions = BTreeMap::from([("git.commits".to_owned(), 3)]);
 
         assert_eq!(
-            provenance(&versions, "git.commits", ServedFrom::Computed),
+            provenance(&versions, "git.commits", ServedFrom::Cache),
             Provenance {
                 executor: Executor::Semantic,
                 definition_version: Some(3),
-                served_from: ServedFrom::Computed,
+                served_from: ServedFrom::Cache,
             }
         );
     }
@@ -76,5 +76,20 @@ mod tests {
 
         assert_eq!(provenance.definition_version, None);
         assert_eq!(provenance.executor, Executor::Semantic);
+    }
+
+    #[test]
+    fn an_answer_states_cache_only_when_every_read_behind_it_was_cached() {
+        let cases = [
+            (vec![true, true], ServedFrom::Cache),
+            (vec![true, false], ServedFrom::Mixed),
+            (vec![false, false], ServedFrom::Computed),
+            (vec![false], ServedFrom::Computed),
+            (vec![true], ServedFrom::Cache),
+        ];
+
+        for (reads, expected) in cases {
+            assert_eq!(ServedFrom::of(reads.clone()), expected, "{reads:?}");
+        }
     }
 }

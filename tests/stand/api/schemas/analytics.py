@@ -1221,9 +1221,12 @@ class Scope(StrEnum):
 
 class ServedFrom(StrEnum):
     """
-    Where the rows behind this answer came from.
+    Where the rows behind this answer came from. `mixed` is one answer some of
+    whose reads were cached and some computed.
     """
+    cache = 'cache'
     computed = 'computed'
+    mixed = 'mixed'
 
 
 class SnapshotScope(StrEnum):

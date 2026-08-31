@@ -14,6 +14,7 @@ use crate::domain::field_catalog::{
     self,
     model::{FieldCatalog, ReadDiscipline as CatalogReadDiscipline},
 };
+use crate::domain::measure_cache::seed_cache_policies;
 
 const ACTOR: &str = "product-seed";
 
@@ -119,6 +120,17 @@ pub async fn reconcile_product_definitions(db: &DatabaseConnection) -> Result<()
     for metric in &definitions.metrics {
         reconcile_metric(&txn, metric, Origin::Product, ACTOR).await?;
     }
+    // INVARIANT: caching is policy, not semantics — this seeds a default beside
+    // the definitions and never touches a definition version.
+    seed_cache_policies(
+        &txn,
+        definitions
+            .measures
+            .iter()
+            .map(|measure| measure.key.as_str()),
+    )
+    .await
+    .map_err(StoreError::from)?;
     txn.commit().await.map_err(StoreError::from)?;
     Ok(())
 }

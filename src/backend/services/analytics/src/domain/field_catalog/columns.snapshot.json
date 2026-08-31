@@ -2082,6 +2082,102 @@
         "type": "String"
       },
       {
+        "name": "measure_key",
+        "type": "String"
+      },
+      {
+        "name": "definition_version",
+        "type": "UInt32"
+      },
+      {
+        "name": "kind",
+        "type": "Enum8('aggregate' = 1, 'event' = 2, 'subject' = 3)"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "entity",
+        "type": "String"
+      },
+      {
+        "name": "dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
+      },
+      {
+        "name": "value",
+        "type": "Float64"
+      },
+      {
+        "name": "subject",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "built_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "semantic_measure_cache",
+    "sorting_key": "tenant_id, measure_key, entity, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "measure_key",
+        "type": "String"
+      },
+      {
+        "name": "definition_version",
+        "type": "UInt32"
+      },
+      {
+        "name": "kind",
+        "type": "Enum8('aggregate' = 1, 'event' = 2, 'subject' = 3)"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "entity",
+        "type": "String"
+      },
+      {
+        "name": "dimensions",
+        "type": "Array(Tuple(key String, value String, label Nullable(String)))"
+      },
+      {
+        "name": "value",
+        "type": "Float64"
+      },
+      {
+        "name": "subject",
+        "type": "Nullable(String)"
+      },
+      {
+        "name": "built_at",
+        "type": "DateTime64(3)"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "semantic_measure_cache_staging",
+    "sorting_key": "tenant_id, measure_key, entity, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
         "name": "insight_source_id",
         "type": "String"
       },

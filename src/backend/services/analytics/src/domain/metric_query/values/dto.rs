@@ -288,7 +288,11 @@ mod tests {
 
     #[test]
     fn an_answer_states_on_the_wire_where_the_rows_behind_it_came_from() {
-        let cases = [(ServedFrom::Computed, "computed")];
+        let cases = [
+            (ServedFrom::Cache, "cache"),
+            (ServedFrom::Computed, "computed"),
+            (ServedFrom::Mixed, "mixed"),
+        ];
 
         for (served_from, spelling) in cases {
             let provenance = Provenance {

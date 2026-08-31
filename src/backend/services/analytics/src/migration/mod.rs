@@ -67,6 +67,8 @@ mod m20260823_000001_ratio_denominator_aggregation;
 mod m20260824_000001_metric_percentile_stddev_computation;
 mod m20260825_000001_metric_evidence_presentation;
 mod m20260826_000001_semantic_dataset_version;
+mod m20260828_000001_semantic_cache;
+mod m20260828_000002_semantic_cache_row_kind;
 pub(crate) use m20260822_000001_feedback::feedback_schema;
 pub(crate) use m20260822_000002_ai_assist::ai_assist_schema;
 
@@ -145,6 +147,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260824_000001_metric_percentile_stddev_computation::Migration),
             Box::new(m20260825_000001_metric_evidence_presentation::Migration),
             Box::new(m20260826_000001_semantic_dataset_version::Migration),
+            Box::new(m20260828_000001_semantic_cache::Migration),
+            Box::new(m20260828_000002_semantic_cache_row_kind::Migration),
         ]
     }
 }
@@ -210,6 +214,14 @@ pub const REQUIRED_CHECKS_BY_TABLE: &[(&str, &[&str])] = &[
     (
         "semantic_definition_revisions",
         m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
+    ),
+    (
+        "semantic_cache_policies",
+        m20260828_000001_semantic_cache::REQUIRED_POLICY_CHECKS,
+    ),
+    (
+        "semantic_cache_coverage",
+        m20260828_000001_semantic_cache::REQUIRED_COVERAGE_CHECKS,
     ),
 ];
 
@@ -290,6 +302,14 @@ mod tests {
             (
                 "semantic_definition_revisions",
                 m20260805_000001_semantic_definition_core::REQUIRED_REVISION_CHECKS,
+            ),
+            (
+                "semantic_cache_policies",
+                m20260828_000001_semantic_cache::REQUIRED_POLICY_CHECKS,
+            ),
+            (
+                "semantic_cache_coverage",
+                m20260828_000001_semantic_cache::REQUIRED_COVERAGE_CHECKS,
             ),
         ];
 

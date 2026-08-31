@@ -7,6 +7,8 @@
 #![allow(dead_code)]
 
 mod bins;
+pub mod cache_build;
+pub mod cache_read;
 mod combined_split;
 pub mod comparison;
 pub(crate) mod dimensions;

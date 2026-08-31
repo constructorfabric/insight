@@ -32,6 +32,7 @@ pub async fn query_values(
         catalog,
         &state.ch,
         &state.db,
+        state.config.measure_cache.read_enabled,
         ctx.subject_tenant_id(),
         batch,
     )

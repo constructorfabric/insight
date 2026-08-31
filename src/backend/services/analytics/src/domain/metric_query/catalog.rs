@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
+use crate::domain::compiler::cache_build::{CacheRowKind, row_kind};
+use crate::domain::compiler::cache_read::{CachedInput, compile_cached_metric_query};
 use crate::domain::compiler::drilldown::{
     CompiledDrilldown, DrilldownPageShape, compile_drilldown, drilldown_input_roles,
     drilldown_page_shapes, drilldown_reported_columns,
@@ -26,6 +28,9 @@ pub struct MetricCatalog {
     catalog: &'static FieldCatalog,
     measures: BTreeMap<String, MeasureDefinition>,
     metrics: BTreeMap<String, MetricDefinition>,
+    /// The row shape each measure's cached work takes, decided once from the
+    /// metrics that read it, so a cached read folds what the build wrote.
+    row_kinds: BTreeMap<String, CacheRowKind>,
 }
 
 impl std::fmt::Debug for MetricCatalog {
@@ -34,6 +39,7 @@ impl std::fmt::Debug for MetricCatalog {
             .field("datasets", &self.catalog.datasets.len())
             .field("measures", &self.measures.len())
             .field("metrics", &self.metrics.len())
+            .field("row_kinds", &self.row_kinds.len())
             .finish()
     }
 }
@@ -49,6 +55,11 @@ impl MetricCatalog {
         let catalog = product_catalog().map_err(|error| SeedError::Catalog(error.to_string()))?;
         let definitions = product_definitions()?;
 
+        let row_kinds = definitions
+            .measures
+            .iter()
+            .map(|measure| (measure.key.clone(), row_kind(measure, &definitions.metrics)))
+            .collect();
         let loaded = Self {
             catalog,
             measures: definitions
@@ -61,6 +72,7 @@ impl MetricCatalog {
                 .into_iter()
                 .map(|metric| (metric.key.clone(), metric))
                 .collect(),
+            row_kinds,
         };
 
         tracing::info!(
@@ -129,6 +141,23 @@ impl MetricCatalog {
         query: &MetricQuery,
     ) -> Result<CompiledMeasureQuery, CompileError> {
         compile_metric_query(self.catalog, metric, &self.measures, query)
+    }
+
+    /// The same read over the measures already materialized. `cached` names
+    /// every input of the metric, or the read has no business being here.
+    pub(super) fn compile_cached(
+        &self,
+        metric: &MetricDefinition,
+        cached: &BTreeMap<String, CachedInput>,
+        query: &MetricQuery,
+    ) -> Result<CompiledMeasureQuery, CompileError> {
+        compile_cached_metric_query(metric, &self.measures, cached, query)
+    }
+
+    /// The row shape a measure's cached work takes; absent for a measure this
+    /// release does not ship.
+    pub(super) fn row_kind(&self, measure_key: &str) -> Option<CacheRowKind> {
+        self.row_kinds.get(measure_key).copied()
     }
 
     /// One page per input of the metric's computation: the rows its value was

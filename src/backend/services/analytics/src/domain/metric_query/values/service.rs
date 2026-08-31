@@ -9,7 +9,6 @@ use uuid::Uuid;
 use serde::de::DeserializeOwned;
 
 use super::super::catalog::MetricCatalog;
-use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
 use super::super::execute::fetch;
 use super::super::provenance::{metric_versions, provenance};
@@ -29,10 +28,19 @@ pub async fn answer(
     catalog: &MetricCatalog,
     clickhouse: &insight_clickhouse::Client,
     db: &DatabaseConnection,
+    cache_reads_enabled: bool,
     tenant_id: Uuid,
     batch: ValidatedBatch,
 ) -> Result<ValuesResponse, QueryError> {
-    let compiled = plan(catalog, clickhouse, tenant_id, &batch).await?;
+    let compiled = plan(
+        catalog,
+        clickhouse,
+        db,
+        cache_reads_enabled,
+        tenant_id,
+        &batch,
+    )
+    .await?;
 
     let keys: Vec<String> = batch
         .queries
@@ -47,10 +55,11 @@ pub async fn answer(
     let results = batch
         .queries
         .iter()
+        .zip(&compiled)
         .zip(bodies?)
-        .map(|(query, result)| QueryResult {
+        .map(|((query, planned), result)| QueryResult {
             metric: query.metric_key.clone(),
-            provenance: provenance(&versions, &query.metric_key, ServedFrom::Computed),
+            provenance: provenance(&versions, &query.metric_key, planned.served_from()),
             result,
         })
         .collect();
@@ -120,7 +129,10 @@ async fn read_both<T>(
 where
     T: DeserializeOwned,
 {
-    let PlannedQuery::Read { current, compared } = planned else {
+    let PlannedQuery::Read {
+        current, compared, ..
+    } = planned
+    else {
         return Ok((Vec::new(), None));
     };
 
@@ -147,6 +159,7 @@ fn shape_name(shape: QueryShape) -> &'static str {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use crate::domain::compiler::sql::CompiledMeasureQuery;
+    use crate::domain::metric_query::dto::ServedFrom;
 
     use super::super::super::fixtures::offline_clickhouse;
     use super::super::dto::Grain;
@@ -174,6 +187,7 @@ mod tests {
                 params: Vec::new(),
             },
             compared: None,
+            served_from: ServedFrom::Computed,
         }
     }
 

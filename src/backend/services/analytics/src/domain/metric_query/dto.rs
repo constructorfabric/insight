@@ -39,9 +39,30 @@ pub enum Executor {
     Semantic,
 }
 
-/// Where the rows behind this answer came from.
+/// Where the rows behind this answer came from. `mixed` is one answer some of
+/// whose reads were cached and some computed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServedFrom {
+    Cache,
     Computed,
+    Mixed,
+}
+
+impl ServedFrom {
+    /// What a set of reads together were served from.
+    pub(super) fn of(reads: impl IntoIterator<Item = bool>) -> Self {
+        let mut cached = 0_usize;
+        let mut total = 0_usize;
+        for read in reads {
+            total += 1;
+            cached += usize::from(read);
+        }
+
+        match (cached, total) {
+            (0, _) => Self::Computed,
+            (cached, total) if cached == total => Self::Cache,
+            _ => Self::Mixed,
+        }
+    }
 }

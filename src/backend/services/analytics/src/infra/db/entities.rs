@@ -247,3 +247,31 @@ pub mod semantic_definition_revisions {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+#[allow(dead_code)] // seeding writes through a statement; the entity types the read side
+pub mod semantic_cache_policies {
+    //! `semantic_cache_policies` entity — whether and how often a measure's work
+    //! is materialized.
+    //!
+    //! INVARIANT: caching is policy, not semantics — nothing on this row may
+    //! move a `definition_version`.
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "semantic_cache_policies")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub measure_key: String,
+        pub enabled: bool,
+        pub hot_window_days: i32,
+        pub refresh_interval_minutes: i32,
+        pub created_at: ChronoDateTimeUtc,
+        pub updated_at: ChronoDateTimeUtc,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

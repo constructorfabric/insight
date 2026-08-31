@@ -8,15 +8,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::NaiveDate;
 use uuid::Uuid;
 
+use crate::domain::compiler::cache_build::CacheRowKind;
+use crate::domain::compiler::cache_read::{CachedInput, view_is_cacheable};
 use crate::domain::compiler::request::{
     Bucket, CombinedSplitView, DimensionFilter, EntityScope, GroupLimit, GroupRankingQuery,
     MetricQuery, RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
+use crate::domain::definitions::definition::MetricDefinition;
 use crate::domain::field_catalog::model::EntityType;
 use crate::domain::identity_binding::{IdentitySet, resolve_all_identities, resolve_identities};
+use crate::domain::measure_cache::{CacheDecision, ReadGate};
 
 use super::super::catalog::MetricCatalog;
+use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
 use super::super::question::{query_row_limit, row_limit};
 use super::dto::Grain;
@@ -28,14 +33,27 @@ use super::validation::{
 #[derive(Debug, PartialEq)]
 pub(super) enum PlannedQuery {
     /// The statements one question runs: its own, and the compared window's
-    /// when it asked for one.
+    /// when it asked for one, with where between them the rows came from.
     Read {
         current: CompiledMeasureQuery,
         compared: Option<CompiledMeasureQuery>,
+        served_from: ServedFrom,
     },
     /// The mapping knows no identity for anyone this question asks about, so
     /// no row can carry a value for them and it is answered empty.
     NoIdentities,
+}
+
+impl PlannedQuery {
+    /// Where the rows behind this question's answer came from. INVARIANT: a
+    /// question that runs no statement took no row from the cache, which is
+    /// what an empty set of reads reports.
+    pub(super) fn served_from(&self) -> ServedFrom {
+        match self {
+            Self::Read { served_from, .. } => *served_from,
+            Self::NoIdentities => ServedFrom::of(std::iter::empty()),
+        }
+    }
 }
 
 /// The window one compiled read covers.
@@ -71,11 +89,14 @@ struct RankingKey {
 pub(super) async fn plan(
     catalog: &MetricCatalog,
     clickhouse: &insight_clickhouse::Client,
+    db: &sea_orm::DatabaseConnection,
+    cache_reads_enabled: bool,
     tenant_id: Uuid,
     batch: &ValidatedBatch,
 ) -> Result<Vec<PlannedQuery>, QueryError> {
     let identities = identities(clickhouse, tenant_id, batch).await?;
     let tenant = tenant_pool(clickhouse, tenant_id, batch).await?;
+    let gate = ReadGate::read(db, cache_reads_enabled, &input_measures(catalog, batch)).await;
 
     let mut rankings: BTreeMap<RankingKey, Vec<RankedGroup>> = BTreeMap::new();
     let mut compiled = Vec::with_capacity(batch.queries.len());
@@ -94,12 +115,21 @@ pub(super) async fn plan(
 
         // INVARIANT: both reads keep the groups the current window ranked, so
         // a series compares against the same group it reports.
-        let current = compile(catalog, tenant_id, query, &scope, limit.clone(), window)?;
+        let (current, current_cached) = compile(
+            catalog,
+            &gate,
+            tenant_id,
+            query,
+            &scope,
+            limit.clone(),
+            window,
+        )?;
         let compared = query
             .compare
             .map(|compared| {
                 compile(
                     catalog,
+                    &gate,
                     tenant_id,
                     query,
                     &scope,
@@ -108,19 +138,80 @@ pub(super) async fn plan(
                 )
             })
             .transpose()?;
-        compiled.push(PlannedQuery::Read { current, compared });
+
+        let served_from = ServedFrom::of(
+            std::iter::once(current_cached).chain(compared.as_ref().map(|(_, cached)| *cached)),
+        );
+        compiled.push(PlannedQuery::Read {
+            current,
+            compared: compared.map(|(statement, _)| statement),
+            served_from,
+        });
     }
     Ok(compiled)
 }
 
+/// Every measure the request's metrics compose, so one store read decides all
+/// of them.
+fn input_measures(catalog: &MetricCatalog, batch: &ValidatedBatch) -> BTreeSet<String> {
+    batch
+        .queries
+        .iter()
+        .filter_map(|query| catalog.metric(&query.metric_key))
+        .flat_map(|metric| metric.input_measures())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// INVARIANT: a metric reads the cache only when every one of its inputs was
+/// decided cacheable — one statement folds them all, so a metric with one
+/// degraded input is compiled over its dataset whole.
+fn cached_inputs(
+    catalog: &MetricCatalog,
+    gate: &ReadGate,
+    metric: &MetricDefinition,
+    view: &ViewKind,
+    window: Window,
+) -> Option<BTreeMap<String, CachedInput>> {
+    if !view_is_cacheable(view) {
+        return None;
+    }
+
+    // INVARIANT: the shape this release folds a measure into is what the gate
+    // asks the coverage to attest, so a shape change degrades to the dataset.
+    let expected: BTreeMap<String, CacheRowKind> = metric
+        .input_measures()
+        .into_iter()
+        .map(|key| Some((key.to_owned(), catalog.row_kind(key)?)))
+        .collect::<Option<_>>()?;
+    let decided = gate.decide(&expected, window.from, window.to);
+
+    expected
+        .into_iter()
+        .map(|(key, kind)| match decided.get(&key) {
+            Some(CacheDecision::Cached { definition_version }) => Some((
+                key,
+                CachedInput {
+                    kind,
+                    definition_version: *definition_version,
+                },
+            )),
+            Some(CacheDecision::Live { .. }) | None => None,
+        })
+        .collect()
+}
+
+/// The statement one window of one question runs, and whether it reads the
+/// cache.
 fn compile(
     catalog: &MetricCatalog,
+    gate: &ReadGate,
     tenant_id: Uuid,
     query: &ValidatedQuery,
     scope: &EntityScope,
     limit: Option<GroupLimit>,
     window: Window,
-) -> Result<CompiledMeasureQuery, QueryError> {
+) -> Result<(CompiledMeasureQuery, bool), QueryError> {
     // INVARIANT: validation refuses a metric the definitions do not carry, so
     // every planned question names one they do.
     let Some(metric) = catalog.metric(&query.metric_key) else {
@@ -129,20 +220,21 @@ fn compile(
         });
     };
 
-    let compiled = catalog.compile(
-        metric,
-        &MetricQuery {
-            tenant_id: tenant_id.to_string(),
-            entity_scope: scope.clone(),
-            from: window.from,
-            to: window.to,
-            bucket: bucket(query.grain),
-            dimension_filters: query.filters.clone(),
-            view: view(query, limit),
-            row_limit: query_row_limit(),
-        },
-    )?;
-    Ok(compiled)
+    let request = MetricQuery {
+        tenant_id: tenant_id.to_string(),
+        entity_scope: scope.clone(),
+        from: window.from,
+        to: window.to,
+        bucket: bucket(query.grain),
+        dimension_filters: query.filters.clone(),
+        view: view(query, limit),
+        row_limit: query_row_limit(),
+    };
+
+    match cached_inputs(catalog, gate, metric, &request.view, window) {
+        Some(cached) => Ok((catalog.compile_cached(metric, &cached, &request)?, true)),
+        None => Ok((catalog.compile(metric, &request)?, false)),
+    }
 }
 
 /// The compiler's view for one question's shape. A shape that reports no group
@@ -341,6 +433,7 @@ mod tests {
     use super::super::fixtures::validated;
     use super::*;
     use crate::domain::compiler::sql::QueryParam;
+    use crate::domain::measure_cache::read_gate::CoverageRow;
 
     fn person() -> Uuid {
         Uuid::from_u128(1)
@@ -383,16 +476,68 @@ mod tests {
         }
     }
 
+    /// The gate that decides every named measure cacheable over any window a
+    /// question can name, so a test can pin the cached read without a store.
+    fn cached_gate(measure_keys: &[&str]) -> ReadGate {
+        let catalog = product_metric_catalog().expect("loads");
+
+        ReadGate::over(
+            measure_keys
+                .iter()
+                .map(|key| CoverageRow {
+                    measure_key: (*key).to_owned(),
+                    current_version: 1,
+                    enabled: true,
+                    cached_version: Some(1),
+                    cached_kind: catalog.row_kind(key),
+                    covered_from: Some(NaiveDate::MIN),
+                    covered_to: Some(NaiveDate::MAX),
+                })
+                .collect(),
+        )
+    }
+
+    /// The same gate with one measure's coverage attesting a shape this release
+    /// no longer folds it into.
+    fn reshaped_gate(measure_key: &str) -> ReadGate {
+        let catalog = product_metric_catalog().expect("loads");
+        let attested = match catalog.row_kind(measure_key) {
+            Some(CacheRowKind::Event) => CacheRowKind::Aggregate,
+            Some(CacheRowKind::Aggregate | CacheRowKind::Subject) | None => CacheRowKind::Event,
+        };
+
+        ReadGate::over(vec![CoverageRow {
+            measure_key: measure_key.to_owned(),
+            current_version: 1,
+            enabled: true,
+            cached_version: Some(1),
+            cached_kind: Some(attested),
+            covered_from: Some(NaiveDate::MIN),
+            covered_to: Some(NaiveDate::MAX),
+        }])
+    }
+
     fn compiled(query: &ValidatedQuery, scope: &EntityScope) -> CompiledMeasureQuery {
+        compile_with(&ReadGate::all_live(), query, scope, None)
+            .unwrap_or_else(|error| panic!("{:?} compiles: {error}", query.shape))
+            .0
+    }
+
+    fn compile_with(
+        gate: &ReadGate,
+        query: &ValidatedQuery,
+        scope: &EntityScope,
+        limit: Option<GroupLimit>,
+    ) -> Result<(CompiledMeasureQuery, bool), QueryError> {
         compile(
             product_metric_catalog().expect("loads"),
+            gate,
             tenant(),
             query,
             scope,
-            None,
+            limit,
             window(query),
         )
-        .unwrap_or_else(|error| panic!("{:?} compiles: {error}", query.shape))
     }
 
     #[test]
@@ -520,6 +665,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_question_that_runs_no_statement_took_no_row_from_the_cache() {
+        assert_eq!(
+            PlannedQuery::NoIdentities.served_from(),
+            ServedFrom::Computed
+        );
+    }
+
+    /// The gate is keyed by measure and the cache's rows by whatever the
+    /// measure's entity column carries, so the two decisions compose: a
+    /// tenant-grain metric reads the cache under tenancy alone, exactly as it
+    /// reads its dataset.
+    #[test]
+    fn a_cached_tenant_grain_metric_reads_the_cache_under_tenancy_alone_and_opens_no_pool() {
+        let query = ValidatedQuery {
+            metric_key: SHIPPED_TENANT_METRIC.to_owned(),
+            ..asking(EntityType::Tenant, ValidatedSubjects::Tenant)
+        };
+        let scope = entity_scope(&query, &BTreeMap::new(), &tenant_people());
+        let inputs = product_metric_catalog()
+            .expect("loads")
+            .metric(SHIPPED_TENANT_METRIC)
+            .expect("the metric is shipped")
+            .input_measures();
+
+        let (compiled, cached) = compile_with(&cached_gate(&inputs), &query, &scope, None)
+            .expect("a tenant-grain question compiles over the cache");
+
+        assert!(cached);
+        assert!(
+            compiled.sql.contains("FROM insight.semantic_measure_cache"),
+            "{}",
+            compiled.sql
+        );
+        assert!(!compiled.sql.contains("pool"), "{}", compiled.sql);
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
     #[tokio::test]
     async fn a_tenant_grain_question_never_enumerates_the_tenants_people() {
         let batch = ValidatedBatch {
@@ -571,15 +754,8 @@ mod tests {
     fn a_dimension_the_definitions_do_not_declare_does_not_compile() {
         let query = validated(QueryShape::SubjectSplit, Grain::Total, &["not_a_dimension"]);
 
-        let error = compile(
-            product_metric_catalog().expect("loads"),
-            tenant(),
-            &query,
-            &people_scope(),
-            None,
-            window(&query),
-        )
-        .expect_err("an undeclared dimension names no column");
+        let error = compile_with(&ReadGate::all_live(), &query, &people_scope(), None)
+            .expect_err("an undeclared dimension names no column");
 
         assert!(matches!(error, QueryError::Uncompilable(_)), "{error}");
     }
@@ -823,9 +999,8 @@ mod tests {
             }),
         });
 
-        let compiled = compile(
-            product_metric_catalog().expect("loads"),
-            tenant(),
+        let (compiled, _) = compile_with(
+            &ReadGate::all_live(),
             &query,
             &EntityScope::Tenant,
             Some(GroupLimit {
@@ -838,7 +1013,6 @@ mod tests {
                 }],
                 include_remainder: true,
             }),
-            window(&query),
         )
         .expect("a capped rollup compiles once its groups are ranked");
 
@@ -889,6 +1063,143 @@ mod tests {
         assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
     }
 
+    /// A ratio, so a question whose two inputs are decided differently is
+    /// visible in what the read scans.
+    const RATIO_METRIC: &str = "git.test_change_share";
+
+    #[test]
+    fn a_question_whose_measure_is_cached_scans_the_materialized_relation() {
+        let query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+
+        let (compiled, cached) =
+            compile_with(&cached_gate(&["commits"]), &query, &people_scope(), None)
+                .expect("a cached question compiles");
+
+        assert!(cached);
+        assert!(
+            compiled.sql.contains("FROM insight.semantic_measure_cache"),
+            "{}",
+            compiled.sql
+        );
+        assert!(
+            compiled
+                .params
+                .contains(&QueryParam::Text("commits".to_owned())),
+            "the read names the measure it re-folds"
+        );
+    }
+
+    #[test]
+    fn a_measure_whose_coverage_attests_another_row_shape_scans_the_dataset() {
+        let query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+
+        let (compiled, cached) =
+            compile_with(&reshaped_gate("commits"), &query, &people_scope(), None)
+                .expect("a reshaped question compiles over its dataset");
+
+        assert!(!cached);
+        assert!(
+            !compiled.sql.contains("semantic_measure_cache"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn the_same_question_over_a_live_gate_scans_the_dataset_instead() {
+        let query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+
+        let (compiled, cached) = compile_with(&ReadGate::all_live(), &query, &people_scope(), None)
+            .expect("a live question compiles");
+
+        assert!(!cached);
+        assert!(
+            !compiled.sql.contains("semantic_measure_cache"),
+            "{}",
+            compiled.sql
+        );
+        assert!(
+            compiled.sql.contains("FROM insight.git_commits"),
+            "{}",
+            compiled.sql
+        );
+    }
+
+    #[test]
+    fn a_ratio_reads_the_cache_only_when_both_of_its_inputs_were_decided_cacheable() {
+        let mut query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
+        query.metric_key = RATIO_METRIC.to_owned();
+        let cases = [
+            (
+                cached_gate(&["test_lines_added", "test_and_code_lines_added"]),
+                true,
+            ),
+            (cached_gate(&["test_lines_added"]), false),
+            (cached_gate(&["test_and_code_lines_added"]), false),
+            (cached_gate(&[]), false),
+        ];
+
+        for (gate, expected) in cases {
+            let (compiled, cached) = compile_with(&gate, &query, &people_scope(), None)
+                .expect("a ratio question compiles either way");
+
+            assert_eq!(cached, expected, "{}", compiled.sql);
+            assert_eq!(
+                compiled.sql.contains("semantic_measure_cache"),
+                expected,
+                "{}",
+                compiled.sql
+            );
+        }
+    }
+
+    #[test]
+    fn a_capped_split_reads_its_dataset_however_the_gate_decided_its_measure() {
+        let mut query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
+        query.split = Some(ValidatedSplit {
+            dimensions: vec!["repository".to_owned()],
+            limit: Some(super::super::validation::ValidatedSplitLimit {
+                top: 2,
+                rank_by: SHIPPED_METRIC.to_owned(),
+                remainder: true,
+            }),
+        });
+
+        let (compiled, cached) = compile_with(
+            &cached_gate(&["commits"]),
+            &query,
+            &EntityScope::Tenant,
+            Some(GroupLimit {
+                groups: vec![RankedGroup {
+                    rank: 1,
+                    dimensions: vec![crate::domain::compiler::request::RankedDimension {
+                        value: "example/app".to_owned(),
+                        label: None,
+                    }],
+                }],
+                include_remainder: true,
+            }),
+        )
+        .expect("a capped rollup compiles");
+
+        assert!(!cached);
+        assert!(!compiled.sql.contains("semantic_measure_cache"));
+    }
+
+    #[test]
+    fn an_answer_states_mixed_when_its_two_windows_were_not_served_the_same_way() {
+        let cases = [
+            (vec![true, true], ServedFrom::Cache),
+            (vec![true, false], ServedFrom::Mixed),
+            (vec![false, true], ServedFrom::Mixed),
+            (vec![false, false], ServedFrom::Computed),
+        ];
+
+        for (reads, expected) in cases {
+            assert_eq!(ServedFrom::of(reads.clone()), expected, "{reads:?}");
+        }
+    }
+
     #[test]
     fn a_compared_question_compiles_the_same_read_over_the_shifted_window() {
         let mut query = validated(QueryShape::SubjectTotal, Grain::Total, &[]);
@@ -900,13 +1211,15 @@ mod tests {
         let current = compiled(&query, &people_scope());
         let compared = compile(
             product_metric_catalog().expect("loads"),
+            &ReadGate::all_live(),
             tenant(),
             &query,
             &people_scope(),
             None,
             query.compare.expect("the question compares").into(),
         )
-        .expect("the compared window compiles");
+        .expect("the compared window compiles")
+        .0;
 
         assert_eq!(
             compared.sql, current.sql,

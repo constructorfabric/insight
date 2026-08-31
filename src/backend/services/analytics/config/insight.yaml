@@ -141,6 +141,11 @@ gears:
       identity_url: ""
       visibility_policy: "org_chart"
       redis_url: ""
+      # Answer from the semantic layer's materialized measures where the
+      # refresher's coverage allows it. TRUE is the adopted default; set to
+      # false to make every question compile over its dataset again.
+      measure_cache:
+        read_enabled: true
       metric_catalog:
         tenant_metrics_enabled: false
         # Per-tenant observation filter on metric reads. Off until the ingest

@@ -21,8 +21,8 @@ use crate::config::GearConfig;
 use crate::domain::external_links::ExternalSourceRegistry;
 use crate::{api, infra};
 
-/// Analytics API gear. Capabilities: `rest` only (the background validator and
-/// contract-version passes are `tokio::spawn`ed in `init`; no
+/// Analytics API gear. Capabilities: `rest` only (the background validator,
+/// contract-version and measure-cache passes are `tokio::spawn`ed in `init`; no
 /// `stateful`/`RunnableCapability`).
 // Config key is the gear name `analytics`; env overrides are
 // `APP__gears__analytics__config__*`.
@@ -89,6 +89,15 @@ impl Gear for AnalyticsApiGear {
                 ch.clone(),
             );
 
+        // Its own pinned session: the per-measure advisory lock that keeps two
+        // replicas out of one staging relation is session-scoped.
+        let measure_cache_refresher = crate::domain::measure_cache::MeasureCacheRefresher::new(
+            db.clone(),
+            ch.clone(),
+            &cfg.database_url,
+        )
+        .await?;
+
         let contract_ch = ch.clone();
 
         let anthropic = infra::anthropic::AnthropicClient::new(
@@ -121,6 +130,9 @@ impl Gear for AnalyticsApiGear {
         // dbt-created after boot on a fresh deploy, and the registry has no
         // write path that would re-trigger probing.
         tokio::spawn(metric_definition_validator.run());
+        // Scheduled, never triggered by a read: a request answers from the
+        // coverage the last successful build left, and waits for nothing.
+        tokio::spawn(measure_cache_refresher.run());
 
         Ok(())
     }

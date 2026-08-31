@@ -78,6 +78,10 @@ pub struct GearConfig {
     /// Metric read configuration.
     pub metric_catalog: MetricCatalogConfig,
 
+    /// Whether reads may answer from the semantic layer's materialized
+    /// measures.
+    pub measure_cache: MeasureCacheConfig,
+
     /// Usage-monitoring configuration.
     pub usage: UsageConfig,
 
@@ -100,6 +104,7 @@ impl Default for GearConfig {
             visibility_policy: VisibilityPolicy::default(),
             redis_url: String::new(),
             metric_catalog: MetricCatalogConfig::default(),
+            measure_cache: MeasureCacheConfig::default(),
             usage: UsageConfig::default(),
             ai_assist: AiAssistConfig::default(),
             external_sources: Vec::new(),
@@ -125,6 +130,24 @@ pub struct MetricCatalogConfig {
     ///
     /// Env: `APP__gears__analytics__config__metric_catalog__enforce_tenant_scope`.
     pub enforce_tenant_scope: bool,
+}
+
+/// Whether a read may answer from the semantic layer's materialized measures.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MeasureCacheConfig {
+    /// Off means every question compiles over its dataset, whatever the
+    /// refresher has built. The materialized tier is the adopted default, so
+    /// this is the kill switch rather than the opt-in.
+    ///
+    /// Env: `APP__gears__analytics__config__measure_cache__read_enabled`.
+    pub read_enabled: bool,
+}
+
+impl Default for MeasureCacheConfig {
+    fn default() -> Self {
+        Self { read_enabled: true }
+    }
 }
 
 /// Whether this instance records how the product is used.

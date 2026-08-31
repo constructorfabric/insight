@@ -731,6 +731,50 @@ ORDER BY (tenant_id, entity_id, metric_date)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.semantic_measure_cache
+(
+    `tenant_id` String,
+    `measure_key` String,
+    `definition_version` UInt32,
+    `kind` Enum8('aggregate' = 1, 'event' = 2, 'subject' = 3),
+    `metric_date` Date,
+    `entity` String,
+    `dimensions` Array(Tuple(
+        key String,
+        value String,
+        label Nullable(String))),
+    `value` Float64,
+    `subject` Nullable(String),
+    `built_at` DateTime64(3)
+)
+ENGINE = MergeTree
+PARTITION BY (measure_key, definition_version, toYYYYMM(metric_date))
+ORDER BY (tenant_id, measure_key, entity, metric_date)
+SETTINGS index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.semantic_measure_cache_staging
+(
+    `tenant_id` String,
+    `measure_key` String,
+    `definition_version` UInt32,
+    `kind` Enum8('aggregate' = 1, 'event' = 2, 'subject' = 3),
+    `metric_date` Date,
+    `entity` String,
+    `dimensions` Array(Tuple(
+        key String,
+        value String,
+        label Nullable(String))),
+    `value` Float64,
+    `subject` Nullable(String),
+    `built_at` DateTime64(3)
+)
+ENGINE = MergeTree
+PARTITION BY (measure_key, definition_version, toYYYYMM(metric_date))
+ORDER BY (tenant_id, measure_key, entity, metric_date)
+SETTINGS index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.task_close_events
 (
     `tenant_id` String,
