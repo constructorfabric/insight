@@ -158,11 +158,11 @@ fn compile_capped(
 mod tests {
     use crate::domain::compiler::error::CompileError;
     use crate::domain::compiler::fixtures::{
-        compile, compile_err, direct, labelled_measure, lines, measure, metric, percent_of_total,
-        query, ratio, text,
+        compile, compile_err, direct, labelled_measure, lines, measure, metric, people,
+        percent_of_total, query, ratio, text,
     };
     use crate::domain::compiler::request::{
-        CombinedSplitView, GroupLimit, RankedDimension, RankedGroup, ViewKind,
+        CombinedSplitView, EntityScope, GroupLimit, RankedDimension, RankedGroup, ViewKind,
     };
     use crate::domain::compiler::sql::QueryParam;
 
@@ -361,6 +361,64 @@ mod tests {
         assert!(compiled.sql.contains(
             "    if((100.0 * (value)) IS NULL, NULL, least(100.0, greatest(0.0, 100.0 * (value)))) AS value,"
         ));
+    }
+
+    /// What a combined split reports as having contributed is decided by the
+    /// scope it reads under: a pooled read counts the people it was resolved
+    /// for, a poolless one the values the dataset's entity column carries.
+    #[test]
+    fn what_a_combined_split_counts_as_a_contributor_follows_the_scope_it_reads_under() {
+        for (group_limit, pooled, poolless) in [
+            (
+                None,
+                "    uniqExact(pool.person_ref) AS contributing_entity_count,",
+                "    uniqExact(author_email) AS contributing_entity_count,",
+            ),
+            (
+                Some(cap(true)),
+                "        uniqExact(person_ref) AS contributing_entity_count",
+                "        uniqExact(author_email) AS contributing_entity_count",
+            ),
+        ] {
+            let named = format!("capped={}", group_limit.is_some());
+            let mut request = query(view(&["repository"], group_limit));
+            request.entity_scope = people();
+            let over_people = compile(
+                &metric(direct("prs_merged")),
+                &[labelled_measure("prs_merged")],
+                &request,
+            );
+
+            request.entity_scope = EntityScope::Tenant;
+            let over_tenant = compile(
+                &metric(direct("prs_merged")),
+                &[labelled_measure("prs_merged")],
+                &request,
+            );
+
+            assert!(
+                over_people
+                    .sql
+                    .contains("INNER JOIN pool ON pool.identity = author_email"),
+                "{named}: {}",
+                over_people.sql
+            );
+            assert!(
+                over_people.sql.contains(pooled),
+                "{named}: {}",
+                over_people.sql
+            );
+            assert!(
+                !over_tenant.sql.contains("pool"),
+                "{named}: {}",
+                over_tenant.sql
+            );
+            assert!(
+                over_tenant.sql.contains(poolless),
+                "{named}: {}",
+                over_tenant.sql
+            );
+        }
     }
 
     #[test]
