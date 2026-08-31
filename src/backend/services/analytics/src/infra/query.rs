@@ -1,6 +1,8 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
+
+use super::metrics::{self, ErrorClass, QueryKind, QueryOutcome};
 
 const QUERY_FETCH_TIMEOUT: Duration = Duration::from_mins(1);
 
@@ -16,7 +18,40 @@ pub(crate) enum QueryFetchError {
     Parse(String),
 }
 
+impl QueryFetchError {
+    fn class(&self) -> ErrorClass {
+        match self {
+            Self::Submit(message) | Self::Fetch(message) => ErrorClass::classify(message),
+            Self::Timeout => ErrorClass::Timeout,
+            Self::Parse(_) => ErrorClass::ParseFailed,
+        }
+    }
+}
+
 pub(crate) async fn fetch_json_rows<T>(
+    client: &insight_clickhouse::Client,
+    sql: &str,
+    params: &[String],
+    kind: QueryKind,
+    log_comment: &str,
+) -> Result<Vec<T>, QueryFetchError>
+where
+    T: DeserializeOwned,
+{
+    let started = Instant::now();
+    let result = fetch_json_rows_inner(client, sql, params, log_comment).await;
+
+    match &result {
+        Ok(_) => metrics::record_query(kind, QueryOutcome::Success, started.elapsed()),
+        Err(error) => {
+            metrics::record_query(kind, QueryOutcome::Error, started.elapsed());
+            metrics::record_clickhouse_error(kind, error.class());
+        }
+    }
+    result
+}
+
+async fn fetch_json_rows_inner<T>(
     client: &insight_clickhouse::Client,
     sql: &str,
     params: &[String],

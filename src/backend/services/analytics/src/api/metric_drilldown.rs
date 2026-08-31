@@ -23,6 +23,7 @@ use crate::domain::metric_drilldown::{
     verify_evidence_snapshot, with_evidence_query_limits,
 };
 use crate::domain::person_visibility::authorize_person_ids;
+use crate::infra::metrics::{self, ErrorClass, QueryKind, QueryOutcome};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(EVIDENCE_QUERY_TIMEOUT_SECS);
 const EXPORT_TIMEOUT: Duration = Duration::from_mins(1);
@@ -48,7 +49,7 @@ pub async fn query_metric_drilldown(
     req.enforce_tenant_scope = state.config.metric_catalog.enforce_tenant_scope;
 
     let log_comment = format!("metric-drilldown:page:{}", req.plan.definition.key());
-    let rows = fetch_rows(&state, &req, &log_comment).await?;
+    let rows = fetch_rows(&state, &req, QueryKind::DrilldownPage, &log_comment).await?;
     verify_evidence_snapshot(&state.ch, &req.plan.relation, &req.snapshot_id).await?;
     let fetched_rows = rows.len();
     let response = build_response(&req, rows, &state.external_links)?;
@@ -197,9 +198,12 @@ async fn collect_export_rows(
         "metric-drilldown:export:{}",
         validated.plan.definition.key()
     );
-    let rows = tokio::time::timeout_at(deadline, fetch_rows(state, validated, &log_comment))
-        .await
-        .map_err(|_| export_limit("Export exceeded the execution time limit."))??;
+    let rows = tokio::time::timeout_at(
+        deadline,
+        fetch_rows(state, validated, QueryKind::DrilldownExport, &log_comment),
+    )
+    .await
+    .map_err(|_| export_limit("Export exceeded the execution time limit."))??;
     verify_evidence_snapshot(&state.ch, &validated.plan.relation, &validated.snapshot_id).await?;
 
     enforce_export_row_limit(rows.len())?;
@@ -267,6 +271,24 @@ fn attachment_response(
 async fn fetch_rows(
     state: &Arc<AppState>,
     req: &crate::domain::metric_drilldown::ValidatedMetricDrilldown,
+    kind: QueryKind,
+    log_comment: &str,
+) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
+    let started = Instant::now();
+    let result = fetch_rows_inner(state, req, kind, log_comment).await;
+
+    let outcome = match &result {
+        Ok(_) => QueryOutcome::Success,
+        Err(_) => QueryOutcome::Error,
+    };
+    metrics::record_query(kind, outcome, started.elapsed());
+    result
+}
+
+async fn fetch_rows_inner(
+    state: &Arc<AppState>,
+    req: &crate::domain::metric_drilldown::ValidatedMetricDrilldown,
+    kind: QueryKind,
     log_comment: &str,
 ) -> Result<Vec<EvidenceQueryRow>, CanonicalError> {
     // INVARIANT: the permit is held across the awaited ClickHouse execution and
@@ -283,21 +305,27 @@ async fn fetch_rows(
     }
     let mut cursor = query.fetch_bytes("JSONEachRow").map_err(|error| {
         tracing::error!(error = %error, "ClickHouse metric drilldown query failed");
-        query_error(&error.to_string())
+        let message = error.to_string();
+        metrics::record_clickhouse_error(kind, ErrorClass::classify(&message));
+        query_error(&message)
     })?;
     let bytes = tokio::time::timeout(QUERY_TIMEOUT, cursor.collect())
         .await
         .map_err(|_| {
             tracing::error!("metric evidence query exceeded the execution time limit");
+            metrics::record_clickhouse_error(kind, ErrorClass::Timeout);
             query_limit_error()
         })?
         .map_err(|error| {
             tracing::error!(error = %error, "ClickHouse metric drilldown fetch failed");
-            query_error(&error.to_string())
+            let message = error.to_string();
+            metrics::record_clickhouse_error(kind, ErrorClass::classify(&message));
+            query_error(&message)
         })?;
 
     decode_evidence_rows(&bytes).map_err(|error| {
         tracing::error!(error = %error, "metric drilldown row decoding failed");
+        metrics::record_clickhouse_error(kind, ErrorClass::ParseFailed);
         CanonicalError::internal("failed to decode metric evidence").create()
     })
 }

@@ -32,6 +32,7 @@ use crate::domain::roster::RosterSource;
 use crate::domain::seed_service::{IdentityInputsReader, SeedSummary, seed_from_rows};
 use crate::infra::db::{self, ops_repo, seed_repo};
 use crate::infra::identity_inputs::ClickHouseIdentityInputsReader;
+use crate::infra::metrics;
 
 /// Author stamped on CLI-run operations and seed-minted observation rows.
 /// Continues the established convention: the retired Python seed stamped
@@ -195,8 +196,17 @@ async fn run_locked(
     ops_repo::try_start(db, operation_id).await?;
     tracing::info!(%operation_id, %tenant, mode, force, "persons-seed: cli run started");
 
-    match guarded_seed(db, config, tenant, force).await {
+    let started = std::time::Instant::now();
+    let seed_result = guarded_seed(db, config, tenant, force).await;
+    let run_outcome = match &seed_result {
+        Ok(_) => metrics::RunOutcome::Success,
+        Err(_) => metrics::RunOutcome::Error,
+    };
+    metrics::record_seed_run(run_outcome, started.elapsed());
+
+    match seed_result {
         Ok(summary) => {
+            metrics::record_seed_outcomes(&summary);
             let summary_json = serde_json::to_string(&summary).unwrap_or_else(|_| "{}".to_owned());
             ops_repo::complete(db, operation_id, &summary_json).await?;
             tracing::info!(%operation_id, ?summary, "persons-seed: completed");

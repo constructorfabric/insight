@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::domain::seed::{KnownBinding, SeedObservationRow, SourceAccountKey, normalize_email};
 use crate::domain::seed_service::{ApplyCounts, SeedStore};
 use crate::infra::db::resolution_repo;
+use crate::infra::metrics::{self, DbQuery};
 
 /// MariaDB-backed [`SeedStore`] — wraps a connection so the persons-seed service
 /// can be driven against the real DB (or a fake in tests).
@@ -42,14 +43,20 @@ impl SeedStore for MariaDbSeedStore<'_> {
         &self,
         tenant_id: Uuid,
     ) -> anyhow::Result<HashMap<SourceAccountKey, KnownBinding>> {
-        known_account_bindings(self.db, tenant_id).await
+        let started = std::time::Instant::now();
+        let result = known_account_bindings(self.db, tenant_id).await;
+        metrics::record_db_query(DbQuery::KnownAccountBindings, started.elapsed());
+        result
     }
 
     async fn latest_email_to_person(
         &self,
         tenant_id: Uuid,
     ) -> anyhow::Result<HashMap<String, Uuid>> {
-        latest_email_to_person(self.db, tenant_id).await
+        let started = std::time::Instant::now();
+        let result = latest_email_to_person(self.db, tenant_id).await;
+        metrics::record_db_query(DbQuery::LatestEmailToPerson, started.elapsed());
+        result
     }
 
     async fn apply(
@@ -58,7 +65,10 @@ impl SeedStore for MariaDbSeedStore<'_> {
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
     ) -> anyhow::Result<ApplyCounts> {
-        apply(self.db, tenant_id, author_person_id, rows).await
+        let started = std::time::Instant::now();
+        let result = apply(self.db, tenant_id, author_person_id, rows).await;
+        metrics::record_db_query(DbQuery::Apply, started.elapsed());
+        result
     }
 }
 

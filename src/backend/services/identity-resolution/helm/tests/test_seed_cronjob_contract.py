@@ -234,6 +234,20 @@ def test_cronjob_uses_the_deployments_secret_and_configmap(default_docs, job: st
 
 
 @pytest.mark.parametrize("job", JOBS)
+def test_cronjob_loads_the_observability_contract_like_the_deployment(default_docs, job: str) -> None:
+    # The seed job installs its own meter provider (#2891), so it must read the
+    # same platform ConfigMap the deployment does or its instruments no-op.
+    # Optional, so a standalone install without the umbrella still schedules.
+    container = _job_container(_cronjob(default_docs, job))
+    platform = next(
+        e["configMapRef"]
+        for e in container["envFrom"]
+        if e.get("configMapRef", {}).get("name", "").endswith("-platform")
+    )
+    assert platform["optional"] is True
+
+
+@pytest.mark.parametrize("job", JOBS)
 def test_tenant_value_overrides_the_secret_via_env(default_docs, job: str) -> None:
     # Default: no explicit env — the Secret is the tenant source.
     container = _job_container(_cronjob(default_docs, job))

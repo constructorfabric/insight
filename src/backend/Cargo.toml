@@ -142,6 +142,10 @@ figment = { version = "0.10", features = ["yaml", "env"] }
 # INVARIANT: must match the toolkit's opentelemetry major — a different major
 # is a different global meter provider and instruments silently no-op.
 opentelemetry = "0.31"
+# Local meter provider for the CLI job paths (seed/sync), which run outside the
+# toolkit server bootstrap and must build + flush their own provider.
+opentelemetry_sdk = { version = "0.31", features = ["metrics", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "http-proto", "metrics"] }
 
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }

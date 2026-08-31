@@ -64,6 +64,13 @@ insight-http-metrics = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
+# Domain instruments (#2891). The seed/sync CLI jobs run outside the toolkit
+# server bootstrap, so they build and flush their own meter provider — hence the
+# sdk/otlp deps beyond the bare `opentelemetry` facade.
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+
 # HTTP surface: tenant SecurityContext, RFC-9457 canonical errors, OpenAPI schemas.
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
