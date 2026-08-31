@@ -41,6 +41,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .analytics import (
+    ConnectorHealthResponse,
     CustomMetric,
     CustomMetricInput,
     CustomMetricListResponse,
@@ -54,6 +55,7 @@ from .analytics import (
     RunResponse,
     SavedQuery,
     SavedQueryListResponse,
+    SyncHistoryResponse,
     UsageConfigResponse,
     UsageSummaryResponse,
 )
@@ -127,6 +129,7 @@ __all__: Sequence[str] = (
     "AccountBindingResponse",
     "AccountSearchResponse",
     "AttentionResponse",
+    "ConnectorHealthResponse",
     "CorrectionResponse",
     "CustomMetric",
     "CustomMetricInput",
@@ -158,6 +161,7 @@ __all__: Sequence[str] = (
     "Subchart",
     "SubchartForest",
     "SubchartNode",
+    "SyncHistoryResponse",
     "SyncOperationList",
     "UsageConfigResponse",
     "UsageSummaryResponse",

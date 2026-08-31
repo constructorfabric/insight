@@ -19,8 +19,23 @@ src/ingestion/reconcile-connectors/
 ├── main.sh                  CLI dispatch
 ├── lib/                     sourceable libs (no top-level CLI)
 ├── python/                  pure-python helpers (CLI via argparse)
+│   └── sweep/               the sync-history sweep (reads stdin, not argv)
 └── templates/               Argo/K8s YAML templates
 ```
+
+## The sync-history sweep
+
+The tick's last layer copies the mover's account of every sync into
+`ingestion_history.sync_events`, which is what the Connector health page reads.
+`lib/sweep.sh` gathers — connector to connection map, token — and
+`python3 -m sweep` plans and writes.
+
+It cannot fail a tick: `sweep_run` always returns 0, so a broken recorder costs
+the page its freshness and costs reconciliation nothing. It adds no environment
+of its own, reusing the `RECONCILE_DEST_CLICKHOUSE_*` credentials the Bronze
+destination already needs.
+
+Spec: `docs/components/backend/analytics/specs/connector-health`.
 
 ## Environment variables
 

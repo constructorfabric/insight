@@ -338,7 +338,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "snapshots", label: "Org snapshots", icon: Clock },
   { id: "group-mgmt", label: "Group management", icon: Users },
   { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3 },
-  { id: "data-health", label: "Data health", icon: ShieldCheck },
+  { id: "connector-health", label: "Connector health", icon: ShieldCheck, adminOnly: true },
   { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
   { id: "mcp", label: "MCP servers", icon: Server },
   { id: "config", label: "Config & setup", icon: Settings2 },

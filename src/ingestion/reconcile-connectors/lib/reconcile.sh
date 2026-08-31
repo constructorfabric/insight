@@ -1517,6 +1517,12 @@ reconcile_run() {
   # Layer 4 — GC (skipped when --no-gc).
   reconcile_gc_orphans
 
+  # Layer 5 — record what the mover says about every sync. Deliberately last
+  # and deliberately unable to fail the tick: `sweep_run` always returns 0, so
+  # a broken recorder costs the page its freshness and costs reconciliation
+  # nothing.
+  sweep_run
+
   log_run_summary "${_RECONCILE_CHANGED}" "${_RECONCILE_FAILED}"
   log_close
   return $(( _RECONCILE_FAILED > 0 ? 2 : 0 ))
