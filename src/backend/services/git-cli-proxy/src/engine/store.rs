@@ -576,6 +576,20 @@ impl RepoStore {
         if let Some(meta) = fresh_meta(&entry_dir, &fingerprint, max_staleness) {
             return Ok(meta.generation);
         }
+        // INVARIANT: meta.json is the publish marker — an entry without it was
+        // never published and must read as absent, or a fetch runs forever
+        // against whatever a crash left in repo.git and every request 500s.
+        if git_dir.is_dir() && RepoMeta::load(&entry_dir).is_none() {
+            match std::fs::remove_dir_all(&entry_dir) {
+                Ok(()) => {
+                    self.drift.lock().await.remove(&key.dir_name());
+                    tracing::warn!(dir = %key.dir_name(), "removed an entry without readable metadata; re-cloning");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, dir = %key.dir_name(), "could not remove a metadata-less entry; it stays unserveable");
+                }
+            }
+        }
         if git_dir.is_dir() {
             self.fetch(key, &entry_dir, &git_dir, creds).await
         } else {
@@ -2401,6 +2415,39 @@ pub(crate) mod tests {
         assert!(
             super::super::index::index_path(guard.git_dir(), guard.generation()).is_file(),
             "a fetch that moved nothing must still replace a missing index"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_metadata_less_entry_is_recloned_not_fetched() {
+        // meta.json is written last, so an entry without it was never
+        // published. Routing it to fetch runs git against whatever a crash
+        // left in repo.git and answers 500 on every request until a restart
+        // sweeps the entry; refresh must apply the startup sweep's rule.
+        let f = fixture("meta-less-heal");
+        let k = key(&f);
+        drop(open_until_ready(&f, &k, refresh()).await);
+
+        let entry_dir = f.store.entry_dir(&k);
+        let git_dir = entry_dir.join("repo.git");
+        if let Err(e) = std::fs::remove_file(entry_dir.join("meta.json")) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::remove_dir_all(&git_dir) {
+            panic!("stage: {e}");
+        }
+        if let Err(e) = std::fs::create_dir_all(git_dir.join("objects")) {
+            panic!("stage: {e}");
+        }
+
+        let guard = open_until_ready(&f, &k, refresh()).await;
+        assert!(
+            guard.git_dir().join("HEAD").is_file(),
+            "the entry must come back as a working clone"
+        );
+        assert!(
+            RepoMeta::load(&entry_dir).is_some(),
+            "the re-clone must publish fresh metadata"
         );
     }
 
