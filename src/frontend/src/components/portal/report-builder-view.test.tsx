@@ -214,6 +214,18 @@ describe("ReportBuilderView", () => {
     expect(await screen.findByText("1082.1594444444445")).toBeInTheDocument();
   });
 
+  it("does not render a preview reopen button below the builder", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("button", { name: /1 rows/ })).toBeNull();
+  });
+
   it("exports the current recipe through the reports hook", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);

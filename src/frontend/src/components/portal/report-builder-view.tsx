@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import type {
   ReportGranularity,
@@ -308,19 +308,6 @@ export function ReportBuilderView() {
           ) : null}
         </CardContent>
       </Card>
-
-      {currentPreview ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="self-start"
-          onClick={() => setPreviewOpen(true)}
-        >
-          <Download className="size-4" />
-          {currentPreview.total_rows} rows · {granularity} · {dateRange.from} to{" "}
-          {dateRange.to}
-        </Button>
-      ) : null}
 
       <ReportPreviewDialog
         response={currentPreview}
