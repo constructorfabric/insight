@@ -1,14 +1,7 @@
-//! Meter-provider lifecycle for the seed/sync CLI jobs.
-//!
-//! The toolkit installs a global meter provider inside `run_server`, but the
-//! `seed` and `sync` subcommands run outside it — so their domain instruments
-//! ([`crate::infra::metrics`]) would record into the no-op global. This builds
-//! a local `SdkMeterProvider` from the same `opentelemetry` config the server
-//! reads, registers it globally, and flushes it on [`MetricsGuard::shutdown`].
-//!
-//! A CLI job exits long before the periodic exporter's interval elapses, so the
-//! final `force_flush` is what actually delivers a run's series — without it
-//! nothing reaches the collector.
+//! Meter-provider lifecycle for the seed/sync CLI jobs, which run outside the
+//! `run_server` bootstrap that installs the global provider. A job exits before
+//! the periodic exporter's interval elapses, so the `force_flush` in
+//! [`MetricsGuard::shutdown`] is what actually delivers a run's series.
 
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig};
@@ -19,17 +12,14 @@ use toolkit::telemetry::config::{Exporter, ExporterKind, OpenTelemetryConfig};
 const DEFAULT_GRPC_ENDPOINT: &str = "http://127.0.0.1:4317";
 const DEFAULT_HTTP_ENDPOINT: &str = "http://127.0.0.1:4318";
 
-/// A registered local meter provider. Hold it for the length of a job and call
-/// [`MetricsGuard::shutdown`] before exit to flush the run's metrics.
 #[must_use = "hold the guard for the job's lifetime and call shutdown() to flush"]
 pub(crate) struct MetricsGuard {
     provider: Option<SdkMeterProvider>,
 }
 
 impl MetricsGuard {
-    /// Build and globally register a meter provider from `cfg`. A no-op that
-    /// yields an empty guard when metrics export is disabled, or when the
-    /// exporter cannot be built (logged, never fatal — a job must still run).
+    // A disabled export or an unbuildable exporter yields an empty guard —
+    // logged, never fatal, since a job must still run without metrics.
     pub(crate) fn install(cfg: &OpenTelemetryConfig) -> Self {
         if !cfg.metrics.enabled {
             tracing::info!("OpenTelemetry metrics disabled; seed instruments are no-ops");
@@ -51,8 +41,8 @@ impl MetricsGuard {
         }
     }
 
-    /// Flush and shut the provider down. Idempotent and best-effort: a failed
-    /// flush is logged, never propagated — losing a metric must not fail a job.
+    // Best-effort: a failed flush is logged, never propagated — losing a metric
+    // must not fail a job.
     pub(crate) fn shutdown(mut self) {
         let Some(provider) = self.provider.take() else {
             return;

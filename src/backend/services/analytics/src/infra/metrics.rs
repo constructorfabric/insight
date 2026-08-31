@@ -10,10 +10,8 @@ use std::time::Duration;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
-/// Query shape, for `analytics.metric_query.duration{kind=…}`.
-///
-/// INVARIANT: one variant per query-building site — the vocabulary of the
-/// `log_comment` prefixes — so the label set stays bounded.
+// INVARIANT: one variant per query-building site (the `log_comment` prefixes),
+// so the `kind` label on `analytics.metric_query.duration` stays bounded.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum QueryKind {
     Ranking,
@@ -47,8 +45,6 @@ impl QueryKind {
     }
 }
 
-/// Terminal state of one query execution, for
-/// `analytics.metric_query.duration{outcome=…}`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum QueryOutcome {
     Success,
@@ -79,7 +75,6 @@ const RESOURCE_LIMIT_MARKERS: [&str; 9] = [
     "Code: 201.",
 ];
 
-/// ClickHouse failure class, for `analytics.clickhouse.errors{class=…}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ErrorClass {
     RelationMissing,
@@ -90,7 +85,6 @@ pub(crate) enum ErrorClass {
 }
 
 impl ErrorClass {
-    /// Classify a ClickHouse error message (submit or fetch failure).
     pub(crate) fn classify(message: &str) -> Self {
         if message.contains("UNKNOWN_TABLE") || message.contains("Code: 60.") {
             return Self::RelationMissing;

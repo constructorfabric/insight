@@ -1,11 +1,7 @@
-//! Domain instruments for the persons-seed pipeline.
-//!
-//! Registered against the global meter provider — on the server path the
-//! toolkit bootstrap installs it; on the seed/sync CLI path [`telemetry`]
-//! installs and flushes a local one. The `opentelemetry` major here must match
-//! the toolkit's (the workspace pin), or these instruments record into a no-op.
-//!
-//! [`telemetry`]: crate::infra::telemetry
+//! Domain instruments for the persons-seed pipeline. The `opentelemetry` major
+//! here must match the toolkit's (the workspace pin), or these instruments
+//! record into a no-op global. The seed/sync CLI installs the provider via
+//! [`crate::infra::telemetry`].
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -17,12 +13,6 @@ use crate::domain::seed_service::SeedSummary;
 
 const METER_NAME: &str = "identity-resolution";
 
-/// How a run classified an account, for `identity_resolution.accounts{outcome=…}`.
-///
-/// A partition of the per-account dispositions a seed run produces: `resolved`
-/// bound the account to a person, `ambiguous` left it unbound because its
-/// address is contested, `unmatched` left it unbound for a structural reason
-/// (closed, no address, no source id, or bound to the excluded person).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResolutionOutcome {
     Resolved,
@@ -40,7 +30,6 @@ impl ResolutionOutcome {
     }
 }
 
-/// Terminal state of one seed run, for `identity_resolution.seed.duration{outcome=…}`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum RunOutcome {
     Success,
@@ -56,13 +45,8 @@ impl RunOutcome {
     }
 }
 
-/// The seed pipeline's database operations, for
-/// `identity_resolution.db.query.duration{query=…}`.
-///
-/// INVARIANT: one variant per [`SeedStore`] method — a closed set, so the
-/// label stays bounded.
-///
-/// [`SeedStore`]: crate::domain::seed_service::SeedStore
+// INVARIANT: one variant per SeedStore method — a closed set, so the `query`
+// label on `identity_resolution.db.query.duration` stays bounded.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum DbQuery {
     KnownAccountBindings,
@@ -113,7 +97,9 @@ fn instruments() -> &'static Instruments {
     })
 }
 
-/// Record the per-account outcome counts of one completed run.
+// Partition the per-account dispositions into the three outcome labels:
+// resolved bound a person; ambiguous hit a contested address; unmatched was
+// left unbound for a structural reason.
 pub(crate) fn record_seed_outcomes(summary: &SeedSummary) {
     let resolved = summary.reused_known
         + summary.linked_by_email
