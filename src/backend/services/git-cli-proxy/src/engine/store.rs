@@ -1284,7 +1284,10 @@ impl RepoStore {
             self.tmp_counter.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&evicted)?;
-        let filter_to = format!("--filter-to={}", evicted.display());
+        // WORKAROUND: git uses --filter-to as a pack base name, not a
+        // directory — packs land as `<value>-<sha>.pack` siblings of it.
+        // Pointing the base inside the directory keeps them collectable.
+        let filter_to = format!("--filter-to={}", evicted.join("pack").display());
 
         remove_promisor_markers(&git_dir);
         let repacked = self
@@ -2514,6 +2517,30 @@ pub(crate) mod tests {
             after.size_bytes,
             dir_size(&entry_dir.join("repo.git")),
             "accounting must match the disk after a purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_purge_leaves_nothing_behind_in_the_staging_dir() {
+        // The evicted pack must land inside the per-purge directory the
+        // repack deletes. Left beside it, the packs accumulate in tmp/ until
+        // the next restart — invisible to the reclaim planner, which only
+        // walks repos/, so the budget never sees the loss.
+        let (f, k, _) = entry_with_fetched_blobs("purge-staging").await;
+        f.store.purge_if_drifted(&k).await;
+
+        let tmp = f.root.join("cache").join("tmp");
+        let leftovers: Vec<String> = std::fs::read_dir(&tmp)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            leftovers.is_empty(),
+            "a purge must collect everything it staged: {leftovers:?}"
         );
     }
 
