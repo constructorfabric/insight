@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "libs/insight-clickhouse",
+    "libs/insight-http-metrics",
     "libs/insight-migration",
     "libs/authenticator-sdk",
     "services/analytics",
@@ -138,8 +139,13 @@ k8s-openapi = { version = "0.27", default-features = false }
 # Config
 figment = { version = "0.10", features = ["yaml", "env"] }
 
+# INVARIANT: must match the toolkit's opentelemetry major — a different major
+# is a different global meter provider and instruments silently no-op.
+opentelemetry = "0.31"
+
 # Internal crates
 insight-clickhouse = { path = "libs/insight-clickhouse" }
+insight-http-metrics = { path = "libs/insight-http-metrics" }
 insight-migration = { path = "libs/insight-migration" }
 authenticator-sdk = { path = "libs/authenticator-sdk" }
 

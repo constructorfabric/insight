@@ -53,7 +53,10 @@ pub fn register_routes(
             state.clone(),
             crate::csrf::middleware,
         ))
-        .layer(Extension(state));
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "authenticator",
+        ));
     host_router.merge(api)
 }
 

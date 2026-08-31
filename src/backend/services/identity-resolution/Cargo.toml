@@ -60,6 +60,7 @@ base64 = { workspace = true }
 # `insight-clickhouse` wraps the client; the direct `clickhouse` dep is for the
 # `Row` derive on the query row struct.
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
 insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
