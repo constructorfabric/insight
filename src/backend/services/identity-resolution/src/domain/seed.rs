@@ -45,7 +45,14 @@ pub struct SeedProfile {
     pub account: SourceAccountKey,
     pub latest_email: Option<String>,
     pub is_closed: bool,
+    pub roster_membership: Option<RosterMembership>,
     pub observations: Vec<IdentityInputRow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RosterMembership {
+    pub active: bool,
+    pub observed_at: DateTime,
 }
 
 /// A resolved observation ready to append to `persons` — stamped with the
@@ -431,11 +438,12 @@ fn record_addressless_group(
     mint: &mut impl FnMut() -> Uuid,
     out: &mut ResolveOutcome,
 ) {
-    let vouched_for = roster.is_some_and(|roster| {
-        group
-            .profiles
-            .iter()
-            .all(|p| roster.speaks_for(&p.account.source_type) && states_a_bindable_id(p))
+    let vouched_for = group.profiles.iter().all(|profile| {
+        states_a_bindable_id(profile)
+            && (profile
+                .roster_membership
+                .is_some_and(|membership| membership.active)
+                || roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type)))
     });
     if !vouched_for {
         out.skipped_no_email += group.profiles.len();
@@ -525,6 +533,7 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
     struct Acc {
         latest_email: Option<String>,
         is_closed: bool,
+        roster_membership: Option<RosterMembership>,
         saw_any: bool,
         upserts: Vec<IdentityInputRow>,
     }
@@ -539,6 +548,7 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         let acc = by_account.entry(key).or_insert_with(|| Acc {
             latest_email: None,
             is_closed: false,
+            roster_membership: None,
             saw_any: false,
             upserts: Vec::new(),
         });
@@ -548,6 +558,12 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         }
         if row.value_type == "email" && acc.latest_email.is_none() && !row.value.trim().is_empty() {
             acc.latest_email = Some(row.value.clone()); // stored as-is (ADR-0011)
+        }
+        if row.value_type == "roster_membership" && acc.roster_membership.is_none() {
+            acc.roster_membership = Some(RosterMembership {
+                active: !row.is_delete && row.value == "active",
+                observed_at: row.synced_at,
+            });
         }
         if !row.is_delete {
             acc.upserts.push(row);
@@ -560,6 +576,7 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
             account,
             latest_email: acc.latest_email,
             is_closed: acc.is_closed,
+            roster_membership: acc.roster_membership,
             observations: acc.upserts,
         })
         .collect()
@@ -650,6 +667,7 @@ mod tests {
             },
             latest_email: email.map(str::to_owned),
             is_closed: closed,
+            roster_membership: None,
             observations: vec![input(
                 source_type,
                 account_id,
@@ -1108,6 +1126,32 @@ mod tests {
     }
 
     #[test]
+    fn build_profiles_keeps_the_latest_roster_membership_state() -> anyhow::Result<()> {
+        let older: DateTime = "2026-01-01T00:00:00".parse()?;
+        let newer: DateTime = "2026-02-01T00:00:00".parse()?;
+        let profiles = build_profiles(vec![
+            input("directory", "U1", "roster_membership", "", true, newer),
+            input(
+                "directory",
+                "U1",
+                "roster_membership",
+                "active",
+                false,
+                older,
+            ),
+        ]);
+
+        assert_eq!(
+            profiles[0].roster_membership,
+            Some(RosterMembership {
+                active: false,
+                observed_at: newer,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
     fn assignments_to_rows_stamps_person_routes_and_reason() -> anyhow::Result<()> {
         let t: DateTime = "2026-01-01T00:00:00".parse()?;
         let profile = SeedProfile {
@@ -1118,6 +1162,7 @@ mod tests {
             },
             latest_email: Some("a@b.com".to_owned()),
             is_closed: false,
+            roster_membership: None,
             observations: vec![
                 input("bamboohr", "5001", "email", "a@b.com", false, t),
                 input("bamboohr", "5001", "display_name", "Ann Smith", false, t),
@@ -1245,6 +1290,25 @@ mod tests {
             out.assignments.iter().map(|a| a.kind).collect::<Vec<_>>(),
             vec![AssignmentKind::MintedFromRoster],
         );
+    }
+
+    #[test]
+    fn an_explicit_membership_mints_without_roster_configuration() {
+        let mut profile = rostered("directory", "e-1", false);
+        profile.roster_membership = Some(RosterMembership {
+            active: true,
+            observed_at: epoch(),
+        });
+
+        let out = resolve_without_roster(
+            group_by_email(vec![profile]),
+            &HashMap::new(),
+            &HashMap::new(),
+            counter(),
+        );
+
+        assert_eq!(out.minted_from_roster, 1);
+        assert_eq!(out.skipped_no_email, 0);
     }
 
     #[test]

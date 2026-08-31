@@ -18,7 +18,7 @@ use super::listing::{self, CursorRejected, PagePosition};
 use super::resolution::PersonSummaryResponse;
 use crate::domain::person_card;
 use crate::infra::db::person_listing::{self, PersonListRow, VisibleTo};
-use crate::infra::db::{persons_repo, subchart_repo};
+use crate::infra::db::{people_repo, subchart_repo};
 
 // One bound parameter per person id, so the request bounds the query. Equal to
 // the analytics metric-results cap on purpose: that endpoint forwards a whole
@@ -79,10 +79,7 @@ impl toolkit::api::api_dto::ResponseApiDto for VisiblePersonsPageResponse {}
 /// Self-scoped and not admin-gated, like the POST: it enumerates only what the
 /// caller's visible set already contains.
 ///
-/// Lists the ROSTER, not the journal: only persons a connector claims as an
-/// account holder. So this answers for a narrower set than the POST confirms —
-/// deliberately, and in the safe direction (a person listed here is a person
-/// that filter would confirm, never the reverse).
+/// Lists current roster people from the canonical `people` projection.
 pub async fn list_visible_persons(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
@@ -104,11 +101,7 @@ pub async fn list_visible_persons(
         tenant,
         &terms,
         &[],
-        // The roster is who the organisation IS. An address a commit carried
-        // becomes a person in the journal without anyone here holding it, and
-        // listing those alongside the members reads as a directory of strangers.
         person_listing::Restrict {
-            listed: person_listing::Listed::AccountHolders,
             visible_to: Some(VisibleTo {
                 viewer_person_id: caller,
                 org_source_type: &state.config.org_chart_source_type,
@@ -135,14 +128,13 @@ pub async fn list_visible_persons(
         })?;
 
     let ids: Vec<Uuid> = rows.iter().map(|row| row.person_id).collect();
-    let cards = persons_repo::person_cards(&state.db, tenant, &ids)
+    let cards = people_repo::person_cards(&state.db, tenant, &ids)
         .await
         .map_err(read_err)?;
-    let mut items: Vec<PersonSummaryResponse> = person_card::in_requested_order(&ids, &cards)
+    let items: Vec<PersonSummaryResponse> = person_card::in_requested_order(&ids, &cards)
         .into_iter()
         .map(PersonSummaryResponse::from)
         .collect();
-    super::resolution::mark_provisional(&state, tenant, &mut items).await?;
 
     Ok(Json(VisiblePersonsPageResponse { items, next_cursor }))
 }
@@ -175,10 +167,11 @@ pub async fn filter_visible_persons(
             .await
             .map_err(read_err)?;
 
+    let roster = people_repo::people_in_tenant(&state.db, tenant, &requested)
+        .await
+        .map_err(read_err)?;
     let visible = if whole_tenant {
-        persons_repo::persons_in_tenant(&state.db, tenant, &requested)
-            .await
-            .map_err(read_err)?
+        roster
     } else {
         let visible = subchart_repo::visible_targets(
             &state.db,
@@ -193,7 +186,7 @@ pub async fn filter_visible_persons(
         .into_iter()
         .collect::<HashSet<_>>();
 
-        requested
+        roster
             .into_iter()
             .filter(|person_id| visible.contains(person_id))
             .collect()

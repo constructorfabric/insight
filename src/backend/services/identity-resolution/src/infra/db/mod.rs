@@ -21,6 +21,7 @@
 pub mod bootstrap;
 pub mod entities;
 pub mod ops_repo;
+pub mod people_repo;
 pub mod person_listing;
 pub mod person_roles_repo;
 pub mod persons_log_repo;

@@ -1,17 +1,10 @@
 //! Person listing — the operator's roster and the picker over it.
 //!
-//! `GET /v1/persons` lists every person of the caller's tenant, ordered by the
-//! name the row shows, a page at a time. `?q=` narrows the same list: every
-//! whitespace-separated term must match some CURRENT observed value (the
-//! latest observation per person × source × value type — the same window rule
-//! `/v1/profiles` resolves by, so search and resolution cannot disagree).
-//! Superseded values stop matching their old owner; a value two persons both
-//! currently claim returns both — the operator is the disambiguator, and
-//! hiding one of them by recency would decide a contested case silently.
+//! `GET /v1/persons` lists the current `people` projection for the caller's
+//! tenant, ordered by the name the row shows, a page at a time. `?q=` narrows
+//! the same list across its canonical presentation fields.
 //!
-//! A term that parses as a UUID names a person id instead: it is the one
-//! identifier an operator can copy off a card, and the only way to reach a
-//! person the journal holds no values for.
+//! A term that parses as a UUID names a person id instead.
 //!
 //! Browsing is bounded by the page, not by a refusal: an operator reviewing
 //! identities needs to see who exists, and `?cursor=` walks the rest rather
@@ -38,8 +31,8 @@ use super::listing::{self, CursorRejected};
 use super::resolution::PersonSummaryResponse;
 use crate::domain::person_card;
 use crate::domain::resolution::EXCLUDED_PERSON;
+use crate::infra::db::people_repo;
 use crate::infra::db::person_listing::{self, After, PersonListRow};
-use crate::infra::db::persons_repo;
 
 const DEFAULT_LIMIT: u64 = 20;
 const MAX_LIMIT: u64 = 100;
@@ -117,17 +110,12 @@ async fn page_of_persons(
         person_id: key.person_id,
     });
 
-    // Every identity, claimed or not: an address nobody holds yet is exactly
-    // what an operator opens this picker to attach to someone.
     person_listing::list_persons(
         &state.db,
         tenant,
         values,
         named,
-        person_listing::Restrict {
-            listed: person_listing::Listed::EveryIdentity,
-            visible_to: None,
-        },
+        person_listing::Restrict { visible_to: None },
         after,
         limit + 1,
     )
@@ -159,18 +147,14 @@ async fn hydrate(
     rows: &[PersonListRow],
 ) -> Result<Vec<PersonSummaryResponse>, CanonicalError> {
     let ids: Vec<Uuid> = rows.iter().map(|row| row.person_id).collect();
-    let cards = persons_repo::person_cards(&state.db, tenant, &ids)
+    let cards = people_repo::person_cards(&state.db, tenant, &ids)
         .await
         .map_err(|e| read_err(&e))?;
 
-    let mut items: Vec<PersonSummaryResponse> = person_card::in_requested_order(&ids, &cards)
+    let items: Vec<PersonSummaryResponse> = person_card::in_requested_order(&ids, &cards)
         .into_iter()
         .map(PersonSummaryResponse::from)
         .collect();
-
-    // A picker is where the wrong person gets chosen, so a person who exists
-    // only because somebody signed in must say so here of all places.
-    super::resolution::mark_provisional(state, tenant, &mut items).await?;
     Ok(items)
 }
 

@@ -28,7 +28,7 @@ async fn find(f: &Fixture, query: &str) -> anyhow::Result<Vec<Uuid>> {
         f.tenant,
         &terms,
         &[],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -42,10 +42,15 @@ async fn a_term_reaches_every_searched_value_of_a_person() -> TestResult {
         return Ok(());
     };
     let person = f.person("ada@listing.test").await?;
-    f.observed(person, "username", "ada-git").await?;
-    f.observed(person, "display_name", "Ada Example").await?;
-    f.observed(person, "first_name", "Adalovelace").await?;
-    f.observed(person, "last_name", "Byronesque").await?;
+    f.project_person(
+        person,
+        Some("ada@listing.test"),
+        Some("ada-git"),
+        Some("Ada Example"),
+        Some("Adalovelace"),
+        Some("Byronesque"),
+    )
+    .await?;
 
     for term in [
         "ada@listing.test",
@@ -115,11 +120,25 @@ async fn two_terms_must_both_match_the_same_person() -> TestResult {
         return Ok(());
     };
     let both = f.person("both@listing.test").await?;
-    f.observed(both, "first_name", "Adamant").await?;
-    f.observed(both, "last_name", "Byronesque").await?;
+    f.project_person(
+        both,
+        Some("both@listing.test"),
+        None,
+        None,
+        Some("Adamant"),
+        Some("Byronesque"),
+    )
+    .await?;
     let one = f.person("one@listing.test").await?;
-    f.observed(one, "first_name", "Adamant").await?;
-    f.observed(one, "last_name", "Otherwise").await?;
+    f.project_person(
+        one,
+        Some("one@listing.test"),
+        None,
+        None,
+        Some("Adamant"),
+        Some("Otherwise"),
+    )
+    .await?;
 
     assert_eq!(find(&f, "Adamant Byronesque").await?, vec![both]);
     Ok(())
@@ -134,7 +153,15 @@ async fn terms_may_land_on_different_values_of_one_person() -> TestResult {
         return Ok(());
     };
     let person = f.person("split@listing.test").await?;
-    f.observed(person, "first_name", "Adamant").await?;
+    f.project_person(
+        person,
+        Some("split@listing.test"),
+        None,
+        None,
+        Some("Adamant"),
+        None,
+    )
+    .await?;
 
     assert_eq!(find(&f, "Adamant split@listing.test").await?, vec![person]);
     Ok(())
@@ -146,11 +173,25 @@ async fn a_wildcard_in_a_term_is_matched_literally() -> TestResult {
         return Ok(());
     };
     let literal = f.person("literal@listing.test").await?;
-    f.observed(literal, "display_name", "Milestone 50% Owner")
-        .await?;
+    f.project_person(
+        literal,
+        Some("literal@listing.test"),
+        None,
+        Some("Milestone 50% Owner"),
+        None,
+        None,
+    )
+    .await?;
     let decoy = f.person("decoy@listing.test").await?;
-    f.observed(decoy, "display_name", "Milestone 50 Owner")
-        .await?;
+    f.project_person(
+        decoy,
+        Some("decoy@listing.test"),
+        None,
+        Some("Milestone 50 Owner"),
+        None,
+        None,
+    )
+    .await?;
 
     assert_eq!(find(&f, "50%").await?, vec![literal]);
     Ok(())
@@ -170,7 +211,7 @@ async fn an_id_named_search_answers_exactly_that_person() -> TestResult {
         f.tenant,
         &[],
         &[wanted],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -185,7 +226,7 @@ async fn an_id_named_search_answers_exactly_that_person() -> TestResult {
         f.tenant,
         &[],
         &[emailless],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -211,7 +252,7 @@ async fn the_excluded_sentinel_is_never_listed_as_a_person() -> TestResult {
         f.tenant,
         &[],
         &[],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         1_000,
     )
@@ -250,11 +291,26 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
     // Labels chosen so the order cannot come from the ids or the insert order:
     // display name wins, else the composed name, else the address.
     let zoe = f.person("aaa-first-by-address@listing.test").await?;
-    f.observed(zoe, "display_name", "Zoe Displayed").await?;
+    f.project_person(
+        zoe,
+        Some("aaa-first-by-address@listing.test"),
+        None,
+        Some("Zoe Displayed"),
+        None,
+        None,
+    )
+    .await?;
     let mid = f.person("mmm-by-address@listing.test").await?;
     let byname = f.person("zzz-last-by-address@listing.test").await?;
-    f.observed(byname, "first_name", "Bertha").await?;
-    f.observed(byname, "last_name", "Composed").await?;
+    f.project_person(
+        byname,
+        Some("zzz-last-by-address@listing.test"),
+        None,
+        None,
+        Some("Bertha"),
+        Some("Composed"),
+    )
+    .await?;
     let nameless = f.emailless_person().await?;
 
     let rows = list_persons(
@@ -262,7 +318,7 @@ async fn the_page_is_ordered_by_the_label_the_row_shows() -> TestResult {
         f.tenant,
         &[],
         &[],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -289,7 +345,15 @@ async fn the_handle_labels_a_person_the_source_gave_no_name() -> TestResult {
     // The address sorts LAST and the handle FIRST, so only the handle winning
     // produces this order — an address-labelled row would come back second.
     let handled = f.person("zzz-generated@users.noreply.example").await?;
-    f.observed(handled, "username", "aaa-handle").await?;
+    f.project_person(
+        handled,
+        Some("zzz-generated@users.noreply.example"),
+        Some("aaa-handle"),
+        None,
+        None,
+        None,
+    )
+    .await?;
     let addressed = f.person("mmm-address-only@listing.test").await?;
 
     let rows = list_persons(
@@ -297,7 +361,7 @@ async fn the_handle_labels_a_person_the_source_gave_no_name() -> TestResult {
         f.tenant,
         &[],
         &[handled, addressed],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -324,7 +388,8 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
                 name.to_lowercase().replace(' ', "-")
             ))
             .await?;
-        f.observed(person, "display_name", name).await?;
+        f.project_person(person, None, None, Some(name), None, None)
+            .await?;
     }
 
     let whole: Vec<(Uuid, String)> = list_persons(
@@ -332,7 +397,7 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
         f.tenant,
         &[],
         &[],
-        Restrict::EVERY_IDENTITY,
+        Restrict::UNRESTRICTED,
         None,
         PAGE,
     )
@@ -348,16 +413,8 @@ async fn paging_one_row_at_a_time_retraces_the_same_order() -> TestResult {
             order_key: key,
             person_id: *id,
         });
-        let page = list_persons(
-            &f.db,
-            f.tenant,
-            &[],
-            &[],
-            Restrict::EVERY_IDENTITY,
-            after,
-            1,
-        )
-        .await?;
+        let page =
+            list_persons(&f.db, f.tenant, &[], &[], Restrict::UNRESTRICTED, after, 1).await?;
         let Some(row) = page.into_iter().next() else {
             break;
         };
@@ -382,14 +439,29 @@ async fn the_unnarrowed_fallback_answers_exactly_what_the_probe_narrowed_to() ->
         return Ok(());
     };
     let hit = f.person("fallback-hit@listing.test").await?;
-    f.observed(hit, "display_name", "Fallback Comparable")
-        .await?;
+    f.project_person(
+        hit,
+        Some("fallback-hit@listing.test"),
+        None,
+        Some("Fallback Comparable"),
+        None,
+        None,
+    )
+    .await?;
     f.observed_at(hit, "email", "gone@listing.test", 86_400)
         .await?;
     f.observed_at(hit, "email", "fallback-hit@listing.test", 60)
         .await?;
     let miss = f.person("unrelated@listing.test").await?;
-    f.observed(miss, "display_name", "Unrelated Person").await?;
+    f.project_person(
+        miss,
+        Some("unrelated@listing.test"),
+        None,
+        Some("Unrelated Person"),
+        None,
+        None,
+    )
+    .await?;
 
     for query in [
         "fallback",
@@ -404,7 +476,7 @@ async fn the_unnarrowed_fallback_answers_exactly_what_the_probe_narrowed_to() ->
             f.tenant,
             &terms,
             &[],
-            Restrict::EVERY_IDENTITY,
+            Restrict::UNRESTRICTED,
             None,
             PAGE,
         )

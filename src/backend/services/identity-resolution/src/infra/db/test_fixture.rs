@@ -66,6 +66,14 @@ impl Fixture {
     pub(crate) async fn person(&self, email: &str) -> anyhow::Result<Uuid> {
         let person_id = Uuid::now_v7();
         self.person_as(person_id, email).await?;
+        self.project_person(person_id, Some(email), None, None, None, None)
+            .await?;
+        Ok(person_id)
+    }
+
+    pub(crate) async fn identity_only_person(&self, email: &str) -> anyhow::Result<Uuid> {
+        let person_id = Uuid::now_v7();
+        self.person_as(person_id, email).await?;
         Ok(person_id)
     }
 
@@ -98,6 +106,39 @@ impl Fixture {
         self.observed(person_id, "id", &format!("acct-{}", person_id.simple()))
             .await?;
         Ok(person_id)
+    }
+
+    pub(crate) async fn project_person(
+        &self,
+        person_id: Uuid,
+        email: Option<&str>,
+        username: Option<&str>,
+        display_name: Option<&str>,
+        first_name: Option<&str>,
+        last_name: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.exec(
+            "INSERT INTO people
+                (insight_tenant_id, person_id, email, username, display_name,
+                 first_name, last_name, valid_from)
+             VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
+             ON DUPLICATE KEY UPDATE
+                 email = VALUES(email),
+                 username = VALUES(username),
+                 display_name = VALUES(display_name),
+                 first_name = VALUES(first_name),
+                 last_name = VALUES(last_name)",
+            [
+                bytes(self.tenant),
+                bytes(person_id),
+                email.map(str::to_owned).into(),
+                username.map(str::to_owned).into(),
+                display_name.map(str::to_owned).into(),
+                first_name.map(str::to_owned).into(),
+                last_name.map(str::to_owned).into(),
+            ],
+        )
+        .await
     }
 
     /// Append one observation of `value_type` for an existing person — the
@@ -266,6 +307,8 @@ impl Fixture {
             ],
         )
         .await?;
+        self.project_person(person_id, None, None, None, None, None)
+            .await?;
         Ok(person_id)
     }
 

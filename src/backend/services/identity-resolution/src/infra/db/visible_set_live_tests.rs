@@ -4,7 +4,7 @@
 use uuid::Uuid;
 
 use super::test_fixture::fixture_or_skip;
-use super::{persons_repo, roles_repo, subchart_repo};
+use super::{people_repo, persons_repo, roles_repo, subchart_repo};
 
 type TestResult = anyhow::Result<()>;
 
@@ -75,7 +75,7 @@ async fn the_wildcard_echo_is_bounded_by_the_tenant() -> TestResult {
     let foreign = other.person("other-tenant@example.com").await?;
 
     let got =
-        persons_repo::persons_in_tenant(&f.db, f.tenant, &[ours, foreign, Uuid::now_v7()]).await?;
+        people_repo::people_in_tenant(&f.db, f.tenant, &[ours, foreign, Uuid::now_v7()]).await?;
 
     assert_eq!(got, vec![ours], "only the caller-tenant person survives");
     Ok(())

@@ -44,5 +44,6 @@
         {'field': 'login', 'value_type': 'username',     'value_field_name': 'bronze_github_directory.org_members.login'},
         {'field': 'name',  'value_type': 'display_name', 'value_field_name': 'bronze_github_directory.org_members.name'},
     ],
-    deactivation_condition="field_name = 'login' AND new_value = ''"
+    deactivation_condition="field_name = 'login' AND new_value = ''",
+    roster_activation_condition="true"
 ) }}

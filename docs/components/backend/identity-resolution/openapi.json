@@ -890,7 +890,19 @@
               "null"
             ]
           },
+          "first_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "job_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_name": {
             "type": [
               "string",
               "null"

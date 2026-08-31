@@ -2,12 +2,17 @@
     fields_history_ref,
     source_type,
     identity_fields,
-    deactivation_condition
+    deactivation_condition,
+    roster_activation_condition=none
 ) %}
 {#
   Generates identity_inputs rows from a fields_history model.
   Produces UPSERT rows for identity-relevant field changes, and DELETE rows
   for all identity fields when a deactivation condition is met.
+
+  Roster emitters also produce `roster_membership` and source-qualified
+  `person_*` presentation claims. Those claims keep activity observations on
+  the same source account from becoming the canonical person profile.
 
   In addition, every activity in history yields a `value_type='id'`
   observation carrying `value = entity_id` (= source_account_id); this
@@ -33,6 +38,12 @@
                             Available columns: entity_id, tenant_id, source_id,
                             field_name, old_value, new_value, updated_at.
                             Example: "field_name = 'status' AND new_value = 'Inactive'"
+    roster_activation_condition: optional SQL expression that identifies an
+                                 active roster member. When present, the macro
+                                 emits roster membership and canonical profile
+                                 claims. Example: "field_name = 'status' AND
+                                 new_value = 'Active'". Sources whose every row
+                                 proves membership may use "true".
 
   Output columns (match identity_inputs schema):
     unique_key, insight_tenant_id, insight_source_id, insight_source_type,
@@ -116,6 +127,80 @@ deactivation_events AS (
     WHERE ({{ deactivation_condition }})
       AND entity_id IS NOT NULL AND entity_id != ''
 ),
+
+{% if roster_activation_condition is not none %}
+roster_membership_upserts AS (
+    SELECT DISTINCT
+        CAST(concat(
+            coalesce(h.tenant_id, ''), '-',
+            coalesce(h.source_id, ''), '-',
+            '{{ source_type }}', '-',
+            coalesce(h.entity_id, ''), '-',
+            'roster_membership-',
+            'UPSERT-',
+            toString(toUnixTimestamp64Milli(toDateTime64(h.updated_at, 3)))
+        ) AS String) AS unique_key,
+        toUUID(UUIDNumToString(sipHash128(coalesce(h.tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(h.source_id, '')))) AS insight_source_id,
+        '{{ source_type }}' AS insight_source_type,
+        h.entity_id AS source_account_id,
+        'roster_membership' AS value_type,
+        'active' AS value,
+        '{{ source_type }}.roster_membership' AS value_field_name,
+        'UPSERT' AS operation_type,
+        toDateTime64(h.updated_at, 3) AS _synced_at,
+        toUnixTimestamp64Milli(toDateTime64(h.updated_at, 3)) AS _version
+    FROM history h
+    LEFT ANTI JOIN deactivation_events d
+        ON  d.tenant_id  = h.tenant_id
+        AND d.source_id  = h.source_id
+        AND d.entity_id  = h.entity_id
+        AND d.updated_at = h.updated_at
+    WHERE ({{ roster_activation_condition }})
+      AND h.entity_id IS NOT NULL AND h.entity_id != ''
+),
+
+roster_membership_deletes AS (
+    SELECT DISTINCT
+        CAST(concat(
+            coalesce(d.tenant_id, ''), '-',
+            coalesce(d.source_id, ''), '-',
+            '{{ source_type }}', '-',
+            coalesce(d.entity_id, ''), '-',
+            'roster_membership-',
+            'DELETE-',
+            toString(toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)))
+        ) AS String) AS unique_key,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
+        '{{ source_type }}' AS insight_source_type,
+        d.entity_id AS source_account_id,
+        'roster_membership' AS value_type,
+        '' AS value,
+        '{{ source_type }}.roster_membership' AS value_field_name,
+        'DELETE' AS operation_type,
+        toDateTime64(d.updated_at, 3) AS _synced_at,
+        toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
+    FROM deactivation_events d
+),
+
+person_profile_upserts AS (
+    SELECT
+        concat(unique_key, '-person-profile') AS unique_key,
+        insight_tenant_id,
+        insight_source_id,
+        insight_source_type,
+        source_account_id,
+        concat('person_', value_type) AS value_type,
+        value,
+        value_field_name,
+        operation_type,
+        _synced_at,
+        _version
+    FROM upserts
+    WHERE value_type IN ('email', 'username', 'display_name', 'first_name', 'last_name')
+),
+{% endif %}
 
 deletes AS (
     {% for f in identity_fields %}
@@ -208,5 +293,13 @@ UNION ALL
 SELECT * FROM id_upserts
 UNION ALL
 SELECT * FROM id_deletes
+{% if roster_activation_condition is not none %}
+UNION ALL
+SELECT * FROM roster_membership_upserts
+UNION ALL
+SELECT * FROM roster_membership_deletes
+UNION ALL
+SELECT * FROM person_profile_upserts
+{% endif %}
 
 {% endmacro %}

@@ -24,7 +24,7 @@ use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
 use crate::domain::seed::{KnownBinding, SourceAccountKey};
-use crate::infra::db::{ops_repo, persons_repo, resolution_repo, seed_repo};
+use crate::infra::db::{ops_repo, people_repo, persons_repo, resolution_repo, seed_repo};
 use crate::infra::identity_evidence::{
     AccountEvidence, AfterAccount, ClickHouseEvidenceReader, EvidenceSnapshot, ListedAccount,
 };
@@ -720,6 +720,8 @@ pub struct PersonSummaryResponse {
     /// field of an identity no HR system has observed yet.
     pub username: Option<String>,
     pub display_name: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
     pub job_title: Option<String>,
     pub status: Option<String>,
 }
@@ -732,34 +734,12 @@ impl From<PersonCard> for PersonSummaryResponse {
             email: card.email,
             username: card.username,
             display_name: card.display_name,
+            first_name: card.first_name,
+            last_name: card.last_name,
             job_title: card.job_title,
             status: card.status,
         }
     }
-}
-
-/// Mark the cards the journal holds nothing but a login-mint for.
-///
-/// A separate read rather than a card attribute: the mark is a fact about the
-/// person's bindings, and the card is assembled from observed values.
-///
-/// # Errors
-///
-/// Returns an error if the read fails.
-pub async fn mark_provisional(
-    state: &AppState,
-    tenant: Uuid,
-    people: &mut [PersonSummaryResponse],
-) -> Result<(), CanonicalError> {
-    let ids: Vec<Uuid> = people.iter().map(|p| p.person_id).collect();
-    let provisional = persons_repo::provisional_persons(&state.db, tenant, &ids)
-        .await
-        .map_err(|e| internal(&e, "failed to read which persons are provisional"))?;
-
-    for person in people {
-        person.provisional = provisional.contains(&person.person_id);
-    }
-    Ok(())
 }
 
 /// How the tenant's observed accounts are split across the resolution states.
@@ -1377,7 +1357,7 @@ async fn candidate_cards(
         .into_iter()
         .collect();
 
-    persons_repo::person_cards(&state.db, tenant, &ids)
+    people_repo::person_cards(&state.db, tenant, &ids)
         .await
         .map_err(|e| internal(&e, "failed to read candidate cards"))
 }

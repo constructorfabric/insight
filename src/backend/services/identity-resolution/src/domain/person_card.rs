@@ -31,6 +31,8 @@ pub struct PersonCard {
     /// field of an identity no HR system has observed yet.
     pub username: Option<String>,
     pub display_name: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
     pub job_title: Option<String>,
     pub status: Option<String>,
 }
@@ -46,6 +48,8 @@ impl PersonCard {
             email: None,
             username: None,
             display_name: None,
+            first_name: None,
+            last_name: None,
             job_title: None,
             status: None,
         }
@@ -78,14 +82,18 @@ fn card(person_id: Uuid, observations: Vec<persons::Model>) -> PersonCard {
     // The profile splits display_name into first/last when those are missing;
     // a card wants the opposite fallback — compose a display name from the
     // parts when no display_name was ever observed.
+    let first_name = get("first_name");
+    let last_name = get("last_name");
     let display_name =
-        get("display_name").or_else(|| compose_name(get("first_name"), get("last_name")));
+        get("display_name").or_else(|| compose_name(first_name.clone(), last_name.clone()));
 
     PersonCard {
         person_id,
         email: get("email"),
         username: get("username"),
         display_name,
+        first_name,
+        last_name,
         job_title: get("job_title"),
         status: get("status"),
     }
@@ -106,7 +114,7 @@ pub fn in_requested_order(ids: &[Uuid], cards: &HashMap<Uuid, PersonCard>) -> Ve
         .collect()
 }
 
-fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
+pub(crate) fn compose_name(first: Option<String>, last: Option<String>) -> Option<String> {
     let joined = [first, last]
         .into_iter()
         .flatten()

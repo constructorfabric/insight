@@ -31,6 +31,7 @@ mod m20260724_000014_account_person_map_datetime;
 mod m20260817_000015_drop_account_person_map;
 mod m20260817_000016_drop_dbup_ledger;
 mod m20260831_000017_previews_admin_role;
+mod m20260901_000018_people;
 
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::sea_orm::ConnectionTrait;
@@ -58,6 +59,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260817_000015_drop_account_person_map::Migration),
             Box::new(m20260817_000016_drop_dbup_ledger::Migration),
             Box::new(m20260831_000017_previews_admin_role::Migration),
+            Box::new(m20260901_000018_people::Migration),
         ]
     }
 }
@@ -134,6 +136,7 @@ mod tests {
             (include_str!("sql/015_drop_account_person_map.sql"), 1),
             (include_str!("sql/016_drop_dbup_ledger.sql"), 1),
             (include_str!("sql/017_previews_admin_role.sql"), 1),
+            (include_str!("sql/018_people.sql"), 1),
         ];
         for (i, (script, expected)) in cases.iter().enumerate() {
             let stmts = split_statements(script);

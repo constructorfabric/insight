@@ -458,7 +458,8 @@ async fn batch_profiles_preserves_order_and_omits_hidden_or_unknown_people() -> 
     f.observed_from("github", github_only, "username", "github-only")
         .await?;
     f.observed(github_only, "department", "Engineering").await?;
-    f.observed(manager, "display_name", "Batch Manager").await?;
+    f.project_person(manager, None, None, Some("Batch Manager"), None, None)
+        .await?;
     f.reports_to(github_only, manager).await?;
 
     let unknown = Uuid::now_v7();
@@ -729,10 +730,7 @@ async fn a_person_is_found_by_a_current_email_fragment() -> TestResult {
 }
 
 #[tokio::test]
-async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
-    // The moved-mailbox case: the old owner observed a NEWER email from the
-    // same source, so the old address is theirs no more — only the person the
-    // address currently belongs to comes back.
+async fn activity_email_does_not_override_the_roster_email() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -752,10 +750,14 @@ async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
     let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=moved-{marker}")).await?;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        found_ids(&body)?,
-        vec![new_owner.to_string()],
-        "the old owner's claim is superseded by their own fresher email"
+    let found = found_ids(&body)?;
+    assert!(found.contains(&old_owner.to_string()));
+    assert!(found.contains(&new_owner.to_string()));
+
+    let (_, activity) = get(app(&f, operator), &format!("/v1/persons?q=fresh-{marker}")).await?;
+    assert!(
+        found_ids(&activity)?.is_empty(),
+        "activity metadata must not rename the roster person"
     );
     Ok(())
 }
@@ -794,8 +796,15 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
     let operator = admin_operator(&f).await?;
     let marker = Uuid::now_v7().simple().to_string();
     let person = f.person(&format!("multi-{marker}@http-live.test")).await?;
-    f.observed(person, "display_name", &format!("Terman Findable {marker}"))
-        .await?;
+    f.project_person(
+        person,
+        Some(&format!("multi-{marker}@http-live.test")),
+        None,
+        Some(&format!("Terman Findable {marker}")),
+        None,
+        None,
+    )
+    .await?;
 
     let by_both = format!("/v1/persons?q=multi-{marker}%20findable");
     let (status, body) = get(app(&f, operator), &by_both).await?;
@@ -836,8 +845,15 @@ async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
     let named = f
         .person(&format!("aaa-order-{marker}@http-live.test"))
         .await?;
-    f.observed(named, "display_name", &format!("Zzz Named {marker}"))
-        .await?;
+    f.project_person(
+        named,
+        None,
+        None,
+        Some(&format!("Zzz Named {marker}")),
+        None,
+        None,
+    )
+    .await?;
     let unlabelled = f.emailless_person().await?;
 
     let (status, body) = get(app(&f, operator), "/v1/persons").await?;
@@ -988,7 +1004,9 @@ async fn the_roster_leaves_out_an_identity_nobody_claims() -> TestResult {
         return Ok(());
     };
     let holder = f.account_holder("roster-holder@http-live.test").await?;
-    let observed_only = f.person("roster-observed@http-live.test").await?;
+    let observed_only = f
+        .identity_only_person("roster-observed@http-live.test")
+        .await?;
 
     let (status, body) = get(flat_app(&f, holder), "/v1/visible-persons").await?;
 
@@ -1036,7 +1054,7 @@ async fn a_roster_cursor_resumes_after_the_page_it_was_issued_for() -> TestResul
 }
 
 #[tokio::test]
-async fn a_sign_in_minted_person_is_listed_by_their_login_and_marked() -> TestResult {
+async fn a_sign_in_minted_identity_is_not_a_roster_person() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1053,10 +1071,12 @@ async fn a_sign_in_minted_person_is_listed_by_their_login_and_marked() -> TestRe
                 .iter()
                 .find(|item| item["person_id"].as_str() == Some(&minted.to_string()))
         })
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("a login-minted person is still a person: {body}"))?;
+        .cloned();
 
-    assert_eq!(entry["provisional"], true, "offered, and marked as thin");
+    assert!(
+        entry.is_none(),
+        "login evidence alone is not the roster: {body}"
+    );
     Ok(())
 }
 

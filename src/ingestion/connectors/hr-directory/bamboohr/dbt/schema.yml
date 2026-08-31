@@ -9,6 +9,15 @@ sources:
       - name: meta_fields
 
 models:
+  - name: bamboohr__identity_inputs
+    description: "Identity-resolution evidence, canonical person profile, and active roster membership emitted from BambooHR employee history."
+    columns:
+      - name: value_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['id', 'email', 'employee_id', 'display_name', 'first_name', 'last_name', 'department', 'division', 'job_title', 'status', 'parent_email', 'parent_id', 'roster_membership', 'person_email', 'person_display_name', 'person_first_name', 'person_last_name']
+
   - name: bamboohr__to_class_people
     description: >
       BambooHR Employees -> class_people (Silver Step 1). Full-refresh source. Identity key: email (workEmail). Maps BambooHR status to normalised status (active/terminated/unknown) — a record that is neither explicitly Active nor Terminated is `unknown`, never `active`, so it cannot silently inflate headcount. Current-state snapshot: entity-level `unique_key` (one row per employee) and `valid_from` = lastChanged. No `valid_to` — this model holds no version history; that lives in bamboohr__employees_snapshot / bamboohr__employees_fields_history. Reads bronze with FINAL because bronze is append-only RMT (see ADR-0001).
