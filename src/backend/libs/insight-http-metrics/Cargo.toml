@@ -19,4 +19,4 @@ tower = "0.5"
 [dev-dependencies]
 tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
-opentelemetry_sdk = { version = "0.31", features = ["metrics", "testing"] }
+opentelemetry_sdk = { version = "0.32", features = ["metrics", "testing"] }
