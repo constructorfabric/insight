@@ -42,6 +42,7 @@ import datetime as dt
 import io
 import json
 import math
+import statistics
 import uuid
 import warnings
 import zipfile
@@ -66,10 +67,19 @@ from ..schemas.analytics import (
     MetricDrilldownColumnType,
     MetricDrilldownEntity,
     MetricDrilldownEntity1,
+    MetricDrilldownEntity3,
     MetricDrilldownResponse,
 )
 from . import query_window
-from .drilldown_matrix import EMPTY_EVIDENCE_METRIC, EXPORT_SHAPES, MATRIX, Expectation, Tier
+from .drilldown_matrix import (
+    EMPTY_EVIDENCE_METRIC,
+    EVIDENCE_BLOCKED,
+    EXPORT_SHAPES,
+    MATRIX,
+    EntityKind,
+    Expectation,
+    Tier,
+)
 
 DRILLDOWN = analytics_path("/v1/metric-drilldown")
 DRILLDOWN_EXPORT = analytics_path("/v1/metric-drilldown/export")
@@ -150,10 +160,39 @@ def drilldown_capabilities(
     return {metric.metric_key: metric.drilldown for metric in metrics}
 
 
+_EVIDENCE_BLOCKED_REASON = (
+    "#2989: the CI source's evidence relation is marked unhealthy, so the endpoint refuses "
+    "the drilldown and the catalogue withholds the capability"
+)
+
+
+def _marks_for(expectation: Expectation) -> tuple[pytest.MarkDecorator, ...]:
+    """A metric the product refuses evidence for is a strict xfail, not a pass."""
+    if expectation.metric_key not in EVIDENCE_BLOCKED:
+        return ()
+    return (pytest.mark.xfail(strict=True, reason=_EVIDENCE_BLOCKED_REASON),)
+
+
+def _entity_body(manifest: Manifest, entity: EntityKind, entity_id: str | None) -> JsonValue:
+    """The drilldown's entity block, person by default.
+
+    A tenant entity carries no identifier: the route rejects a supplied one.
+    """
+    if entity == EntityKind.TENANT:
+        return {"type": "tenant"}
+    return {
+        "type": "person",
+        # Not `or`: an empty id is a case a caller may want to send, and
+        # falling back to a real person would quietly test something else.
+        "id": manifest.fixture("dev_lead").uuid if entity_id is None else entity_id,
+    }
+
+
 def _request_for(
     manifest: Manifest,
     metric_key: str,
     *,
+    entity: EntityKind = EntityKind.PERSON,
     entity_id: str | None = None,
     limit: int | None = None,
     cursor: str | None = None,
@@ -163,12 +202,7 @@ def _request_for(
     start, end = query_window(manifest)
     request: dict[str, JsonValue] = {
         "metric_key": metric_key,
-        "entity": {
-            "type": "person",
-            # Not `or`: an empty id is a case a caller may want to send, and
-            # falling back to a real person would quietly test something else.
-            "id": manifest.fixture("dev_lead").uuid if entity_id is None else entity_id,
-        },
+        "entity": _entity_body(manifest, entity, entity_id),
         "period": {"from": start, "to": end},
         "filters": list(filters),
         "display_dimensions": list(display_dimensions),
@@ -204,6 +238,7 @@ def _page(
     metric_key: str,
     *,
     limit: int,
+    entity: EntityKind = EntityKind.PERSON,
     cursor: str | None = None,
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
@@ -213,6 +248,7 @@ def _page(
         json_body=_request_for(
             manifest,
             metric_key,
+            entity=entity,
             limit=limit,
             cursor=cursor,
             filters=filters,
@@ -227,6 +263,7 @@ def _walk(
     metric_key: str,
     *,
     limit: int,
+    entity: EntityKind = EntityKind.PERSON,
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
     page_budget: int | None = None,
@@ -242,6 +279,7 @@ def _walk(
         manifest,
         metric_key,
         limit=limit,
+        entity=entity,
         filters=filters,
         display_dimensions=display_dimensions,
     )
@@ -270,6 +308,7 @@ def _walk(
             manifest,
             metric_key,
             limit=limit,
+            entity=entity,
             cursor=cursor,
             filters=filters,
             display_dimensions=display_dimensions,
@@ -284,20 +323,22 @@ def _period_value(
     manifest: Manifest,
     metric_key: str,
     *,
+    entity: EntityKind = EntityKind.PERSON,
     filters: Sequence[JsonValue] = (),
 ) -> float | None:
-    """The scalar the dashboard shows for the same person, period and filters.
+    """The scalar the dashboard shows for the same entity, period and filters.
 
-    `None` is a real answer rather than a failure: nothing zero-fills, so a
-    person with no observations in the period has no value at all, and that is
+    `None` is a real answer rather than a failure: nothing zero-fills, so an
+    entity with no observations in the period has no value at all, and that is
     what an empty evidence page has to agree with.
     """
     start, end = query_window(manifest)
-    person_id = manifest.fixture("dev_lead").uuid
+    tenant = entity == EntityKind.TENANT
+    entity_id = manifest.tenant if tenant else manifest.fixture("dev_lead").uuid
     response = api.post(
         METRIC_RESULTS,
         json_body={
-            "entity": {"type": "person", "ids": [person_id]},
+            "entity": {"type": "tenant"} if tenant else {"type": "person", "ids": [entity_id]},
             "period": {"from": start, "to": end},
             "metrics": [
                 {
@@ -316,7 +357,7 @@ def _period_value(
     assert isinstance(views[0].root, PeriodView)
     values = views[0].root.values
     assert len(values) == 1
-    assert values[0].entity_id == person_id
+    assert values[0].entity_id == entity_id
     return values[0].value
 
 
@@ -487,10 +528,27 @@ def _person_entity_id(entity: MetricDrilldownEntity) -> str:
     return person.id
 
 
+def _assert_selection_entity(
+    entity: MetricDrilldownEntity, expectation: Expectation, person_id: str
+) -> None:
+    """The rows came back for the entity the request asked about.
+
+    Narrowing the union is the assertion: a tenant metric answered under a
+    person selection would be a different question answered.
+    """
+    if expectation.entity == EntityKind.TENANT:
+        assert isinstance(entity.root, MetricDrilldownEntity3), (
+            f"{expectation.metric_key}: expected the tenant selection, got {entity.root.type}"
+        )
+        return
+
+    assert _person_entity_id(entity) == person_id
+
+
 def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None:
     selection = walk.first.selection
     assert selection.metric_key == expectation.metric_key
-    assert _person_entity_id(selection.entity) == person_id
+    _assert_selection_entity(selection.entity, expectation, person_id)
     assert selection.filters == []
     assert selection.display_dimensions == []
 
@@ -522,6 +580,7 @@ def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None
             Tier.EXACT_SUM
             | Tier.EXACT_MEDIAN
             | Tier.EXACT_PERCENTILE
+            | Tier.EXACT_STDDEV
             | Tier.EXACT_DISTINCT_DATES
             | Tier.COLLAPSE_BOUNDED_SUM
             | Tier.STRUCTURAL_ONLY
@@ -611,6 +670,27 @@ def _assert_ratio(
     )
 
 
+def _assert_stddev(period: float | None, values: Sequence[float], metric_key: str) -> None:
+    """`stddevSampIf` is the sample deviation, so the evidence recomputes it.
+
+    A single row has no sample deviation to speak of — ClickHouse answers nan
+    there — so the one-row case asserts only that the metric declined to claim
+    one, rather than pinning a value neither side defines.
+    """
+    if len(values) < 2:
+        assert period is None or math.isnan(period), (
+            f"{metric_key}: {len(values)} evidence row(s) cannot have a sample deviation, "
+            f"but the metric answered {period}"
+        )
+        return
+
+    deviation = statistics.stdev(values)
+    assert period is not None and _close(deviation, period), (
+        f"{metric_key}: evidence deviates by {deviation} over {len(values)} rows "
+        f"against a metric value of {period}"
+    )
+
+
 def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> None:
     metric_key = expectation.metric_key
 
@@ -636,6 +716,8 @@ def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> N
                 expectation.quantile,
                 metric_key,
             )
+        case Tier.EXACT_STDDEV:
+            _assert_stddev(period, _numbers(walk.rows, "value", metric_key), metric_key)
         case Tier.DERIVED_MEDIAN:
             parts = [_numbers(walk.rows, column, metric_key) for column in expectation.derived_from]
             _assert_median(period, [sum(row) for row in zip(*parts, strict=True)], metric_key)
@@ -747,7 +829,9 @@ def test_advertised_capability_matches_what_the_endpoint_serves(
 
 @pytest.mark.requires_seed("dev_lead")
 @pytest.mark.parametrize(
-    "expectation", MATRIX, ids=[expectation.metric_key for expectation in MATRIX]
+    "expectation",
+    [pytest.param(expectation, marks=_marks_for(expectation)) for expectation in MATRIX],
+    ids=[expectation.metric_key for expectation in MATRIX],
 )
 @pytest.mark.reliability
 def test_drilldown_reconciles_with_the_metric_value(
@@ -772,7 +856,18 @@ def test_drilldown_reconciles_with_the_metric_value(
     that decides whether evidence exists.
     """
     person_id = stand_manifest.fixture("dev_lead").uuid
-    probe = _page(api, stand_manifest, expectation.metric_key, limit=_PAGE_LIMIT)
+    probe = _page(
+        api,
+        stand_manifest,
+        expectation.metric_key,
+        limit=_PAGE_LIMIT,
+        entity=expectation.entity,
+    )
+    if expectation.metric_key in EVIDENCE_BLOCKED:
+        assert probe.status_code == 200, (
+            f"{expectation.metric_key}: evidence exists but the endpoint refused it — "
+            f"{probe.status_code}: {probe.text[:300]}"
+        )
     if probe.status_code != 200:
         _assert_evidence_unavailable(
             probe, expectation.metric_key, drilldown_capabilities.get(expectation.metric_key)
@@ -784,12 +879,13 @@ def test_drilldown_reconciles_with_the_metric_value(
         stand_manifest,
         expectation.metric_key,
         limit=_PAGE_LIMIT,
+        entity=expectation.entity,
         page_budget=_PAGE_BUDGET,
         initial=probe,
     )
     _assert_shape(walk, expectation, person_id)
 
-    period = _period_value(api, stand_manifest, expectation.metric_key)
+    period = _period_value(api, stand_manifest, expectation.metric_key, entity=expectation.entity)
     if not walk.rows:
         assert period is None, (
             f"{expectation.metric_key}: no evidence rows, but the metric answered {period}"

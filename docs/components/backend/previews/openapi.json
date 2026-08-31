@@ -338,7 +338,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Create a preview experiment (name + FE image tag)"
+        "summary": "Create a preview experiment (name + FE image tag); requires the previews-admin or admin role"
       }
     },
     "/v1/experiments/{name}": {
@@ -435,7 +435,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Delete a preview experiment"
+        "summary": "Delete a preview experiment; requires the previews-admin or admin role"
       }
     }
   }

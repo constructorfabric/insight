@@ -20,11 +20,16 @@ use uuid::Uuid;
 use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::ExperimentError;
+
 use crate::domain::experiment::{
     Experiment, ExperimentName, ExperimentStatus, ImageTag, TtlDays, experiment_url,
 };
 use crate::domain::objects::{self, ExperimentStamp};
 use crate::infra::cluster::{CreateError, DeleteOutcome};
+
+/// The identity role names (JWT `roles` → `token_scopes`) that may create or
+/// delete experiments.
+const MANAGE_SCOPES: [&str; 2] = ["previews-admin", "admin"];
 
 /// Body of `POST /v1/experiments`. The image repository is fixed server-side;
 /// only the tag varies.
@@ -111,7 +116,7 @@ pub async fn create_experiment(
     Extension(ctx): Extension<SecurityContext>,
     CanonicalJson(req): CanonicalJson<CreateExperimentRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let caller = require_caller(&ctx)?;
+    let caller = require_manage_scope(&ctx)?;
 
     let name = ExperimentName::parse(&req.name).map_err(|why| field_violation("name", &why))?;
     let tag = ImageTag::parse(&req.tag).map_err(|why| field_violation("tag", &why))?;
@@ -205,7 +210,7 @@ pub async fn delete_experiment(
     Extension(ctx): Extension<SecurityContext>,
     Path(raw_name): Path<String>,
 ) -> Result<impl IntoResponse, CanonicalError> {
-    let caller = require_caller(&ctx)?;
+    let caller = require_manage_scope(&ctx)?;
 
     let name = ExperimentName::parse(&raw_name).map_err(|why| field_violation("name", &why))?;
 
@@ -240,6 +245,34 @@ fn require_caller(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
     Ok(caller)
 }
 
+/// Require a caller whose verified token scopes allow managing experiments;
+/// no database and no S2S call.
+fn require_manage_scope(ctx: &SecurityContext) -> Result<Uuid, CanonicalError> {
+    let caller = require_caller(ctx)?;
+    if !holds_manage_scope(ctx.token_scopes()) {
+        return Err(manage_scope_denied(ctx, caller));
+    }
+    Ok(caller)
+}
+
+fn holds_manage_scope(scopes: &[String]) -> bool {
+    scopes
+        .iter()
+        .any(|scope| MANAGE_SCOPES.contains(&scope.as_str()))
+}
+
+/// The canonical 403 for a mutation without a managing scope, logged.
+fn manage_scope_denied(ctx: &SecurityContext, caller: Uuid) -> CanonicalError {
+    tracing::warn!(
+        caller = %caller,
+        subject_type = ctx.subject_type().unwrap_or(""),
+        "experiment mutation denied: token carries no previews-admin/admin scope"
+    );
+    ExperimentError::permission_denied()
+        .with_reason("managing experiments requires the previews-admin or admin role")
+        .create()
+}
+
 fn field_violation(field: &'static str, why: &str) -> CanonicalError {
     ExperimentError::invalid_argument()
         .with_field_violation(field, why, "INVALID")
@@ -250,4 +283,68 @@ fn field_violation(field: &'static str, why: &str) -> CanonicalError {
 fn list_err(e: anyhow::Error) -> CanonicalError {
     tracing::error!(error = %format!("{e:#}"), "experiment listing failed");
     CanonicalError::internal("failed to list experiments").create()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scopes(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn only_the_previews_admin_or_admin_scope_may_manage() {
+        for (case, held, allowed) in [
+            ("previews-admin", scopes(&["previews-admin"]), true),
+            ("admin", scopes(&["admin"]), true),
+            ("both plus noise", scopes(&["user", "admin"]), true),
+            ("the default user role", scopes(&["user"]), false),
+            ("no scopes at all", scopes(&[]), false),
+            // Exact names, never substrings — a made-up superset must not pass.
+            ("a superset name", scopes(&["previews-admin-plus"]), false),
+            ("a different admin", scopes(&["session_admin"]), false),
+        ] {
+            assert_eq!(
+                holds_manage_scope(&held),
+                allowed,
+                "wrong decision for: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mutation_without_the_scope_is_a_403_and_without_a_subject_a_401()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let identified = SecurityContext::builder()
+            .subject_id(Uuid::from_u128(1))
+            .subject_tenant_id(Uuid::from_u128(2))
+            .token_scopes(scopes(&["user"]))
+            .build()
+            .map_err(|e| format!("build context: {e:?}"))?;
+        let Err(denied) = require_manage_scope(&identified) else {
+            return Err("the default user role must not manage experiments".into());
+        };
+        assert_eq!(denied.status_code(), StatusCode::FORBIDDEN);
+
+        let anonymous = SecurityContext::builder()
+            .subject_id(Uuid::nil())
+            .subject_tenant_id(Uuid::from_u128(2))
+            .token_scopes(scopes(&["previews-admin"]))
+            .build()
+            .map_err(|e| format!("build context: {e:?}"))?;
+        let Err(refused) = require_manage_scope(&anonymous) else {
+            return Err("a subject-less token must be refused before the scope check".into());
+        };
+        assert_eq!(refused.status_code(), StatusCode::UNAUTHORIZED);
+
+        let granted = SecurityContext::builder()
+            .subject_id(Uuid::from_u128(1))
+            .subject_tenant_id(Uuid::from_u128(2))
+            .token_scopes(scopes(&["previews-admin"]))
+            .build()
+            .map_err(|e| format!("build context: {e:?}"))?;
+        assert_eq!(require_manage_scope(&granted)?, Uuid::from_u128(1));
+        Ok(())
+    }
 }

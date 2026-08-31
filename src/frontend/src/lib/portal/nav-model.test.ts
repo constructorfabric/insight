@@ -78,15 +78,33 @@ describe("resolveZoneItem", () => {
  * reordering would silently reshape the pane every operator already knows.
  */
 describe("manageItemsFor", () => {
-  it("gives an admin the full pane", () => {
-    expect(manageItemsFor(true)).toEqual(MANAGE_ITEMS);
+  it("gives a viewer passing every gate the full pane", () => {
+    expect(
+      manageItemsFor({ isAdmin: true, canManagePreviews: true }),
+    ).toEqual(MANAGE_ITEMS);
   });
 
-  it("drops exactly the admin-only surfaces for everyone else", () => {
-    const visible = manageItemsFor(false);
+  it("drops exactly the gated surfaces for everyone else", () => {
+    const visible = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: false,
+    });
 
     expect(visible.map((i) => i.id)).not.toContain("identities");
-    expect(visible).toEqual(MANAGE_ITEMS.filter((i) => !i.adminOnly));
+    expect(visible.map((i) => i.id)).not.toContain("previews");
+    expect(visible).toEqual(
+      MANAGE_ITEMS.filter((i) => !i.adminOnly && !i.previewsGated),
+    );
+  });
+
+  it("gates previews independently of admin-ness", () => {
+    const previewsOnly = manageItemsFor({
+      isAdmin: false,
+      canManagePreviews: true,
+    });
+
+    expect(previewsOnly.map((i) => i.id)).toContain("previews");
+    expect(previewsOnly.map((i) => i.id)).not.toContain("identities");
   });
 });
 

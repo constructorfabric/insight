@@ -15,6 +15,7 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     // Unix seconds; far enough out that no test trips an accidental refresh.
     expiresAt: 4102444800, // 2100-01-01
     refreshAt: 4102444710,
+    experimentsEnabled: false,
     impersonatorEmail: null,
     ...overrides,
   };

@@ -52,7 +52,11 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "identity-resolution",
+        ));
 
     host_router.merge(api)
 }
@@ -121,6 +125,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = router.route(
         "/internal/persons/provision",
         axum::routing::post(handlers::internal_provision_person),
+    );
+    let router = router.route(
+        "/internal/persons/active-roles",
+        axum::routing::get(handlers::internal_person_active_roles),
     );
 
     let router = OperationBuilder::post("/v1/profiles")

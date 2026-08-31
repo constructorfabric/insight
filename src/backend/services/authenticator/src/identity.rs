@@ -99,6 +99,17 @@ pub trait PersonResolver: Send + Sync {
         let _ = id;
         Ok(None)
     }
+
+    /// The ACTIVE identity role names the person holds in the tenant. An
+    /// empty list means "no grants" — the caller falls back to its
+    /// `default_roles`, so this default keeps the prior behaviour.
+    ///
+    /// # Errors
+    /// Fails when the Identity Service is unreachable or errors.
+    async fn active_roles(&self, person_id: &str, tenant_id: &str) -> anyhow::Result<Vec<String>> {
+        let _ = (person_id, tenant_id);
+        Ok(Vec::new())
+    }
 }
 
 /// `PersonResolver` backed by the Identity Service.
@@ -306,6 +317,12 @@ impl IdentityPersonResolver {
     }
 }
 
+/// Wire shape of `GET /internal/persons/active-roles` — only the names.
+#[derive(serde::Deserialize)]
+struct ActiveRolesProfile {
+    roles: Vec<String>,
+}
+
 #[async_trait]
 impl PersonResolver for IdentityPersonResolver {
     async fn resolve(&self, id: &IdpIdentity) -> anyhow::Result<Option<PersonResolution>> {
@@ -331,6 +348,29 @@ impl PersonResolver for IdentityPersonResolver {
             person_id: person_id.to_string(),
             tenant_id: id.tenant_id.clone(),
         }))
+    }
+
+    async fn active_roles(&self, person_id: &str, tenant_id: &str) -> anyhow::Result<Vec<String>> {
+        if self.base_url.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = format!("{}/internal/persons/active-roles", self.base_url);
+        let token = self.mint_service_token(tenant_id)?;
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[("person_id", person_id)])
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("Identity active-roles request")?;
+        anyhow::ensure!(
+            resp.status().is_success(),
+            "Identity returned {} for /internal/persons/active-roles",
+            resp.status()
+        );
+        let profile: ActiveRolesProfile = resp.json().await.context("decode ActiveRolesProfile")?;
+        Ok(profile.roles)
     }
 }
 
@@ -417,6 +457,14 @@ mod tests {
                 "{target:?} must not send source_type",
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_resolver_without_a_roles_source_grants_nothing() -> anyhow::Result<()> {
+        let roles = LookupOnly.active_roles("person", "tenant").await?;
+
+        assert!(roles.is_empty());
+        Ok(())
     }
 
     #[tokio::test]

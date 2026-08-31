@@ -1,23 +1,18 @@
 // @vitest-environment jsdom
-/**
- * The report builder's promises to the reader: never offer a metric the file
- * cannot honestly contain, never offer a file built from something other than
- * what is on screen, and never hand back a partial one.
- */
-const usageMocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
-
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const usageMocks = vi.hoisted(() => ({ recordUsageEvent: vi.fn() }));
 const mocks = vi.hoisted(() => ({
   definitions: [] as unknown[],
-  computations: new Map<string, string>(),
   scope: {} as Record<string, unknown>,
   dateRange: { from: "2026-05-13", to: "2026-08-12" },
-  run: vi.fn(),
-  csv: vi.fn(),
-  xlsx: vi.fn(),
+  preview: vi.fn(),
+  export: vi.fn(),
+  metricVisible: vi.fn(),
+  previewPending: false,
+  exportPending: false,
 }));
 
 vi.mock("@/queries/metric-definitions", () => ({
@@ -27,381 +22,410 @@ vi.mock("@/queries/metric-definitions", () => ({
     isError: false,
   }),
 }));
-vi.mock("@/queries/report-catalogue", () => ({
-  useMetricComputations: () => ({
-    data: mocks.computations,
-    isPending: false,
-    isError: false,
-  }),
+vi.mock("@/lib/portal/use-org-scope", () => ({
+  useOrgScope: () => mocks.scope,
 }));
-vi.mock("@/lib/portal/use-org-scope", () => ({ useOrgScope: () => mocks.scope }));
 vi.mock("@/hooks/use-portal-period", () => ({
-  usePortalPeriod: () => ({
-    period: "quarter",
-    dateRange: mocks.dateRange,
+  usePortalPeriod: () => ({ dateRange: mocks.dateRange }),
+}));
+vi.mock("@/queries/reports", () => ({
+  useReportPreview: () => ({
+    isPending: mocks.previewPending,
+    mutateAsync: mocks.preview,
+  }),
+  useReportExport: () => ({
+    isPending: mocks.exportPending,
+    mutateAsync: mocks.export,
   }),
 }));
-vi.mock("@/lib/reports/run-report", () => ({ runReport: mocks.run }));
+vi.mock("@/lib/portal/nav-policy", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/portal/nav-policy")
+  >("@/lib/portal/nav-policy");
+  return { ...actual, metricVisible: mocks.metricVisible };
+});
 vi.mock("@/telemetry", async () => {
-  const actual = await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
+  const actual =
+    await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
   return { ...actual, recordUsageEvent: usageMocks.recordUsageEvent };
 });
 
-vi.mock("@/lib/export/matrix", () => ({
-  downloadMatrixCsv: mocks.csv,
-  downloadMatrixXlsx: mocks.xlsx,
-}));
-
 import { ReportBuilderView } from "@/components/portal/report-builder-view";
 
-const definition = (over: Record<string, unknown>) => ({
-  metric_key: "git.commits",
-  label: "Commits",
-  description: "Authored commits",
-  is_enabled: true,
-  schema_status: "ok",
-  last_observed_date: "2026-05-01",
-  origin: "builtin",
-  ...over,
-});
+const personId = "00000000-0000-0000-0000-000000000001";
 
-const person = {
-  person_id: "P1",
-  email: "jane.doe@example.com",
-  display_name: "Jane Doe",
-  subordinates: [],
+const preview = {
+  columns: [
+    { key: "person", label: "Person", data_type: "text" as const },
+    {
+      key: "git.commits",
+      label: "Commits",
+      data_type: "number" as const,
+      format: "decimal" as const,
+    },
+  ],
+  rows: [["Jane Doe", 1082.1594444444445]],
+  total_rows: 1,
 };
 
-const reportPerson = {
-  entityId: "p1",
-  name: "Jane Doe",
-  email: "jane.doe@example.com",
-  division: "",
-  department: "",
-  jobTitle: "",
-  managerName: "",
-  managerEmail: "",
-  status: "",
-};
-
-const decimalResult = (value: number) =>
-  ({
+function metric(overrides: Record<string, unknown>) {
+  return {
     metric_key: "git.commits",
+    entity_type: "person",
     label: "Commits",
-    format: "decimal",
+    short_label: null,
+    description: "Authored commits",
+    explanation: null,
     unit: null,
+    format: "decimal",
     direction: "neutral",
-    computation: "sum",
-    views: [
-      {
-        view: "timeseries",
-        bucket: "month",
-        series: [
-          {
-            entity_id: "p1",
-            dimensions: [],
-            points: [{ bucket_start: "2026-05-01", value }],
-          },
-        ],
-      },
-    ],
-  }) as never;
+    dimensions: [],
+    is_enabled: true,
+    origin: "builtin",
+    schema_status: "ok",
+    schema_error_code: null,
+    last_observed_date: "2026-05-01",
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
-  mocks.definitions = [
-    definition({}),
-    definition({ metric_key: "git.merge_rate", label: "Merge rate" }),
-    definition({
-      metric_key: "tasks.closed",
-      label: "Issues closed",
-      last_observed_date: null,
-    }),
-  ];
-  mocks.computations = new Map([
-    ["git.commits", "sum"],
-    ["git.merge_rate", "ratio"],
-  ]);
-  mocks.scope = {
-    pivot: person,
-    roster: [{ person_id: "P1" }],
-    reportPeople: [reportPerson],
-    label: "Jane Doe",
-    isLoading: false,
-    isError: false,
-  };
   mocks.dateRange = { from: "2026-05-13", to: "2026-08-12" };
-  mocks.run.mockReset().mockResolvedValue(new Map());
-  mocks.csv.mockReset();
-  mocks.xlsx.mockReset();
+  mocks.definitions = [
+    metric({}),
+    metric({ metric_key: "tasks.closed", label: "Issues closed" }),
+    metric({ metric_key: "ci.runs", label: "CI runs", entity_type: "tenant" }),
+  ];
+  mocks.scope = {
+    roster: [{ person_id: personId }],
+    label: "Whole organisation",
+  };
+  mocks.preview.mockReset().mockResolvedValue(preview);
+  mocks.export.mockReset().mockResolvedValue(undefined);
+  mocks.previewPending = false;
+  mocks.exportPending = false;
+  mocks.metricVisible.mockReset().mockReturnValue(true);
+  usageMocks.recordUsageEvent.mockReset();
 });
 
-const box = (name: string) => screen.getByRole("checkbox", { name });
-/** The checkbox is a span with a role, so disabled shows as an attribute. */
-const isDisabled = (name: string) =>
-  box(name).getAttribute("aria-disabled") === "true";
-/** The dialog opens over the page and takes the background out of the a11y
- *  tree, so the offer behind it is only reachable once it is closed. */
-const closeDialog = (user: ReturnType<typeof userEvent.setup>) =>
-  user.keyboard("{Escape}");
+function checkbox(name: string): HTMLElement {
+  return screen.getByRole("checkbox", { name });
+}
 
 describe("ReportBuilderView", () => {
-  it("lists a metric nothing has reached, disabled, rather than hiding it", () => {
-    // A family that simply vanishes leaves the reader unable to tell "not
-    // measured here" from "I misremembered the name".
-    render(<ReportBuilderView />);
-    expect(isDisabled("Issues closed")).toBe(true);
-    expect(screen.getByText("Issues closed").closest("label")).toHaveAttribute(
-      "title",
-      expect.stringMatching(/No data source is connected/),
-    );
-  });
-
-  it("disables a non-additive metric only where buckets are added up", async () => {
+  it("refuses granularity longer than the period and sends the clamped value", async () => {
+    mocks.dateRange = { from: "2026-08-24", to: "2026-08-30" };
     const user = userEvent.setup();
     render(<ReportBuilderView />);
-    expect(isDisabled("Merge rate")).toBe(false);
-
-    await user.click(screen.getByRole("button", { name: "Quarterly" }));
-    expect(isDisabled("Merge rate")).toBe(true);
-    expect(isDisabled("Commits")).toBe(false);
-  });
-
-  it("refuses a non-additive metric in repository rows at any grain", async () => {
-    // Per repository every row is people added up, so the additivity question
-    // arrives immediately rather than only at a quarter.
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-    expect(isDisabled("Merge rate")).toBe(false);
-
-    await user.click(screen.getByRole("button", { name: "Repositories" }));
-    expect(isDisabled("Merge rate")).toBe(true);
-    expect(screen.getByText("Merge rate").closest("label")).toHaveAttribute(
-      "title",
-      expect.stringMatching(/cannot be totalled per repository/),
-    );
-    expect(isDisabled("Commits")).toBe(false);
-    expect(
-      screen.getByText(/one row per repository per period/),
-    ).toBeInTheDocument();
-  });
-
-  it("refuses a grain longer than the period, and says which to pick", async () => {
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-
-    const yearly = screen.getByRole("button", { name: "Yearly" });
-    expect(yearly).toBeDisabled();
-    expect(yearly).toHaveAttribute(
-      "title",
-      expect.stringMatching(/at least a year — pick quarterly or finer/),
-    );
-
-    await user.click(screen.getByRole("button", { name: "Quarterly" }));
-    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("says why it cannot build yet, rather than greying out in silence", async () => {
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-
-    expect(screen.getByRole("button", { name: "Build report" })).toBeDisabled();
-    expect(screen.getByText("Pick at least one metric")).toBeInTheDocument();
-
-    await user.click(box("Commits"));
-
-    expect(screen.queryByText("Pick at least one metric")).not.toBeInTheDocument();
-  });
-
-  it("says when the scope is what blocks the build, once a metric is picked", async () => {
-    const user = userEvent.setup();
-    mocks.scope = { ...mocks.scope, roster: [], reportPeople: [] };
-    render(<ReportBuilderView />);
-
-    await user.click(box("Commits"));
-
-    expect(screen.getByRole("button", { name: "Build report" })).toBeDisabled();
-    expect(screen.getByText("This scope has no people")).toBeInTheDocument();
-  });
-
-  it("reports which format a reader took the report out in", async () => {
-    const user = userEvent.setup();
-    usageMocks.recordUsageEvent.mockClear();
-    render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-    await closeDialog(user);
-    await user.click(await screen.findByRole("button", { name: /rows ·/ }));
-
-    await user.click(await screen.findByRole("button", { name: "CSV" }));
-    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith("export", "report:csv");
-
-    await user.click(await screen.findByRole("button", { name: "Excel" }));
-    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith("export", "report:xlsx");
-  });
-
-  it("cannot build until something is picked", async () => {
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-    const build = screen.getByRole("button", { name: "Build report" });
-    expect(build).toBeDisabled();
-
-    await user.click(box("Commits"));
-    expect(build).not.toBeDisabled();
-  });
-
-  it("builds from a flat scope without a tree pivot", async () => {
-    const user = userEvent.setup();
-    mocks.scope = {
-      ...mocks.scope,
-      pivot: null,
-      roster: [{ person_id: "P1" }],
-      reportPeople: [reportPerson],
-      label: "Whole organisation",
-    };
-    render(<ReportBuilderView />);
-
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-
-    await waitFor(() =>
-      expect(mocks.run).toHaveBeenCalledWith(
-        expect.objectContaining({ entityIds: ["p1"] }),
-      ),
-    );
-  });
-
-  it("formats rounded metric values in the preview", async () => {
-    const user = userEvent.setup();
-    mocks.run.mockResolvedValueOnce(
-      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
-    );
-    render(<ReportBuilderView />);
-
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-
-    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
-  });
-
-  it("offers the file once the run has finished, stamped with what made it", async () => {
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-
-    // The preview opens on its own — the reader asked for it by building.
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Monthly");
-    expect(dialog).toHaveTextContent("2026-05-13 to 2026-08-12");
-    expect(mocks.run).toHaveBeenCalledTimes(1);
-
-    await closeDialog(user);
-    const offer = await screen.findByRole("button", { name: /rows ·/ });
-    expect(offer).toHaveTextContent("Monthly");
-  });
-
-  it("withdraws the file when the granularity it was built for changes", async () => {
-    // It is held in the screen, not saved. A table built monthly must not
-    // still be downloadable under a yearly heading.
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-    await screen.findByRole("dialog");
-    await closeDialog(user);
-    await screen.findByRole("button", { name: /rows ·/ });
-
-    await user.click(screen.getByRole("button", { name: "Quarterly" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull(),
-    );
-  });
-
-  it("withdraws the file when the scope becomes a different roster of the same size", async () => {
-    // Counting people would call these the same report. They are not, and the
-    // file carries the names of whoever was in scope when it was built.
-    const user = userEvent.setup();
-    const { rerender } = render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-    await screen.findByRole("dialog");
-    await closeDialog(user);
-    await screen.findByRole("button", { name: /rows ·/ });
-
-    mocks.scope = {
-      ...mocks.scope,
-      pivot: { ...person, person_id: "P2", display_name: "Sam Smith" },
-      roster: [{ person_id: "P2" }],
-      reportPeople: [{ ...reportPerson, entityId: "p2", name: "Sam Smith" }],
-    };
-    rerender(<ReportBuilderView />);
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull(),
-    );
-  });
-
-  it("downloads nothing when the run fails, and says so", async () => {
-    mocks.run.mockRejectedValueOnce(new Error("network"));
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-
-    expect(await screen.findByText(/Could not build the report/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /rows ·/ })).toBeNull();
-    expect(mocks.csv).not.toHaveBeenCalled();
-    expect(mocks.xlsx).not.toHaveBeenCalled();
-  });
-  it("drops a held grain the shortened period cannot carry, and builds at the finer one", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(<ReportBuilderView />);
-    await user.click(screen.getByRole("button", { name: "Quarterly" }));
-    expect(screen.getByRole("button", { name: "Quarterly" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-
-    mocks.dateRange = { from: "2026-08-17", to: "2026-08-23" };
-    rerender(<ReportBuilderView />);
 
     expect(screen.getByRole("button", { name: "Weekly" })).toHaveAttribute(
       "aria-pressed",
-      "true",
+      "true"
     );
-    expect(screen.getByRole("button", { name: "Quarterly" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Yearly" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Yearly" })).toHaveAttribute(
+      "title",
+      expect.stringMatching(/at least a year — pick weekly or finer/)
+    );
 
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
     await waitFor(() =>
-      expect(mocks.run).toHaveBeenCalledWith(
-        expect.objectContaining({ granularity: "week" }),
-      ),
+      expect(mocks.preview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipe: expect.objectContaining({ granularity: "week" }),
+        })
+      )
     );
   });
 
-  it("hands both exporters the table the preview showed, without building again", async () => {
+  it("shows applicable metric groups together in the all-metrics tab", () => {
+    render(<ReportBuilderView />);
+
+    expect(
+      screen.queryByRole("heading", { name: "Report builder" })
+    ).toBeNull();
+    expect(screen.queryByText(/one row per person per period/)).toBeNull();
+    expect(screen.queryByText("Visible roster members")).toBeNull();
+    expect(screen.queryByText("Tenant-wide metrics")).toBeNull();
+    expect(
+      screen.queryByText("Period comes from the bar above")
+    ).toBeNull();
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.queryByText("Subject")).toBeNull();
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "CI runs" })).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: /All metrics/i })
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Git/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Delivery/i })).toBeInTheDocument();
+  });
+
+  it("filters the stacked metric groups with family tabs", async () => {
     const user = userEvent.setup();
-    mocks.run.mockResolvedValueOnce(
-      new Map([["git.commits", decimalResult(1082.1594444444445)]]),
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("tab", { name: /Git/i }));
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
+
+    await user.click(screen.getByRole("tab", { name: /All metrics/i }));
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+  });
+
+  it("filters metrics locally by search", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Search metrics" }), "issues");
+
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Commits" })).toBeNull();
+    expect(mocks.preview).not.toHaveBeenCalled();
+  });
+
+  it("keeps selection actions available and clears the current selection", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    expect(
+      screen.getByRole("status", { name: "0 selected" })
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Pick at least one metric")).toBeNull();
+    await user.click(checkbox("Commits"));
+    expect(
+      screen.getByRole("status", { name: "1 selected" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(checkbox("Commits")).not.toBeChecked();
+    expect(
+      screen.getByRole("status", { name: "0 selected" })
+    ).toBeInTheDocument();
+  });
+
+  it("omits metric groups hidden by the installation policy", () => {
+    mocks.metricVisible.mockImplementation(
+      (metricKey) => metricKey !== "tasks.closed"
     );
     render(<ReportBuilderView />);
-    await user.click(box("Commits"));
-    await user.click(screen.getByRole("button", { name: "Build report" }));
-    expect(await screen.findByText("1,082.2")).toBeInTheDocument();
-    await closeDialog(user);
-    await user.click(await screen.findByRole("button", { name: /rows ·/ }));
 
-    await user.click(await screen.findByRole("button", { name: "CSV" }));
-    await user.click(await screen.findByRole("button", { name: "Excel" }));
-
-    const exported = mocks.csv.mock.calls[0][1];
+    expect(checkbox("Commits")).toBeInTheDocument();
     expect(
-      exported.rows.some((row: unknown[]) => row.includes(1082.2)),
-    ).toBe(true);
-    expect(mocks.xlsx.mock.calls[0][2]).toBe(exported);
-    expect(mocks.run).toHaveBeenCalledTimes(1);
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
+    expect(screen.queryByText("Development · Delivery")).toBeNull();
+  });
+
+  it("sends visible people IDs in a people recipe", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith({
+        recipe: {
+          subject: { type: "people", ids: [personId] },
+          period: mocks.dateRange,
+          granularity: "month",
+          metric_keys: ["git.commits"],
+        },
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it("sends tenant subject without people IDs", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("button", { name: "Tenant" }));
+    await user.click(checkbox("CI runs"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipe: expect.objectContaining({
+            subject: { type: "tenant" },
+            metric_keys: ["ci.runs"],
+          }),
+        })
+      )
+    );
+  });
+
+  it("switches the grid to tenant metrics", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("button", { name: "Tenant" }));
+
+    expect(checkbox("CI runs")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Commits" })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
+  });
+
+  it("does not offer a separate report rows selector", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    expect(screen.queryByText("Rows")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repositories" })).toBeNull();
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    await waitFor(() =>
+      expect(mocks.preview).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipe: expect.not.objectContaining({ rows: expect.anything() }),
+        })
+      )
+    );
+  });
+
+  it("shows server positional values without client rounding", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    expect(await screen.findByText("1082.1594444444445")).toBeInTheDocument();
+  });
+
+  it("does not render a preview reopen button below the builder", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("button", { name: /1 rows/ })).toBeNull();
+  });
+
+  it("exports the current recipe through the reports hook", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: "CSV" }));
+
+    await waitFor(() =>
+      expect(mocks.export).toHaveBeenCalledWith(
+        expect.objectContaining({
+          format: "csv",
+          recipe: expect.objectContaining({ metric_keys: ["git.commits"] }),
+          signal: expect.any(AbortSignal),
+        })
+      )
+    );
+    expect(usageMocks.recordUsageEvent).toHaveBeenCalledWith(
+      "export",
+      "report:csv"
+    );
+  });
+
+  it("surfaces preview failures without offering a download", async () => {
+    mocks.preview.mockRejectedValueOnce(new Error("network"));
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+
+    expect(
+      await screen.findByText("Could not preview the report: network")
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /rows/ })).toBeNull();
+  });
+
+  it("aborts an in-flight preview", async () => {
+    let input: { signal?: AbortSignal } | undefined;
+    mocks.preview.mockImplementationOnce(
+      (next) =>
+        new Promise((_, reject) => {
+          input = next;
+          next.signal.addEventListener("abort", () =>
+            reject(new Error("aborted"))
+          );
+        })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+    await waitFor(() => expect(input).toBeDefined());
+    mocks.previewPending = true;
+    rerender(<ReportBuilderView />);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(input?.signal?.aborted).toBe(true);
+    expect(
+      await screen.findByText("Cancelled — no report was generated.")
+    ).toBeInTheDocument();
+  });
+
+  it("aborts an in-flight preview when its recipe changes", async () => {
+    let input: { signal?: AbortSignal } | undefined;
+    mocks.preview.mockImplementationOnce(
+      (next) =>
+        new Promise((_, reject) => {
+          input = next;
+          next.signal.addEventListener("abort", () =>
+            reject(new Error("aborted"))
+          );
+        })
+    );
+    const user = userEvent.setup();
+    const { rerender } = render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+    await user.click(screen.getByRole("button", { name: "Preview report" }));
+    await waitFor(() => expect(input).toBeDefined());
+    mocks.scope = {
+      ...mocks.scope,
+      roster: [{ person_id: "00000000-0000-0000-0000-000000000002" }],
+    };
+    rerender(<ReportBuilderView />);
+
+    expect(input?.signal?.aborted).toBe(true);
+  });
+  it("requires a narrower people scope when the API roster limit is exceeded", async () => {
+    mocks.scope = {
+      ...mocks.scope,
+      roster: Array.from({ length: 1001 }, () => ({ person_id: personId })),
+    };
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(checkbox("Commits"));
+
+    expect(
+      screen.getByText(
+        "This scope has 1,001 people; reports support up to 1,000. Narrow the scope"
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Preview report" })
+    ).toBeDisabled();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
-import { bucketBreakdown } from "./trend-drilldown";
+import { bucketBreakdown, bucketRange } from "./trend-drilldown";
 
 function result(
   points: Record<string, ReadonlyArray<[string, number | null]>>,
@@ -122,4 +122,46 @@ describe("bucketBreakdown", () => {
 
   it("answers with nothing for a metric the response does not carry", () =>
     expect(bucketBreakdown("git.absent", new Map(), MEMBERS)).toEqual([]));
+});
+
+describe("bucketRange", () => {
+  it("makes a day bucket its own single day", () => {
+    expect(bucketRange("2026-07-14", "day")).toEqual({
+      from: "2026-07-14",
+      to: "2026-07-14",
+    });
+  });
+
+  it("covers the seven days a week bucket stands for", () => {
+    expect(bucketRange("2026-07-13", "week")).toEqual({
+      from: "2026-07-13",
+      to: "2026-07-19",
+    });
+  });
+
+  it("closes a month bucket on the month's own last day", () => {
+    // February, and a leap year, because a fixed 30 or 31 would pass the rest.
+    expect(bucketRange("2026-02-01", "month")).toEqual({
+      from: "2026-02-01",
+      to: "2026-02-28",
+    });
+    expect(bucketRange("2024-02-01", "month")).toEqual({
+      from: "2024-02-01",
+      to: "2024-02-29",
+    });
+  });
+
+  it("crosses a year boundary rather than clamping inside one", () => {
+    expect(bucketRange("2026-12-28", "week")).toEqual({
+      from: "2026-12-28",
+      to: "2027-01-03",
+    });
+  });
+
+  it("answers a label it cannot read as that label alone", () => {
+    expect(bucketRange("not a date", "week")).toEqual({
+      from: "not a date",
+      to: "not a date",
+    });
+  });
 });

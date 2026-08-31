@@ -51,13 +51,14 @@ flowchart TB
   classDef map stroke:#4a4e9e,stroke-width:2px
 
   GEN(["seeder generators — every seed run"]):::actor
-  DBT1(["seed dbt run — apply-ch-migrations.sh, tag:gold +identity_inputs"]):::actor
+  DBT1(["seed dbt run — apply-ch-migrations.sh, tag:gold +identity_inputs +ai_invoice +CI chain"]):::actor
   PSEED(["compose exec identity-resolution seed"]):::actor
   PSYNC(["compose exec identity-resolution sync"]):::actor
   DBT2(["insight-seed gold — final rebuild"]):::actor
 
   subgraph BZ["bronze_* — ClickHouse"]
     EMP["bamboohr.employees with raw_data JSON"]
+    CIBZ["github.workflow_runs/deployments/deployment_statuses/repositories + gitlab.projects + bitbucket_cloud.repositories"]
   end
   subgraph ST["staging — ClickHouse"]
     direction TB
@@ -73,6 +74,7 @@ flowchart TB
   end
   subgraph SV["silver — ClickHouse"]
     CLS["class_* activity"]
+    CICLS["class_git_ci_runs, class_git_deployments, class_git_deployment_events, class_git_repositories"]
   end
   subgraph GD["insight gold — ClickHouse"]
     direction TB
@@ -80,13 +82,17 @@ flowchart TB
   end
 
   GEN -->|"1 INSERT"| EMP
+  GEN -->|"1 INSERT"| CIBZ
   GEN -->|"1 INSERT, silver written directly"| CLS
   EMP --> DBT1
+  CIBZ --> DBT1
   DBT1 -->|"2 snapshot + diff"| SNAP
   FEED -->|"2 union model identity_inputs.sql, same run"| II
+  DBT1 -->|"2 dbt build, same run"| CICLS
   II --> PSEED -->|"3 link accounts to persons by email"| PER
   PER --> PSYNC -->|"4 atomic snapshot copy"| IP
   CLS --> DBT2
+  CICLS --> DBT2
   II -.->|"email claims"| DBT2
   IP -.->|"person bindings"| DBT2
   DBT2 -->|"5 resolve + build"| EVD
@@ -163,11 +169,11 @@ Preflight runs before anything is written and reports every problem at once:
   **TRUNCATEs every table it writes**, across all tenants, so those rows would be
   destroyed. This is the one genuinely destructive thing the seeder does, and it
   is why an occupied stand is refused rather than merged into. The surface it
-  checks is `generators.base.RESET_TARGETS`, the same list `truncate` itself
-  enforces — including two inputs outside the silver database (an
-  identity-projection table and a bronze HR table). This check is differential,
-  so it finds nothing on a single-tenant stand; that is what the `persons` signal
-  above is for. Targets carrying no tenant column at all cannot be attributed to
+  checks is `generators.insert.RESET_TARGETS`, the same list `truncate` itself
+  enforces — spanning several `bronze_*` schemas and `staging`, not just the
+  silver database. This check is differential, so it finds nothing on a
+  single-tenant stand; that is what the `persons` signal above is for. Targets
+  carrying no tenant column at all cannot be attributed to
   anyone; the run logs them by name, and logs how many rows the step is about to
   clear in total, instead of pretending to have judged them.
 

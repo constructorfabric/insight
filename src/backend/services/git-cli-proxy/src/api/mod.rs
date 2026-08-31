@@ -56,7 +56,10 @@ pub fn register_routes(
         .layer(Extension(state))
         // Outside the bearer layer, so a rejected request is timed too — an
         // operator watching a token rotation needs exactly those.
-        .layer(axum::middleware::from_fn(observe));
+        .layer(axum::middleware::from_fn(observe))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "git-cli-proxy",
+        ));
 
     host_router.merge(v1)
 }

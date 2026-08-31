@@ -25,7 +25,8 @@ feeds the shared `class_git_*` silver models.
 | pull_request_review_comments | `/repos/{r}/pulls/comments` | updated_at, server-side `since` |
 | issues | `/repos/{r}/issues` | updated_at, server-side `since`; PRs filtered out |
 | projects_v2 | GraphQL `organization.projectsV2` | full refresh |
-| project_fields | GraphQL `ProjectV2.fields`, per board | full refresh, one row per (field, collection day) |
+| issue_links | GraphQL `repository.issues` link connections | updated_at, newest-first data feed |
+| project_fields | GraphQL `ProjectV2.fields`, per board | full refresh, one row per board field |
 | project_items | GraphQL `ProjectV2.items`, per board | card `updatedAt`, server-side `updated:>=DATE` (day granularity) |
 | issue_fields | GraphQL `organization.issueFields` | full refresh |
 | issue_types | GraphQL `organization.issueTypes` | full refresh |
@@ -61,15 +62,25 @@ GraphQL error, so a typo reads as "nothing changed": a green sync, an empty
 stream, and no way to tell it from a quiet week. The cursor's `datetime_format`
 is therefore `%Y-%m-%d`, so a timestamp cannot reach the query string, and
 `assert_boards_yield_cards` catches the outcome if one ever does. One day is
-re-read on every sync by design: the row key carries the day the card changed,
-so a re-read rewrites the same row.
+re-read on every sync by design, and that is free: the row key is the card, so
+a re-read collapses onto the row already there.
 
-**Why a collection day sits in the board keys.** GitHub keeps no history of a
-board field, an option rename, or a non-status card value. `updatedAt` says
-when a value was last touched and never what it was before, so a succession of
-snapshots is the only record — the day in the key makes each sync's view its
-own row while a re-collection inside one day replaces it. Status history is the
+**Where board history lives.** GitHub keeps no history of a board field, an
+option rename, or a non-status card value, so a succession of observations is
+the only record. Both board relations are keyed on the entity, so bronze holds
+the present and the RMT collapses each re-collection onto it; the record of
+change is the SCD2 snapshot above them (`*_snapshot`, `project_fields_history`),
+which writes nothing on a day when nothing changed. Status history is the
 exception: it comes from the issue timeline and is retroactively recoverable.
+
+**Links between work items are collected two ways, because one is not enough.**
+Hierarchy and dependency links emit a matching add/remove pair on the timeline,
+so their history folds exactly. A pull request closing an issue does not: the
+timeline may report it as a connection, as a cross-reference that claims it
+will NOT close the issue, or not at all, while `closedByPullRequestsReferences`
+states it plainly. So `issue_links` observes the sets and the timeline supplies
+the events, and `silver.class_task_links` records which evidence bounded each
+interval.
 
 **Board status is not the issue's state.** An issue is open or closed; a board
 column is a separate field, one per board, and the two are bound separately.

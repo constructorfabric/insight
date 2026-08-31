@@ -69,6 +69,7 @@ import {
 import { useActiveZone } from "@/lib/portal/use-active-zone";
 import { cn } from "@/lib/utils";
 import { useIsAdmin, useVisibilityPolicy } from "@/queries/identity-me";
+import { usePreviewsGate } from "@/queries/previews";
 
 const ZONE_SUB: Record<string, string> = {
   overview: "Cross-functional org rollup",
@@ -341,12 +342,13 @@ function ThemeNav({
 }
 
 function ManageNav({ active }: { active: string | null }) {
-  // Admin-only surfaces (Identities) drop from the pane for everyone else;
-  // the view behind them refuses direct URLs on its own.
+  // Gated surfaces (Identities, Previews) drop from the pane for everyone
+  // else; the view behind each refuses direct URLs on its own.
   const { isAdmin } = useIsAdmin();
+  const canManagePreviews = usePreviewsGate();
   return (
     <ItemsNav
-      items={manageItemsFor(isAdmin)}
+      items={manageItemsFor({ isAdmin, canManagePreviews })}
       groupLabel="Manage"
       active={active}
     />

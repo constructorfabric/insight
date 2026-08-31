@@ -1,0 +1,22 @@
+[package]
+name = "insight-http-metrics"
+version = "0.1.0"
+description = "Server-side RED metrics middleware (http.server.request.duration)"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+axum = { workspace = true }
+opentelemetry = { workspace = true }
+tower = "0.5"
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+opentelemetry_sdk = { version = "0.31", features = ["metrics", "testing"] }

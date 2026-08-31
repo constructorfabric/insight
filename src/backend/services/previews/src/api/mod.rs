@@ -91,7 +91,10 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
 
     let router = OperationBuilder::post("/v1/experiments")
         .operation_id("previews.experiments.create")
-        .summary("Create a preview experiment (name + FE image tag)")
+        .summary(
+            "Create a preview experiment (name + FE image tag); requires the \
+             previews-admin or admin role",
+        )
         .authenticated()
         .no_license_required()
         .json_request::<experiments::CreateExperimentRequest>(openapi, "Experiment to create")
@@ -106,7 +109,7 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
 
     OperationBuilder::delete("/v1/experiments/{name}")
         .operation_id("previews.experiments.delete")
-        .summary("Delete a preview experiment")
+        .summary("Delete a preview experiment; requires the previews-admin or admin role")
         .authenticated()
         .path_param("name", "Experiment slug (the `/exp/<name>` segment)")
         .no_license_required()

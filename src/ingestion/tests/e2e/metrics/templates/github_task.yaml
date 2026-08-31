@@ -194,7 +194,6 @@ templates:
     source_id: github-test
     data_source: github
     collected_at: "2026-03-01T00:00:00Z"
-    snapshot_date: "2026-03-01"
     project_id: PVT_board1
     project_number: 40
     field_id: PVTSSF_board1_status

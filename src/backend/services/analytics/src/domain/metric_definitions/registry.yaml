@@ -178,6 +178,7 @@ sources:
       - comment_target
       - destination_branch
       - file_extension
+      - hour_block
       - project
       - repository
       - source
@@ -968,6 +969,7 @@ metrics:
         measure_key: commit_count
     dimensions:
       - branch_scope
+      - hour_block
       - project
       - repository
       - source
@@ -993,6 +995,7 @@ metrics:
       - input_role: value
         measure_key: default_commit_count
     dimensions:
+      - hour_block
       - project
       - repository
       - source
@@ -1018,6 +1021,7 @@ metrics:
       - input_role: value
         measure_key: non_default_commit_count
     dimensions:
+      - hour_block
       - project
       - repository
       - source

@@ -1,0 +1,96 @@
+spec_version: 1
+description: >-
+  Commits carry the two-hour block they landed in, so a repository screen can
+  draw when work happens without a second request.
+
+  Alice commits three times on one day — 09:14, 09:52 and 15:03 UTC — once the
+  next day at 09:30, and once more that evening at 21:05 on a branch that has
+  not landed. The blocks are therefore 08 three times, 14 once and 20 once.
+
+  What the numbers prove:
+    • the breakdown by `hour_block` sums to the commit total, and the 08 block
+      carries three of the five commits;
+    • each branch scope answers over the same dimension: the trunk keeps the
+      three 08-block commits, and the block of the one still in flight belongs
+      to the non-default reading;
+    • `git.active_days` stays 2. This is the assertion that matters: the block
+      rides on the commit rows only. Were it added to the model the
+      `commit_day` rows group by, one active day would split into one row per
+      block and this would read 3.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/alice
+  bronze_github.branches:
+    - {$ref: templates/git_activity.yaml#/templates/base, unique_key: br-main, repository: "https://github.com/constructor/insight.git", name: main, head_sha: head-main, is_default: true}
+  bronze_github.commits:
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-1, sha: sha-1, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T09:14:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-2, sha: sha-2, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T09:52:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-3, sha: sha-3, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-01T15:03:00Z", additions: 5, is_in_default_branch: true}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-4, sha: sha-4, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-02T09:30:00Z", additions: 5, is_in_default_branch: true}
+    # Still in flight, and late in the day: the non-default scope declares the
+    # same dimension, so a breakdown over it must answer too.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: c-5, sha: sha-5, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, committed_date: "2026-10-02T21:05:00Z", additions: 5, is_in_default_branch: false}
+  bronze_github.file_changes:
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-1, sha: sha-1, filename: src/one.rs, additions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-2, sha: sha-2, filename: src/two.rs, additions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-3, sha: sha-3, filename: src/three.rs, additions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-4, sha: sha-4, filename: src/four.rs, additions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: f-5, sha: sha-5, filename: src/five.rs, additions: 5}
+
+cases:
+  - name: Commits break down by the block they landed in
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-03"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: period}
+              - {view: breakdown, dimensions: [hour_block]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.commits, view: period, find: {entity_id: alice@example.com}, equal: {value: 5}}
+      # 09:14, 09:52 and 09:30 all fall in the 08–10 block.
+      - {metric: git.commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: hour_block, value: "08"}}, equal: {value: 3}}
+      - {metric: git.commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: hour_block, value: "14"}}, equal: {value: 1}}
+      # The label is what a heatmap axis shows.
+      - {metric: git.commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: hour_block, value: "14"}}, contains: {dimensions: {key: hour_block, label: "14–16"}}}
+
+  - name: Each branch scope breaks down over the same dimension
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-03"}
+        metrics:
+          - metric_key: git.default_branch_commits
+            views:
+              - {view: breakdown, dimensions: [hour_block]}
+          - metric_key: git.non_default_branch_commits
+            views:
+              - {view: breakdown, dimensions: [hour_block]}
+    expect:
+      - assert: "status == 200"
+      - {metric: git.default_branch_commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: hour_block, value: "08"}}, equal: {value: 3}}
+      - {metric: git.non_default_branch_commits, view: breakdown, find: {entity_id: alice@example.com, dimensions: {key: hour_block, value: "20"}}, equal: {value: 1}}
+
+  - name: The block does not split an active day
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [alice@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-03"}
+        metrics:
+          - metric_key: git.active_days
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      # Two calendar days, however many blocks the commits fell into.
+      - {metric: git.active_days, view: period, find: {entity_id: alice@example.com}, equal: {value: 2}}

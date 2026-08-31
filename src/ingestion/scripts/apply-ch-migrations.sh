@@ -80,6 +80,41 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   run_ch < "$migration"
 done
 
+echo "=== Healing GitHub Projects V2 bronze keys ==="
+# Both relations were briefly keyed with the collection day inside `unique_key`.
+# That keeps every observation permanently current instead of collapsing onto
+# the entity — the shape `union_by_tag` names outright (ADR-0001, ADR-0004).
+#
+# The rows cannot be repaired in place, because the key IS the identity: a
+# day-keyed row and its entity-keyed replacement are different rows forever, and
+# no merge will ever reconcile them. Bronze is derivable from the API, so the
+# stale generation is dropped instead.
+#
+# Guarded on the stale rows themselves, so this is a no-op on a fresh cluster
+# and a no-op on the second deploy. It must run BEFORE dbt: the SCD2 snapshots
+# above these tables key on `unique_key`, and a day-keyed row would enter them
+# as its own entity and stay there.
+#
+# `project_fields` is full refresh, so the next sync rewrites it whole.
+# `project_items` is cursored, so it refills as the cursor advances — clearing
+# that stream's state makes it immediate. Nothing reads either relation yet, so
+# the gap costs nothing either way.
+heal_github_project_day_keys() {
+  local table="$1" stale
+  ch_table_exists bronze_github "${table}" || return 0
+  stale="$(printf "SELECT count() FROM bronze_github.%s WHERE match(unique_key, ':[0-9]{4}-[0-9]{2}-[0-9]{2}$')" \
+    "${table}" | _ch_http_query | tr -d '[:space:]')"
+  [[ "${stale}" =~ ^[0-9]+$ ]] || return 0
+  [[ "${stale}" -gt 0 ]] || return 0
+  echo "  bronze_github.${table}: ${stale} day-keyed row(s) — dropping, the connector refills them"
+  run_ch <<SQL
+TRUNCATE TABLE bronze_github.${table};
+SQL
+}
+
+heal_github_project_day_keys project_fields
+heal_github_project_day_keys project_items
+
 echo "=== Healing AI staging contract schemas ==="
 # Physical column order must equal the model's SELECT order (positional
 # incremental inserts, positional union). Labels left the contract (they

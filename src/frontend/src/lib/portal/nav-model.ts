@@ -9,6 +9,7 @@ import {
   FileText,
   Filter,
   Fingerprint,
+  FlaskConical,
   GitPullRequest,
   LayoutGrid,
   Layers,
@@ -161,6 +162,11 @@ export interface PaneItem {
    * regardless of what the frontend draws.
    */
   adminOnly?: boolean;
+  /**
+   * Rendered only when the previews gate passes (`usePreviewsGate`) — the
+   * same courtesy-over-server-gate doctrine as `adminOnly`.
+   */
+  previewsGated?: boolean;
 }
 
 export interface PaneGroup {
@@ -320,13 +326,22 @@ export function peopleItemsFor(
 
 /* ── Manage zone ─────────────────────────────────────────────────────── */
 
-/** The Manage pane for one viewer: admin-only surfaces drop for everyone else. */
+/** The viewer facts that decide which gated Manage surfaces exist for them. */
+export interface ManageGates {
+  isAdmin: boolean;
+  canManagePreviews: boolean;
+}
+
+/** The Manage pane for one viewer: gated surfaces drop for everyone else. */
 export function manageItemsFor(
-  isAdmin: boolean,
+  gates: ManageGates,
   policy: InstanceNavPolicy = navPolicy(),
 ): readonly PaneItem[] {
   return MANAGE_ITEMS.filter(
-    (item) => (!item.adminOnly || isAdmin) && !itemHidden("manage", item.id, policy),
+    (item) =>
+      (!item.adminOnly || gates.isAdmin) &&
+      (!item.previewsGated || gates.canManagePreviews) &&
+      !itemHidden("manage", item.id, policy),
   ).map((item) => withConfigReadiness("manage", item, policy));
 }
 
@@ -340,6 +355,7 @@ export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "scorecard-mgmt", label: "Scorecard management", icon: BarChart3 },
   { id: "connector-health", label: "Connector health", icon: ShieldCheck, adminOnly: true },
   { id: "platform-usage", label: "Platform usage", icon: Activity, adminOnly: true },
+  { id: "previews", label: "Previews", icon: FlaskConical, previewsGated: true },
   { id: "mcp", label: "MCP servers", icon: Server },
   { id: "config", label: "Config & setup", icon: Settings2 },
   { id: "ai-assistant", label: "AI assistant", icon: Sparkles },
