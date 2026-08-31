@@ -187,11 +187,12 @@ describe("ReportBuilderView", () => {
     ).toBeNull();
   });
 
-  it("leaves repository rows inert and absent from the recipe", async () => {
+  it("does not offer a separate report rows selector", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
 
-    expect(screen.getByRole("button", { name: "Repositories" })).toBeDisabled();
+    expect(screen.queryByText("Rows")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repositories" })).toBeNull();
     await user.click(checkbox("Commits"));
     await user.click(screen.getByRole("button", { name: "Preview report" }));
 

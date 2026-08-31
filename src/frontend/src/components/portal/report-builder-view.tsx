@@ -214,21 +214,6 @@ export function ReportBuilderView() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Rows</span>
-            <ToggleGroup value={[subject]} variant="outline" size="sm">
-              <ToggleGroupItem value={subject}>
-                {subject === "people" ? "People" : "Tenant"}
-              </ToggleGroupItem>
-              <ToggleGroupItem value="repositories" disabled>
-                Repositories
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <span className="text-xs text-muted-foreground">
-              Repositories are not available for reports yet.
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
             <span className={TEXT_LABEL}>Granularity</span>
             <ToggleGroup
               value={[granularity]}
