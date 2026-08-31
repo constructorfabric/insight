@@ -252,7 +252,7 @@ impl ReportQueryRunner for FakeRunner {
             return Err(ReportQueryError::InvalidResultShape);
         }
         let selected_ids = match &query.subject {
-            ReportQuerySubject::People(ids) => ids.to_vec(),
+            ReportQuerySubject::People(ids) => ids.clone(),
             ReportQuerySubject::Tenant(id) => vec![*id],
         };
         let values = self

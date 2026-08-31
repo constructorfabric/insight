@@ -22,6 +22,7 @@ pub(crate) enum ReportQuerySubject {
 pub(crate) struct ReportMetricQuery {
     pub(crate) metric_index: usize,
     pub(crate) metric_key: String,
+    #[cfg(test)]
     pub(crate) subject: ReportQuerySubject,
     pub(crate) compiled: CompiledQuery,
 }
@@ -103,7 +104,7 @@ pub(crate) fn compile_report_metric_query(
     metric_index: usize,
     metric: &MetricDefinition,
     tenant_id: Uuid,
-    subject: ReportQuerySubject,
+    subject: &ReportQuerySubject,
     from: NaiveDate,
     to: NaiveDate,
     bucket: ReportBucket,
@@ -133,7 +134,8 @@ pub(crate) fn compile_report_metric_query(
     ReportMetricQuery {
         metric_index,
         metric_key: metric.key().to_owned(),
-        subject,
+        #[cfg(test)]
+        subject: subject.clone(),
         compiled,
     }
 }
@@ -154,7 +156,7 @@ mod tests {
             3,
             &metric(),
             tenant_id,
-            ReportQuerySubject::People(vec![person_id]),
+            &ReportQuerySubject::People(vec![person_id]),
             date("2026-01-10"),
             date("2026-06-20"),
             ReportBucket::Quarter,

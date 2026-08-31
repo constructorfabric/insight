@@ -133,7 +133,7 @@ async fn execute_metric_queries<R: ReportQueryRunner>(
                 metric_index,
                 metric,
                 context.tenant_id,
-                subject.clone(),
+                &subject,
                 recipe.from,
                 recipe.to,
                 plan.bucket,
