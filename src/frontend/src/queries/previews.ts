@@ -16,8 +16,11 @@ import {
   createExperiment,
   deleteExperiment,
   listExperiments,
+  listImages,
   type CreateExperimentRequest,
   type Experiment,
+  type ExperimentListResponse,
+  type ImageListResponse,
 } from "@/api/previews-client";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
@@ -33,7 +36,7 @@ const EXPERIMENTS_STALE_TIME = 30 * 1000;
 export function canManagePreviews(session: Session | null): boolean {
   if (!session?.experimentsEnabled) return false;
   return session.roles.some((role) =>
-    (PREVIEWS_MANAGE_ROLES as readonly string[]).includes(role),
+    (PREVIEWS_MANAGE_ROLES as readonly string[]).includes(role)
   );
 }
 
@@ -42,7 +45,7 @@ export function usePreviewsGate(): boolean {
   return canManagePreviews(session);
 }
 
-export function useExperiments(): UseQueryResult<Experiment[]> {
+export function useExperiments(): UseQueryResult<ExperimentListResponse> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   return useQuery({
@@ -50,6 +53,21 @@ export function useExperiments(): UseQueryResult<Experiment[]> {
     queryKey: ["previews", "experiments", sessionScope],
     queryFn: listExperiments,
     staleTime: EXPERIMENTS_STALE_TIME,
+    enabled: sessionScope != null,
+  });
+}
+
+/** The registry's tags barely move; a listing failure is not worth retrying. */
+const IMAGES_STALE_TIME = 5 * 60 * 1000;
+
+export function useImages(): UseQueryResult<ImageListResponse> {
+  const { session } = useAuth();
+  const sessionScope = sessionAuthorizationScope(session);
+  return useQuery({
+    queryKey: ["previews", "images", sessionScope],
+    queryFn: listImages,
+    staleTime: IMAGES_STALE_TIME,
+    retry: false,
     enabled: sessionScope != null,
   });
 }
