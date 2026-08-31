@@ -83,7 +83,7 @@ datasources:
         uid: loki
         type: loki
         access: proxy
-        url: http://loki.${NS_LOKI}.svc.cluster.local:3100
+        url: http://loki.${NS_MONITORING}.svc.cluster.local:3100
         isDefault: true
         jsonData:
           maxLines: 1000
@@ -100,14 +100,14 @@ datasources:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://tempo.${NS_TEMPO}.svc.cluster.local:3200
+        url: http://tempo.${NS_MONITORING}.svc.cluster.local:3200
         isDefault: false
 
       - name: VictoriaMetrics
         uid: vm
         type: prometheus
         access: proxy
-        url: http://victoriametrics-server.${NS_VICTORIAMETRICS}.svc.cluster.local:8428
+        url: http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428
         isDefault: false
         jsonData:
           timeInterval: "30s"
@@ -122,7 +122,7 @@ datasources:
         access: proxy
         isDefault: false
         jsonData:
-          host: clickhouse.${NS_CLICKHOUSE}.svc.cluster.local
+          host: clickhouse.${NS_INFRA}.svc.cluster.local
           port: 9000
           protocol: native
           secure: false

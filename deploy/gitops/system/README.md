@@ -130,22 +130,21 @@ neither file reaches helm verbatim: `scripts/render-system-values.sh`
 first resolves the `${NS_*}` placeholders that cross-service references
 use (`http://loki.${NS_LOKI}.svc.cluster.local:3100`, …), writing the
 rendered copies to `.deploy/system-values/` — inspect them there after a
-run. There is one variable per producer another release addresses, each
-defaulting to the inventory's `namespaces.infra`:
+run. Two variables cover every cross-service reference:
 
-| Variable | Producer it locates | Consumers |
-|----------|--------------------|-----------|
-| `NS_LOKI` | `loki` | alloy, grafana |
-| `NS_TEMPO` | `tempo` | alloy, grafana |
-| `NS_VICTORIAMETRICS` | `victoriametrics` | alloy, alloy-metrics, grafana |
-| `NS_KUBE_STATE_METRICS` | `kube-state-metrics` | alloy-metrics |
-| `NS_CLICKHOUSE` | `clickhouse` | alloy-metrics, grafana |
-| `NS_REDPANDA` | `redpanda` | redpanda-console |
+| Variable | Locates | Consumers |
+|----------|---------|-----------|
+| `NS_INFRA` | the data stores (`clickhouse`, `redpanda`) | alloy-metrics, grafana, redpanda-console |
+| `NS_MONITORING` | the observability unit (`loki`, `tempo`, `victoriametrics`, `kube-state-metrics`) | alloy, alloy-metrics, grafana |
+
+`NS_MONITORING` defaults to `NS_INFRA` — the layout every environment
+here uses — and exists because the observability stack is the one unit
+an environment plausibly hosts apart from the data stores.
 
 Service *names* stay literal on purpose — `fullnameOverride` in each
 producer's values pins them, so the name is the contract and only the
-namespace moves. Substitution replaces only the exact braced tokens for
-this variable set (plus `NS_INFRA`): every other `$` construct — Grafana
+namespace moves. Substitution replaces only these two exact braced
+tokens: every other `$` construct — Grafana
 provisioning `$VAR` / `$$VAR` escapes, `$__auto` in dashboards,
 `${…}`-shaped strings in Alloy configs — passes through byte-identical,
 so overlays that carry full Alloy configs or restated datasource lists

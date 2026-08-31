@@ -88,7 +88,7 @@ alloy:
       // (fullnameOverride pins the Service name).
       prometheus.scrape "kube_state_metrics" {
         targets = [
-          {"__address__" = "kube-state-metrics.${NS_KUBE_STATE_METRICS}.svc.cluster.local:8080", "job" = "kube-state-metrics"},
+          {"__address__" = "kube-state-metrics.${NS_MONITORING}.svc.cluster.local:8080", "job" = "kube-state-metrics"},
         ]
         scrape_interval = "30s"
         forward_to      = [prometheus.relabel.drop_noise.receiver]
@@ -99,7 +99,7 @@ alloy:
       // system/clickhouse/values.yaml): /metrics on the Service's 8001 port.
       prometheus.scrape "clickhouse" {
         targets = [
-          {"__address__" = "clickhouse.${NS_CLICKHOUSE}.svc.cluster.local:8001", "job" = "clickhouse"},
+          {"__address__" = "clickhouse.${NS_INFRA}.svc.cluster.local:8001", "job" = "clickhouse"},
         ]
         scrape_interval = "30s"
         forward_to      = [prometheus.relabel.drop_noise.receiver]
@@ -139,6 +139,6 @@ alloy:
 
       prometheus.remote_write "victoriametrics" {
         endpoint {
-          url = "http://victoriametrics-server.${NS_VICTORIAMETRICS}.svc.cluster.local:8428/api/v1/write"
+          url = "http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428/api/v1/write"
         }
       }

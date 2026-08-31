@@ -9,7 +9,7 @@
 ## Per-env overrides go in environments/<env>/redpanda-console-values.yaml
 ## (usually to enable an ingress for the UI).
 ##
-## Reaches the broker as `redpanda.${NS_REDPANDA}.svc.cluster.local:9093`
+## Reaches the broker as `redpanda.${NS_INFRA}.svc.cluster.local:9093`
 ## (Kafka API) — the placeholder is resolved by
 ## scripts/render-system-values.sh before helm reads the file
 ## (see system/README.md § Values layout).
@@ -24,7 +24,7 @@ fullnameOverride: redpanda-console
 config:
   kafka:
     brokers:
-      - redpanda.${NS_REDPANDA}.svc.cluster.local:9093
+      - redpanda.${NS_INFRA}.svc.cluster.local:9093
 
 # UI is internal-only by default. Enable an ingress in the per-env
 # overlay if the team wants browser access to the console.

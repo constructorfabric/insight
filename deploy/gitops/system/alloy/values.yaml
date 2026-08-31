@@ -103,7 +103,7 @@ alloy:
 
       loki.write "default" {
         endpoint {
-          url = "http://loki.${NS_LOKI}.svc.cluster.local:3100/loki/api/v1/push"
+          url = "http://loki.${NS_MONITORING}.svc.cluster.local:3100/loki/api/v1/push"
         }
       }
 
@@ -131,13 +131,13 @@ alloy:
 
       prometheus.remote_write "victoriametrics" {
         endpoint {
-          url = "http://victoriametrics-server.${NS_VICTORIAMETRICS}.svc.cluster.local:8428/api/v1/write"
+          url = "http://victoriametrics-server.${NS_MONITORING}.svc.cluster.local:8428/api/v1/write"
         }
       }
 
       otelcol.exporter.otlp "to_tempo" {
         client {
-          endpoint = "tempo.${NS_TEMPO}.svc.cluster.local:4317"
+          endpoint = "tempo.${NS_MONITORING}.svc.cluster.local:4317"
           tls {
             // In-cluster hop; Tempo's ingest is plaintext.
             insecure = true

@@ -52,18 +52,15 @@ NS_INFRA         ?= $(shell yq -r '.namespaces.infra    // "insight-infra"'  $(I
 NS_PREVIEWS      ?= $(shell yq -r '.namespaces.previews // "insight-previews"' $(INVENTORY) 2>/dev/null)
 RELEASE          ?= $(shell yq -r '.release             // "insight"'        $(INVENTORY) 2>/dev/null)
 
-# Producer namespaces for the cross-service hostnames in system/*/values.yaml
-# (`loki.${NS_LOKI}.svc.cluster.local` and friends). One variable per producer
-# that another release addresses; every system-* target here installs into
-# NS_INFRA, so they all default to it. Override per invocation (env var / CLI)
-# if an environment hosts a producer elsewhere. render-system-values.sh
-# substitutes them before helm reads the values — see _system_values_args.
-NS_LOKI               ?= $(NS_INFRA)
-NS_TEMPO              ?= $(NS_INFRA)
-NS_VICTORIAMETRICS    ?= $(NS_INFRA)
-NS_KUBE_STATE_METRICS ?= $(NS_INFRA)
-NS_CLICKHOUSE         ?= $(NS_INFRA)
-NS_REDPANDA           ?= $(NS_INFRA)
+# Namespaces for the cross-service hostnames in system/*/values.yaml
+# (`loki.${NS_MONITORING}.svc.cluster.local` and friends), substituted by
+# render-system-values.sh before helm reads the values — see
+# _system_values_args. Data stores are addressed via ${NS_INFRA}; the
+# observability stack (LGTM + kube-state-metrics) via ${NS_MONITORING}, one
+# unit that an environment may host apart from the data stores. Every
+# system-* target here installs into NS_INFRA, so it defaults to that —
+# override per invocation (env var / CLI) if the stack lives elsewhere.
+NS_MONITORING    ?= $(NS_INFRA)
 
 # Back-compat alias for older targets still referencing NAMESPACE.
 NAMESPACE        ?= $(NS_APP)
@@ -681,9 +678,7 @@ endef
 # any other `$` syntax pass through untouched) into
 # $(RENDER_DIR)/system-values/ and helm reads the rendered copies.
 # Usage: $(call _system_values_args,<svc>)
-_system_ns_env = NS_INFRA=$(NS_INFRA) NS_LOKI=$(NS_LOKI) NS_TEMPO=$(NS_TEMPO) \
-	NS_VICTORIAMETRICS=$(NS_VICTORIAMETRICS) NS_KUBE_STATE_METRICS=$(NS_KUBE_STATE_METRICS) \
-	NS_CLICKHOUSE=$(NS_CLICKHOUSE) NS_REDPANDA=$(NS_REDPANDA)
+_system_ns_env = NS_INFRA=$(NS_INFRA) NS_MONITORING=$(NS_MONITORING)
 _system_values_args = $(or $(shell $(_system_ns_env) bash scripts/render-system-values.sh $(1) $(ENV) $(RENDER_DIR)/system-values),$(error render-system-values.sh failed for '$(1)' — see the message above))
 
 # Helper: require a sealed-secret named `<svc>-creds` to be present in
