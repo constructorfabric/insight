@@ -4,6 +4,7 @@ pub(crate) mod ai;
 mod connector_health;
 pub(crate) mod error;
 mod feedback;
+mod gear_roadmap;
 mod metric_definitions;
 mod metric_drilldown;
 mod metric_results;
@@ -40,6 +41,7 @@ use crate::config::GearConfig;
 use crate::domain::ai::dto as ai_dto;
 use crate::domain::connector_health as connector_health_domain;
 use crate::domain::external_links::ExternalSourceRegistry;
+use crate::domain::gear_roadmap::response as gear_roadmap_response;
 use crate::domain::metric_crud;
 use crate::domain::metric_definitions::listing as metric_definitions_listing;
 use crate::domain::saved_query;
@@ -245,6 +247,20 @@ pub(crate) fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) ->
         )
         .standard_errors(openapi)
         .handler(connector_health::get_connector_syncs)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/v1/gear-roadmap")
+        .operation_id("analytics_api.gear_roadmap.board")
+        .summary("Gear delivery board with its assumed-capacity schedule")
+        .authenticated()
+        .no_license_required()
+        .json_response_with_schema::<gear_roadmap_response::GearRoadmapResponse>(
+            openapi,
+            StatusCode::OK,
+            "Every gear on the configured board, plus one lane per assignee",
+        )
+        .standard_errors(openapi)
+        .handler(gear_roadmap::get_gear_roadmap)
         .register(router, openapi);
 
     // Sending is open to any signed-in caller; the listing is admin-gated
