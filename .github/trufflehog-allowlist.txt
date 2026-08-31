@@ -2,6 +2,7 @@
 # so an entry survives a rebase. A line here is a reviewed claim that the match is not a
 # credential; adding one goes through pull request review, removing one is always safe.
 # Seeded 2026-08-06 from a scan of every ref with trufflehog 3.96.0.
+# A reason must not quote a flagged value verbatim: this file is scanned too.
 
 96923d309cc0326b  Atlassian          docs/connectors/support/jsm.md  # example account id quoted from vendor documentation
 b92efd223e8930c0  CloudflareApiToken STORAGE_TECHNOLOGY_EVALUATION.md  # prose fragment in a document
@@ -33,6 +34,8 @@ c71d7d6ef85cd006  Gitlab             src/ingestion/connectors/git/gitlab/dbt/git
 cd968567652ff20b  Gitlab             src/ingestion/connectors/git/gitlab/source_gitlab/streams/project_incremental.py  # code identifier / constant name
 d1c1dd2c5248b565  Gitlab             src/ingestion/connectors/git/gitlab/tests/test_source.py  # code identifier / constant name
 079c134aaca8eb24  Gitlab             src/ingestion/scripts/connectors-ddl/gitlab-nocode.sql  # connector name in a DDL snapshot, not a token
+a1d64ea5858af851  Gitlab             src/ingestion/tools/seed/insight_seed/generators/git_repos.py  # the vendor project seeding function's name, not a token
+b7724cdd5c80cebb  Gitlab             src/ingestion/tools/seed/tests/test_git_repos.py  # a bronze relation name in the vendor-relation assertion, not a token
 5976017fb71ea0e2  HubSpotApiKey      docs/architecture/CONNECTOR_AUTOMATION.md  # synthetic UUID fixture
 fdd801f84b096f9b  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
 93192185cb9d3fc6  HubSpotApiKey      src/ingestion/tests/e2e/lib/metric_coverage.py  # synthetic UUID fixture
