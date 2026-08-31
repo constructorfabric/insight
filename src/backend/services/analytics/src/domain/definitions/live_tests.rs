@@ -4,6 +4,8 @@
 
 use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement, Value};
 
+use crate::domain::field_catalog::model::EntityType;
+
 use super::definition::{
     Aggregation, Computation, DatasetDefinition, Direction, Format, MeasureDefinition,
     MetricDefinition, Origin, ReadDiscipline, Transform,
@@ -56,7 +58,7 @@ fn metric(key: &str, measure_key: &str) -> MetricDefinition {
         transform: None,
         format: Format::Integer,
         direction: Direction::HigherIsBetter,
-        entity_type: "person".to_owned(),
+        entity_type: EntityType::Person,
         cohort_key: None,
         label: None,
         description: None,

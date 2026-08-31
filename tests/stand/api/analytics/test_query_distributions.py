@@ -32,6 +32,10 @@ GIT_PR_SIZE = "git.pr_size"
 #: not a spelling rejection dressed as one.
 UNKNOWN_METRIC = "stand.does_not_exist"
 
+#: A percentile computation over per-run duration, keyed by the tenant rather
+#: than by a person.
+CI_RUN_DURATION = "ci.run_duration_min"
+
 #: Asked sorted and distinct, which is how the service reports them back.
 _QUANTILES: tuple[float, ...] = (0.25, 0.5, 0.75)
 
@@ -153,3 +157,68 @@ def test_query_distributions_refuses_a_quantile_that_is_not_a_position(
     response = api.post(QUERY_DISTRIBUTIONS, json_body={"queries": [question]})
     assert response.status_code == 400, f"status={response.status_code} {response.text[:300]}"
     assert response.parse(ProblemDocument).status == 400
+
+
+def _tenant_question(manifest: Manifest, metric: str) -> dict[str, JsonValue]:
+    start, end = query_window(manifest)
+    return {
+        "metric": metric,
+        "subjects": {"type": "tenant"},
+        "time": {"from": start, "to": end},
+        "bins": _BINS,
+        "quantiles": list(_QUANTILES),
+    }
+
+
+@pytest.mark.reliability
+def test_query_distributions_shapes_a_tenant_metric_without_naming_a_subject(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """One distribution comes back, and it names nobody: the tenant is not a subject.
+
+    The CI connector streams are not part of the sample seed, so this pins that
+    exactly one distribution is reported for the one entity a tenant read groups
+    by, and that it carries no subject — an unobserved range is a legitimate
+    answer here.
+    """
+    response = api.post(
+        QUERY_DISTRIBUTIONS,
+        json_body={"queries": [_tenant_question(stand_manifest, CI_RUN_DURATION)]},
+    )
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    results = response.parse(DistributionsResponse).results
+    assert len(results) == 1
+    subjects = results[0].subjects
+    assert len(subjects) == 1, f"a tenant question answered {len(subjects)} distributions"
+    assert subjects[0].subject is None
+
+    histogram = subjects[0].histogram
+    assert histogram is not None, "a question naming bins is answered with a histogram"
+    _assert_bins_tile_the_range(histogram)
+
+    quantiles = subjects[0].quantiles
+    assert quantiles is not None, "a question naming quantiles is answered with positions"
+    assert [quantile.q for quantile in quantiles] == list(_QUANTILES)
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_query_distributions_refuses_subjects_that_are_not_the_metrics_grain(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """Each surface answers one grain: naming the other side is unanswerable, not empty."""
+    person = stand_manifest.fixture("dev_lead")
+    cases = {
+        "a tenant metric asked about a person": _question(
+            stand_manifest, CI_RUN_DURATION, person.uuid
+        ),
+        "a person metric asked about the tenant": _tenant_question(stand_manifest, GIT_PR_SIZE),
+    }
+
+    for named, query in cases.items():
+        response = api.post(QUERY_DISTRIBUTIONS, json_body={"queries": [query]})
+        assert response.status_code == 400, (
+            f"{named} answered {response.status_code}: {response.text[:300]}"
+        )
+        assert response.parse(ProblemDocument).status == 400

@@ -7,6 +7,7 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
 use crate::api::AppState;
+use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_query::distributions::{
     DistributionsRequest, DistributionsResponse, answer, validate_request,
 };
@@ -25,6 +26,9 @@ pub async fn query_distributions(
     })?;
 
     let batch = validate_request(catalog, req)?;
+    if batch.asks_about_the_tenant() {
+        authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)?;
+    }
 
     // SAFETY: every subject is checked individually; a batch is never a way
     // around the gate deciding which people a caller may read.

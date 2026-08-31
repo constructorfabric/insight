@@ -514,6 +514,126 @@
         "type": "String"
       },
       {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "source_id",
+        "type": "String"
+      },
+      {
+        "name": "project_key",
+        "type": "String"
+      },
+      {
+        "name": "repo_slug",
+        "type": "String"
+      },
+      {
+        "name": "commit_hash",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "committed_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "commit_reference",
+        "type": "String"
+      },
+      {
+        "name": "repository_value",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ci_commits",
+    "sorting_key": "tenant_id, entity_id, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "source_id",
+        "type": "String"
+      },
+      {
+        "name": "deployment_id",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "deployment_label",
+        "type": "String"
+      },
+      {
+        "name": "repository_value",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "environment_value",
+        "type": "String"
+      },
+      {
+        "name": "environment_label",
+        "type": "String"
+      },
+      {
+        "name": "outcome_value",
+        "type": "String"
+      },
+      {
+        "name": "outcome_label",
+        "type": "String"
+      },
+      {
+        "name": "env_kind_value",
+        "type": "String"
+      },
+      {
+        "name": "env_kind_label",
+        "type": "String"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ci_deployments",
+    "sorting_key": "tenant_id, entity_id, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
         "name": "source_key",
         "type": "String"
       },
@@ -650,6 +770,114 @@
     "engine": "MergeTree",
     "relation": "ci_metric_observations",
     "sorting_key": "tenant_id, source_key, entity_type, entity_id, measure_key, metric_date"
+  },
+  {
+    "columns": [
+      {
+        "name": "tenant_id",
+        "type": "String"
+      },
+      {
+        "name": "entity_id",
+        "type": "String"
+      },
+      {
+        "name": "source_id",
+        "type": "String"
+      },
+      {
+        "name": "run_id",
+        "type": "String"
+      },
+      {
+        "name": "run_number",
+        "type": "String"
+      },
+      {
+        "name": "metric_date",
+        "type": "Date"
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime64(3)"
+      },
+      {
+        "name": "is_gate",
+        "type": "UInt8"
+      },
+      {
+        "name": "is_retry",
+        "type": "UInt8"
+      },
+      {
+        "name": "attempt",
+        "type": "UInt32"
+      },
+      {
+        "name": "commit_known",
+        "type": "UInt8"
+      },
+      {
+        "name": "branch",
+        "type": "String"
+      },
+      {
+        "name": "duration_min",
+        "type": "Float64"
+      },
+      {
+        "name": "duration_h",
+        "type": "Float64"
+      },
+      {
+        "name": "run_label",
+        "type": "String"
+      },
+      {
+        "name": "repository_value",
+        "type": "String"
+      },
+      {
+        "name": "repository_label",
+        "type": "String"
+      },
+      {
+        "name": "pipeline_value",
+        "type": "String"
+      },
+      {
+        "name": "pipeline_label",
+        "type": "String"
+      },
+      {
+        "name": "trigger_value",
+        "type": "String"
+      },
+      {
+        "name": "trigger_label",
+        "type": "String"
+      },
+      {
+        "name": "outcome_value",
+        "type": "String"
+      },
+      {
+        "name": "outcome_label",
+        "type": "String"
+      },
+      {
+        "name": "hour_block_value",
+        "type": "String"
+      },
+      {
+        "name": "hour_block_label",
+        "type": "String"
+      }
+    ],
+    "database": "insight",
+    "engine": "MergeTree",
+    "relation": "ci_runs",
+    "sorting_key": "tenant_id, entity_id, metric_date"
   },
   {
     "columns": [

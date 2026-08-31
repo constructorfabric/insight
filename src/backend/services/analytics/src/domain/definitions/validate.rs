@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::definition::{Computation, MeasureDefinition, MetricDefinition, Operand};
 use super::expr::{ScalarExprError, validate_scalar_expr};
 use super::filter::FilterError;
-use crate::domain::field_catalog::model::{CatalogDataset, FieldCatalog, FieldRole};
+use crate::domain::field_catalog::model::{CatalogDataset, EntityType, FieldCatalog, FieldRole};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ValidationError {
@@ -76,6 +76,19 @@ pub enum ValidationError {
     UnknownDerivedInput { metric: String, alias: String },
     #[error("metric `{metric}` declares input `{alias}`, which its expression never reads")]
     UnusedDerivedInput { metric: String, alias: String },
+    #[error(
+        "metric `{metric}` is authored at {metric_grain} grain but reads measure `{measure}` \
+         over dataset `{dataset}`, whose rows are {dataset_grain} grain"
+    )]
+    EntityGrainMismatch {
+        metric: String,
+        measure: String,
+        dataset: String,
+        metric_grain: EntityType,
+        dataset_grain: EntityType,
+    },
+    #[error("metric `{metric}` is {grain} grain and may not declare a cohort to compare against")]
+    CohortWithoutPeers { metric: String, grain: EntityType },
     #[error("metric `{metric}` inputs `{a}` and `{b}` bind dimension `{key}` to different fields")]
     DimensionBindingsDisagree {
         metric: String,
@@ -107,7 +120,7 @@ pub fn validate_definitions(
         if !seen.insert(metric.key.as_str()) {
             errors.push(ValidationError::DuplicateKey(metric.key.clone()));
         }
-        validate_metric(metric, measures, &mut errors);
+        validate_metric(catalog, metric, measures, &mut errors);
     }
 
     if errors.is_empty() {
@@ -259,6 +272,7 @@ fn validate_operand(measure: &MeasureDefinition, errors: &mut Vec<ValidationErro
 }
 
 fn validate_metric(
+    catalog: &FieldCatalog,
     metric: &MetricDefinition,
     measures: &[MeasureDefinition],
     errors: &mut Vec<ValidationError>,
@@ -293,6 +307,8 @@ fn validate_metric(
 
     validate_computation(metric, measures, errors);
     validate_shared_dimensions(metric, measures, errors);
+    validate_entity_grain(catalog, metric, measures, errors);
+    validate_cohort_grain(metric, errors);
 
     // Joining aggregates across datasets is capability the compiler does not
     // have, so a definition may not ask for it.
@@ -305,6 +321,46 @@ fn validate_metric(
             metric: metric.key.clone(),
             a: (*first_key).to_owned(),
             b: (*other_key).to_owned(),
+        });
+    }
+}
+
+/// What a metric's values are keyed by is not a label on the metric — it is a
+/// property of the rows it folds. A metric may therefore only claim the grain
+/// every dataset it reads is authored at, because nothing downstream can turn
+/// a per-person row into a tenant value or the other way round.
+fn validate_entity_grain(
+    catalog: &FieldCatalog,
+    metric: &MetricDefinition,
+    measures: &[MeasureDefinition],
+    errors: &mut Vec<ValidationError>,
+) {
+    for input in metric.input_measures() {
+        let Some(measure) = measures.iter().find(|measure| measure.key == input) else {
+            continue;
+        };
+        let Some(dataset) = catalog.dataset(&measure.dataset) else {
+            continue;
+        };
+        if dataset.entity_type != metric.entity_type {
+            errors.push(ValidationError::EntityGrainMismatch {
+                metric: metric.key.clone(),
+                measure: measure.key.clone(),
+                dataset: dataset.key.clone(),
+                metric_grain: metric.entity_type,
+                dataset_grain: dataset.entity_type,
+            });
+        }
+    }
+}
+
+/// A cohort is a grouping of people, and a tenant has no peers to be grouped
+/// with: a cohort comparison over one would name a population of itself.
+fn validate_cohort_grain(metric: &MetricDefinition, errors: &mut Vec<ValidationError>) {
+    if metric.entity_type == EntityType::Tenant && metric.cohort_key.is_some() {
+        errors.push(ValidationError::CohortWithoutPeers {
+            metric: metric.key.clone(),
+            grain: metric.entity_type,
         });
     }
 }
@@ -513,7 +569,7 @@ datasets:
             transform: None,
             format: Format::Integer,
             direction: Direction::HigherIsBetter,
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: None,
             label: None,
             description: None,

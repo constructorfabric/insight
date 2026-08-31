@@ -9,16 +9,20 @@ use chrono::{Days, Months, NaiveDate};
 use uuid::Uuid;
 
 use crate::domain::compiler::request::DimensionFilter;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::dto::Subjects;
 use super::super::error::QueryError;
-use super::super::question::{batch_size, defined_metric, filters, person_ids, window};
+use super::super::question::{
+    batch_size, defined_metric, filters, metric_entity_type, person_ids, window,
+};
 use super::answerable::{Ask, SplitAsk, SubjectsAsk, shape_of};
 use super::dto::{
     Compare, CompareOffset, Fold, Grain, Split, SplitLimit, ValuesQuery, ValuesRequest,
 };
 
+pub use super::super::question::ValidatedSubjects;
 pub use super::answerable::QueryShape;
 
 const MAX_SPLIT_DIMENSIONS: usize = 10;
@@ -26,12 +30,6 @@ const MAX_SPLIT_TOP: u32 = 50;
 
 /// The field a values question names its people in.
 const SUBJECTS_FIELD: &str = "queries.subjects.ids";
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ValidatedSubjects {
-    Persons(Vec<Uuid>),
-    Tenant,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidatedSplitLimit {
@@ -57,6 +55,9 @@ pub struct ComparedWindow {
 #[derive(Debug, PartialEq)]
 pub struct ValidatedQuery {
     pub metric_key: String,
+    /// What the metric's values are keyed by, carried from the catalogue so
+    /// the answer names a subject only where one exists.
+    pub entity_type: EntityType,
     pub subjects: ValidatedSubjects,
     pub from: NaiveDate,
     pub to: NaiveDate,
@@ -103,6 +104,16 @@ impl ValidatedBatch {
             .iter()
             .any(|query| matches!(query.subjects, ValidatedSubjects::Tenant))
     }
+
+    /// Whether any question reads a person-grain metric tenant-wide, which is
+    /// the one shape answered by folding the tenant's whole roster of people.
+    #[must_use]
+    pub fn folds_the_tenants_people(&self) -> bool {
+        self.queries.iter().any(|query| {
+            query.entity_type == EntityType::Person
+                && matches!(query.subjects, ValidatedSubjects::Tenant)
+        })
+    }
 }
 
 pub fn validate_request(
@@ -125,6 +136,7 @@ fn validate_query(
     query: ValuesQuery,
 ) -> Result<ValidatedQuery, QueryError> {
     let metric_key = defined_metric(catalog, &query.metric)?;
+    let entity_type = metric_entity_type(catalog, &metric_key)?;
     let subjects = subjects(query.subjects)?;
     let (from, to) = window(&query.time.from, &query.time.to)?;
     let filters = filters(catalog, &metric_key, query.filters)?;
@@ -136,10 +148,17 @@ fn validate_query(
         .compare
         .map(|compare| compared_window(from, to, compare))
         .transpose()?;
-    let shape = shape(query.time.grain, query.fold, split.as_ref(), &subjects)?;
+    let shape = shape(
+        entity_type,
+        query.time.grain,
+        query.fold,
+        split.as_ref(),
+        &subjects,
+    )?;
 
     Ok(ValidatedQuery {
         metric_key,
+        entity_type,
         subjects,
         from,
         to,
@@ -263,6 +282,7 @@ fn validate_limit(
 /// The question stripped to its shape, so answerability is decided by the one
 /// predicate the catalogue also reads.
 fn shape(
+    entity_type: EntityType,
     grain: Grain,
     fold: Fold,
     split: Option<&ValidatedSplit>,
@@ -279,6 +299,7 @@ fn shape(
     };
 
     shape_of(Ask {
+        entity_type,
         grain,
         fold,
         split,
@@ -290,7 +311,7 @@ fn shape(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::super::super::catalog::product_metric_catalog;
-    use super::super::super::fixtures::SHIPPED_METRIC;
+    use super::super::super::fixtures::{SHIPPED_METRIC, SHIPPED_TENANT_METRIC};
     use super::super::super::question::{
         DATE_FORMAT, MAX_FILTER_VALUE_BYTES, MAX_FILTER_VALUES, MAX_FILTERS, MAX_QUERIES,
         MAX_SUBJECTS,
@@ -624,6 +645,7 @@ mod tests {
             validated,
             ValidatedQuery {
                 metric_key: SHIPPED_METRIC.to_owned(),
+                entity_type: EntityType::Person,
                 subjects: ValidatedSubjects::Persons(vec![person()]),
                 from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
                 to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
@@ -896,5 +918,95 @@ mod tests {
             validated.subjects,
             ValidatedSubjects::Persons(vec![person()])
         );
+    }
+
+    fn tenant_query(grain: &str, fold: &str, split: serde_json::Value) -> serde_json::Value {
+        let mut query = serde_json::json!({
+            "metric": SHIPPED_TENANT_METRIC,
+            "subjects": { "type": "tenant" },
+            "time": { "from": "2026-01-01", "to": "2026-01-31", "grain": grain },
+            "fold": fold,
+        });
+        if !split.is_null() {
+            query["split"] = split;
+        }
+        query
+    }
+
+    #[test]
+    fn a_tenant_metric_is_answered_about_the_tenant_at_every_shape_a_person_metric_offers() {
+        let cases = [
+            (
+                tenant_query("total", "per_subject", serde_json::Value::Null),
+                QueryShape::SubjectTotal,
+            ),
+            (
+                tenant_query("total", "per_subject", split(None)),
+                QueryShape::SubjectSplit,
+            ),
+            (
+                tenant_query("total", "combined", split(None)),
+                QueryShape::CombinedSplit,
+            ),
+            (
+                tenant_query("week", "per_subject", serde_json::Value::Null),
+                QueryShape::SubjectSeries,
+            ),
+        ];
+
+        for (query, expected) in cases {
+            let named = query.to_string();
+            let validated = one(query).unwrap_or_else(|error| panic!("{named}: {error}"));
+
+            assert_eq!(validated.shape, expected, "{named}");
+            assert_eq!(validated.subjects, ValidatedSubjects::Tenant, "{named}");
+            assert_eq!(validated.entity_type, EntityType::Tenant, "{named}");
+        }
+    }
+
+    #[test]
+    fn a_tenant_metric_refuses_a_question_that_names_a_person() {
+        let mut query = tenant_query("total", "per_subject", serde_json::Value::Null);
+        query["subjects"] = serde_json::json!({
+            "type": "persons",
+            "ids": [person().to_string()],
+        });
+
+        let refused = one(query).expect_err("a tenant metric measures no person");
+
+        assert!(
+            matches!(refused, QueryError::Unanswerable { .. }),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_person_metric_asked_about_the_tenant_still_answers_only_a_combined_split() {
+        let mut folded = persons_query("total", "combined", split(None));
+        folded["subjects"] = serde_json::json!({ "type": "tenant" });
+        let mut per_subject = persons_query("total", "per_subject", serde_json::Value::Null);
+        per_subject["subjects"] = serde_json::json!({ "type": "tenant" });
+
+        assert_eq!(
+            one(folded)
+                .expect("a person metric folds its people for the tenant")
+                .shape,
+            QueryShape::CombinedSplit
+        );
+        assert!(matches!(
+            one(per_subject).expect_err("the tenant is not a subject of a person metric"),
+            QueryError::Unanswerable { .. }
+        ));
+    }
+
+    #[test]
+    fn a_tenant_question_names_no_person_for_the_visibility_gate_to_check() {
+        let batch = request(serde_json::json!({
+            "queries": [tenant_query("total", "per_subject", serde_json::Value::Null)],
+        }))
+        .expect("a tenant metric answers about the tenant");
+
+        assert!(batch.subject_ids().is_empty());
+        assert!(batch.asks_about_the_tenant());
     }
 }

@@ -92,7 +92,7 @@ async fn body(
         QueryShape::SubjectTotal | QueryShape::SubjectSplit => {
             let (rows, compared) =
                 read_both::<SubjectValueRow>(clickhouse, planned, &comment).await?;
-            subject_values(rows, compared, dimensions)
+            subject_values(rows, compared, dimensions, query.entity_type)
         }
         QueryShape::CombinedSplit => {
             let (rows, compared) =
@@ -102,7 +102,7 @@ async fn body(
         QueryShape::SubjectSeries => {
             let (rows, compared) =
                 read_both::<SubjectSeriesRow>(clickhouse, planned, &comment).await?;
-            subject_series(rows, compared, dimensions)
+            subject_series(rows, compared, dimensions, query.entity_type)
         }
     }
 }

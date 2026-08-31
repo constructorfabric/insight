@@ -1373,6 +1373,172 @@ models:
           the run, UTC); deployments carry repository / environment /
           outcome / env_kind.
 
+  - name: ci_runs
+    description: >
+      One row per decided pipeline run, with its dimensions resolved and its
+      duration carried in both units the measures read. A semantic-layer
+      dataset — measures count and fold it, drilldown projects it. TENANT
+      grain: entity_id is the tenant id and no identity join happens, because
+      a pipeline run belongs to the organization rather than to a person.
+      Undecided runs are excluded; a retried run appears once, at its latest
+      attempt.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — what a tenant-grain read keys its rows by.
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector source the run was collected through; a run id is unique only within it"
+      - name: run_id
+        description: "Source identifier of the run within its repository"
+      - name: run_number
+        description: "Number the run is quoted by in its source"
+      - name: metric_date
+        description: "Day the run started"
+      - name: started_at
+        description: "When the run started; the dataset's event time"
+      - name: is_gate
+        description: "1 when the run is commit-triggered and reached a decided outcome — the population pass rates are taken over"
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: is_retry
+        description: "1 when the run's final state came from a re-run"
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: attempt
+        description: "Attempt number the run's state was read from; 1 means it was never re-run"
+      - name: commit_known
+        description: "1 when the run's head commit exists among the collected commits"
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: branch
+        description: "Head branch the run built, '' when the source reports none"
+      - name: duration_min
+        description: "Wall-clock minutes from start to decision; 0 when the run recorded no duration"
+      - name: duration_h
+        description: "The same span in hours, so the hours measure divides nothing at read time"
+      - name: run_label
+        description: "Pipeline name and run number, as a drilldown row names the run"
+      - name: repository_value
+        description: "Repository dimension value"
+      - name: repository_label
+        description: "Display label of the repository"
+      - name: pipeline_value
+        description: "Pipeline dimension value — the workflow file, which is stable where the display name is not"
+      - name: pipeline_label
+        description: "Display name of the pipeline"
+      - name: trigger_value
+        description: "What started the run: push | pull_request | merge_queue | schedule | manual | other"
+      - name: trigger_label
+        description: "Display label of the trigger"
+      - name: outcome_value
+        description: "Decided outcome of the run; undecided runs are not in this relation"
+      - name: outcome_label
+        description: "Display label of the outcome"
+      - name: hour_block_value
+        description: "Two-hour block of the run's start hour, UTC, zero-padded"
+      - name: hour_block_label
+        description: "Display label of the two-hour block, as a range"
+
+  - name: ci_deployments
+    description: >
+      One row per deployment, with the latest status event folded in as its
+      outcome. A semantic-layer dataset — measures count it, drilldown
+      projects it. TENANT grain: entity_id is the tenant id and no identity
+      join happens. A deployment with no status event yet reads as the visible
+      'pending' outcome rather than being rounded away.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — what a tenant-grain read keys its rows by.
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector source the deployment was collected through; a deployment id is unique only within it"
+      - name: deployment_id
+        description: "Source identifier of the deployment"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Day the deployment was created"
+      - name: created_at
+        description: "When the deployment was created; the dataset's event time"
+      - name: deployment_label
+        description: "Environment and outcome, as a drilldown row names the deployment"
+      - name: repository_value
+        description: "Repository dimension value"
+      - name: repository_label
+        description: "Display label of the repository"
+      - name: environment_value
+        description: "Environment dimension value, as the source names it"
+      - name: environment_label
+        description: "Display label of the environment"
+      - name: outcome_value
+        description: "Latest status the deployment reached, or pending when it has none"
+      - name: outcome_label
+        description: "Display label of the outcome"
+      - name: env_kind_value
+        description: "Environment class: production | preview | static"
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['production', 'preview', 'static']
+      - name: env_kind_label
+        description: "Display label of the environment class"
+
+  - name: ci_commits
+    description: >
+      One row per collected commit, dated at its commit time — the denominator
+      of the run-to-commit join-coverage reading. A semantic-layer dataset.
+      TENANT grain: this counts what the connector collected rather than what
+      anyone wrote, so entity_id is the tenant id and the commit's author is
+      not carried here; git_commits serves the person-grain reading.
+    columns:
+      - name: tenant_id
+        description: "Owning tenant"
+        tests:
+          - not_null
+      - name: entity_id
+        description: >
+          The tenant id, verbatim — what a tenant-grain read keys its rows by.
+        tests:
+          - not_null
+      - name: source_id
+        description: "Connector source the commit was collected through"
+      - name: project_key
+        description: "Project the repository belongs to, as the source names it"
+      - name: repo_slug
+        description: "Repository the commit was collected from"
+      - name: commit_hash
+        description: "Full commit hash; one row per hash within the repository that collected it"
+        tests:
+          - not_null
+      - name: metric_date
+        description: "Day the commit was made"
+      - name: committed_at
+        description: "When the commit was made; the dataset's event time"
+      - name: commit_reference
+        description: "Short hash, as a drilldown row quotes the commit"
+      - name: repository_value
+        description: "Repository the commit was collected from, qualified by project"
+      - name: repository_label
+        description: "Display label of the repository"
+
   - name: wiki_metric_observations
     description: >
       Source measure observations for the unified metrics runtime, wiki

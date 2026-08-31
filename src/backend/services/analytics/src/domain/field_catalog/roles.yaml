@@ -350,3 +350,79 @@ datasets:
       scope:
         role: dimension
         label_field: scope_label
+
+  # CI datasets are TENANT-grain: a run, a deployment and a collected commit
+  # belong to the organization, so entity_id holds the tenant id and no
+  # identity is ever resolved for them.
+  - key: ci_runs
+    database: insight
+    relation: ci_runs
+    entity_type: tenant
+    row_identity: [source_id, repository_value, run_id]
+    fields:
+      tenant_id: tenant
+      entity_id: entity
+      started_at: event_time
+      duration_min: measurable
+      duration_h: measurable
+      run_label:
+        display: [title]
+      run_number:
+        display: [reference]
+      branch:
+        display: [location]
+      repository_value:
+        role: dimension
+        label_field: repository_label
+      pipeline_value:
+        role: dimension
+        label_field: pipeline_label
+      trigger_value:
+        role: dimension
+        label_field: trigger_label
+      outcome_value:
+        role: dimension
+        label_field: outcome_label
+      hour_block_value:
+        role: dimension
+        label_field: hour_block_label
+
+  - key: ci_deployments
+    database: insight
+    relation: ci_deployments
+    entity_type: tenant
+    row_identity: [source_id, deployment_id]
+    fields:
+      tenant_id: tenant
+      entity_id: entity
+      created_at: event_time
+      deployment_label:
+        display: [title]
+      deployment_id:
+        display: [reference]
+      repository_value:
+        role: dimension
+        label_field: repository_label
+      environment_value:
+        role: dimension
+        label_field: environment_label
+      outcome_value:
+        role: dimension
+        label_field: outcome_label
+      env_kind_value:
+        role: dimension
+        label_field: env_kind_label
+
+  - key: ci_commits
+    database: insight
+    relation: ci_commits
+    entity_type: tenant
+    row_identity: [source_id, project_key, repo_slug, commit_hash]
+    fields:
+      tenant_id: tenant
+      entity_id: entity
+      committed_at: event_time
+      commit_reference:
+        display: [reference]
+      repository_label:
+        display: [location]

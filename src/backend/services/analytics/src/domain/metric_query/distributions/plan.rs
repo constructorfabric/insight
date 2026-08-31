@@ -14,7 +14,7 @@ use crate::domain::identity_binding::{IdentitySet, resolve_identities};
 
 use super::super::catalog::MetricCatalog;
 use super::super::error::QueryError;
-use super::super::question::query_row_limit;
+use super::super::question::{ValidatedSubjects, query_row_limit};
 use super::validation::{ValidatedDistribution, ValidatedDistributions};
 
 // INVARIANT: a distribution reports the whole window at once, so neither read
@@ -132,19 +132,24 @@ async fn identities(
 
 /// INVARIANT: a person is carried with their own identities rather than merged
 /// into one list, because the answer is keyed per person.
-fn entity_scope(subjects: &[Uuid], identities: &BTreeMap<Uuid, IdentitySet>) -> EntityScope {
-    EntityScope::People(
-        subjects
-            .iter()
-            .map(|id| ResolvedPerson {
-                person_ref: id.to_string(),
-                identities: identities
-                    .get(id)
-                    .map(IdentitySet::values)
-                    .unwrap_or_default(),
-            })
-            .collect(),
-    )
+fn entity_scope(
+    subjects: &ValidatedSubjects,
+    identities: &BTreeMap<Uuid, IdentitySet>,
+) -> EntityScope {
+    match subjects {
+        ValidatedSubjects::Tenant => EntityScope::Tenant,
+        ValidatedSubjects::Persons(ids) => EntityScope::People(
+            ids.iter()
+                .map(|id| ResolvedPerson {
+                    person_ref: id.to_string(),
+                    identities: identities
+                        .get(id)
+                        .map(IdentitySet::values)
+                        .unwrap_or_default(),
+                })
+                .collect(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -157,7 +162,9 @@ mod tests {
     use crate::domain::compiler::sql::QueryParam;
 
     use super::super::super::catalog::product_metric_catalog;
-    use super::super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, offline_clickhouse, tenant};
+    use super::super::super::fixtures::{
+        SHIPPED_DISTRIBUTION_METRIC, offline_clickhouse, shipped_subjects, tenant,
+    };
     use super::*;
 
     fn person() -> Uuid {
@@ -167,7 +174,7 @@ mod tests {
     fn validated(bins: Option<u32>, quantiles: Option<Vec<f64>>) -> ValidatedDistribution {
         ValidatedDistribution {
             metric_key: SHIPPED_DISTRIBUTION_METRIC.to_owned(),
-            subjects: vec![person()],
+            subjects: ValidatedSubjects::Persons(vec![person()]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
             filters: Vec::new(),
@@ -285,7 +292,7 @@ mod tests {
     fn a_question_one_of_whose_people_resolves_is_read_for_that_person() {
         let unresolved = Uuid::from_u128(9);
         let query = ValidatedDistribution {
-            subjects: vec![person(), unresolved],
+            subjects: ValidatedSubjects::Persons(vec![person(), unresolved]),
             ..validated(Some(10), None)
         };
         let known = BTreeMap::from([(
@@ -315,7 +322,10 @@ mod tests {
 
     #[test]
     fn a_person_the_mapping_answers_nothing_for_is_scoped_to_no_identity_at_all() {
-        let scope = entity_scope(&[person()], &BTreeMap::new());
+        let scope = entity_scope(
+            &ValidatedSubjects::Persons(vec![person()]),
+            &BTreeMap::new(),
+        );
 
         assert_eq!(
             scope,
@@ -365,7 +375,7 @@ mod tests {
             let request: DistributionsRequest = serde_json::from_value(serde_json::json!({
                 "queries": [{
                     "metric": metric.key,
-                    "subjects": { "type": "persons", "ids": [person().to_string()] },
+                    "subjects": shipped_subjects(&metric.key),
                     "time": { "from": "2026-01-01", "to": "2026-01-31" },
                     "bins": 10,
                     "quantiles": [0.5],

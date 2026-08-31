@@ -22,6 +22,8 @@ mod fixtures {
     use chrono::NaiveDate;
     use uuid::Uuid;
 
+    use crate::domain::field_catalog::model::EntityType;
+
     use super::super::fixtures::SHIPPED_METRIC;
     use super::dto::Grain;
     use super::validation::{QueryShape, ValidatedQuery, ValidatedSplit, ValidatedSubjects};
@@ -29,6 +31,7 @@ mod fixtures {
     pub fn validated(shape: QueryShape, grain: Grain, dimensions: &[&str]) -> ValidatedQuery {
         ValidatedQuery {
             metric_key: SHIPPED_METRIC.to_owned(),
+            entity_type: EntityType::Person,
             subjects: ValidatedSubjects::Persons(vec![Uuid::from_u128(1)]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),

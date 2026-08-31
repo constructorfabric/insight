@@ -144,6 +144,8 @@ fn paged(mut read: Vec<ReadRow>, page_size: u32) -> Page {
 mod tests {
     use chrono::NaiveDate;
 
+    use crate::domain::metric_query::question::ValidatedSubjects;
+
     use super::super::super::catalog::product_metric_catalog;
     use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, tenant};
     use super::*;
@@ -185,7 +187,7 @@ mod tests {
     async fn a_position_issued_for_another_question_is_refused_before_anything_is_read() {
         let asked = |to: u32| ValidatedRows {
             metric_key: SHIPPED_METRIC.to_owned(),
-            subjects: vec![Uuid::from_u128(1)],
+            subjects: ValidatedSubjects::Persons(vec![Uuid::from_u128(1)]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, to).expect("valid date"),
             filters: Vec::new(),

@@ -95,4 +95,7 @@ gears:
       clickhouse_database: "insight"
       identity_url: ""
       redis_url: ""
-      metric_catalog: {}
+      metric_catalog:
+        # The stand serves the tenant-grain families, so the deployed-stand
+        # suite exercises the surfaces that answer them.
+        tenant_metrics_enabled: true

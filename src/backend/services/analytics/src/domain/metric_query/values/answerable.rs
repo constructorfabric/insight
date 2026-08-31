@@ -2,7 +2,10 @@
 //! alone. INVARIANT: validation and the catalogue both decide here, so every
 //! combination advertised is one a request may name, and no other is.
 
+use crate::domain::field_catalog::model::EntityType;
+
 use super::super::error::QueryError;
+use super::super::question::PERSON_SUBJECTS_OVER_A_TENANT_METRIC;
 use super::dto::{CompareOffset, Fold, Grain};
 
 /// INVARIANT: these enumerate their enums; a variant added and not listed here
@@ -48,6 +51,9 @@ pub(super) enum SubjectsAsk {
 /// no dimension names — only the shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Ask {
+    /// What the metric's values are keyed by, which decides whose subjects a
+    /// question about it may name.
+    pub entity_type: EntityType,
     pub grain: Grain,
     pub fold: Fold,
     pub split: SplitAsk,
@@ -83,27 +89,43 @@ pub(super) fn shape_of(ask: Ask) -> Result<QueryShape, QueryError> {
         }
     };
 
-    answerable_for(ask.subjects, shape)
+    answerable_for(ask.entity_type, ask.subjects, shape)
 }
 
-/// INVARIANT: a dataset records rows per observed person and never for the
-/// tenant, so a tenant-wide question must report no subject of its own.
-fn answerable_for(subjects: SubjectsAsk, shape: QueryShape) -> Result<QueryShape, QueryError> {
-    match (subjects, shape) {
-        (SubjectsAsk::Persons, _) | (SubjectsAsk::Tenant, QueryShape::CombinedSplit) => Ok(shape),
-        (
-            SubjectsAsk::Tenant,
-            QueryShape::SubjectTotal | QueryShape::SubjectSplit | QueryShape::SubjectSeries,
-        ) => Err(QueryError::Unanswerable {
-            reason: "no dataset records a row keyed by the tenant, so a tenant-wide question is \
-                     answered with its subjects folded together",
+/// Whose subjects a question may name is decided by what the metric's rows are
+/// keyed by: a person-grain metric answers about people and folds them together
+/// for a tenant-wide reading, while a tenant-grain metric records no person at
+/// all and answers only about the tenant.
+fn answerable_for(
+    entity_type: EntityType,
+    subjects: SubjectsAsk,
+    shape: QueryShape,
+) -> Result<QueryShape, QueryError> {
+    match (entity_type, subjects) {
+        (EntityType::Person, SubjectsAsk::Persons) | (EntityType::Tenant, SubjectsAsk::Tenant) => {
+            Ok(shape)
+        }
+        // A person-grain metric has no row keyed by the tenant, so a
+        // tenant-wide reading of it is its people folded together — which is
+        // reported per split group and never per subject.
+        (EntityType::Person, SubjectsAsk::Tenant) => match shape {
+            QueryShape::CombinedSplit => Ok(shape),
+            QueryShape::SubjectTotal | QueryShape::SubjectSplit | QueryShape::SubjectSeries => {
+                Err(QueryError::Unanswerable {
+                    reason: "no dataset records a row keyed by the tenant, so a tenant-wide \
+                             question is answered with its subjects folded together",
+                })
+            }
+        },
+        (EntityType::Tenant, SubjectsAsk::Persons) => Err(QueryError::Unanswerable {
+            reason: PERSON_SUBJECTS_OVER_A_TENANT_METRIC,
         }),
     }
 }
 
 /// Every question shape that is answerable at all for a metric, where
 /// `splittable` says whether the metric declares a dimension to break out by.
-fn answerable(splittable: bool) -> impl Iterator<Item = Ask> {
+fn answerable(entity_type: EntityType, splittable: bool) -> impl Iterator<Item = Ask> {
     let splits: &'static [SplitAsk] = if splittable {
         &[SplitAsk::None, SplitAsk::EveryGroup, SplitAsk::TopGroups]
     } else {
@@ -114,6 +136,7 @@ fn answerable(splittable: bool) -> impl Iterator<Item = Ask> {
         FOLDS.into_iter().flat_map(move |fold| {
             splits.iter().flat_map(move |split| {
                 SUBJECTS.into_iter().map(move |subjects| Ask {
+                    entity_type,
                     grain,
                     fold,
                     split: *split,
@@ -125,20 +148,30 @@ fn answerable(splittable: bool) -> impl Iterator<Item = Ask> {
 }
 
 /// The grains a metric's values may be asked at.
-pub(in crate::domain::metric_query) fn offered_grains(splittable: bool) -> Vec<Grain> {
+pub(in crate::domain::metric_query) fn offered_grains(
+    entity_type: EntityType,
+    splittable: bool,
+) -> Vec<Grain> {
     GRAINS
         .into_iter()
         .filter(|grain| {
-            answerable(splittable).any(|ask| ask.grain == *grain && shape_of(ask).is_ok())
+            answerable(entity_type, splittable)
+                .any(|ask| ask.grain == *grain && shape_of(ask).is_ok())
         })
         .collect()
 }
 
 /// The folds a metric's values may be asked with.
-pub(in crate::domain::metric_query) fn offered_folds(splittable: bool) -> Vec<Fold> {
+pub(in crate::domain::metric_query) fn offered_folds(
+    entity_type: EntityType,
+    splittable: bool,
+) -> Vec<Fold> {
     FOLDS
         .into_iter()
-        .filter(|fold| answerable(splittable).any(|ask| ask.fold == *fold && shape_of(ask).is_ok()))
+        .filter(|fold| {
+            answerable(entity_type, splittable)
+                .any(|ask| ask.fold == *fold && shape_of(ask).is_ok())
+        })
         .collect()
 }
 
@@ -155,6 +188,7 @@ mod tests {
 
     fn ask(grain: Grain, fold: Fold, split: SplitAsk) -> Ask {
         Ask {
+            entity_type: EntityType::Person,
             grain,
             fold,
             split,
@@ -162,18 +196,32 @@ mod tests {
         }
     }
 
+    fn tenant_metric(grain: Grain, fold: Fold, split: SplitAsk) -> Ask {
+        Ask {
+            entity_type: EntityType::Tenant,
+            subjects: SubjectsAsk::Tenant,
+            ..ask(grain, fold, split)
+        }
+    }
+
     #[test]
     fn a_metric_without_a_dimension_is_asked_per_subject_only() {
-        assert_eq!(offered_folds(false), vec![Fold::PerSubject]);
         assert_eq!(
-            offered_grains(false),
+            offered_folds(EntityType::Person, false),
+            vec![Fold::PerSubject]
+        );
+        assert_eq!(
+            offered_grains(EntityType::Person, false),
             vec![Grain::Total, Grain::Day, Grain::Week, Grain::Month]
         );
     }
 
     #[test]
     fn a_dimension_is_what_makes_a_combined_fold_answerable() {
-        assert_eq!(offered_folds(true), vec![Fold::PerSubject, Fold::Combined]);
+        assert_eq!(
+            offered_folds(EntityType::Person, true),
+            vec![Fold::PerSubject, Fold::Combined]
+        );
 
         assert!(shape_of(ask(Grain::Total, Fold::Combined, SplitAsk::None)).is_err());
         assert_eq!(
@@ -192,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_combined_split_is_answered_for_the_tenant() {
+    fn only_a_combined_split_is_answered_for_the_tenant_over_a_person_metric() {
         for split in [SplitAsk::None, SplitAsk::EveryGroup] {
             assert!(
                 shape_of(Ask {
@@ -212,5 +260,63 @@ mod tests {
             .ok(),
             Some(QueryShape::CombinedSplit)
         );
+    }
+
+    #[test]
+    fn a_tenant_metric_answers_the_tenant_at_every_shape_its_own_grain_allows() {
+        let cases = [
+            (
+                tenant_metric(Grain::Total, Fold::PerSubject, SplitAsk::None),
+                QueryShape::SubjectTotal,
+            ),
+            (
+                tenant_metric(Grain::Total, Fold::PerSubject, SplitAsk::EveryGroup),
+                QueryShape::SubjectSplit,
+            ),
+            (
+                tenant_metric(Grain::Total, Fold::Combined, SplitAsk::EveryGroup),
+                QueryShape::CombinedSplit,
+            ),
+            (
+                tenant_metric(Grain::Week, Fold::PerSubject, SplitAsk::None),
+                QueryShape::SubjectSeries,
+            ),
+        ];
+
+        for (asked, expected) in cases {
+            assert_eq!(shape_of(asked).ok(), Some(expected), "{asked:?}");
+        }
+    }
+
+    #[test]
+    fn a_tenant_metric_refuses_a_question_naming_people() {
+        for split in [SplitAsk::None, SplitAsk::EveryGroup] {
+            for grain in [Grain::Total, Grain::Month] {
+                assert!(
+                    shape_of(Ask {
+                        subjects: SubjectsAsk::Persons,
+                        ..tenant_metric(grain, Fold::PerSubject, split)
+                    })
+                    .is_err(),
+                    "should refuse: {grain:?} {split:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_tenant_metric_offers_the_same_grains_and_folds_a_person_metric_does() {
+        for splittable in [false, true] {
+            assert_eq!(
+                offered_grains(EntityType::Tenant, splittable),
+                offered_grains(EntityType::Person, splittable),
+                "grains, splittable={splittable}"
+            );
+            assert_eq!(
+                offered_folds(EntityType::Tenant, splittable),
+                offered_folds(EntityType::Person, splittable),
+                "folds, splittable={splittable}"
+            );
+        }
     }
 }

@@ -1,7 +1,47 @@
 //! Field-catalog vocabulary: what a dataset field is and what it may be used
 //! for. Types come from the schema artifact; roles are authored.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// What a row — and so every value read from it — is keyed by.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    /// One row per observed person: a read resolves identities and reports a
+    /// value per person.
+    #[default]
+    Person,
+    /// One row per tenant: there is no person to resolve, and the tenant is
+    /// the single subject every value belongs to.
+    Tenant,
+}
+
+impl EntityType {
+    pub fn as_db(self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Tenant => "tenant",
+        }
+    }
+}
+
+impl std::fmt::Display for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_db())
+    }
+}
 
 /// A field's type, normalized from the warehouse's spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +121,9 @@ pub struct CatalogDataset {
     pub key: String,
     pub database: String,
     pub relation: String,
+    /// What one row is about. INVARIANT: this is the dataset's grain, and a
+    /// metric may only be authored at the grain of every dataset it reads.
+    pub entity_type: EntityType,
     pub read_discipline: ReadDiscipline,
     pub sorting_key: Vec<String>,
     /// INVARIANT: a row-by-row read orders by the sorting key AND these, since

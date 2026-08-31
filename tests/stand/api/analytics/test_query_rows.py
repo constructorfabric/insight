@@ -40,6 +40,10 @@ GIT_COMMITS = "git.commits"
 #: not a spelling rejection dressed as one.
 UNKNOWN_METRIC = "stand.does_not_exist"
 
+#: Keyed by the tenant rather than by a person: the CI family measures the
+#: organization's pipelines, which belong to nobody in particular.
+CI_RUNS = "ci.runs"
+
 #: One row a page, so the walk issues a cursor from as little seeded evidence as
 #: possible.
 _PAGE_SIZE = 1
@@ -364,3 +368,56 @@ def test_query_rows_refuses_a_column_the_page_does_not_report(
         f"{response.text[:300]}"
     )
     assert response.parse(ProblemDocument).status == 400
+
+
+def _tenant_request(manifest: Manifest, metric: str) -> dict[str, JsonValue]:
+    start, end = query_window(manifest)
+    return {
+        "metric": metric,
+        "subjects": {"type": "tenant"},
+        "time": {"from": start, "to": end},
+        "page_size": _PAGE_SIZE,
+    }
+
+
+@pytest.mark.reliability
+def test_query_rows_pages_a_tenant_metric_over_the_input_it_composes(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """A tenant-grain page is served like any other: named input, columns, ordered rows.
+
+    The CI connector streams are not part of the sample seed, so this pins the
+    page's shape rather than its contents — an empty page is a legitimate
+    answer here and a refusal is not.
+    """
+    response = api.post(QUERY_ROWS, json_body=_tenant_request(stand_manifest, CI_RUNS))
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    page = response.parse(RowsResponse)
+    assert page.metric == CI_RUNS
+    assert page.input == "value", f"a metric composing one input paged its `{page.input}`"
+    assert page.columns, "a page reports the columns its rows are read under"
+    for row in page.rows:
+        assert len(row) == len(page.columns), (
+            f"a row carries {len(row)} values for {len(page.columns)} columns"
+        )
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.reliability
+def test_query_rows_refuses_a_page_whose_subjects_are_not_the_metrics_grain(
+    api: ApiClient, stand_manifest: Manifest
+) -> None:
+    """Each surface answers one grain: naming the other side is unanswerable, not empty."""
+    person = stand_manifest.fixture("dev_lead")
+    cases = {
+        "a tenant metric asked about a person": _request(stand_manifest, CI_RUNS, person.uuid),
+        "a person metric asked about the tenant": _tenant_request(stand_manifest, GIT_COMMITS),
+    }
+
+    for named, body in cases.items():
+        response = api.post(QUERY_ROWS, json_body=body)
+        assert response.status_code == 400, (
+            f"{named} answered {response.status_code}: {response.text[:300]}"
+        )
+        assert response.parse(ProblemDocument).status == 400

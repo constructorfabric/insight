@@ -194,6 +194,50 @@ ORDER BY (tenant_id, email, usage_date)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE TABLE IF NOT EXISTS insight.ci_commits
+(
+    `tenant_id` String,
+    `entity_id` String,
+    `source_id` String,
+    `project_key` String,
+    `repo_slug` String,
+    `commit_hash` String,
+    `metric_date` Date,
+    `committed_at` DateTime64(3),
+    `commit_reference` String,
+    `repository_value` String,
+    `repository_label` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(metric_date)
+ORDER BY (tenant_id, entity_id, metric_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.ci_deployments
+(
+    `tenant_id` String,
+    `entity_id` String,
+    `source_id` String,
+    `deployment_id` String,
+    `metric_date` Date,
+    `created_at` DateTime64(3),
+    `deployment_label` String,
+    `repository_value` String,
+    `repository_label` String,
+    `environment_value` String,
+    `environment_label` String,
+    `outcome_value` String,
+    `outcome_label` String,
+    `env_kind_value` String,
+    `env_kind_label` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(metric_date)
+ORDER BY (tenant_id, entity_id, metric_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
 CREATE TABLE IF NOT EXISTS insight.ci_metric_evidence
 (
     `tenant_id` String,
@@ -247,6 +291,40 @@ CREATE TABLE IF NOT EXISTS insight.ci_metric_observations
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(metric_date)
 ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_date)
+SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.ci_runs
+(
+    `tenant_id` String,
+    `entity_id` String,
+    `source_id` String,
+    `run_id` String,
+    `run_number` String,
+    `metric_date` Date,
+    `started_at` DateTime64(3),
+    `is_gate` UInt8,
+    `is_retry` UInt8,
+    `attempt` UInt32,
+    `commit_known` UInt8,
+    `branch` String,
+    `duration_min` Float64,
+    `duration_h` Float64,
+    `run_label` String,
+    `repository_value` String,
+    `repository_label` String,
+    `pipeline_value` String,
+    `pipeline_label` String,
+    `trigger_value` String,
+    `trigger_label` String,
+    `outcome_value` String,
+    `outcome_label` String,
+    `hour_block_value` String,
+    `hour_block_label` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(metric_date)
+ORDER BY (tenant_id, entity_id, metric_date)
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 

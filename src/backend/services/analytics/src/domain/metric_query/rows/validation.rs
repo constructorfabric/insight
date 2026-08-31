@@ -7,14 +7,17 @@
 use std::collections::BTreeSet;
 
 use chrono::NaiveDate;
-use uuid::Uuid;
 
 use crate::domain::compiler::request::{DimensionFilter, SortDirection};
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::dto::Subjects;
 use super::super::error::QueryError;
-use super::super::question::{defined_metric, filters, person_ids, window};
+use super::super::question::{
+    PERSON_SUBJECTS_OVER_A_TENANT_METRIC, ValidatedSubjects, defined_metric, filters,
+    metric_entity_type, person_ids, window,
+};
 use super::dto::{RowSort, RowsRequest, SortDirection as AskedDirection};
 
 /// The field a page names its people in.
@@ -27,7 +30,7 @@ const MAX_DISPLAY_DIMENSIONS: usize = 10;
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidatedRows {
     pub metric_key: String,
-    pub subjects: Vec<Uuid>,
+    pub subjects: ValidatedSubjects,
     pub from: NaiveDate,
     pub to: NaiveDate,
     pub filters: Vec<DimensionFilter>,
@@ -50,12 +53,19 @@ pub struct ValidatedSort {
     pub direction: SortDirection,
 }
 
+impl ValidatedRows {
+    #[must_use]
+    pub fn asks_about_the_tenant(&self) -> bool {
+        matches!(self.subjects, ValidatedSubjects::Tenant)
+    }
+}
+
 pub fn validate_request(
     catalog: &MetricCatalog,
     request: RowsRequest,
 ) -> Result<ValidatedRows, QueryError> {
     let metric_key = defined_metric(catalog, &request.metric)?;
-    let subjects = subjects(request.subjects)?;
+    let subjects = subjects(metric_entity_type(catalog, &metric_key)?, request.subjects)?;
     let (from, to) = window(&request.time.from, &request.time.to)?;
     let filters = filters(catalog, &metric_key, request.filters)?;
     let display_dimensions = display_dimensions(catalog, &metric_key, request.display_dimensions)?;
@@ -124,14 +134,20 @@ fn direction(asked: AskedDirection) -> SortDirection {
     }
 }
 
-/// A page reports the events credited to a subject, and a dataset records no
-/// event keyed by the tenant.
-fn subjects(subjects: Subjects) -> Result<Vec<Uuid>, QueryError> {
-    match subjects {
-        Subjects::Persons { ids } => person_ids(SUBJECTS_FIELD, ids),
-        Subjects::Tenant {} => Err(QueryError::Unanswerable {
-            reason: "a page reports the events credited to a subject, and no event is recorded \
-                     against the tenant itself",
+/// A page reports the events credited to a subject, so it answers only where
+/// the subjects the question names are the grain the metric records.
+fn subjects(entity_type: EntityType, subjects: Subjects) -> Result<ValidatedSubjects, QueryError> {
+    match (entity_type, subjects) {
+        (EntityType::Person, Subjects::Persons { ids }) => {
+            Ok(ValidatedSubjects::Persons(person_ids(SUBJECTS_FIELD, ids)?))
+        }
+        (EntityType::Tenant, Subjects::Tenant {}) => Ok(ValidatedSubjects::Tenant),
+        (EntityType::Person, Subjects::Tenant {}) => Err(QueryError::Unanswerable {
+            reason: "a page reports the events credited to a subject, and this metric records \
+                     no event against the tenant itself",
+        }),
+        (EntityType::Tenant, Subjects::Persons { .. }) => Err(QueryError::Unanswerable {
+            reason: PERSON_SUBJECTS_OVER_A_TENANT_METRIC,
         }),
     }
 }
@@ -219,9 +235,12 @@ fn named(roles: &[String]) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use uuid::Uuid;
+
     use super::super::super::catalog::product_metric_catalog;
     use super::super::super::fixtures::{
-        SHIPPED_METRIC, SHIPPED_RATIO_METRIC, shipped_input_roles,
+        SHIPPED_METRIC, SHIPPED_RATIO_METRIC, SHIPPED_TENANT_METRIC, shipped_input_roles,
+        shipped_subjects,
     };
     use super::*;
 
@@ -355,7 +374,10 @@ mod tests {
         }))
         .expect("a repeated subject is one subject");
 
-        assert_eq!(validated.subjects, vec![person()]);
+        assert_eq!(
+            validated.subjects,
+            ValidatedSubjects::Persons(vec![person()])
+        );
     }
 
     #[test]
@@ -374,7 +396,10 @@ mod tests {
     #[test]
     fn every_shipped_metric_pages_each_input_it_composes() {
         for (metric_key, roles) in shipped_input_roles() {
-            let unnamed = validate(&serde_json::json!({ "metric": metric_key }));
+            let unnamed = validate(&serde_json::json!({
+                "metric": metric_key,
+                "subjects": shipped_subjects(metric_key),
+            }));
             if roles.len() == 1 {
                 assert_eq!(
                     unnamed.map(|validated| validated.input_role).ok().as_ref(),
@@ -391,6 +416,7 @@ mod tests {
             for role in &roles {
                 let validated = validate(&serde_json::json!({
                     "metric": metric_key,
+                    "subjects": shipped_subjects(metric_key),
                     "input": role,
                 }));
 
@@ -481,6 +507,46 @@ mod tests {
                     "`{metric_key}` pages its `{role}` by event time"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_tenant_metric_pages_the_rows_behind_the_tenants_own_value() {
+        let validated = validate(&serde_json::json!({
+            "metric": SHIPPED_TENANT_METRIC,
+            "subjects": { "type": "tenant" },
+        }))
+        .expect("a tenant metric pages");
+
+        assert_eq!(validated.subjects, ValidatedSubjects::Tenant);
+        assert!(validated.asks_about_the_tenant());
+    }
+
+    #[test]
+    fn a_page_is_refused_where_the_subjects_are_not_the_grain_the_metric_records() {
+        let cases = [
+            (
+                "a tenant metric asked about a person",
+                serde_json::json!({
+                    "metric": SHIPPED_TENANT_METRIC,
+                    "subjects": { "type": "persons", "ids": [person().to_string()] },
+                }),
+            ),
+            (
+                "a person metric asked about the tenant",
+                serde_json::json!({
+                    "metric": SHIPPED_METRIC,
+                    "subjects": { "type": "tenant" },
+                }),
+            ),
+        ];
+
+        for (named, overrides) in cases {
+            let refused = validate(&overrides).expect_err(named);
+            assert!(
+                matches!(refused, QueryError::Unanswerable { .. }),
+                "{named}: {refused}"
+            );
         }
     }
 }

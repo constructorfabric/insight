@@ -23,6 +23,7 @@ const FAMILIES: &[(&str, &str)] = &[
     ("tasks", include_str!("seeds/tasks.yaml")),
     ("wiki", include_str!("seeds/wiki.yaml")),
     ("collab", include_str!("seeds/collab.yaml")),
+    ("ci", include_str!("seeds/ci.yaml")),
 ];
 
 #[derive(Debug, Deserialize)]
@@ -126,7 +127,7 @@ pub async fn reconcile_product_definitions(db: &DatabaseConnection) -> Result<()
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::domain::field_catalog::model::CatalogDataset;
+    use crate::domain::field_catalog::model::{CatalogDataset, EntityType};
 
     #[test]
     fn every_shipped_definition_is_valid() {
@@ -160,6 +161,7 @@ mod tests {
             key: key.to_owned(),
             database: database.to_owned(),
             relation: key.to_owned(),
+            entity_type: EntityType::Person,
             read_discipline,
             sorting_key: Vec::new(),
             row_identity: Vec::new(),

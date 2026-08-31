@@ -92,7 +92,9 @@ mod tests {
     use crate::domain::definitions::filter::{
         FilterError, FilterLeaf, FilterOp, FilterTree, FilterValue, Scalar,
     };
-    use crate::domain::field_catalog::model::{CatalogField, FieldRole, FieldType, ReadDiscipline};
+    use crate::domain::field_catalog::model::{
+        CatalogField, EntityType, FieldRole, FieldType, ReadDiscipline,
+    };
 
     fn measure() -> MeasureDefinition {
         MeasureDefinition {
@@ -577,6 +579,7 @@ any:
             key: "git_pull_requests".to_owned(),
             database: "silver".to_owned(),
             relation: "class_git_pull_requests".to_owned(),
+            entity_type: EntityType::Person,
             read_discipline: ReadDiscipline::Direct,
             sorting_key: vec!["unique_key".to_owned()],
             row_identity: vec!["unique_key".to_owned()],

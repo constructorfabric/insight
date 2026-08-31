@@ -52,6 +52,9 @@ class Tier(StrEnum):
     #: Percentile over event rows passed through one-for-one, like
     #: `EXACT_MEDIAN` but at a quantile the expectation carries.
     EXACT_PERCENTILE = "exact_percentile"
+    #: Sample standard deviation over event rows passed through to observations
+    #: one-for-one: the spread of the projected values IS the period scalar.
+    EXACT_STDDEV = "exact_stddev"
     #: Ratio of two additive measures: the summed numerator over the summed
     #: denominator, scaled, then transformed.
     EXACT_RATIO = "exact_ratio"
@@ -132,6 +135,25 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.removed_lines", "ai", Tier.EXACT_SUM),
     Expectation("ai.seat_cost", "ai_cost", Tier.EXACT_SUM),
     Expectation("ai.tool_acceptance_rate", "ai", Tier.EXACT_RATIO, scale=100.0),
+    # The CI family is TENANT grain: a run belongs to the organization, so its
+    # evidence carries no person and the sweep asks for it with the tenant
+    # entity. Counting measures contribute a constant 1 and their presentation
+    # shows no value column, so one evidence row is one run, one deployment or
+    # one collected commit. Duration is the exception the observations model
+    # already makes: `run_duration_min` alone passes through at event grain, so
+    # its median, its p90 and its spread are all statements about the very rows
+    # the page projects.
+    Expectation("ci.commits_observed", "ci", Tier.EXACT_COUNT),
+    Expectation("ci.deployments", "ci", Tier.EXACT_COUNT),
+    Expectation("ci.gate_first_try_pass_rate", "ci", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("ci.gate_pass_rate", "ci", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("ci.gate_retry_share", "ci", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("ci.run_duration_min", "ci", Tier.EXACT_MEDIAN),
+    Expectation("ci.run_duration_min_p90", "ci", Tier.EXACT_PERCENTILE, quantile=0.9),
+    Expectation("ci.run_duration_min_stddev", "ci", Tier.EXACT_STDDEV),
+    Expectation("ci.run_hours", "ci", Tier.EXACT_SUM),
+    Expectation("ci.runs", "ci", Tier.EXACT_COUNT),
+    Expectation("ci.runs_matched_commit", "ci", Tier.EXACT_COUNT),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
     Expectation("collab.adhoc_meetings", "collab", Tier.EXACT_SUM),
     Expectation("collab.breadth", "collab", Tier.STRUCTURAL_ONLY),

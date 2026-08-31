@@ -133,13 +133,15 @@ mod tests {
 
     use chrono::NaiveDate;
 
+    use crate::domain::metric_query::question::ValidatedSubjects;
+
     use super::super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, offline_clickhouse};
     use super::*;
 
     fn validated() -> ValidatedDistribution {
         ValidatedDistribution {
             metric_key: SHIPPED_DISTRIBUTION_METRIC.to_owned(),
-            subjects: vec![Uuid::from_u128(1)],
+            subjects: ValidatedSubjects::Persons(vec![Uuid::from_u128(1)]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
             filters: Vec::new(),

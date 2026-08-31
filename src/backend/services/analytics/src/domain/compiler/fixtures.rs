@@ -14,6 +14,8 @@ use crate::domain::definitions::definition::{
     MetricDefinition, Transform,
 };
 
+use crate::domain::field_catalog::model::EntityType;
+
 use super::error::CompileError;
 use super::metric::compile_metric_query;
 use super::request::{
@@ -77,7 +79,7 @@ pub fn metric(computation: Computation) -> MetricDefinition {
         transform: None,
         format: Format::Percent,
         direction: Direction::HigherIsBetter,
-        entity_type: "person".to_owned(),
+        entity_type: EntityType::Person,
         cohort_key: None,
         label: None,
         description: None,

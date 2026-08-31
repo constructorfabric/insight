@@ -3,18 +3,19 @@ use serde_json::{Value, json};
 use super::super::catalog::product_metric_catalog;
 use super::super::comparisons::{Population, population};
 use super::super::distributions::distributable;
-use super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, SHIPPED_METRIC};
+use super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, SHIPPED_METRIC, SHIPPED_TENANT_METRIC};
 use super::describe;
 
 use crate::domain::definitions::definition::{
     Computation, Direction, Format, MetricDefinition, Transform,
 };
+use crate::domain::field_catalog::model::EntityType;
 
 const SHIPPED_RATIO_METRIC: &str = "git.merge_rate";
 
 fn catalogued() -> Value {
     let catalog = product_metric_catalog().expect("the shipped definitions load");
-    serde_json::to_value(describe(catalog).expect("every shipped metric resolves its inputs"))
+    serde_json::to_value(describe(catalog, true).expect("every shipped metric resolves its inputs"))
         .expect("the catalogue serializes")
 }
 
@@ -37,7 +38,7 @@ fn without_cohort() -> MetricDefinition {
         transform: Option::<Transform>::None,
         format: Format::Integer,
         direction: Direction::Neutral,
-        entity_type: "person".to_owned(),
+        entity_type: EntityType::Person,
         cohort_key: None,
         label: None,
         description: None,
@@ -219,4 +220,99 @@ fn a_metric_declaring_a_cohort_advertises_both_populations() {
         json!([{ "type": "tenant" }, { "type": "cohort" }])
     );
     assert!(population(metric, Population::Cohort {}).is_ok());
+}
+
+#[test]
+fn a_tenant_metric_is_catalogued_as_asked_about_the_tenant_and_compared_against_nobody() {
+    let entry = entry(SHIPPED_TENANT_METRIC);
+
+    assert_eq!(entry["entity_type"], json!("tenant"));
+    assert_eq!(entry["cohort_key"], Value::Null);
+    assert_eq!(entry["questions"]["comparisons"]["populations"], json!([]));
+    assert_eq!(
+        entry["questions"]["values"]["grains"],
+        json!(["total", "day", "week", "month"])
+    );
+    assert_eq!(
+        entry["questions"]["values"]["folds"],
+        json!(["per_subject", "combined"])
+    );
+}
+
+#[test]
+fn the_catalogue_advertises_a_tenant_metric_only_where_the_installation_serves_one() {
+    let catalog = product_metric_catalog().expect("the shipped definitions load");
+    let keys = |tenant_metrics_enabled| -> Vec<String> {
+        describe(catalog, tenant_metrics_enabled)
+            .expect("every shipped metric resolves its inputs")
+            .metrics
+            .into_iter()
+            .filter(|metric| metric.entity_type == EntityType::Tenant)
+            .map(|metric| metric.key)
+            .collect()
+    };
+
+    assert!(
+        keys(true).contains(&SHIPPED_TENANT_METRIC.to_owned()),
+        "an installation serving tenant metrics advertises them: {:?}",
+        keys(true)
+    );
+    assert_eq!(
+        keys(false),
+        Vec::<String>::new(),
+        "an installation that refuses a tenant question must not advertise one"
+    );
+}
+
+/// The CI family is the first authored at tenant grain, and its metrics carry
+/// exactly the dimension sets the family means to offer. A metric's capability
+/// is the intersection of its inputs' declared keys, so this reads back what
+/// the authored measures actually agree on rather than what they meant to.
+#[test]
+fn the_ci_family_is_catalogued_with_the_dimensions_its_measures_share() {
+    let expected: [(&str, &[&str]); 11] = [
+        (
+            "ci.runs",
+            &["hour_block", "outcome", "pipeline", "repository", "trigger"],
+        ),
+        (
+            "ci.gate_pass_rate",
+            &["hour_block", "pipeline", "repository"],
+        ),
+        ("ci.gate_first_try_pass_rate", &["pipeline", "repository"]),
+        ("ci.gate_retry_share", &["pipeline", "repository"]),
+        (
+            "ci.run_duration_min",
+            &["outcome", "pipeline", "repository"],
+        ),
+        (
+            "ci.run_duration_min_p90",
+            &["outcome", "pipeline", "repository"],
+        ),
+        (
+            "ci.run_duration_min_stddev",
+            &["outcome", "pipeline", "repository"],
+        ),
+        ("ci.run_hours", &["outcome", "pipeline", "repository"]),
+        ("ci.runs_matched_commit", &[]),
+        ("ci.commits_observed", &[]),
+        (
+            "ci.deployments",
+            &["env_kind", "environment", "outcome", "repository"],
+        ),
+    ];
+
+    for (key, dimensions) in expected {
+        let entry = entry(key);
+        let mut catalogued: Vec<String> = entry["dimensions"]
+            .as_array()
+            .expect("dimensions are a list")
+            .iter()
+            .map(|dimension| dimension["key"].as_str().expect("a key").to_owned())
+            .collect();
+        catalogued.sort();
+
+        assert_eq!(catalogued, dimensions, "`{key}` offers {catalogued:?}");
+        assert_eq!(entry["entity_type"], json!("tenant"), "`{key}`");
+    }
 }

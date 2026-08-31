@@ -12,6 +12,7 @@ use crate::domain::compiler::request::{
     ViewKind, any_identity_resolved,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::error::QueryError;
@@ -35,7 +36,7 @@ struct Populations {
 /// Everything a population read's answer depends on.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PopulationKey {
-    entity_type: String,
+    entity_type: EntityType,
     cohort_key: String,
     targets: Vec<Uuid>,
 }
@@ -79,7 +80,7 @@ async fn resolve(
             cohort_key,
         } => {
             let key = PopulationKey {
-                entity_type: entity_type.clone(),
+                entity_type: *entity_type,
                 cohort_key: cohort_key.clone(),
                 targets: query.targets.clone(),
             };
@@ -113,7 +114,7 @@ async fn declared_cohort(
     let pool = cohort_pool(
         clickhouse,
         tenant_id,
-        &key.entity_type,
+        key.entity_type,
         &key.cohort_key,
         &key.targets,
     )
@@ -203,7 +204,7 @@ mod tests {
 
     fn declared() -> ValidatedPopulation {
         ValidatedPopulation::DeclaredCohort {
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: "org_unit".to_owned(),
         }
     }

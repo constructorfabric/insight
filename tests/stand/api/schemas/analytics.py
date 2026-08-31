@@ -1487,6 +1487,8 @@ class ValidationErrorKind(StrEnum):
     unknown_derived_input = 'unknown_derived_input'
     unused_derived_input = 'unused_derived_input'
     dimension_bindings_disagree = 'dimension_bindings_disagree'
+    entity_grain_mismatch = 'entity_grain_mismatch'
+    cohort_without_peers = 'cohort_without_peers'
 
 
 class ValidationFailure(BaseModel):
@@ -1733,7 +1735,7 @@ class MetricDefinition(BaseModel):
     computation: Computation
     description: str | None = None
     direction: Direction
-    entity_type: str
+    entity_type: EntityType = Field(..., description="What the metric's values are keyed by. INVARIANT: equal to the grain of\nevery dataset its measures read — see `validate`.")
     format: Format
     key: str
     label: str | None = None
@@ -2022,7 +2024,7 @@ class SubjectDistribution(BaseModel):
     )
     histogram: Histogram | None = None
     quantiles: list[Quantile] | None = Field(None, description='Absent when the question named no quantiles.')
-    subject: str
+    subject: str | None = Field(None, description="Absent when the metric measures the tenant: the answer is about the\ncaller's own tenant, which the question already named.")
 
 
 class TimeseriesDto(BaseModel):
@@ -2088,7 +2090,7 @@ class CatalogMetric(BaseModel):
     description: str | None = None
     dimensions: list[CatalogDimension]
     direction: Direction
-    entity_type: str = Field(..., description="What the metric's values are keyed by, such as `person`.")
+    entity_type: EntityType = Field(..., description="What the metric's values are keyed by.")
     format: Format
     key: str = Field(..., description='The key a question names, such as `git.commits`.')
     label: str | None = None

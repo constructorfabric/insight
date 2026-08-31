@@ -53,16 +53,11 @@ async fn authorize_subjects(
 
     // SAFETY: every person is checked individually; a batch is never a way
     // around the gate deciding which people a caller may read.
-    let person_ids = batch.subject_ids();
-    if person_ids.is_empty() {
-        return Ok(());
-    }
-
     authorize_person_ids(
         &state.identity,
         ctx,
         crate::api::forwarded_authorization(headers),
-        &person_ids,
+        &batch.subject_ids(),
     )
     .await
 }

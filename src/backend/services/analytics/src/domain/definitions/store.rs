@@ -449,7 +449,7 @@ async fn insert_metric<C: ConnectionTrait>(
             json_value(metric.transform.as_ref()),
             Value::from(metric.format.as_db()),
             Value::from(metric.direction.as_db()),
-            Value::from(metric.entity_type.as_str()),
+            Value::from(metric.entity_type.as_db()),
             optional_str(metric.cohort_key.as_deref()),
             Value::from(origin.as_db()),
         ],
@@ -475,7 +475,7 @@ async fn update_metric<C: ConnectionTrait>(
                 json_value(metric.transform.as_ref()),
                 Value::from(metric.format.as_db()),
                 Value::from(metric.direction.as_db()),
-                Value::from(metric.entity_type.as_str()),
+                Value::from(metric.entity_type.as_db()),
                 optional_str(metric.cohort_key.as_deref()),
                 Value::from(metric.key.as_str()),
                 Value::from(from_version),
@@ -557,6 +557,7 @@ mod tests {
     use crate::domain::definitions::definition::{
         Aggregation, Computation, DimensionBinding, Direction, Format, ReadDiscipline, Transform,
     };
+    use crate::domain::field_catalog::model::EntityType;
 
     fn dataset() -> DatasetDefinition {
         DatasetDefinition {
@@ -592,7 +593,7 @@ dimensions:
             transform: None,
             format: Format::Integer,
             direction: Direction::HigherIsBetter,
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: None,
             label: None,
             description: None,

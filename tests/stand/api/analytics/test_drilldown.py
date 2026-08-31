@@ -42,6 +42,7 @@ import datetime as dt
 import io
 import json
 import math
+import statistics
 import uuid
 import warnings
 import zipfile
@@ -62,10 +63,13 @@ from ..schemas import (
     ProblemDocument,
 )
 from ..schemas.analytics import (
+    EntityType,
+    MetricDefinitionView,
     MetricDrilldownCapability,
     MetricDrilldownColumnType,
     MetricDrilldownEntity,
     MetricDrilldownEntity1,
+    MetricDrilldownEntity3,
     MetricDrilldownResponse,
 )
 from . import query_window
@@ -126,14 +130,27 @@ class _Walk:
 
 
 @pytest.fixture(scope="session")
-def drilldown_capabilities(
-    lead_session: PersonaSession,
-) -> Mapping[str, MetricDrilldownCapability | None]:
-    """What the catalogue says each metric supports, read once for the sweep.
+def metric_definitions(lead_session: PersonaSession) -> Mapping[str, MetricDefinitionView]:
+    """The catalogue the sweep is driven off, read once for the whole run.
 
     Session-scoped because it is one answer for the whole run, and because the
     alternative — a listing request per parametrized case — would make the sweep
-    cost twice what it needs to.
+    cost twice what it needs to. Both the drilldown capability and the grain a
+    request must name are read from it, so the sweep asks each metric the
+    question its own definition says it answers.
+    """
+    response = lead_session.client.get(METRIC_DEFINITIONS)
+    assert response.status_code == 200, f"definitions: {response.status_code}"
+    metrics = response.parse(MetricDefinitionListResponse).metrics
+    assert metrics, "no metric definitions — did the migrations run?"
+    return {metric.metric_key: metric for metric in metrics}
+
+
+@pytest.fixture(scope="session")
+def drilldown_capabilities(
+    metric_definitions: Mapping[str, MetricDefinitionView],
+) -> Mapping[str, MetricDrilldownCapability | None]:
+    """What the catalogue says each metric supports.
 
     Capability is derived per request from the health of the evidence relation,
     so this is a claim the endpoint can contradict, and it does: the catalogue's
@@ -143,17 +160,36 @@ def drilldown_capabilities(
     `test_advertised_capability_matches_what_the_endpoint_serves` carries the
     other as a strict xfail.
     """
-    response = lead_session.client.get(METRIC_DEFINITIONS)
-    assert response.status_code == 200, f"definitions: {response.status_code}"
-    metrics = response.parse(MetricDefinitionListResponse).metrics
-    assert metrics, "no metric definitions — did the migrations run?"
-    return {metric.metric_key: metric.drilldown for metric in metrics}
+    return {key: metric.drilldown for key, metric in metric_definitions.items()}
+
+
+def _drilldown_entity(
+    manifest: Manifest, entity_type: EntityType, entity_id: str | None
+) -> JsonValue:
+    """Whose evidence a selection names, spelled as the drilldown takes it.
+
+    A tenant selection carries no id at all: the tenant is the caller's own,
+    taken from the session, and the wire shape forbids naming one.
+    """
+    match entity_type:
+        case EntityType.person:
+            return {
+                "type": "person",
+                # Not `or`: an empty id is a case a caller may want to send, and
+                # falling back to a real person would quietly test something else.
+                "id": manifest.fixture("dev_lead").uuid if entity_id is None else entity_id,
+            }
+        case EntityType.tenant:
+            return {"type": "tenant"}
+        case unhandled:
+            assert_never(unhandled)
 
 
 def _request_for(
     manifest: Manifest,
     metric_key: str,
     *,
+    entity_type: EntityType = EntityType.person,
     entity_id: str | None = None,
     limit: int | None = None,
     cursor: str | None = None,
@@ -163,12 +199,7 @@ def _request_for(
     start, end = query_window(manifest)
     request: dict[str, JsonValue] = {
         "metric_key": metric_key,
-        "entity": {
-            "type": "person",
-            # Not `or`: an empty id is a case a caller may want to send, and
-            # falling back to a real person would quietly test something else.
-            "id": manifest.fixture("dev_lead").uuid if entity_id is None else entity_id,
-        },
+        "entity": _drilldown_entity(manifest, entity_type, entity_id),
         "period": {"from": start, "to": end},
         "filters": list(filters),
         "display_dimensions": list(display_dimensions),
@@ -204,6 +235,7 @@ def _page(
     metric_key: str,
     *,
     limit: int,
+    entity_type: EntityType = EntityType.person,
     cursor: str | None = None,
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
@@ -213,6 +245,7 @@ def _page(
         json_body=_request_for(
             manifest,
             metric_key,
+            entity_type=entity_type,
             limit=limit,
             cursor=cursor,
             filters=filters,
@@ -227,6 +260,7 @@ def _walk(
     metric_key: str,
     *,
     limit: int,
+    entity_type: EntityType = EntityType.person,
     filters: Sequence[JsonValue] = (),
     display_dimensions: Sequence[str] = (),
     page_budget: int | None = None,
@@ -242,6 +276,7 @@ def _walk(
         manifest,
         metric_key,
         limit=limit,
+        entity_type=entity_type,
         filters=filters,
         display_dimensions=display_dimensions,
     )
@@ -270,6 +305,7 @@ def _walk(
             manifest,
             metric_key,
             limit=limit,
+            entity_type=entity_type,
             cursor=cursor,
             filters=filters,
             display_dimensions=display_dimensions,
@@ -279,25 +315,45 @@ def _walk(
     return _Walk(first=first, rows=rows, complete=True)
 
 
+def _results_entity(manifest: Manifest, entity_type: EntityType) -> tuple[JsonValue, str]:
+    """The same subject as `_drilldown_entity`, spelled as `/v1/metric-results`
+    takes it, beside the `entity_id` its answer is keyed by.
+
+    The two endpoints disagree on the wire — one id, a list of ids, or none —
+    so the spelling lives in one place per endpoint rather than at each call.
+    """
+    match entity_type:
+        case EntityType.person:
+            person_id = manifest.fixture("dev_lead").uuid
+            return {"type": "person", "ids": [person_id]}, person_id
+        case EntityType.tenant:
+            # A tenant read is keyed by the tenant itself, which the service
+            # takes from the session; the manifest names the one it seeded.
+            return {"type": "tenant"}, manifest.tenant
+        case unhandled:
+            assert_never(unhandled)
+
+
 def _period_value(
     api: ApiClient,
     manifest: Manifest,
     metric_key: str,
     *,
+    entity_type: EntityType = EntityType.person,
     filters: Sequence[JsonValue] = (),
 ) -> float | None:
-    """The scalar the dashboard shows for the same person, period and filters.
+    """The scalar the dashboard shows for the same subject, period and filters.
 
     `None` is a real answer rather than a failure: nothing zero-fills, so a
-    person with no observations in the period has no value at all, and that is
+    subject with no observations in the period has no value at all, and that is
     what an empty evidence page has to agree with.
     """
     start, end = query_window(manifest)
-    person_id = manifest.fixture("dev_lead").uuid
+    entity, entity_id = _results_entity(manifest, entity_type)
     response = api.post(
         METRIC_RESULTS,
         json_body={
-            "entity": {"type": "person", "ids": [person_id]},
+            "entity": entity,
             "period": {"from": start, "to": end},
             "metrics": [
                 {
@@ -316,7 +372,7 @@ def _period_value(
     assert isinstance(views[0].root, PeriodView)
     values = views[0].root.values
     assert len(values) == 1
-    assert values[0].entity_id == person_id
+    assert values[0].entity_id == entity_id
     return values[0].value
 
 
@@ -487,10 +543,32 @@ def _person_entity_id(entity: MetricDrilldownEntity) -> str:
     return person.id
 
 
-def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None:
+def _assert_selection_subject(
+    entity: MetricDrilldownEntity, entity_type: EntityType, manifest: Manifest, metric_key: str
+) -> None:
+    """The selection echoed back names the subject the request asked about.
+
+    A tenant selection carries no id to compare — the shape itself is the
+    claim, and the service reading a different tenant would be a tenancy defect
+    the cross-tenant refusal cases own, not something an echo could show.
+    """
+    match entity_type:
+        case EntityType.person:
+            assert _person_entity_id(entity) == manifest.fixture("dev_lead").uuid, metric_key
+        case EntityType.tenant:
+            assert isinstance(entity.root, MetricDrilldownEntity3), (
+                f"{metric_key}: a tenant-grain metric answered a {entity.root.type} selection"
+            )
+        case unhandled:
+            assert_never(unhandled)
+
+
+def _assert_shape(
+    walk: _Walk, expectation: Expectation, entity_type: EntityType, manifest: Manifest
+) -> None:
     selection = walk.first.selection
     assert selection.metric_key == expectation.metric_key
-    assert _person_entity_id(selection.entity) == person_id
+    _assert_selection_subject(selection.entity, entity_type, manifest, expectation.metric_key)
     assert selection.filters == []
     assert selection.display_dimensions == []
 
@@ -522,6 +600,7 @@ def _assert_shape(walk: _Walk, expectation: Expectation, person_id: str) -> None
             Tier.EXACT_SUM
             | Tier.EXACT_MEDIAN
             | Tier.EXACT_PERCENTILE
+            | Tier.EXACT_STDDEV
             | Tier.EXACT_DISTINCT_DATES
             | Tier.COLLAPSE_BOUNDED_SUM
             | Tier.STRUCTURAL_ONLY
@@ -563,6 +642,28 @@ def _assert_percentile(
     assert period in candidates, (
         f"{metric_key}: period {period} is not the p{quantile:.0%} element of "
         f"{len(ordered)} evidence rows, nor its neighbour {sorted(candidates)}"
+    )
+
+
+def _assert_stddev(period: float | None, values: Sequence[float], metric_key: str) -> None:
+    """`stddevSampIfOrNull` is the SAMPLE deviation of the projected values.
+
+    Sample, not population, so a single observation measures no spread at all
+    and the metric is null rather than a fabricated zero — the same honest-null
+    the median takes. With two or more, the spread of the rows the page shows
+    is the number the dashboard shows, so this is an equality.
+    """
+    if len(values) < 2:
+        assert period is None, (
+            f"{metric_key}: {len(values)} evidence row(s) measure no spread, "
+            f"yet the metric answered {period}"
+        )
+        return
+
+    evidence = statistics.stdev(values)
+    assert period is not None and _close(period, evidence), (
+        f"{metric_key}: {len(values)} evidence rows have a sample deviation of {evidence}, "
+        f"and the metric answered {period}"
     )
 
 
@@ -636,6 +737,8 @@ def _reconcile(period: float | None, walk: _Walk, expectation: Expectation) -> N
                 expectation.quantile,
                 metric_key,
             )
+        case Tier.EXACT_STDDEV:
+            _assert_stddev(period, _numbers(walk.rows, "value", metric_key), metric_key)
         case Tier.DERIVED_MEDIAN:
             parts = [_numbers(walk.rows, column, metric_key) for column in expectation.derived_from]
             _assert_median(period, [sum(row) for row in zip(*parts, strict=True)], metric_key)
@@ -753,6 +856,7 @@ def test_advertised_capability_matches_what_the_endpoint_serves(
 def test_drilldown_reconciles_with_the_metric_value(
     api: ApiClient,
     stand_manifest: Manifest,
+    metric_definitions: Mapping[str, MetricDefinitionView],
     drilldown_capabilities: Mapping[str, MetricDrilldownCapability | None],
     expectation: Expectation,
 ) -> None:
@@ -767,12 +871,26 @@ def test_drilldown_reconciles_with_the_metric_value(
     An empty page is a legitimate answer, and it is still an assertion: nothing
     zero-fills, so evidence and metric have to be empty together.
 
+    Both sides are asked about the subject the definition says the metric is
+    keyed by, read from the catalogue rather than decided per metric key here:
+    naming a person for a tenant-grain metric is a request the service refuses
+    on its shape, which would read as missing evidence.
+
     Driven off what the endpoint answers rather than off the advertised
     capability, because the two do not agree today and the endpoint is the side
     that decides whether evidence exists.
     """
-    person_id = stand_manifest.fixture("dev_lead").uuid
-    probe = _page(api, stand_manifest, expectation.metric_key, limit=_PAGE_LIMIT)
+    definition = metric_definitions.get(expectation.metric_key)
+    assert definition is not None, f"{expectation.metric_key} is not in the catalogue"
+    entity_type = definition.entity_type
+
+    probe = _page(
+        api,
+        stand_manifest,
+        expectation.metric_key,
+        limit=_PAGE_LIMIT,
+        entity_type=entity_type,
+    )
     if probe.status_code != 200:
         _assert_evidence_unavailable(
             probe, expectation.metric_key, drilldown_capabilities.get(expectation.metric_key)
@@ -784,12 +902,13 @@ def test_drilldown_reconciles_with_the_metric_value(
         stand_manifest,
         expectation.metric_key,
         limit=_PAGE_LIMIT,
+        entity_type=entity_type,
         page_budget=_PAGE_BUDGET,
         initial=probe,
     )
-    _assert_shape(walk, expectation, person_id)
+    _assert_shape(walk, expectation, entity_type, stand_manifest)
 
-    period = _period_value(api, stand_manifest, expectation.metric_key)
+    period = _period_value(api, stand_manifest, expectation.metric_key, entity_type=entity_type)
     if not walk.rows:
         assert period is None, (
             f"{expectation.metric_key}: no evidence rows, but the metric answered {period}"

@@ -7,6 +7,7 @@ use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 
 use crate::api::AppState;
+use crate::domain::metric_access::authorize_tenant_metrics;
 use crate::domain::metric_query::product_metric_catalog;
 use crate::domain::metric_query::rows::{RowsRequest, RowsResponse, answer, validate_request};
 use crate::domain::person_visibility::authorize_person_ids;
@@ -23,6 +24,9 @@ pub async fn query_rows(
     })?;
 
     let request = validate_request(catalog, req)?;
+    if request.asks_about_the_tenant() {
+        authorize_tenant_metrics(state.config.metric_catalog.tenant_metrics_enabled)?;
+    }
 
     // SAFETY: every subject is checked individually; a page is never a way
     // around the gate deciding which people a caller may read.
@@ -30,7 +34,7 @@ pub async fn query_rows(
         &state.identity,
         &ctx,
         crate::api::forwarded_authorization(&headers),
-        &request.subjects,
+        request.subjects.person_ids(),
     )
     .await?;
 

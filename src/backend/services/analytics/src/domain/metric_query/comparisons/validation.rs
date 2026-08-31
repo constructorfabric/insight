@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::domain::compiler::request::DimensionFilter;
 use crate::domain::definitions::definition::MetricDefinition;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::error::QueryError;
@@ -26,7 +27,7 @@ pub enum ValidatedPopulation {
     /// Everyone sharing the metric's declared cohort with the target, under
     /// the entity type the metric declares membership by.
     DeclaredCohort {
-        entity_type: String,
+        entity_type: EntityType,
         cohort_key: String,
     },
     /// Every person the tenant's identity mapping knows.
@@ -107,6 +108,15 @@ pub(in crate::domain::metric_query) fn population(
     metric: &MetricDefinition,
     population: Population,
 ) -> Result<ValidatedPopulation, QueryError> {
+    // A comparison sets one person against the people around them. A tenant is
+    // the only one of its kind in the answer, so there is no population to
+    // place it in.
+    if metric.entity_type == EntityType::Tenant {
+        return Err(QueryError::Unanswerable {
+            reason: "this metric measures the tenant, which has no peers to be compared with",
+        });
+    }
+
     match population {
         Population::Tenant {} => Ok(ValidatedPopulation::Tenant),
         Population::Cohort {} => {
@@ -117,7 +127,7 @@ pub(in crate::domain::metric_query) fn population(
             };
 
             Ok(ValidatedPopulation::DeclaredCohort {
-                entity_type: metric.entity_type.clone(),
+                entity_type: metric.entity_type,
                 cohort_key,
             })
         }
@@ -169,7 +179,7 @@ mod tests {
         assert_eq!(
             validated.queries[0].population,
             ValidatedPopulation::DeclaredCohort {
-                entity_type: "person".to_owned(),
+                entity_type: EntityType::Person,
                 cohort_key: "org_unit".to_owned(),
             }
         );

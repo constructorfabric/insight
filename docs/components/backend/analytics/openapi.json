@@ -253,8 +253,8 @@
             "$ref": "#/components/schemas/Direction"
           },
           "entity_type": {
-            "description": "What the metric's values are keyed by, such as `person`.",
-            "type": "string"
+            "$ref": "#/components/schemas/EntityType",
+            "description": "What the metric's values are keyed by."
           },
           "format": {
             "$ref": "#/components/schemas/Format"
@@ -1820,7 +1820,8 @@
             "$ref": "#/components/schemas/Direction"
           },
           "entity_type": {
-            "type": "string"
+            "$ref": "#/components/schemas/EntityType",
+            "description": "What the metric's values are keyed by. INVARIANT: equal to the grain of\nevery dataset its measures read — see `validate`."
           },
           "format": {
             "$ref": "#/components/schemas/Format"
@@ -3967,12 +3968,13 @@
             ]
           },
           "subject": {
-            "type": "string"
+            "description": "Absent when the metric measures the tenant: the answer is about the\ncaller's own tenant, which the question already named.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": [
-          "subject"
-        ],
         "type": "object"
       },
       "Subjects": {
@@ -4584,7 +4586,9 @@
           "metric_expression",
           "unknown_derived_input",
           "unused_derived_input",
-          "dimension_bindings_disagree"
+          "dimension_bindings_disagree",
+          "entity_grain_mismatch",
+          "cohort_without_peers"
         ],
         "type": "string"
       },

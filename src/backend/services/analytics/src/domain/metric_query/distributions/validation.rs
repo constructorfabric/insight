@@ -9,11 +9,15 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use crate::domain::compiler::request::DimensionFilter;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::dto::Subjects;
 use super::super::error::QueryError;
-use super::super::question::{batch_size, defined_metric, filters, person_ids, window};
+use super::super::question::{
+    PERSON_SUBJECTS_OVER_A_TENANT_METRIC, ValidatedSubjects, batch_size, defined_metric, filters,
+    metric_entity_type, person_ids, window,
+};
 use super::dto::{DistributionQuery, DistributionsRequest};
 
 /// The field a distribution question names its people in.
@@ -30,7 +34,7 @@ const MAX_QUANTILES: usize = 10;
 #[derive(Debug, PartialEq)]
 pub struct ValidatedDistribution {
     pub metric_key: String,
-    pub subjects: Vec<Uuid>,
+    pub subjects: ValidatedSubjects,
     pub from: NaiveDate,
     pub to: NaiveDate,
     pub filters: Vec<DimensionFilter>,
@@ -51,10 +55,17 @@ impl ValidatedDistributions {
     pub fn subject_ids(&self) -> Vec<Uuid> {
         self.queries
             .iter()
-            .flat_map(|query| query.subjects.iter().copied())
+            .flat_map(|query| query.subjects.person_ids().iter().copied())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect()
+    }
+
+    #[must_use]
+    pub fn asks_about_the_tenant(&self) -> bool {
+        self.queries
+            .iter()
+            .any(|query| matches!(query.subjects, ValidatedSubjects::Tenant))
     }
 }
 
@@ -79,7 +90,7 @@ fn validate_query(
 ) -> Result<ValidatedDistribution, QueryError> {
     let metric_key = defined_metric(catalog, &query.metric)?;
     distributable(catalog, &metric_key)?;
-    let subjects = subjects(query.subjects)?;
+    let subjects = subjects(metric_entity_type(catalog, &metric_key)?, query.subjects)?;
     let (from, to) = window(&query.time.from, &query.time.to)?;
     let filters = filters(catalog, &metric_key, query.filters)?;
     let quantiles = query.quantiles.map(quantiles).transpose()?;
@@ -114,14 +125,21 @@ pub(in crate::domain::metric_query) fn distributable(
         .map_err(QueryError::NoDistribution)
 }
 
-/// A distribution reports the values a subject's own events carried, and a
-/// dataset records no event keyed by the tenant.
-fn subjects(subjects: Subjects) -> Result<Vec<Uuid>, QueryError> {
-    match subjects {
-        Subjects::Persons { ids } => person_ids(SUBJECTS_FIELD, ids),
-        Subjects::Tenant {} => Err(QueryError::Unanswerable {
-            reason: "a distribution reports the values of a subject's own events, and no event \
-                     is recorded against the tenant itself",
+/// A distribution reports the values one subject's own events carried, so it
+/// answers only where the subjects the question names are the grain the metric
+/// records.
+fn subjects(entity_type: EntityType, subjects: Subjects) -> Result<ValidatedSubjects, QueryError> {
+    match (entity_type, subjects) {
+        (EntityType::Person, Subjects::Persons { ids }) => {
+            Ok(ValidatedSubjects::Persons(person_ids(SUBJECTS_FIELD, ids)?))
+        }
+        (EntityType::Tenant, Subjects::Tenant {}) => Ok(ValidatedSubjects::Tenant),
+        (EntityType::Person, Subjects::Tenant {}) => Err(QueryError::Unanswerable {
+            reason: "a distribution reports the values of a subject's own events, and this \
+                     metric records no event against the tenant itself",
+        }),
+        (EntityType::Tenant, Subjects::Persons { .. }) => Err(QueryError::Unanswerable {
+            reason: PERSON_SUBJECTS_OVER_A_TENANT_METRIC,
         }),
     }
 }
@@ -170,7 +188,9 @@ fn quantiles(asked: Vec<f64>) -> Result<Vec<f64>, QueryError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::super::super::catalog::product_metric_catalog;
-    use super::super::super::fixtures::{SHIPPED_DISTRIBUTION_METRIC, SHIPPED_METRIC};
+    use super::super::super::fixtures::{
+        SHIPPED_DISTRIBUTION_METRIC, SHIPPED_METRIC, SHIPPED_TENANT_DISTRIBUTION_METRIC,
+    };
     use super::*;
 
     fn catalog() -> &'static MetricCatalog {
@@ -315,7 +335,51 @@ mod tests {
         })))
         .expect("a repeated subject is one subject");
 
-        assert_eq!(validated.queries[0].subjects, vec![person()]);
+        assert_eq!(
+            validated.queries[0].subjects,
+            ValidatedSubjects::Persons(vec![person()])
+        );
         assert_eq!(validated.subject_ids(), vec![person()]);
+    }
+
+    #[test]
+    fn a_tenant_metric_distributes_the_tenants_own_events() {
+        let validated = validate(&query(&serde_json::json!({
+            "metric": SHIPPED_TENANT_DISTRIBUTION_METRIC,
+            "subjects": { "type": "tenant" },
+        })))
+        .expect("a tenant metric taken over per-row values distributes");
+
+        assert_eq!(validated.queries[0].subjects, ValidatedSubjects::Tenant);
+        assert!(validated.asks_about_the_tenant());
+        assert!(validated.subject_ids().is_empty());
+    }
+
+    #[test]
+    fn a_distribution_is_refused_where_the_subjects_are_not_the_grain_the_metric_records() {
+        let cases = [
+            (
+                "a tenant metric asked about a person",
+                serde_json::json!({
+                    "metric": SHIPPED_TENANT_DISTRIBUTION_METRIC,
+                    "subjects": { "type": "persons", "ids": [person().to_string()] },
+                }),
+            ),
+            (
+                "a person metric asked about the tenant",
+                serde_json::json!({
+                    "metric": SHIPPED_DISTRIBUTION_METRIC,
+                    "subjects": { "type": "tenant" },
+                }),
+            ),
+        ];
+
+        for (named, overrides) in cases {
+            let refused = validate(&query(&overrides)).expect_err(named);
+            assert!(
+                matches!(refused, QueryError::Unanswerable { .. }),
+                "{named}: {refused}"
+            );
+        }
     }
 }

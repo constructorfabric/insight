@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::filter::FilterTree;
+use crate::domain::field_catalog::model::EntityType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -149,7 +150,9 @@ pub struct MetricDefinition {
     pub transform: Option<Transform>,
     pub format: Format,
     pub direction: Direction,
-    pub entity_type: String,
+    /// What the metric's values are keyed by. INVARIANT: equal to the grain of
+    /// every dataset its measures read — see `validate`.
+    pub entity_type: EntityType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cohort_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -305,7 +308,7 @@ dimensions:
             transform: None,
             format: Format::Percent,
             direction: Direction::HigherIsBetter,
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: None,
             label: None,
             description: None,
@@ -345,7 +348,7 @@ dimensions:
             transform: None,
             format: Format::Percent,
             direction: Direction::HigherIsBetter,
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: None,
             label: None,
             description: None,

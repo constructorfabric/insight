@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::domain::compiler::comparison::compile_cohort_members_query;
 use crate::domain::compiler::request::{CohortMembersQuery, ResolvedPerson};
+use crate::domain::field_catalog::model::EntityType;
 use crate::domain::identity_binding::{IdentitySet, resolve_all_identities, resolve_identities};
 
 use super::super::error::QueryError;
@@ -28,7 +29,7 @@ struct CohortMemberRow {
 pub(super) async fn cohort_pool(
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
-    entity_type: &str,
+    entity_type: EntityType,
     cohort_key: &str,
     targets: &[Uuid],
 ) -> Result<Vec<ResolvedPerson>, QueryError> {
@@ -40,7 +41,7 @@ pub(super) async fn cohort_pool(
 
     let query = CohortMembersQuery {
         tenant_id: tenant_id.to_string(),
-        entity_type: entity_type.to_owned(),
+        entity_type,
         cohort_key: cohort_key.to_owned(),
         targets: targets.iter().map(Uuid::to_string).collect(),
         row_limit: query_row_limit(),
@@ -270,7 +271,14 @@ mod tests {
     #[tokio::test]
     async fn a_comparison_with_no_target_asks_the_server_nothing() {
         for outcome in [
-            cohort_pool(&offline_clickhouse(), tenant(), "person", "org_unit", &[]).await,
+            cohort_pool(
+                &offline_clickhouse(),
+                tenant(),
+                EntityType::Person,
+                "org_unit",
+                &[],
+            )
+            .await,
             tenant_pool(&offline_clickhouse(), tenant(), &[]).await,
         ] {
             assert!(matches!(
@@ -288,7 +296,7 @@ mod tests {
             cohort_pool(
                 &offline_clickhouse(),
                 tenant(),
-                "person",
+                EntityType::Person,
                 "org_unit",
                 &[target],
             )

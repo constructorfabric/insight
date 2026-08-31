@@ -6,7 +6,7 @@
 use std::fmt::Write;
 
 use crate::domain::definitions::definition::MetricDefinition;
-use crate::domain::field_catalog::model::CatalogDataset;
+use crate::domain::field_catalog::model::{CatalogDataset, EntityType};
 
 use super::error::CompileError;
 use super::fold::{Fold, transform_in_place};
@@ -40,13 +40,13 @@ pub fn compile_cohort_members_query(
     push_cohort_scope_values(
         &mut params,
         &query.tenant_id,
-        &query.entity_type,
+        query.entity_type,
         &query.cohort_key,
     );
     push_cohort_scope_values(
         &mut params,
         &query.tenant_id,
-        &query.entity_type,
+        query.entity_type,
         &query.cohort_key,
     );
     params.extend(query.targets.iter().cloned().map(QueryParam::Text));
@@ -172,7 +172,7 @@ fn push_cohort_scope(
     metric: &MetricDefinition,
     cohort_key: &str,
 ) {
-    push_cohort_scope_values(params, &query.tenant_id, &metric.entity_type, cohort_key);
+    push_cohort_scope_values(params, &query.tenant_id, metric.entity_type, cohort_key);
 }
 
 // INVARIANT: tenancy leads a cohort read exactly as it leads a dataset read,
@@ -180,11 +180,11 @@ fn push_cohort_scope(
 fn push_cohort_scope_values(
     params: &mut Vec<QueryParam>,
     tenant_id: &str,
-    entity_type: &str,
+    entity_type: EntityType,
     cohort_key: &str,
 ) {
     params.push(QueryParam::Text(tenant_id.to_owned()));
-    params.push(QueryParam::Text(entity_type.to_owned()));
+    params.push(QueryParam::Text(entity_type.as_db().to_owned()));
     params.push(QueryParam::Text(cohort_key.to_owned()));
 }
 
@@ -339,6 +339,7 @@ mod tests {
     };
     use crate::domain::compiler::sql::QueryParam;
     use crate::domain::definitions::definition::MetricDefinition;
+    use crate::domain::field_catalog::model::EntityType;
 
     fn cohort_metric() -> MetricDefinition {
         MetricDefinition {
@@ -380,7 +381,7 @@ mod tests {
     fn members_query(targets: &[&str]) -> CohortMembersQuery {
         CohortMembersQuery {
             tenant_id: "acme-tenant".to_owned(),
-            entity_type: "person".to_owned(),
+            entity_type: EntityType::Person,
             cohort_key: "org_unit".to_owned(),
             targets: targets.iter().map(|target| (*target).to_owned()).collect(),
             row_limit: 10_001,

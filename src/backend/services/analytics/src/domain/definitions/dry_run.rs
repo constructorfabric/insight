@@ -54,6 +54,8 @@ pub enum ValidationErrorKind {
     UnknownDerivedInput,
     UnusedDerivedInput,
     DimensionBindingsDisagree,
+    EntityGrainMismatch,
+    CohortWithoutPeers,
 }
 
 /// INVARIANT: the submitted definitions are judged as part of one set with the
@@ -113,6 +115,8 @@ const fn kind_of(error: &ValidationError) -> ValidationErrorKind {
         ValidationError::DimensionBindingsDisagree { .. } => {
             ValidationErrorKind::DimensionBindingsDisagree
         }
+        ValidationError::EntityGrainMismatch { .. } => ValidationErrorKind::EntityGrainMismatch,
+        ValidationError::CohortWithoutPeers { .. } => ValidationErrorKind::CohortWithoutPeers,
     }
 }
 

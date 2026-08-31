@@ -116,7 +116,22 @@ fn assert_each_kind_is_reported(cases: &[(ValidationErrorKind, Value)]) {
 
 #[test]
 fn every_rule_a_measure_can_break_is_reported_under_its_own_discriminant() {
-    let cases: [(ValidationErrorKind, Value); 9] = [
+    let cases: [(ValidationErrorKind, Value); 11] = [
+        (
+            // A person-grain metric authored over a tenant-grain dataset.
+            ValidationErrorKind::EntityGrainMismatch,
+            json!({ "metrics": [with(probe_metric("ci_runs_decided"), "key", json!("probe.runs"))] }),
+        ),
+        (
+            ValidationErrorKind::CohortWithoutPeers,
+            json!({
+                "metrics": [with(
+                    with(probe_metric("ci_runs_decided"), "entity_type", json!("tenant")),
+                    "cohort_key",
+                    json!("org_unit"),
+                )],
+            }),
+        ),
         (
             ValidationErrorKind::KeyShape,
             json!({ "measures": [with(probe_measure(), "key", json!("Not A Key"))] }),

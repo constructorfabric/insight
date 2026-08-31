@@ -7,6 +7,7 @@
 use serde::Serialize;
 
 use crate::domain::definitions::definition::{Direction, Format};
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::comparisons::Population;
 use super::super::values::{CompareOffset, Fold, Grain};
@@ -27,8 +28,8 @@ pub struct CatalogMetric {
     pub description: Option<String>,
     pub format: Format,
     pub direction: Direction,
-    /// What the metric's values are keyed by, such as `person`.
-    pub entity_type: String,
+    /// What the metric's values are keyed by.
+    pub entity_type: EntityType,
     pub computation: CatalogComputation,
     /// The grouping a cohort comparison reads; absent when the metric declares
     /// none, and then no cohort comparison is offered.

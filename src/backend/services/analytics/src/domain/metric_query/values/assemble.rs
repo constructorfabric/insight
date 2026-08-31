@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::domain::compiler::dimensions::dimension_aliases;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::error::QueryError;
 use super::dto::{
@@ -61,10 +62,11 @@ pub(super) fn subject_values(
     rows: Vec<SubjectValueRow>,
     compared: Option<Vec<SubjectValueRow>>,
     dimensions: &[String],
+    entity_type: EntityType,
 ) -> Result<ResultBody, QueryError> {
-    let mut values = subject_value_index(rows, dimensions)?;
+    let mut values = subject_value_index(rows, dimensions, entity_type)?;
     if let Some(compared) = compared {
-        let previous = subject_value_index(compared, dimensions)?;
+        let previous = subject_value_index(compared, dimensions, entity_type)?;
         attach_comparisons(&mut values, &previous);
     }
 
@@ -76,6 +78,7 @@ pub(super) fn subject_values(
 fn subject_value_index(
     rows: Vec<SubjectValueRow>,
     dimensions: &[String],
+    entity_type: EntityType,
 ) -> Result<BTreeMap<(String, GroupOrder), GroupedValue>, QueryError> {
     let mut values = BTreeMap::new();
     for row in rows {
@@ -83,7 +86,7 @@ fn subject_value_index(
         values.insert(
             (row.entity_id.clone(), order),
             GroupedValue {
-                subject: Some(row.entity_id),
+                subject: reported_subject(entity_type, row.entity_id),
                 group,
                 value: row.value,
                 compare: None,
@@ -156,6 +159,16 @@ fn comparison(current: Option<f64>, previous: Option<f64>) -> Comparison {
 
 /// INVARIANT: the total arrives as its own row, so it stays absent until that
 /// row is read rather than being derived from the points.
+/// A person-grain row names the person it belongs to. A tenant-grain row
+/// belongs to the tenant the question was asked in, which the caller already
+/// named, so echoing its id back states nothing.
+fn reported_subject(entity_type: EntityType, entity_id: String) -> Option<String> {
+    match entity_type {
+        EntityType::Person => Some(entity_id),
+        EntityType::Tenant => None,
+    }
+}
+
 #[derive(Debug, Default)]
 struct SeriesUnderway {
     group: Option<Group>,
@@ -167,6 +180,7 @@ pub(super) fn subject_series(
     rows: Vec<SubjectSeriesRow>,
     compared: Option<Vec<SubjectSeriesRow>>,
     dimensions: &[String],
+    entity_type: EntityType,
 ) -> Result<ResultBody, QueryError> {
     let series = series_index(rows, dimensions)?;
     let previous = compared
@@ -185,7 +199,7 @@ pub(super) fn subject_series(
                     )
                 });
                 GroupedSeries {
-                    subject: Some(key.0),
+                    subject: reported_subject(entity_type, key.0),
                     group: underway.group,
                     points: underway.points,
                     total: underway.total,
@@ -339,6 +353,7 @@ mod tests {
             }],
             None,
             &[],
+            EntityType::Person,
         )
         .expect("an ungrouped row needs no dimension column");
 
@@ -363,6 +378,7 @@ mod tests {
             }],
             None,
             &dimensions(),
+            EntityType::Person,
         )
         .expect("the row carries its dimension");
 
@@ -387,6 +403,7 @@ mod tests {
             }],
             None,
             &dimensions(),
+            EntityType::Person,
         );
 
         assert!(matches!(
@@ -513,6 +530,7 @@ mod tests {
             ],
             None,
             &[],
+            EntityType::Person,
         )
         .expect("an ungrouped series needs no dimension column");
 
@@ -569,8 +587,10 @@ mod tests {
             },
         ];
 
-        let series =
-            series_of(subject_series(rows, None, &dimensions()).expect("every row groups"));
+        let series = series_of(
+            subject_series(rows, None, &dimensions(), EntityType::Person)
+                .expect("every row groups"),
+        );
 
         assert_eq!(
             series
@@ -632,6 +652,7 @@ mod tests {
             ],
             Some(vec![value_row("person-1", Some(3.0))]),
             &[],
+            EntityType::Person,
         )
         .expect("both windows assemble");
 
@@ -664,8 +685,13 @@ mod tests {
 
     #[test]
     fn a_question_that_asked_for_no_comparison_carries_none() {
-        let body = subject_values(vec![value_row("person-1", Some(9.0))], None, &[])
-            .expect("one window assembles");
+        let body = subject_values(
+            vec![value_row("person-1", Some(9.0))],
+            None,
+            &[],
+            EntityType::Person,
+        )
+        .expect("one window assembles");
 
         assert_eq!(values_of(body)[0].compare, None);
     }
@@ -696,7 +722,8 @@ mod tests {
         };
 
         let series = series_of(
-            subject_series(window(8.0), Some(window(2.0)), &[]).expect("both windows assemble"),
+            subject_series(window(8.0), Some(window(2.0)), &[], EntityType::Person)
+                .expect("both windows assemble"),
         );
 
         assert_eq!(
@@ -724,9 +751,51 @@ mod tests {
             }],
             None,
             &[],
+            EntityType::Person,
         )
         .expect("a series without its total row still reports its points");
 
         assert_eq!(series_of(body)[0].total, None);
+    }
+
+    #[test]
+    fn a_tenant_answer_carries_no_subject_because_the_question_already_named_the_tenant() {
+        let body = subject_values(
+            vec![value_row("acme-tenant", Some(4.0))],
+            None,
+            &[],
+            EntityType::Tenant,
+        )
+        .expect("a tenant total assembles");
+
+        assert_eq!(values_of(body)[0].subject, None);
+    }
+
+    #[test]
+    fn a_tenant_series_carries_no_subject_either() {
+        let rows = vec![
+            SubjectSeriesRow {
+                entity_id: "acme-tenant".to_owned(),
+                bucket_start: "2026-01-01".to_owned(),
+                value: Some(2.0),
+                is_total: 0,
+                rank: None,
+                remainder: 0,
+                columns: BTreeMap::new(),
+            },
+            SubjectSeriesRow {
+                entity_id: "acme-tenant".to_owned(),
+                bucket_start: "1970-01-01".to_owned(),
+                value: Some(2.0),
+                is_total: 1,
+                rank: None,
+                remainder: 0,
+                columns: BTreeMap::new(),
+            },
+        ];
+
+        let body = subject_series(rows, None, &[], EntityType::Tenant).expect("a series assembles");
+
+        assert_eq!(series_of(body)[0].subject, None);
     }
 }

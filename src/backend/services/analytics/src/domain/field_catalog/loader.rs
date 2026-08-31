@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, HashSet};
 use serde::Deserialize;
 
 use super::model::{
-    CatalogDataset, CatalogField, DisplayRole, FieldCatalog, FieldRole, FieldType, ReadDiscipline,
+    CatalogDataset, CatalogField, DisplayRole, EntityType, FieldCatalog, FieldRole, FieldType,
+    ReadDiscipline,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -75,6 +76,10 @@ struct DatasetRoles {
     key: String,
     database: String,
     relation: String,
+    /// What one row is about. Omitted means a person, the grain every dataset
+    /// had before a tenant-grain one existed.
+    #[serde(default)]
+    entity_type: EntityType,
     #[serde(default)]
     row_identity: Vec<String>,
     #[serde(default)]
@@ -207,6 +212,7 @@ fn join(
         key: declared.key,
         database: declared.database,
         relation: declared.relation,
+        entity_type: declared.entity_type,
         read_discipline: ReadDiscipline::for_engine(&found.engine),
         sorting_key: parse_sorting_key(&found.sorting_key),
         row_identity: declared.row_identity,

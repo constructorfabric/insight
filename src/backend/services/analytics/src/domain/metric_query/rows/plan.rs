@@ -18,8 +18,14 @@ use crate::domain::identity_binding::{IdentitySet, identity_epoch, resolve_ident
 
 use super::super::catalog::MetricCatalog;
 use super::super::error::QueryError;
+use super::super::question::ValidatedSubjects;
 use super::cursor::Resume;
 use super::validation::ValidatedRows;
+
+/// What a page anchors on when no identity mapping was read for it. INVARIANT:
+/// the same value a mapping with no marker of its own contributes, so a tenant
+/// page and an unmarked person page anchor alike.
+const UNREAD_IDENTITY_EPOCH: u64 = 0;
 
 #[derive(Debug)]
 pub(super) enum PlannedPage {
@@ -42,20 +48,15 @@ pub(super) async fn plan(
     request: &ValidatedRows,
     resume: Option<&Resume>,
 ) -> Result<PlannedPage, QueryError> {
-    // INVARIANT: the marker is read beside the mapping it describes, so it is
-    // the epoch this page's pool was actually built from.
-    let (identities, epoch) = tokio::join!(
-        resolve_identities(clickhouse, tenant_id, &request.subjects),
-        identity_epoch(clickhouse, tenant_id)
-    );
-    let identities = identities.map_err(|error| {
-        tracing::error!(%error, "a page could not resolve the people it asks about");
-        QueryError::SubjectsUnresolved
-    })?;
-    let identity_epoch = epoch.map_err(|error| {
-        tracing::error!(%error, "a page could not mark the identity mapping it read");
-        QueryError::SubjectsUnresolved
-    })?;
+    let (identities, identity_epoch) = match &request.subjects {
+        // A tenant page attributes nothing through the identity mapping, so it
+        // reads neither the mapping nor its marker, and anchors on the epoch an
+        // unread mapping contributes.
+        ValidatedSubjects::Tenant => (BTreeMap::new(), UNREAD_IDENTITY_EPOCH),
+        ValidatedSubjects::Persons(people) => {
+            resolved_people(clickhouse, tenant_id, people).await?
+        }
+    };
 
     compile(
         catalog,
@@ -65,6 +66,31 @@ pub(super) async fn plan(
         resume,
         identity_epoch,
     )
+}
+
+/// The identities the page's people are known by, and the marker of the mapping
+/// that named them.
+async fn resolved_people(
+    clickhouse: &insight_clickhouse::Client,
+    tenant_id: Uuid,
+    people: &[Uuid],
+) -> Result<(BTreeMap<Uuid, IdentitySet>, u64), QueryError> {
+    // INVARIANT: the marker is read beside the mapping it describes, so it is
+    // the epoch this page's pool was actually built from.
+    let (identities, epoch) = tokio::join!(
+        resolve_identities(clickhouse, tenant_id, people),
+        identity_epoch(clickhouse, tenant_id)
+    );
+    let identities = identities.map_err(|error| {
+        tracing::error!(%error, "a page could not resolve the people it asks about");
+        QueryError::SubjectsUnresolved
+    })?;
+    let epoch = epoch.map_err(|error| {
+        tracing::error!(%error, "a page could not mark the identity mapping it read");
+        QueryError::SubjectsUnresolved
+    })?;
+
+    Ok((identities, epoch))
 }
 
 fn compile(
@@ -178,19 +204,24 @@ fn refused(error: CompileError) -> QueryError {
 
 /// INVARIANT: a person is carried with their own identities rather than merged
 /// into one list, because every row is keyed by the person it is credited to.
-fn entity_scope(subjects: &[Uuid], identities: &BTreeMap<Uuid, IdentitySet>) -> EntityScope {
-    EntityScope::People(
-        subjects
-            .iter()
-            .map(|id| ResolvedPerson {
-                person_ref: id.to_string(),
-                identities: identities
-                    .get(id)
-                    .map(IdentitySet::values)
-                    .unwrap_or_default(),
-            })
-            .collect(),
-    )
+fn entity_scope(
+    subjects: &ValidatedSubjects,
+    identities: &BTreeMap<Uuid, IdentitySet>,
+) -> EntityScope {
+    match subjects {
+        ValidatedSubjects::Tenant => EntityScope::Tenant,
+        ValidatedSubjects::Persons(ids) => EntityScope::People(
+            ids.iter()
+                .map(|id| ResolvedPerson {
+                    person_ref: id.to_string(),
+                    identities: identities
+                        .get(id)
+                        .map(IdentitySet::values)
+                        .unwrap_or_default(),
+                })
+                .collect(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -204,7 +235,8 @@ mod tests {
 
     use super::super::super::catalog::product_metric_catalog;
     use super::super::super::fixtures::{
-        SHIPPED_METRIC, SHIPPED_RATIO_METRIC, offline_clickhouse, shipped_input_roles, tenant,
+        SHIPPED_METRIC, SHIPPED_RATIO_METRIC, SHIPPED_TENANT_METRIC, offline_clickhouse,
+        shipped_input_roles, tenant,
     };
     use super::super::cursor::Anchor;
     use super::super::validation::ValidatedSort;
@@ -221,7 +253,7 @@ mod tests {
     fn request(metric_key: &str, input_role: &str) -> ValidatedRows {
         ValidatedRows {
             metric_key: metric_key.to_owned(),
-            subjects: vec![person()],
+            subjects: ValidatedSubjects::Persons(vec![person()]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
             filters: Vec::new(),
@@ -354,7 +386,7 @@ mod tests {
     #[test]
     fn a_page_one_of_whose_people_resolves_is_read_for_that_person() {
         let asked = ValidatedRows {
-            subjects: vec![person(), Uuid::from_u128(9)],
+            subjects: ValidatedSubjects::Persons(vec![person(), Uuid::from_u128(9)]),
             ..request(SHIPPED_METRIC, "value")
         };
 
@@ -510,6 +542,39 @@ mod tests {
         assert!(
             matches!(error, QueryError::UnknownSortColumn { .. }),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn a_tenant_page_reads_no_identity_mapping_and_anchors_on_the_epoch_an_unread_one_contributes()
+    {
+        let mut asked = request(SHIPPED_TENANT_METRIC, "value");
+        asked.subjects = ValidatedSubjects::Tenant;
+
+        // A closed port answers nothing, so planning at all proves the page
+        // asked the mapping for neither its identities nor its marker.
+        let planned = futures::executor::block_on(plan(
+            catalog(),
+            &offline_clickhouse(),
+            tenant(),
+            &asked,
+            None,
+        ))
+        .expect("a tenant page needs no identity mapping");
+
+        let PlannedPage::Read {
+            compiled,
+            identity_epoch,
+        } = planned
+        else {
+            panic!("a tenant page reads the tenant's own rows");
+        };
+        assert_eq!(identity_epoch, UNREAD_IDENTITY_EPOCH);
+        assert!(!compiled.sql.contains("pool"), "{}", compiled.sql);
+        assert!(
+            compiled.sql.contains("entity_id AS entity_id"),
+            "a tenant page keys its rows by the tenant column itself: {}",
+            compiled.sql
         );
     }
 }

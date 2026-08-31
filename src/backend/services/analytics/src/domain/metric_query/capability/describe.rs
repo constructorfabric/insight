@@ -4,6 +4,7 @@
 
 use crate::domain::compiler::error::CompileError;
 use crate::domain::definitions::definition::{Computation, MetricDefinition};
+use crate::domain::field_catalog::model::EntityType;
 
 use super::super::catalog::MetricCatalog;
 use super::super::comparisons::{Population, population};
@@ -20,13 +21,28 @@ use super::dto::{
 const POPULATIONS: [Population; 2] = [Population::Tenant {}, Population::Cohort {}];
 
 /// What a client needs to form a valid question about any shipped metric.
-pub fn describe(catalog: &MetricCatalog) -> Result<MetricCatalogResponse, CompileError> {
+///
+/// INVARIANT: `tenant_metrics_enabled` is the same installation gate the query
+/// surfaces enforce, so the catalogue never advertises a metric a question
+/// about it would be refused for.
+pub fn describe(
+    catalog: &MetricCatalog,
+    tenant_metrics_enabled: bool,
+) -> Result<MetricCatalogResponse, CompileError> {
     let metrics = catalog
         .metrics()
+        .filter(|metric| served(metric, tenant_metrics_enabled))
         .map(|metric| describe_metric(catalog, metric))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(MetricCatalogResponse { metrics })
+}
+
+fn served(metric: &MetricDefinition, tenant_metrics_enabled: bool) -> bool {
+    match metric.entity_type {
+        EntityType::Person => true,
+        EntityType::Tenant => tenant_metrics_enabled,
+    }
 }
 
 fn describe_metric(
@@ -50,14 +66,14 @@ fn describe_metric(
         description: metric.description.clone(),
         format: metric.format,
         direction: metric.direction,
-        entity_type: metric.entity_type.clone(),
+        entity_type: metric.entity_type,
         computation: computation_of(&metric.computation),
         cohort_key: metric.cohort_key.clone(),
         dimensions,
         questions: MetricQuestions {
             values: ValuesQuestions {
-                grains: offered_grains(splittable),
-                folds: offered_folds(splittable),
+                grains: offered_grains(metric.entity_type, splittable),
+                folds: offered_folds(metric.entity_type, splittable),
                 compare: offered_compare_offsets(),
                 split: splittable,
             },

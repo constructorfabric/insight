@@ -1,0 +1,270 @@
+# CI measures and metrics. Datasets are not authored here — they are a
+# projection of the field catalog.
+#
+# This family is TENANT grain: a pipeline run, a deployment and a collected
+# commit belong to the organization, so every dataset keys its rows by the
+# tenant and no identity is ever resolved. A question about these metrics names
+# the tenant as its subject and never a person.
+measures:
+  - key: ci_runs_decided
+    dataset: ci_runs
+    description: Pipeline runs that reached a decided outcome, dated by the day the run started.
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+      - { key: trigger, value_field: trigger_value, label_field: trigger_label }
+      - { key: outcome, value_field: outcome_value, label_field: outcome_label }
+      - { key: hour_block, value_field: hour_block_value, label_field: hour_block_label }
+
+  - key: ci_gate_runs
+    dataset: ci_runs
+    description: >-
+      Gate runs: triggered by a push, a pull request or the merge queue, and
+      decided. Cancelled and skipped runs decide nothing, and a run stopped at
+      an approval wall never executed, so neither is a gate run.
+    filter: { field: is_gate, op: eq, value: 1 }
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+      - { key: hour_block, value_field: hour_block_value, label_field: hour_block_label }
+
+  - key: ci_gate_passed
+    dataset: ci_runs
+    description: Gate runs that succeeded.
+    filter:
+      all:
+        - { field: is_gate, op: eq, value: 1 }
+        - { field: outcome_value, op: eq, value: success }
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+      - { key: hour_block, value_field: hour_block_value, label_field: hour_block_label }
+
+  - key: ci_gate_first_try_passed
+    dataset: ci_runs
+    description: Gate runs that succeeded on their first attempt, without a re-run.
+    filter:
+      all:
+        - { field: is_gate, op: eq, value: 1 }
+        - { field: outcome_value, op: eq, value: success }
+        - { field: attempt, op: eq, value: 1 }
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+
+  - key: ci_gate_retried
+    dataset: ci_runs
+    description: Gate runs whose final state came from a re-run, counted once at their last attempt.
+    filter:
+      all:
+        - { field: is_gate, op: eq, value: 1 }
+        - { field: is_retry, op: eq, value: 1 }
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+
+  - key: ci_run_duration_min
+    dataset: ci_runs
+    description: >-
+      Wall-clock minutes a gate run took, per run. Instant failures that never
+      really ran carry no duration and are excluded, so they count toward rates
+      without dragging the timings down.
+    filter:
+      all:
+        - { field: is_gate, op: eq, value: 1 }
+        - { field: duration_min, op: gt, value: 0 }
+    aggregation: avg
+    value_expr: duration_min
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+      - { key: outcome, value_field: outcome_value, label_field: outcome_label }
+
+  - key: ci_run_hours
+    dataset: ci_runs
+    description: >-
+      Wall-clock hours a decided run spent executing, whatever its trigger.
+      Elapsed time of the run, not the sum of the jobs inside it.
+    filter: { field: duration_h, op: gt, value: 0 }
+    aggregation: sum
+    value_expr: duration_h
+    event_time: started_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: pipeline, value_field: pipeline_value, label_field: pipeline_label }
+      - { key: outcome, value_field: outcome_value, label_field: outcome_label }
+
+  - key: ci_runs_matched_commit
+    dataset: ci_runs
+    description: >-
+      Decided runs whose head commit exists among the collected commits. Pull
+      request runs build synthetic merge refs, and fork commits are never
+      collected, so this is the ceiling for any reading that joins CI to git
+      history.
+    filter: { field: commit_known, op: eq, value: 1 }
+    aggregation: count
+    event_time: started_at
+    entity: entity_id
+
+  - key: ci_deployments_created
+    dataset: ci_deployments
+    description: >-
+      Deployments recorded, dated by their creation. The outcome is the latest
+      status the deployment reached; one with no status yet reads as pending.
+    aggregation: count
+    event_time: created_at
+    entity: entity_id
+    dimensions:
+      - { key: repository, value_field: repository_value, label_field: repository_label }
+      - { key: environment, value_field: environment_value, label_field: environment_label }
+      - { key: outcome, value_field: outcome_value, label_field: outcome_label }
+      - { key: env_kind, value_field: env_kind_value, label_field: env_kind_label }
+
+  - key: ci_commits_collected
+    dataset: ci_commits
+    description: Commits the git connector collected, dated at their commit time.
+    aggregation: count
+    event_time: committed_at
+    entity: entity_id
+
+metrics:
+  - key: ci.runs
+    computation: { type: direct, measure: ci_runs_decided }
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    label: CI runs
+    description: >-
+      Every pipeline run that reached a decided outcome, dated by the day the
+      run started, whatever its trigger. Runs still in progress are not counted
+      until they decide.
+
+  - key: ci.gate_pass_rate
+    computation: { type: ratio, numerator: ci_gate_passed, denominator: ci_gate_runs }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    label: Gate pass rate
+    description: >-
+      Success share of gate runs — runs triggered by a push, a pull request or
+      the merge queue that reached a decided outcome. Cancelled and skipped
+      runs decide nothing and stay out of both sides.
+
+  - key: ci.gate_first_try_pass_rate
+    computation: { type: ratio, numerator: ci_gate_first_try_passed, denominator: ci_gate_runs }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: higher_is_better
+    entity_type: tenant
+    label: First-try pass rate
+    description: >-
+      Gate runs that passed on their first attempt, as a share of all gate
+      runs. The gap to the plain pass rate is green that had to be bought with
+      a re-run.
+
+  - key: ci.gate_retry_share
+    computation: { type: ratio, numerator: ci_gate_retried, denominator: ci_gate_runs }
+    transform: { multiplier: 100.0 }
+    format: percent
+    direction: lower_is_better
+    entity_type: tenant
+    label: Retried gate runs
+    description: >-
+      Gate runs whose final state came from a re-run, as a share of all gate
+      runs. A retried run counts once, at its last attempt.
+
+  - key: ci.run_duration_min
+    computation: { type: percentile, measure: ci_run_duration_min, quantile: 0.5 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    label: Gate run duration
+    description: >-
+      Median wall-clock minutes from a gate run's start to its decision. Wall
+      clock, not billable compute.
+
+  - key: ci.run_duration_min_p90
+    computation: { type: percentile, measure: ci_run_duration_min, quantile: 0.9 }
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    label: Gate run duration p90
+    description: >-
+      The 90th percentile of gate run duration — nine in ten runs finish
+      faster. The gap to the median is the bad-day penalty a developer waits
+      for.
+
+  - key: ci.run_duration_min_stddev
+    computation: { type: stddev, measure: ci_run_duration_min }
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    label: Gate run duration spread
+    description: >-
+      Standard deviation of gate run durations, in minutes. A pipeline whose
+      duration swings wildly is harder to plan around than a slow but steady
+      one.
+
+  - key: ci.run_hours
+    computation: { type: direct, measure: ci_run_hours }
+    format: decimal
+    direction: lower_is_better
+    entity_type: tenant
+    label: CI hours
+    description: >-
+      Wall-clock hours all decided runs spent executing, whatever the trigger.
+      Not billable compute minutes — parallel jobs inside one run count as the
+      run's elapsed time, not their sum.
+
+  - key: ci.runs_matched_commit
+    computation: { type: direct, measure: ci_runs_matched_commit }
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    label: Runs matching a collected commit
+    description: >-
+      Decided runs whose head commit exists among the collected commits. Set
+      beside total runs and collected commits it shows how far a CI-to-git
+      join can be trusted.
+
+  - key: ci.commits_observed
+    computation: { type: direct, measure: ci_commits_collected }
+    format: integer
+    direction: neutral
+    entity_type: tenant
+    label: Commits collected
+    description: >-
+      Commits the git connector collected, dated at their commit time — the
+      other side of the run-to-commit join. Where runs far outnumber matched
+      runs while commits stay high, CI is running on refs the commit stream
+      does not see rather than on missing history.
+
+  - key: ci.deployments
+    computation: { type: direct, measure: ci_deployments_created }
+    format: integer
+    direction: higher_is_better
+    entity_type: tenant
+    label: Deployments
+    description: >-
+      Deployments recorded in the period. The outcome is the latest status the
+      deployment reached; one with no status yet shows as pending rather than
+      being rounded away.

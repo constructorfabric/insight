@@ -13,6 +13,7 @@ use crate::domain::compiler::request::{
     MetricQuery, RankedGroup, ResolvedPerson, SubjectSeriesView, SubjectSplitView, ViewKind,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
+use crate::domain::field_catalog::model::EntityType;
 use crate::domain::identity_binding::{IdentitySet, resolve_all_identities, resolve_identities};
 
 use super::super::catalog::MetricCatalog;
@@ -79,7 +80,7 @@ pub(super) async fn plan(
     let mut rankings: BTreeMap<RankingKey, Vec<RankedGroup>> = BTreeMap::new();
     let mut compiled = Vec::with_capacity(batch.queries.len());
     for query in &batch.queries {
-        let scope = entity_scope(&query.subjects, &identities, &tenant);
+        let scope = entity_scope(query, &identities, &tenant);
         if !scope.reaches_any_row() {
             compiled.push(PlannedQuery::NoIdentities);
             continue;
@@ -203,18 +204,19 @@ async fn identities(
 }
 
 /// Everyone the tenant's identity mapping knows, read once for the whole
-/// request and only when a question asks about the tenant.
+/// request and only when a question folds the tenant's people together.
 ///
-/// INVARIANT: no dataset records a row keyed by the tenant, so a tenant-wide
-/// value is its people's rows folded together. Reading them through the
-/// mapping is what makes the fold count people rather than source identities,
-/// and what leaves out the identities the mapping resolves nobody for.
+/// INVARIANT: a person-grain dataset records no row keyed by the tenant, so a
+/// tenant-wide value of one is its people's rows folded together. Reading them
+/// through the mapping is what makes the fold count people rather than source
+/// identities, and what leaves out the identities the mapping resolves nobody
+/// for.
 async fn tenant_pool(
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
     batch: &ValidatedBatch,
 ) -> Result<Vec<ResolvedPerson>, QueryError> {
-    if !batch.asks_about_the_tenant() {
+    if !batch.folds_the_tenants_people() {
         return Ok(Vec::new());
     }
 
@@ -239,27 +241,32 @@ async fn tenant_pool(
 
 /// INVARIANT: a person is carried with their own identities rather than merged
 /// into one list, because the answer is keyed per person. A tenant-wide
-/// question carries the whole tenant's people for the same reason: what it
-/// reports as having contributed is people, not the identities they are
-/// recorded under.
+/// reading of a person-grain metric carries the whole tenant's people for the
+/// same reason: what it reports as having contributed is people, not the
+/// identities they are recorded under.
 fn entity_scope(
-    subjects: &ValidatedSubjects,
+    query: &ValidatedQuery,
     identities: &BTreeMap<Uuid, IdentitySet>,
     tenant: &[ResolvedPerson],
 ) -> EntityScope {
-    match subjects {
-        ValidatedSubjects::Tenant => EntityScope::People(tenant.to_vec()),
-        ValidatedSubjects::Persons(ids) => EntityScope::People(
-            ids.iter()
-                .map(|id| ResolvedPerson {
-                    person_ref: id.to_string(),
-                    identities: identities
-                        .get(id)
-                        .map(IdentitySet::values)
-                        .unwrap_or_default(),
-                })
-                .collect(),
-        ),
+    match query.entity_type {
+        // INVARIANT: a tenant-grain metric records one row per tenant, so
+        // tenancy is the whole narrowing and there is nobody to resolve.
+        EntityType::Tenant => EntityScope::Tenant,
+        EntityType::Person => match &query.subjects {
+            ValidatedSubjects::Tenant => EntityScope::People(tenant.to_vec()),
+            ValidatedSubjects::Persons(ids) => EntityScope::People(
+                ids.iter()
+                    .map(|id| ResolvedPerson {
+                        person_ref: id.to_string(),
+                        identities: identities
+                            .get(id)
+                            .map(IdentitySet::values)
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+            ),
+        },
     }
 }
 
@@ -328,7 +335,9 @@ fn scoped_refs(scope: &EntityScope) -> Vec<String> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::super::super::catalog::product_metric_catalog;
-    use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse};
+    use super::super::super::fixtures::{
+        SHIPPED_METRIC, SHIPPED_TENANT_METRIC, offline_clickhouse,
+    };
     use super::super::fixtures::validated;
     use super::*;
     use crate::domain::compiler::sql::QueryParam;
@@ -346,6 +355,16 @@ mod tests {
             person_ref: person().to_string(),
             identities: vec!["dev@example.com".to_owned()],
         }])
+    }
+
+    /// The question `entity_scope` is asked about, stripped to what decides the
+    /// scope: what the metric's values are keyed by, and whose values it names.
+    fn asking(entity_type: EntityType, subjects: ValidatedSubjects) -> ValidatedQuery {
+        ValidatedQuery {
+            entity_type,
+            subjects,
+            ..validated(QueryShape::SubjectTotal, Grain::Total, &[])
+        }
     }
 
     /// The tenant's mapping as one pooled person, so a tenant-wide read has
@@ -443,7 +462,7 @@ mod tests {
     fn a_tenant_question_folds_the_tenants_people_and_counts_them_rather_than_their_identities() {
         let query = validated(QueryShape::CombinedSplit, Grain::Total, &["repository"]);
         let scope = entity_scope(
-            &ValidatedSubjects::Tenant,
+            &asking(EntityType::Person, ValidatedSubjects::Tenant),
             &BTreeMap::new(),
             &tenant_people(),
         );
@@ -474,12 +493,47 @@ mod tests {
     #[test]
     fn a_tenant_question_reaches_only_the_people_the_mapping_resolves() {
         let scope = entity_scope(
-            &ValidatedSubjects::Tenant,
+            &asking(EntityType::Person, ValidatedSubjects::Tenant),
             &BTreeMap::new(),
             &tenant_people(),
         );
 
         assert_eq!(scope, EntityScope::People(tenant_people()));
+    }
+
+    /// A tenant-grain metric records one row per tenant, so its values need no
+    /// pool: there is nobody to attribute a row to.
+    #[test]
+    fn a_tenant_grain_metric_reads_under_tenancy_alone_and_opens_no_pool() {
+        let query = ValidatedQuery {
+            metric_key: SHIPPED_TENANT_METRIC.to_owned(),
+            ..asking(EntityType::Tenant, ValidatedSubjects::Tenant)
+        };
+
+        let scope = entity_scope(&query, &BTreeMap::new(), &tenant_people());
+
+        assert_eq!(scope, EntityScope::Tenant);
+        assert!(
+            !compiled(&query, &scope).sql.contains("pool"),
+            "{}",
+            compiled(&query, &scope).sql
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tenant_grain_question_never_enumerates_the_tenants_people() {
+        let batch = ValidatedBatch {
+            queries: vec![ValidatedQuery {
+                metric_key: SHIPPED_TENANT_METRIC.to_owned(),
+                ..asking(EntityType::Tenant, ValidatedSubjects::Tenant)
+            }],
+        };
+
+        let pooled = tenant_pool(&offline_clickhouse(), tenant(), &batch)
+            .await
+            .expect("a tenant-grain question resolves nobody");
+
+        assert!(pooled.is_empty());
     }
 
     #[tokio::test]
@@ -552,7 +606,10 @@ mod tests {
         ]);
 
         let scope = entity_scope(
-            &ValidatedSubjects::Persons(vec![alice, bob]),
+            &asking(
+                EntityType::Person,
+                ValidatedSubjects::Persons(vec![alice, bob]),
+            ),
             &resolved,
             &[],
         );
@@ -582,7 +639,14 @@ mod tests {
             },
         )]);
 
-        let scope = entity_scope(&ValidatedSubjects::Persons(vec![person()]), &resolved, &[]);
+        let scope = entity_scope(
+            &asking(
+                EntityType::Person,
+                ValidatedSubjects::Persons(vec![person()]),
+            ),
+            &resolved,
+            &[],
+        );
 
         assert_eq!(
             scope,
@@ -596,7 +660,10 @@ mod tests {
     #[test]
     fn a_person_the_mapping_answers_nothing_for_is_named_with_no_identity_at_all() {
         let scope = entity_scope(
-            &ValidatedSubjects::Persons(vec![person()]),
+            &asking(
+                EntityType::Person,
+                ValidatedSubjects::Persons(vec![person()]),
+            ),
             &BTreeMap::new(),
             &[],
         );

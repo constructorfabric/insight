@@ -8,6 +8,8 @@ use std::num::NonZeroU32;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+use crate::domain::field_catalog::model::EntityType;
+
 /// The time grain a measure is folded to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -296,7 +298,7 @@ pub enum SortValue {
 pub struct CohortMembersQuery {
     pub tenant_id: String,
     /// The entity type the metric declares, which cohort membership is under.
-    pub entity_type: String,
+    pub entity_type: EntityType,
     pub cohort_key: String,
     /// Person references whose own cohorts the membership is read from.
     pub targets: Vec<String>,

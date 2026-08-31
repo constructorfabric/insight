@@ -68,7 +68,7 @@ pub(super) fn fingerprint(tenant_id: Uuid, request: &ValidatedRows) -> Result<St
     let asked = serde_json::json!({
         "tenant": tenant_id.to_string(),
         "metric": request.metric_key,
-        "subjects": request.subjects.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+        "subjects": request.subjects,
         "from": request.from.to_string(),
         "to": request.to.to_string(),
         "filters": filters,
@@ -176,6 +176,7 @@ mod tests {
     use chrono::NaiveDate;
 
     use crate::domain::compiler::request::{DimensionFilter, SortDirection};
+    use crate::domain::metric_query::question::ValidatedSubjects;
 
     use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, tenant};
     use super::super::validation::ValidatedSort;
@@ -191,7 +192,7 @@ mod tests {
     fn validated() -> ValidatedRows {
         ValidatedRows {
             metric_key: SHIPPED_METRIC.to_owned(),
-            subjects: vec![Uuid::from_u128(1)],
+            subjects: ValidatedSubjects::Persons(vec![Uuid::from_u128(1)]),
             from: NaiveDate::from_ymd_opt(2026, 1, 1).expect("valid date"),
             to: NaiveDate::from_ymd_opt(2026, 1, 31).expect("valid date"),
             filters: Vec::new(),

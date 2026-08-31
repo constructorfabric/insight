@@ -13,6 +13,10 @@ pub(crate) async fn authorize_person_ids(
     authorization: Option<&str>,
     person_ids: &[Uuid],
 ) -> Result<(), CanonicalError> {
+    if person_ids.is_empty() {
+        return Ok(());
+    }
+
     if ctx.subject_type() == Some(SERVICE_SUBJECT_TYPE) {
         return Ok(());
     }

@@ -61,7 +61,10 @@ pub struct DistributionResult {
 
 #[derive(Debug, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct SubjectDistribution {
-    pub subject: String,
+    /// Absent when the metric measures the tenant: the answer is about the
+    /// caller's own tenant, which the question already named.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     /// Absent when the question asked for no histogram.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub histogram: Option<Histogram>,
@@ -182,7 +185,7 @@ mod tests {
                     served_from: ServedFrom::Computed,
                 },
                 subjects: vec![SubjectDistribution {
-                    subject: "00000000-0000-0000-0000-000000000001".to_owned(),
+                    subject: Some("00000000-0000-0000-0000-000000000001".to_owned()),
                     histogram: Some(Histogram {
                         lo: Some(0.0),
                         hi: Some(10.0),
@@ -241,7 +244,7 @@ mod tests {
                     served_from: ServedFrom::Computed,
                 },
                 subjects: vec![SubjectDistribution {
-                    subject: "00000000-0000-0000-0000-000000000001".to_owned(),
+                    subject: Some("00000000-0000-0000-0000-000000000001".to_owned()),
                     histogram: Some(Histogram {
                         lo: None,
                         hi: None,

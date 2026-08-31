@@ -9,6 +9,7 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use crate::domain::compiler::request::DimensionFilter;
+use crate::domain::field_catalog::model::EntityType;
 
 use super::catalog::MetricCatalog;
 use super::dto::DimensionFilter as FilterDto;
@@ -35,6 +36,49 @@ pub const fn row_limit() -> usize {
 pub const fn query_row_limit() -> u64 {
     ROW_LIMIT as u64 + 1
 }
+
+/// Whose values a question turned out to be about, once the wire shape was
+/// parsed. INVARIANT: `Tenant` carries no id — the tenant a question is about
+/// is the caller's own, taken from the session and never from the request.
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidatedSubjects {
+    Persons(Vec<Uuid>),
+    Tenant,
+}
+
+impl ValidatedSubjects {
+    /// The people this question names: what the visibility gate checks and what
+    /// the identity mapping is read for. Empty for a tenant question — there is
+    /// nobody to resolve and nobody's visibility to decide.
+    #[must_use]
+    pub fn person_ids(&self) -> &[Uuid] {
+        match self {
+            Self::Persons(ids) => ids,
+            Self::Tenant => &[],
+        }
+    }
+}
+
+/// What the metric's values are keyed by, taken from the catalogue.
+/// INVARIANT: `defined_metric` already refused a key the catalogue does not
+/// carry, so this resolves for every metric key that reached it.
+pub(super) fn metric_entity_type(
+    catalog: &MetricCatalog,
+    metric_key: &str,
+) -> Result<EntityType, QueryError> {
+    catalog
+        .metric(metric_key)
+        .map(|metric| metric.entity_type)
+        .ok_or_else(|| QueryError::UnknownMetric {
+            metric: metric_key.to_owned(),
+        })
+}
+
+/// The refusal a surface reporting one row per subject owes a question whose
+/// subjects are not the grain the metric records.
+pub(super) const PERSON_SUBJECTS_OVER_A_TENANT_METRIC: &str = "this metric measures the tenant rather than the people in it, so it is asked \
+     about the tenant and never about a person";
 
 /// How many questions one request may carry.
 pub(super) fn batch_size(asked: usize) -> Result<(), QueryError> {

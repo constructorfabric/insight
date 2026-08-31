@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use serde::Deserialize;
-use uuid::Uuid;
 
+use super::super::question::ValidatedSubjects;
 use super::dto::{Histogram, HistogramBin, Quantile, SubjectDistribution};
 
 /// One observed (subject, bin) pair plus that subject's exact bounds.
@@ -39,7 +39,7 @@ struct Observed {
 }
 
 pub(super) fn subject_distributions(
-    subjects: &[Uuid],
+    subjects: &ValidatedSubjects,
     bins: Option<NonZeroU32>,
     quantiles: Option<&[f64]>,
     histogram_rows: Vec<HistogramRow>,
@@ -55,19 +55,29 @@ pub(super) fn subject_distributions(
         observed.entry(row.entity_id).or_default().quantile_values = row.quantile_values;
     }
 
-    subjects
-        .iter()
-        .map(|subject| {
-            let subject = subject.to_string();
-            let answered = observed.remove(&subject).unwrap_or_default();
+    let shape = |answered: &Observed, subject: Option<String>| SubjectDistribution {
+        histogram: bins.map(|bins| histogram(answered, bins)),
+        quantiles: quantiles.map(|quantiles| positions(answered, quantiles)),
+        subject,
+    };
 
-            SubjectDistribution {
-                histogram: bins.map(|bins| histogram(&answered, bins)),
-                quantiles: quantiles.map(|quantiles| positions(&answered, quantiles)),
-                subject,
-            }
-        })
-        .collect()
+    match subjects {
+        // A tenant read groups by the one entity its rows carry, so the answer
+        // is that one distribution — reported whether or not anything was
+        // observed, exactly as a person with no rows still gets an entry.
+        ValidatedSubjects::Tenant => {
+            let answered = observed.into_values().next().unwrap_or_default();
+            vec![shape(&answered, None)]
+        }
+        ValidatedSubjects::Persons(ids) => ids
+            .iter()
+            .map(|id| {
+                let subject = id.to_string();
+                let answered = observed.remove(&subject).unwrap_or_default();
+                shape(&answered, Some(subject))
+            })
+            .collect(),
+    }
 }
 
 /// The subject's own range cut into equal-width bins. A range collapsing to a
@@ -147,7 +157,13 @@ where
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use uuid::Uuid;
+
     use super::*;
+
+    fn people(ids: &[Uuid]) -> ValidatedSubjects {
+        ValidatedSubjects::Persons(ids.to_vec())
+    }
 
     fn person() -> Uuid {
         Uuid::from_u128(1)
@@ -187,7 +203,7 @@ mod tests {
     #[test]
     fn every_bin_of_the_range_is_reported_and_the_last_one_closes_on_the_maximum() {
         let distributions = subject_distributions(
-            &[person()],
+            &people(&[person()]),
             bins(4),
             None,
             vec![
@@ -216,7 +232,7 @@ mod tests {
     #[test]
     fn a_range_collapsing_to_a_point_is_one_bin_rather_than_a_cut_of_no_width() {
         let distributions = subject_distributions(
-            &[person()],
+            &people(&[person()]),
             bins(10),
             None,
             vec![histogram_row(&person().to_string(), 0, 5.0, 5.0, 4)],
@@ -243,7 +259,7 @@ mod tests {
         let unobserved = Uuid::from_u128(2);
 
         let distributions = subject_distributions(
-            &[observed, unobserved],
+            &people(&[observed, unobserved]),
             bins(2),
             Some(&[0.5]),
             vec![histogram_row(&observed.to_string(), 0, 0.0, 4.0, 1)],
@@ -254,7 +270,7 @@ mod tests {
         );
 
         assert_eq!(distributions.len(), 2);
-        assert_eq!(distributions[1].subject, unobserved.to_string());
+        assert_eq!(distributions[1].subject, Some(unobserved.to_string()));
         let histogram = distributions[1]
             .histogram
             .as_ref()
@@ -273,7 +289,7 @@ mod tests {
     #[test]
     fn each_position_keeps_the_value_the_read_projected_for_it() {
         let distributions = subject_distributions(
-            &[person()],
+            &people(&[person()]),
             None,
             Some(&[0.25, 0.5, 0.9]),
             Vec::new(),
@@ -309,7 +325,7 @@ mod tests {
         let second = Uuid::from_u128(2);
 
         let distributions = subject_distributions(
-            &[first, second],
+            &people(&[first, second]),
             bins(1),
             None,
             vec![
@@ -322,9 +338,35 @@ mod tests {
         assert_eq!(
             distributions
                 .iter()
-                .map(|distribution| distribution.subject.as_str())
+                .map(|distribution| distribution.subject.clone())
                 .collect::<Vec<_>>(),
-            vec![first.to_string(), second.to_string()]
+            vec![Some(first.to_string()), Some(second.to_string())]
         );
+    }
+
+    #[test]
+    fn a_tenant_distribution_is_one_entry_naming_nobody_whatever_the_read_observed() {
+        let observed = subject_distributions(
+            &ValidatedSubjects::Tenant,
+            NonZeroU32::new(2),
+            None,
+            vec![
+                histogram_row("acme-tenant", 0, 1.0, 3.0, 2),
+                histogram_row("acme-tenant", 1, 1.0, 3.0, 1),
+            ],
+            Vec::new(),
+        );
+        let unobserved = subject_distributions(
+            &ValidatedSubjects::Tenant,
+            NonZeroU32::new(2),
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        for (named, answer) in [("observed", observed), ("unobserved", unobserved)] {
+            assert_eq!(answer.len(), 1, "{named}: the tenant is one subject");
+            assert_eq!(answer[0].subject, None, "{named}");
+        }
     }
 }

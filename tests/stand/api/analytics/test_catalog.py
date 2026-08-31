@@ -42,6 +42,11 @@ _ONE_MEASURE: tuple[int, int | None] = (1, 1)
 TENANT = {"type": "tenant"}
 COHORT = {"type": "cohort"}
 
+#: What a metric's values are keyed by. A tenant-grain metric measures the
+#: organization itself, so it names no person and has no peers.
+_PERSON = "person"
+_TENANT = "tenant"
+
 
 def _advertises_one_page_per_input(computation: str, pages: int) -> bool:
     minimum, maximum = _INPUTS_PER_COMPUTATION.get(computation, _ONE_MEASURE)
@@ -90,17 +95,32 @@ def test_every_question_a_metric_advertises_agrees_with_the_rest_of_its_entry(
             f"`{key}` advertises split={values['split']} with {len(metric['dimensions'])} "
             f"dimensions"
         )
+        # Both grains report one value per subject: a person metric per person,
+        # a tenant metric for the one tenant its rows are keyed by.
         assert "per_subject" in values["folds"], f"`{key}` advertises folds {values['folds']}"
         assert ("combined" in values["folds"]) == splittable, (
             f"`{key}` advertises a combined fold with nothing to fold into: {values['folds']}"
         )
         assert values["compare"], f"`{key}` advertises no comparable window"
 
+        entity_type = metric["entity_type"]
+        assert entity_type in {_PERSON, _TENANT}, f"`{key}` is keyed by {entity_type!r}"
+
         populations = questions["comparisons"]["populations"]
-        assert TENANT in populations, f"`{key}` advertises populations {populations}"
-        assert (COHORT in populations) == ("cohort_key" in metric), (
-            f"`{key}` advertises {populations} while its cohort_key is {metric.get('cohort_key')!r}"
-        )
+        if entity_type == _TENANT:
+            assert populations == [], (
+                f"`{key}` measures the tenant, which has no peers, yet advertises {populations}"
+            )
+            assert "cohort_key" not in metric, (
+                f"`{key}` measures the tenant and declares the cohort "
+                f"{metric.get('cohort_key')!r} to be grouped by"
+            )
+        else:
+            assert TENANT in populations, f"`{key}` advertises populations {populations}"
+            assert (COHORT in populations) == ("cohort_key" in metric), (
+                f"`{key}` advertises {populations} while its cohort_key is "
+                f"{metric.get('cohort_key')!r}"
+            )
 
         inputs = questions["rows"]["inputs"]
         assert _advertises_one_page_per_input(computation, len(inputs)), (
@@ -120,3 +140,19 @@ def test_catalog_metrics_discloses_no_value_of_any_dimension(api: ApiClient) -> 
             assert sorted(dimension) == ["key", "label"], (
                 f"`{metric['key']}` advertises a dimension carrying more than its name: {dimension}"
             )
+
+
+@pytest.mark.versatility
+def test_catalog_metrics_advertises_the_grains_this_installation_answers(api: ApiClient) -> None:
+    """A stand serving tenant metrics advertises them; the two grains are both present.
+
+    The catalogue is filtered by the same installation gate the query surfaces
+    enforce, so a metric advertised here is one a question about it can reach.
+    """
+    response = api.get(CATALOG_METRICS)
+    assert response.status_code == 200, f"status={response.status_code} {response.text[:300]}"
+
+    grains = {metric["entity_type"] for metric in response.json()["metrics"]}
+    assert grains == {_PERSON, _TENANT}, (
+        f"the catalogue advertises metrics keyed by {sorted(grains)}"
+    )
