@@ -76,7 +76,13 @@ pub async fn answer(
     let page = paged(read, request.page_size);
     let next_cursor = page
         .position
-        .map(|last| encode(&fingerprint, &anchor, shape.position(&last)))
+        .map(|last| {
+            let sorted = request.sort.as_ref().map_or(Value::Null, |sort| {
+                shape.reported_value(&last, &sort.column)
+            });
+
+            encode(&fingerprint, &anchor, sorted, shape.position(&last))
+        })
         .transpose()?;
 
     Ok(RowsResponse {
@@ -167,6 +173,7 @@ mod tests {
             filters: Vec::new(),
             input_role: "value".to_owned(),
             display_dimensions: Vec::new(),
+            sort: None,
             page_size: 100,
             cursor: None,
         };
@@ -177,6 +184,7 @@ mod tests {
                 snapshot_id: "dataset-uuid".to_owned(),
                 identity_epoch: 1,
             },
+            Value::Null,
             vec!["row-7".to_owned()],
         )
         .expect("encodes");

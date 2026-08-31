@@ -197,7 +197,7 @@ pub struct MetricQuery {
 
 /// What a caller asks a metric for row by row. INVARIANT: tenancy, scope,
 /// window and dimension narrowing are the aggregate request's.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DrilldownQuery {
     pub tenant_id: String,
     pub entity_scope: EntityScope,
@@ -211,14 +211,59 @@ pub struct DrilldownQuery {
     /// Rows per page. The statement reads one more than this, so the caller
     /// can tell whether a further page follows without counting the whole read.
     pub page_size: u64,
+    /// The column to order by ahead of the total order. Absent leaves a page
+    /// in the only order it is guaranteed to have.
+    pub sort: Option<DrilldownSort>,
     pub cursor: Option<DrilldownCursor>,
+}
+
+/// Which column a page is ordered by, named as the page reports it rather than
+/// as the dataset spells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrilldownSort {
+    pub column: String,
+    pub direction: SortDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Ascending => "ASC",
+            Self::Descending => "DESC",
+        }
+    }
+
+    /// The comparison selecting the rows a page has not reported yet.
+    pub(super) fn after(self) -> &'static str {
+        match self {
+            Self::Ascending => ">",
+            Self::Descending => "<",
+        }
+    }
 }
 
 /// Where a page resumes: the ordering values the previous page's last row
 /// carried, in the order the read sorts by.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DrilldownCursor {
+    /// What the last row carried in the sorted column, absent when that value
+    /// was null and the page resumes inside the tail nulls sort into.
+    pub sort_value: Option<SortValue>,
     pub sort_values: Vec<String>,
+}
+
+/// A value a page resumes at in its sorted column, in the type that column
+/// compares as: ordering `value` as text would rank 100 below 9.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SortValue {
+    Text(String),
+    Number(f64),
 }
 
 /// What the comparison pre-pass asks for: everyone who shares a declared cohort with

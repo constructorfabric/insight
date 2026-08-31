@@ -217,6 +217,7 @@ pub fn drilldown_query() -> DrilldownQuery {
         dimension_filters: Vec::new(),
         display_dimensions: Vec::new(),
         page_size: 50,
+        sort: None,
         cursor: None,
     }
 }

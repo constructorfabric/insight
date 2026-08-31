@@ -9,13 +9,13 @@ use std::collections::BTreeSet;
 use chrono::NaiveDate;
 use uuid::Uuid;
 
-use crate::domain::compiler::request::DimensionFilter;
+use crate::domain::compiler::request::{DimensionFilter, SortDirection};
 
 use super::super::catalog::MetricCatalog;
 use super::super::dto::Subjects;
 use super::super::error::QueryError;
 use super::super::question::{defined_metric, filters, person_ids, window};
-use super::dto::RowsRequest;
+use super::dto::{RowSort, RowsRequest, SortDirection as AskedDirection};
 
 /// The field a page names its people in.
 const SUBJECTS_FIELD: &str = "subjects.ids";
@@ -35,10 +35,19 @@ pub struct ValidatedRows {
     pub input_role: String,
     /// Dimension keys to report beyond the measure's own, asked for once each.
     pub display_dimensions: Vec<String>,
+    /// The column the page is ordered by, ahead of its total order.
+    pub sort: Option<ValidatedSort>,
     pub page_size: u32,
     /// Still encoded: reading a position needs the fingerprint of the question
     /// it was issued for, which only the whole validated request decides.
     pub cursor: Option<String>,
+}
+
+/// One column of a page, and which way it runs.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ValidatedSort {
+    pub column: String,
+    pub direction: SortDirection,
 }
 
 pub fn validate_request(
@@ -51,6 +60,13 @@ pub fn validate_request(
     let filters = filters(catalog, &metric_key, request.filters)?;
     let display_dimensions = display_dimensions(catalog, &metric_key, request.display_dimensions)?;
     let input_role = input_role(catalog, &metric_key, request.input.as_deref())?;
+    let sort = sort(
+        catalog,
+        &metric_key,
+        &input_role,
+        &display_dimensions,
+        request.sort,
+    )?;
     let page_size = page_size(request.page_size)?;
 
     Ok(ValidatedRows {
@@ -61,9 +77,51 @@ pub fn validate_request(
         filters,
         input_role,
         display_dimensions,
+        sort,
         page_size,
         cursor: request.cursor,
     })
+}
+
+/// The column a page is ordered by. A page can only be ordered by something it
+/// reports, so the refusal names what it reports.
+fn sort(
+    catalog: &MetricCatalog,
+    metric_key: &str,
+    input_role: &str,
+    display_dimensions: &[String],
+    asked: Option<RowSort>,
+) -> Result<Option<ValidatedSort>, QueryError> {
+    let Some(asked) = asked else {
+        return Ok(None);
+    };
+
+    let Some(metric) = catalog.metric(metric_key) else {
+        return Err(QueryError::UnknownMetric {
+            metric: metric_key.to_owned(),
+        });
+    };
+    let sortable = catalog.drilldown_sortable_columns(metric, input_role, display_dimensions)?;
+
+    let column = asked.column.trim().to_owned();
+    if !sortable.contains(&column) {
+        return Err(QueryError::UnknownSortColumn {
+            column,
+            sortable: named(&sortable),
+        });
+    }
+
+    Ok(Some(ValidatedSort {
+        column,
+        direction: direction(asked.direction),
+    }))
+}
+
+fn direction(asked: AskedDirection) -> SortDirection {
+    match asked {
+        AskedDirection::Asc => SortDirection::Ascending,
+        AskedDirection::Desc => SortDirection::Descending,
+    }
 }
 
 /// A page reports the events credited to a subject, and a dataset records no
@@ -340,6 +398,87 @@ mod tests {
                     validated.map(|validated| validated.input_role).ok(),
                     Some(role.clone()),
                     "{metric_key} pages its `{role}`"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_page_is_ordered_only_by_a_column_it_reports_and_the_refusal_names_which_ones_it_does() {
+        let refused = validate(&serde_json::json!({
+            "sort": { "column": "not_a_column", "direction": "asc" },
+        }))
+        .expect_err("a page reports no such column");
+
+        let QueryError::UnknownSortColumn { column, sortable } = &refused else {
+            panic!("expected a sortable-set refusal, got {refused}");
+        };
+        assert_eq!(column, "not_a_column");
+        assert!(
+            sortable.contains("`date`") && sortable.contains("`observed_at`"),
+            "the refusal names what may be asked for: {sortable}"
+        );
+    }
+
+    #[test]
+    fn a_page_is_ordered_by_the_column_and_direction_the_question_names() {
+        let cases = [
+            ("asc", SortDirection::Ascending),
+            ("desc", SortDirection::Descending),
+        ];
+
+        for (asked, expected) in cases {
+            let validated = validate(&serde_json::json!({
+                "sort": { "column": "date", "direction": asked },
+            }))
+            .unwrap_or_else(|error| panic!("`{asked}` orders a page: {error}"));
+
+            assert_eq!(
+                validated.sort,
+                Some(ValidatedSort {
+                    column: "date".to_owned(),
+                    direction: expected,
+                }),
+                "should order {asked}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_naming_no_column_leaves_the_page_in_the_order_it_falls_back_on() {
+        let validated = validate(&serde_json::json!({})).expect("a page needs no column named");
+
+        assert_eq!(validated.sort, None);
+    }
+
+    /// A dimension reported only because the question asked for it is still a
+    /// column of the page, so it can be ordered by like any other.
+    #[test]
+    fn a_dimension_reported_only_on_request_can_still_be_ordered_by() {
+        let validated = validate(&serde_json::json!({
+            "display_dimensions": ["repository"],
+            "sort": { "column": "repository", "direction": "asc" },
+        }))
+        .expect("a reported dimension orders a page");
+
+        assert_eq!(
+            validated.sort.map(|sort| sort.column),
+            Some("repository".to_owned())
+        );
+    }
+
+    #[test]
+    fn every_shipped_metric_reports_the_columns_its_pages_may_be_ordered_by() {
+        for (metric_key, roles) in shipped_input_roles() {
+            for role in roles {
+                let metric = catalog().metric(metric_key).expect("a shipped metric");
+                let sortable = catalog()
+                    .drilldown_sortable_columns(metric, &role, &[])
+                    .unwrap_or_else(|error| panic!("`{metric_key}` reports its columns: {error}"));
+
+                assert!(
+                    sortable.contains(&"date".to_owned()),
+                    "`{metric_key}` pages its `{role}` by event time"
                 );
             }
         }

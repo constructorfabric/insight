@@ -70,6 +70,8 @@ pub enum CompileError {
     UnorderableDataset { dataset: String, reason: String },
     #[error("a page resumes from {found} ordering values, and the read orders by {expected}")]
     CursorArity { expected: usize, found: usize },
+    #[error("a page reports no column `{column}` to order by; it reports {sortable}")]
+    UnsortableColumn { column: String, sortable: String },
     #[error(
         "the group cap ranks group {rank} by {named} dimension values, and the read groups by {requested}"
     )]

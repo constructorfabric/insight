@@ -74,6 +74,8 @@ pub enum QueryError {
     TooManyDisplayDimensions { limit: usize },
     #[error("the metric declares no dimension `{dimension}` to report")]
     UnknownDisplayDimension { dimension: String },
+    #[error("a page reports no column `{column}` to order by; it reports {sortable}")]
+    UnknownSortColumn { column: String, sortable: String },
     #[error("the metric composes {valid}, so a page names which of them to read")]
     InputUnnamed { valid: String },
     #[error("the metric composes no input `{input}`; it composes {valid}")]
@@ -143,6 +145,7 @@ impl QueryError {
             Self::TooManyDisplayDimensions { .. } | Self::UnknownDisplayDimension { .. } => {
                 "display_dimensions"
             }
+            Self::UnknownSortColumn { .. } => "sort.column",
             Self::InputUnnamed { .. } | Self::UnknownInput { .. } => "input",
             Self::CursorUnreadable | Self::CursorMismatched => "cursor",
             Self::Uncompilable(_)
@@ -225,6 +228,7 @@ impl From<QueryError> for CanonicalError {
             | QueryError::PageSizeOutOfRange { .. }
             | QueryError::TooManyDisplayDimensions { .. }
             | QueryError::UnknownDisplayDimension { .. }
+            | QueryError::UnknownSortColumn { .. }
             | QueryError::InputUnnamed { .. }
             | QueryError::UnknownInput { .. }
             | QueryError::CursorUnreadable
@@ -296,6 +300,10 @@ mod tests {
             QueryError::TooManyDisplayDimensions { limit: 10 },
             QueryError::UnknownDisplayDimension {
                 dimension: "not_a_dimension".to_owned(),
+            },
+            QueryError::UnknownSortColumn {
+                column: "not_a_column".to_owned(),
+                sortable: "`date`, `value`".to_owned(),
             },
             QueryError::InputUnnamed {
                 valid: "`numerator`, `denominator`".to_owned(),

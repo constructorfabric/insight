@@ -1009,6 +1009,15 @@ class SnapshotSeries(BaseModel):
     points: list[float | None] = Field(..., description='Readings per bucket, oldest first; a gap is null.')
 
 
+class SortDirection(StrEnum):
+    """
+    Which way a sorted column runs. Rows carrying no value in it are reported
+    last either way.
+    """
+    asc = 'asc'
+    desc = 'desc'
+
+
 class SplitLimit(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1619,6 +1628,17 @@ class ResultBody(RootModel[ResultBody1 | ResultBody2]):
     root: ResultBody1 | ResultBody2 = Field(..., description="The answer's shape, decided by the question's grain: `total` answers with\nvalues, every other grain answers with series.")
 
 
+class RowSort(BaseModel):
+    """
+    Orders a page by one of the columns it reports.
+    """
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    column: str = Field(..., description='A column the page reports, spelled as its `columns[].key`.')
+    direction: SortDirection
+
+
 class RowsRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -1629,6 +1649,7 @@ class RowsRequest(BaseModel):
     input: str | None = Field(None, description="Which input of the metric's computation to page. A metric composing one\ninput needs none; one composing several names which.")
     metric: str = Field(..., description='The metric key the semantic definitions carry, such as `git.commits`.')
     page_size: int | None = Field(None, description='Rows per page. Absent means 100.', ge=0)
+    sort: RowSort | None = None
     subjects: Subjects
     time: TimeRange
 

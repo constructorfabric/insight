@@ -2949,6 +2949,24 @@
         ],
         "type": "object"
       },
+      "RowSort": {
+        "additionalProperties": false,
+        "description": "Orders a page by one of the columns it reports.",
+        "properties": {
+          "column": {
+            "description": "A column the page reports, spelled as its `columns[].key`.",
+            "type": "string"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SortDirection"
+          }
+        },
+        "required": [
+          "column",
+          "direction"
+        ],
+        "type": "object"
+      },
       "RowsRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2991,6 +3009,17 @@
             "type": [
               "integer",
               "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RowSort",
+                "description": "Which column to order the page by. Absent leaves a page in the only\norder it is guaranteed to have, which no request can name."
+              }
             ]
           },
           "subjects": {
@@ -3209,6 +3238,14 @@
           "points"
         ],
         "type": "object"
+      },
+      "SortDirection": {
+        "description": "Which way a sorted column runs. Rows carrying no value in it are reported\nlast either way.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
       },
       "Split": {
         "additionalProperties": false,

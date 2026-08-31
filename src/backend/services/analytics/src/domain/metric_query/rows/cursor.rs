@@ -26,9 +26,13 @@ pub(super) struct Anchor {
 }
 
 /// A position read off a cursor, once it is known to be this question's.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Resume {
     pub anchor: Anchor,
+    /// What the previous page's last row carried in the sorted column. Null
+    /// when the question sorts by nothing, and when that row carried no value
+    /// in the column it does sort by.
+    pub sort_value: serde_json::Value,
     /// The ordering values the previous page's last row carried.
     pub sort_values: Vec<String>,
 }
@@ -40,6 +44,10 @@ struct Envelope {
     snap: String,
     epoch: u64,
     key: Vec<String>,
+    /// Absent on a question that sorts by nothing, which is what an envelope
+    /// carrying no sorted value means.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    sort: serde_json::Value,
 }
 
 /// What the question asks for, as a position is valid against it. INVARIANT:
@@ -66,6 +74,7 @@ pub(super) fn fingerprint(tenant_id: Uuid, request: &ValidatedRows) -> Result<St
         "filters": filters,
         "input": request.input_role,
         "display_dimensions": request.display_dimensions,
+        "sort": request.sort.as_ref().map(|sort| (&sort.column, sort.direction.keyword())),
     });
 
     let bytes = serde_json::to_vec(&asked).map_err(|error| {
@@ -78,6 +87,7 @@ pub(super) fn fingerprint(tenant_id: Uuid, request: &ValidatedRows) -> Result<St
 pub(super) fn encode(
     fingerprint: &str,
     anchor: &Anchor,
+    sort_value: serde_json::Value,
     sort_values: Vec<String>,
 ) -> Result<String, QueryError> {
     let envelope = Envelope {
@@ -86,6 +96,7 @@ pub(super) fn encode(
         snap: anchor.snapshot_id.clone(),
         epoch: anchor.identity_epoch,
         key: sort_values,
+        sort: sort_value,
     };
 
     let bytes = serde_json::to_vec(&envelope).map_err(|error| {
@@ -116,6 +127,7 @@ pub(super) fn decode(value: &str, fingerprint: &str) -> Result<Resume, QueryErro
             snapshot_id: envelope.snap,
             identity_epoch: envelope.epoch,
         },
+        sort_value: envelope.sort,
         sort_values: envelope.key,
     })
 }
@@ -163,9 +175,10 @@ pub(super) fn still_anchored(resumed: &Anchor, current: &Anchor) -> Result<(), Q
 mod tests {
     use chrono::NaiveDate;
 
-    use crate::domain::compiler::request::DimensionFilter;
+    use crate::domain::compiler::request::{DimensionFilter, SortDirection};
 
     use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, tenant};
+    use super::super::validation::ValidatedSort;
     use super::*;
 
     fn anchor() -> Anchor {
@@ -184,6 +197,7 @@ mod tests {
             filters: Vec::new(),
             input_role: "value".to_owned(),
             display_dimensions: Vec::new(),
+            sort: None,
             page_size: 100,
             cursor: None,
         }
@@ -198,14 +212,21 @@ mod tests {
         let fingerprint = fingerprinted(&validated());
         let sort_values = vec!["row-7".to_owned(), "github".to_owned()];
 
-        let encoded = encode(&fingerprint, &anchor(), sort_values.clone()).expect("encodes");
+        let encoded = encode(
+            &fingerprint,
+            &anchor(),
+            serde_json::Value::Null,
+            sort_values.clone(),
+        )
+        .expect("encodes");
         let resumed = decode(&encoded, &fingerprint).expect("decodes");
 
         assert_eq!(
             resumed,
             Resume {
                 anchor: anchor(),
-                sort_values
+                sort_value: serde_json::Value::Null,
+                sort_values,
             }
         );
     }
@@ -213,7 +234,13 @@ mod tests {
     #[test]
     fn a_position_issued_for_another_question_is_refused_rather_than_resumed() {
         let issued = fingerprinted(&validated());
-        let encoded = encode(&issued, &anchor(), vec!["row-7".to_owned()]).expect("encodes");
+        let encoded = encode(
+            &issued,
+            &anchor(),
+            serde_json::Value::Null,
+            vec!["row-7".to_owned()],
+        )
+        .expect("encodes");
 
         let elsewhere = ValidatedRows {
             to: NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date"),
@@ -348,5 +375,108 @@ mod tests {
             outcome.expect_err("a closed port cannot answer"),
             QueryError::PageUnanchored
         ));
+    }
+
+    fn ordered(column: &str, direction: SortDirection) -> ValidatedRows {
+        ValidatedRows {
+            sort: Some(ValidatedSort {
+                column: column.to_owned(),
+                direction,
+            }),
+            ..validated()
+        }
+    }
+
+    /// The order decides which rows a page holds and in which sequence, so a
+    /// position issued under one order selects unrelated rows under another.
+    #[test]
+    fn a_question_ordered_differently_fingerprints_differently() {
+        let unordered = fingerprinted(&validated());
+        let ascending = fingerprinted(&ordered("date", SortDirection::Ascending));
+        let descending = fingerprinted(&ordered("date", SortDirection::Descending));
+        let elsewhere = fingerprinted(&ordered("value", SortDirection::Ascending));
+
+        for (named, other) in [
+            ("an unordered question", &unordered),
+            ("the other direction", &descending),
+            ("another column", &elsewhere),
+        ] {
+            assert_ne!(&ascending, other, "should differ from {named}");
+        }
+    }
+
+    /// A caller cannot resume a sorted page from a value the order it asked for
+    /// never produced: the order is fingerprinted, so the position is refused
+    /// before it can select anything.
+    #[test]
+    fn a_position_issued_under_another_order_is_refused_rather_than_resumed() {
+        let issued = fingerprinted(&ordered("date", SortDirection::Ascending));
+        let encoded = encode(
+            &issued,
+            &anchor(),
+            serde_json::Value::from("2026-01-05"),
+            vec!["row-7".to_owned()],
+        )
+        .expect("encodes");
+
+        let refused = decode(
+            &encoded,
+            &fingerprinted(&ordered("date", SortDirection::Descending)),
+        );
+
+        assert!(
+            matches!(refused, Err(QueryError::CursorMismatched)),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_sorted_position_carries_the_value_its_page_ended_on() {
+        let fingerprint = fingerprinted(&ordered("value", SortDirection::Ascending));
+        let cases = [
+            ("a number", serde_json::Value::from(12)),
+            ("text", serde_json::Value::from("a title")),
+            ("no value at all", serde_json::Value::Null),
+        ];
+
+        for (named, sort_value) in cases {
+            let encoded = encode(
+                &fingerprint,
+                &anchor(),
+                sort_value.clone(),
+                vec!["row-7".to_owned()],
+            )
+            .expect("encodes");
+
+            let resumed = decode(&encoded, &fingerprint).expect("decodes");
+
+            assert_eq!(resumed.sort_value, sort_value, "should round-trip: {named}");
+        }
+    }
+
+    /// A question that orders by nothing writes no ordered value, so the
+    /// positions it issues stay exactly what they were.
+    #[test]
+    fn an_unordered_question_issues_a_position_carrying_no_sorted_value() {
+        let fingerprint = fingerprinted(&validated());
+
+        let encoded = encode(
+            &fingerprint,
+            &anchor(),
+            serde_json::Value::Null,
+            vec!["row-7".to_owned()],
+        )
+        .expect("encodes");
+        let decoded: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&encoded)
+                .expect("decodes"),
+        )
+        .expect("an envelope");
+
+        assert!(
+            decoded.get("sort").is_none(),
+            "an unordered position carries no sorted value: {decoded}"
+        );
     }
 }

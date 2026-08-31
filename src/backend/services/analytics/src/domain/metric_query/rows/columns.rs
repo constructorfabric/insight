@@ -7,7 +7,6 @@
 use serde_json::Value;
 
 use crate::domain::compiler::drilldown::{Contribution, DrilldownColumn, DrilldownColumnKind};
-use crate::domain::field_catalog::model::DisplayRole;
 
 use super::dto::{ColumnKind, RowColumn};
 
@@ -75,6 +74,17 @@ impl PageShape {
             .collect()
     }
 
+    /// What a row carried in one of the columns the page reports. A column the
+    /// read answered nothing for is unknown rather than absent, exactly as it
+    /// reaches the wire.
+    pub(super) fn reported_value(&self, read: &serde_json::Map<String, Value>, key: &str) -> Value {
+        self.projected
+            .iter()
+            .find(|projected| projected.column.key == key)
+            .and_then(|projected| read.get(&projected.alias).cloned())
+            .unwrap_or(Value::Null)
+    }
+
     /// Where a page ends, as the next one resumes from it.
     pub(super) fn position(&self, read: &serde_json::Map<String, Value>) -> Vec<String> {
         self.sort_aliases
@@ -88,46 +98,33 @@ impl PageShape {
     }
 }
 
-/// What a projected column is called on the wire, and how its values read.
-///
-/// Three kinds are reported as none, each because the page already says it
-/// better elsewhere: the input role, which the answer names once beside the
-/// rows; the ordering values, which the cursor carries; and the contribution of
-/// a row that was itself what the fold counted. A dimension is reported twice —
-/// its label under the dimension's own key, because that is what a reader sees,
-/// and its value under a suffixed one, because that is what the metric grouped
-/// by.
+/// What a projected column is called on the wire, and how its values read. The
+/// name is the compiler's, because what a page may be ordered by is decided
+/// from the same naming.
 fn reported(
     kind: &DrilldownColumnKind,
     contribution: Contribution,
 ) -> Option<(String, ColumnKind)> {
-    match kind {
-        DrilldownColumnKind::EntityId => Some(("subject".to_owned(), ColumnKind::Text)),
-        DrilldownColumnKind::InputRole | DrilldownColumnKind::SortKey(_) => None,
-        DrilldownColumnKind::Date => Some(("date".to_owned(), ColumnKind::Date)),
-        DrilldownColumnKind::ObservedAt => Some(("observed_at".to_owned(), ColumnKind::Timestamp)),
-        DrilldownColumnKind::Contribution => match contribution {
-            Contribution::CountedRow => None,
-            Contribution::MeasuredValue => Some(("value".to_owned(), ColumnKind::Number)),
-        },
-        DrilldownColumnKind::Subject => Some(("subject_key".to_owned(), ColumnKind::Text)),
-        DrilldownColumnKind::Display(role) => Some((display_key(*role), ColumnKind::Text)),
-        DrilldownColumnKind::DimensionLabel(key) => Some((key.clone(), ColumnKind::Text)),
-        DrilldownColumnKind::DimensionValue(key) => {
-            Some((format!("{key}_value"), ColumnKind::Text))
-        }
-    }
+    let key = kind.reported_key(contribution)?;
+
+    Some((key, value_kind(kind)))
 }
 
-fn display_key(role: DisplayRole) -> String {
-    match role {
-        DisplayRole::Title => "title",
-        DisplayRole::Reference => "reference",
-        DisplayRole::Actor => "actor",
-        DisplayRole::Location => "location",
-        DisplayRole::Link => "link",
+/// How a reported column's values read, so a caller renders a page without
+/// matching key spellings.
+fn value_kind(kind: &DrilldownColumnKind) -> ColumnKind {
+    match kind {
+        DrilldownColumnKind::EntityId
+        | DrilldownColumnKind::InputRole
+        | DrilldownColumnKind::SortKey(_)
+        | DrilldownColumnKind::Subject
+        | DrilldownColumnKind::Display(_)
+        | DrilldownColumnKind::DimensionLabel(_)
+        | DrilldownColumnKind::DimensionValue(_) => ColumnKind::Text,
+        DrilldownColumnKind::Date => ColumnKind::Date,
+        DrilldownColumnKind::ObservedAt => ColumnKind::Timestamp,
+        DrilldownColumnKind::Contribution => ColumnKind::Number,
     }
-    .to_owned()
 }
 
 /// One rule for every column: the key read as words, each of them capitalized.
@@ -148,6 +145,8 @@ fn humanized(key: &str) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use crate::domain::field_catalog::model::DisplayRole;
+
     use super::*;
 
     fn column(alias: &str, kind: DrilldownColumnKind) -> DrilldownColumn {

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use crate::domain::compiler::drilldown::{
-    CompiledDrilldown, compile_drilldown, drilldown_input_roles,
+    CompiledDrilldown, compile_drilldown, drilldown_input_roles, drilldown_reported_columns,
 };
 use crate::domain::compiler::error::CompileError;
 use crate::domain::compiler::group_ranking::compile_group_ranking_query;
@@ -139,6 +139,25 @@ impl MetricCatalog {
         query: &DrilldownQuery,
     ) -> Result<Vec<CompiledDrilldown>, CompileError> {
         compile_drilldown(self.catalog, metric, &self.measures, query)
+    }
+
+    /// The columns a page of `input_role` reports, which is exactly what a
+    /// request may order that page by.
+    ///
+    /// INVARIANT: a role is resolved against [`Self::input_roles`] before a
+    /// page is asked what it may be ordered by, and both read the same fold,
+    /// so a role reaching here always names one of them.
+    pub(super) fn drilldown_sortable_columns(
+        &self,
+        metric: &MetricDefinition,
+        input_role: &str,
+        display_dimensions: &[String],
+    ) -> Result<Vec<String>, CompileError> {
+        Ok(
+            drilldown_reported_columns(self.catalog, metric, &self.measures, display_dimensions)?
+                .remove(input_role)
+                .unwrap_or_default(),
+        )
     }
 
     /// The parts of a metric's computation a page may be asked for, named as
