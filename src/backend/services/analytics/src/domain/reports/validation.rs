@@ -16,6 +16,11 @@ use super::dto::{
 
 const MAX_REPORT_PEOPLE: usize = 1000;
 const MAX_REPORT_METRICS: usize = 100;
+const MIN_DAY_PERIOD_DAYS: i64 = 1;
+const MIN_WEEK_PERIOD_DAYS: i64 = 7;
+const MIN_MONTH_PERIOD_DAYS: i64 = 28;
+const MIN_QUARTER_PERIOD_DAYS: i64 = 89;
+const MIN_YEAR_PERIOD_DAYS: i64 = 365;
 
 #[derive(Debug)]
 pub struct ValidatedReportRecipe {
@@ -123,6 +128,7 @@ fn validate_recipe_shape(
     if from > to {
         return invalid("period", "period.from must be before or equal to period.to");
     }
+    validate_granularity_period(request.granularity, from, to)?;
 
     Ok(RecipeShape {
         subject,
@@ -131,6 +137,29 @@ fn validate_recipe_shape(
         granularity: request.granularity,
         metric_keys: validate_metric_keys(request.metric_keys)?,
     })
+}
+
+fn validate_granularity_period(
+    granularity: ReportGranularity,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<(), CanonicalError> {
+    let (name, minimum_days) = match granularity {
+        ReportGranularity::Day => ("day", MIN_DAY_PERIOD_DAYS),
+        ReportGranularity::Week => ("week", MIN_WEEK_PERIOD_DAYS),
+        ReportGranularity::Month => ("month", MIN_MONTH_PERIOD_DAYS),
+        ReportGranularity::Quarter => ("quarter", MIN_QUARTER_PERIOD_DAYS),
+        ReportGranularity::Year => ("year", MIN_YEAR_PERIOD_DAYS),
+    };
+    let period_days = (to - from).num_days() + 1;
+    if period_days < minimum_days {
+        return invalid(
+            "granularity",
+            format!("{name} granularity requires a period of at least {minimum_days} days"),
+        );
+    }
+
+    Ok(())
 }
 
 fn validate_people(ids: Vec<Uuid>) -> Result<Vec<Uuid>, CanonicalError> {
@@ -390,6 +419,39 @@ mod tests {
         let mut reversed = recipe(ReportSubject::Tenant {}, &["git.commits"]);
         reversed.period.from = "2026-04-01".to_owned();
         assert!(validate_recipe_shape(reversed, Uuid::nil()).is_err());
+    }
+
+    #[test]
+    fn rejects_granularity_longer_than_the_period() {
+        let cases = [
+            (ReportGranularity::Day, "2026-01-01", "2026-01-01", true),
+            (ReportGranularity::Week, "2026-01-01", "2026-01-06", false),
+            (ReportGranularity::Week, "2026-01-01", "2026-01-07", true),
+            (ReportGranularity::Month, "2026-01-01", "2026-01-27", false),
+            (ReportGranularity::Month, "2026-01-01", "2026-01-28", true),
+            (
+                ReportGranularity::Quarter,
+                "2026-01-01",
+                "2026-03-29",
+                false,
+            ),
+            (ReportGranularity::Quarter, "2026-01-01", "2026-03-30", true),
+            (ReportGranularity::Year, "2026-01-01", "2026-12-30", false),
+            (ReportGranularity::Year, "2026-01-01", "2026-12-31", true),
+        ];
+
+        for (granularity, from, to, accepted) in cases {
+            let mut request = recipe(ReportSubject::Tenant {}, &["git.commits"]);
+            request.period.from = from.to_owned();
+            request.period.to = to.to_owned();
+            request.granularity = granularity;
+
+            assert_eq!(
+                validate_recipe_shape(request, Uuid::nil()).is_ok(),
+                accepted,
+                "unexpected validation for {granularity:?} over {from} to {to}"
+            );
+        }
     }
 
     #[test]
