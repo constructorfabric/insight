@@ -143,6 +143,8 @@ describe("ReportBuilderView", () => {
   it("shows applicable metric groups without family tabs", () => {
     render(<ReportBuilderView />);
 
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.queryByText("Subject")).toBeNull();
     expect(checkbox("Commits")).toBeInTheDocument();
     expect(checkbox("Issues closed")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "CI runs" })).toBeNull();

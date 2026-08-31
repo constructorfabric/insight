@@ -206,7 +206,7 @@ export function ReportBuilderView() {
       <Card>
         <CardContent className="flex flex-col gap-4 p-4">
           <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Subject</span>
+            <span className={TEXT_LABEL}>Scope</span>
             <ToggleGroup
               value={[subject]}
               onValueChange={(value) => {
