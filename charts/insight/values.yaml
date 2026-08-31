@@ -120,14 +120,16 @@ global:
 #   endpoint: set  — services additionally export OTLP there: the
 #                    in-cluster Alloy for a self-hosted stack
 #                    (http://alloy.insight-infra.svc.cluster.local:4317),
-#                    or the customer's own collector.
+#                    or the customer's own collector. Gears services then
+#                    export OTel metrics and traces too.
 #
 # The umbrella NEVER installs the collector stack — like Airbyte and Argo
 # it is separate releases, driven by the deploy pipeline (inventory
 # toggles; see deploy/gitops/system/README.md). This block only governs what
 # services EMIT. The values are published into the `{release}-platform`
-# ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars, so every pod that does
-# `envFrom` picks them up uniformly — no per-service wiring.
+# ConfigMap as INSIGHT_LOG_LEVEL / OTEL_* env vars (plus the gears-rust
+# dialect, APP__opentelemetry__*), so every pod that does `envFrom` picks
+# them up uniformly — no per-service wiring.
 observability:
   logs:
     level: info # debug|info|warn|error — default level for all services

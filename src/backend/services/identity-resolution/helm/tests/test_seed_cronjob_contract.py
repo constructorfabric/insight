@@ -45,9 +45,7 @@ TENANT = "3e1d5a65-434c-95b4-8c1b-eb8f53a39bab"
 # freshness backstop, and a backstop that is red on healthy stands (empty
 # identity_inputs, a raced lock) trains everyone to ignore it — refusals
 # surface as failed operations-journal rows instead.
-JOBS = {
-    "seed": ("*/15 * * * *", ["seed", "--busy-ok", "--guard-ok"]),
-}
+JOBS = {"seed": ("*/15 * * * *", ["seed", "--busy-ok", "--guard-ok"])}
 
 # Minimum viable subchart install (mirrors the umbrella's wiring).
 SUBCHART_BASE = [
@@ -139,13 +137,10 @@ def _cronjob(docs: list[dict], job: str) -> dict:
     release/alias prefix differs).
     """
     matches = {
-        name: doc
-        for name, doc in _cronjobs(docs).items()
-        if "identity-resolution" in name and name.endswith(f"-{job}")
+        name: doc for name, doc in _cronjobs(docs).items() if "identity-resolution" in name and name.endswith(f"-{job}")
     }
     assert len(matches) == 1, (
-        f"expected exactly one identity-resolution {job} CronJob; "
-        f"present: {sorted(_cronjobs(docs))}"
+        f"expected exactly one identity-resolution {job} CronJob; present: {sorted(_cronjobs(docs))}"
     )
     return next(iter(matches.values()))
 
@@ -170,8 +165,7 @@ def _umbrella_gear_config(manifests: str) -> dict:
     named = [
         d
         for d in _docs(manifests)
-        if d.get("kind") == "ConfigMap"
-        and d["metadata"]["name"].endswith("-identity-resolution-gears-config")
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("-identity-resolution-gears-config")
     ]
     assert len(named) == 1, f"expected one identity gears ConfigMap, got {len(named)}"
 
@@ -197,9 +191,7 @@ def test_no_persons_sync_cronjob_is_scheduled(default_docs) -> None:
     """A scheduled sync would put the log and its ClickHouse snapshot back on
     two independent clocks — the ordering hazard the seed's own publish step
     removes. Nothing else in this suite would notice it returning."""
-    assert not [n for n in _cronjobs(default_docs) if n.endswith("-sync")], sorted(
-        _cronjobs(default_docs)
-    )
+    assert not [n for n in _cronjobs(default_docs) if n.endswith("-sync")], sorted(_cronjobs(default_docs))
 
 
 @pytest.mark.parametrize("job", JOBS)
@@ -226,9 +218,11 @@ def test_cronjob_uses_the_deployments_secret_and_configmap(default_docs, job: st
     deploy = _the(default_docs, "Deployment")
     container = _job_container(cj)
 
-    secret_refs = [e["secretRef"]["name"] for e in container["envFrom"]]
+    secret_refs = [e["secretRef"]["name"] for e in container["envFrom"] if "secretRef" in e]
     deploy_secret_refs = [
-        e["secretRef"]["name"] for e in deploy["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        e["secretRef"]["name"]
+        for e in deploy["spec"]["template"]["spec"]["containers"][0]["envFrom"]
+        if "secretRef" in e
     ]
     assert secret_refs == deploy_secret_refs == ["test-secret"]
 
@@ -269,9 +263,7 @@ def test_job_pod_labels_never_match_the_service_selector(default_docs, job: str)
     it, it would enter the endpoints and blackhole live traffic during every
     run."""
     selector = _the(default_docs, "Service")["spec"]["selector"]
-    pod_labels = _cronjob(default_docs, job)["spec"]["jobTemplate"]["spec"]["template"][
-        "metadata"
-    ]["labels"]
+    pod_labels = _cronjob(default_docs, job)["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
     assert any(pod_labels.get(k) != v for k, v in selector.items()), (
         f"{job} pod labels {pod_labels} satisfy the Service selector {selector}"
     )
@@ -290,9 +282,7 @@ def test_umbrella_refuses_enabled_seed_without_a_tenant(umbrella_deps) -> None:
 
 
 def test_umbrella_renders_the_cronjobs_with_a_tenant(umbrella_deps) -> None:
-    rc, out, err = _render(
-        umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}"
-    )
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
     assert rc == 0, err
     docs = _docs(out)
     for job in JOBS:
@@ -300,9 +290,7 @@ def test_umbrella_renders_the_cronjobs_with_a_tenant(umbrella_deps) -> None:
 
 
 def test_umbrella_accepts_the_explicit_seed_tenant_alone(umbrella_deps) -> None:
-    rc, out, err = _render(
-        umbrella_deps, *UMBRELLA_BASE, "--set", f"identityResolution.seed.tenantDefaultId={TENANT}"
-    )
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"identityResolution.seed.tenantDefaultId={TENANT}")
     assert rc == 0, err
     container = _job_container(_cronjob(_docs(out), "seed"))
     env = {e["name"]: e["value"] for e in container.get("env", [])}
@@ -310,14 +298,10 @@ def test_umbrella_accepts_the_explicit_seed_tenant_alone(umbrella_deps) -> None:
 
 
 def test_umbrella_disabled_seed_needs_no_tenant(umbrella_deps) -> None:
-    rc, out, err = _render(
-        umbrella_deps, *UMBRELLA_BASE, "--set", "identityResolution.seed.enabled=false"
-    )
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", "identityResolution.seed.enabled=false")
     assert rc == 0, err
     jobs = _cronjobs(_docs(out))
-    assert not any(
-        "identity-resolution" in n and n.endswith("-seed") for n in jobs
-    ), sorted(jobs)
+    assert not any("identity-resolution" in n and n.endswith("-seed") for n in jobs), sorted(jobs)
 
 
 def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_deps) -> None:
@@ -341,11 +325,7 @@ def test_umbrella_carries_the_roster_source_to_the_gear_that_reads_it(umbrella_d
 
 
 def test_umbrella_names_no_roster_by_default(umbrella_deps) -> None:
-    rc, out, err = _render(
-        umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}"
-    )
+    rc, out, err = _render(umbrella_deps, *UMBRELLA_BASE, "--set", f"global.tenantDefaultId={TENANT}")
     assert rc == 0, err
 
-    assert _umbrella_gear_config(out)["roster_source_type"] == "", (
-        "an upgrade must not start minting persons by itself"
-    )
+    assert _umbrella_gear_config(out)["roster_source_type"] == "", "an upgrade must not start minting persons by itself"

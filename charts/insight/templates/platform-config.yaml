@@ -69,9 +69,15 @@ data:
   # vars → services log to stdout only and whoever runs the cluster collects.
   INSIGHT_LOG_LEVEL: {{ $obsLogs.level | default "info" | quote }}
   {{- if $otlpEndpoint }}
+  {{- $otlpProtocol := $obsOtlp.protocol | default "grpc" }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ $otlpEndpoint | quote }}
-  OTEL_EXPORTER_OTLP_PROTOCOL: {{ $obsOtlp.protocol | default "grpc" | quote }}
+  OTEL_EXPORTER_OTLP_PROTOCOL: {{ $otlpProtocol | quote }}
   OTEL_LOGS_EXPORTER:          "otlp"
-  # Hardcoded off until the tracing phase (Tempo) — flip to "otlp" then.
-  OTEL_TRACES_EXPORTER:        "none"
+  OTEL_TRACES_EXPORTER:        "otlp"
+  # Same contract for the gears-rust toolkit, which reads APP__* config
+  # paths (figment), not the OTEL_* names.
+  APP__opentelemetry__exporter__kind: {{ eq $otlpProtocol "grpc" | ternary "otlp_grpc" "otlp_http" | quote }}
+  APP__opentelemetry__exporter__endpoint: {{ $otlpEndpoint | quote }}
+  APP__opentelemetry__metrics__enabled: "true"
+  APP__opentelemetry__tracing__enabled: "true"
   {{- end }}

@@ -94,6 +94,10 @@ spec:
               containerPort: {{ .Values.service.tokenPort }}
               protocol: TCP
           envFrom:
+            # Umbrella observability contract; optional so standalone installs schedule.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-authenticator-config`). Provides the
             # APP__gears__authenticator__config__* leaf overrides.

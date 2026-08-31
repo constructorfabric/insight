@@ -13,6 +13,19 @@ data:
       default:
         console_level: info
 
+    opentelemetry:
+      resource:
+        service_name: "insight-git-cli-proxy"
+      exporter:
+        kind: {{ .Values.opentelemetry.exporter.kind }}
+        {{- with .Values.opentelemetry.exporter.endpoint }}
+        endpoint: {{ . | quote }}
+        {{- end }}
+      tracing:
+        enabled: {{ .Values.opentelemetry.tracing.enabled }}
+      metrics:
+        enabled: {{ .Values.opentelemetry.metrics.enabled }}
+
     gears:
       gear-orchestrator:
         config: {}

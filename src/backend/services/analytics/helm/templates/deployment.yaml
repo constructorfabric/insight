@@ -70,6 +70,10 @@ spec:
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),
           # so there are no APP__ env overrides for it here.
           envFrom:
+            # Umbrella observability contract; optional so standalone installs schedule.
+            - configMapRef:
+                name: {{ .Release.Name }}-platform
+                optional: true
             # Operator MUST pre-create this Secret (umbrella does it
             # automatically as `insight-analytics-config`). Provides the
             # APP__gears__analytics__config__* leaf overrides.
