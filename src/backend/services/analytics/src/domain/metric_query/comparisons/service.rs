@@ -6,8 +6,6 @@
 use sea_orm::DatabaseConnection;
 use uuid::Uuid;
 
-use crate::domain::compiler::sql::CompiledMeasureQuery;
-
 use super::super::catalog::MetricCatalog;
 use super::super::dto::ServedFrom;
 use super::super::error::QueryError;
@@ -16,7 +14,7 @@ use super::super::provenance::{metric_versions, provenance};
 use super::super::question::bounded;
 use super::assemble::{ComparisonRow, target_comparisons};
 use super::dto::{ComparisonResult, ComparisonsResponse};
-use super::plan::plan;
+use super::plan::{PlannedComparison, plan};
 use super::validation::{ValidatedComparison, ValidatedComparisons};
 
 /// How many reads this endpoint keeps in flight for one request.
@@ -57,10 +55,10 @@ pub async fn answer(
 async fn read_all(
     clickhouse: &insight_clickhouse::Client,
     batch: &ValidatedComparisons,
-    compiled: &[CompiledMeasureQuery],
+    compiled: &[PlannedComparison],
 ) -> Result<Vec<Vec<ComparisonRow>>, QueryError> {
     let mut answered = Vec::with_capacity(compiled.len());
-    let pairs: Vec<(&ValidatedComparison, &CompiledMeasureQuery)> =
+    let pairs: Vec<(&ValidatedComparison, &PlannedComparison)> =
         batch.queries.iter().zip(compiled).collect();
 
     for chunk in pairs.chunks(QUERY_CONCURRENCY) {
@@ -74,11 +72,18 @@ async fn read_all(
     Ok(answered)
 }
 
+/// INVARIANT: a comparison no identity resolves for reads exactly as a scan
+/// that matched nothing, so both are assembled into the same answer: every
+/// target reported, unobserved, over a population of nobody.
 async fn rows(
     clickhouse: &insight_clickhouse::Client,
     query: &ValidatedComparison,
-    compiled: &CompiledMeasureQuery,
+    planned: &PlannedComparison,
 ) -> Result<Vec<ComparisonRow>, QueryError> {
+    let PlannedComparison::Read(compiled) = planned else {
+        return Ok(Vec::new());
+    };
+
     let comment = format!("metric-comparisons:{}", query.metric_key);
     bounded(fetch::<ComparisonRow>(clickhouse, compiled, &comment).await?)
 }
@@ -88,7 +93,10 @@ async fn rows(
 mod tests {
     use chrono::NaiveDate;
 
+    use crate::domain::compiler::sql::CompiledMeasureQuery;
+
     use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse};
+    use super::super::dto::{PopulationSpread, TargetComparison};
     use super::super::validation::ValidatedPopulation;
     use super::*;
 
@@ -103,11 +111,43 @@ mod tests {
         }
     }
 
-    fn compiled() -> CompiledMeasureQuery {
-        CompiledMeasureQuery {
+    fn compiled() -> PlannedComparison {
+        PlannedComparison::Read(CompiledMeasureQuery {
             sql: "SELECT 1".to_owned(),
             params: Vec::new(),
-        }
+        })
+    }
+
+    /// A comparison the mapping knows no identity for anybody in reads as no
+    /// data, not as a bad request: every target is reported, unobserved, over a
+    /// population of nobody.
+    #[tokio::test]
+    async fn a_comparison_no_identity_resolves_for_is_answered_empty_without_a_read() {
+        let query = validated();
+
+        let read = rows(
+            &offline_clickhouse(),
+            &query,
+            &PlannedComparison::NoIdentities,
+        )
+        .await
+        .expect("a comparison nobody's identities reach is answerable");
+
+        assert_eq!(
+            target_comparisons(read, &query.targets),
+            vec![TargetComparison {
+                subject: query.targets[0].to_string(),
+                value: None,
+                population: PopulationSpread {
+                    n: 0,
+                    p25: None,
+                    median: None,
+                    p75: None,
+                    min: None,
+                    max: None,
+                },
+            }]
+        );
     }
 
     #[tokio::test]

@@ -39,9 +39,19 @@ impl EntityScope {
         match self {
             Self::Tenant => true,
             Self::Identities(values) => !values.is_empty(),
-            Self::People(members) => members.iter().any(|member| !member.identities.is_empty()),
+            Self::People(members) => any_identity_resolved(members),
         }
     }
+}
+
+/// Whether any of these people resolved to an identity a row can carry.
+///
+/// INVARIANT: a pool none of them resolved for admits nothing. Every read that
+/// joins one narrows by that join alone, so an empty pool must be decided
+/// before the read rather than read as "everybody".
+#[must_use]
+pub fn any_identity_resolved(members: &[ResolvedPerson]) -> bool {
+    members.iter().any(|member| !member.identities.is_empty())
 }
 
 /// A person and the source identities the caller resolved for them.
