@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::domain::compiler::request::{
     Bucket, ComparisonPopulation, ComparisonView, EntityScope, MetricQuery, ResolvedPerson,
-    ViewKind,
+    ViewKind, any_identity_resolved,
 };
 use crate::domain::compiler::sql::CompiledMeasureQuery;
 
@@ -40,13 +40,23 @@ struct PopulationKey {
     targets: Vec<Uuid>,
 }
 
+#[derive(Debug, PartialEq)]
+pub(super) enum PlannedComparison {
+    /// The one statement a comparison runs.
+    Read(CompiledMeasureQuery),
+    /// The mapping knows no identity for anyone in the population, so no row
+    /// can carry a value for any of them: every target is unobserved and the
+    /// spread is taken over nobody.
+    NoIdentities,
+}
+
 /// The statements one request runs, in the order its questions were asked.
 pub(super) async fn plan(
     catalog: &MetricCatalog,
     clickhouse: &insight_clickhouse::Client,
     tenant_id: Uuid,
     batch: &ValidatedComparisons,
-) -> Result<Vec<CompiledMeasureQuery>, QueryError> {
+) -> Result<Vec<PlannedComparison>, QueryError> {
     let mut populations = Populations::default();
     let mut compiled = Vec::with_capacity(batch.queries.len());
 
@@ -133,7 +143,7 @@ fn compile(
     query: &ValidatedComparison,
     population: ComparisonPopulation,
     pool: Vec<ResolvedPerson>,
-) -> Result<CompiledMeasureQuery, QueryError> {
+) -> Result<PlannedComparison, QueryError> {
     // INVARIANT: validation refuses a metric the definitions do not carry, so
     // every planned question names one they do.
     let Some(metric) = catalog.metric(&query.metric_key) else {
@@ -141,6 +151,9 @@ fn compile(
             metric: query.metric_key.clone(),
         });
     };
+    if !any_identity_resolved(&pool) {
+        return Ok(PlannedComparison::NoIdentities);
+    }
 
     let compiled = catalog.compile(
         metric,
@@ -161,12 +174,14 @@ fn compile(
             row_limit: query_row_limit(),
         },
     )?;
-    Ok(compiled)
+    Ok(PlannedComparison::Read(compiled))
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use crate::domain::compiler::sql::{CompiledMeasureQuery, QueryParam};
+
     use super::super::super::catalog::product_metric_catalog;
     use super::super::super::fixtures::{SHIPPED_METRIC, offline_clickhouse, tenant};
     use super::*;
@@ -200,6 +215,21 @@ mod tests {
         }]
     }
 
+    /// The one member of a pool the mapping answered nothing for.
+    fn unmapped(person_id: Uuid) -> ResolvedPerson {
+        ResolvedPerson {
+            person_ref: person_id.to_string(),
+            identities: Vec::new(),
+        }
+    }
+
+    fn read(planned: PlannedComparison, named: &str) -> CompiledMeasureQuery {
+        match planned {
+            PlannedComparison::Read(compiled) => compiled,
+            PlannedComparison::NoIdentities => panic!("{named} has somebody to read"),
+        }
+    }
+
     #[test]
     fn a_cohort_comparison_reads_the_cohort_relation_and_takes_the_spread_in_one_statement() {
         let compiled = compile(
@@ -211,6 +241,7 @@ mod tests {
             },
             pool(),
         )
+        .map(|planned| read(planned, "a cohort comparison"))
         .expect("a shipped metric compares");
 
         assert!(
@@ -231,6 +262,7 @@ mod tests {
             ComparisonPopulation::Tenant,
             pool(),
         )
+        .map(|planned| read(planned, "a tenant comparison"))
         .expect("a shipped metric compares");
 
         assert!(
@@ -239,6 +271,74 @@ mod tests {
                 .contains("insight.metric_entity_cohorts_current")
         );
         assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    /// A target the mapping knows nothing about joins no row, exactly as the
+    /// pool builder's own rule says: it is left out of the spread, and the
+    /// peers around it are still read.
+    #[test]
+    fn a_target_the_mapping_answers_nothing_for_is_compared_against_the_peers_that_resolved() {
+        let silent = Uuid::from_u128(9);
+        let query = ValidatedComparison {
+            targets: vec![silent],
+            ..validated(ValidatedPopulation::Tenant)
+        };
+
+        let compiled = compile(
+            product_metric_catalog().expect("loads"),
+            tenant(),
+            &query,
+            ComparisonPopulation::Tenant,
+            [vec![unmapped(silent)], pool()].concat(),
+        )
+        .map(|planned| read(planned, "a comparison with a mapped peer"))
+        .expect("a population one of whose members resolved is read");
+
+        assert!(
+            compiled
+                .params
+                .contains(&QueryParam::Text("dev@example.com".to_owned())),
+            "the peer that resolved is pooled, so a spread is still taken"
+        );
+        assert_eq!(
+            compiled
+                .params
+                .iter()
+                .filter(|param| **param == QueryParam::Text(silent.to_string()))
+                .count(),
+            1,
+            "the unmapped target is named once, as a target, and pools no pair"
+        );
+        assert_eq!(compiled.sql.matches('?').count(), compiled.params.len());
+    }
+
+    /// A comparison the mapping answers nothing for anyone in reads as no data,
+    /// not as a bad request.
+    #[test]
+    fn a_population_no_identity_resolves_for_is_answered_without_a_read() {
+        for population in [
+            (
+                declared(),
+                ComparisonPopulation::DeclaredCohort {
+                    cohort_key: "org_unit".to_owned(),
+                },
+            ),
+            (ValidatedPopulation::Tenant, ComparisonPopulation::Tenant),
+        ] {
+            let (validated_population, peers) = population;
+            let named = format!("{peers:?}");
+
+            let planned = compile(
+                product_metric_catalog().expect("loads"),
+                tenant(),
+                &validated(validated_population),
+                peers,
+                vec![unmapped(person())],
+            )
+            .unwrap_or_else(|error| panic!("should be answerable: {named} — {error}"));
+
+            assert_eq!(planned, PlannedComparison::NoIdentities, "{named}");
+        }
     }
 
     #[tokio::test]
@@ -297,9 +397,10 @@ mod tests {
 
                 let compiled = compile(catalog, tenant(), &query, peers, pool());
 
-                let compiled = compiled.unwrap_or_else(|error| {
+                let planned = compiled.unwrap_or_else(|error| {
                     panic!("metric `{key}` must compare against {name:?}: {error}")
                 });
+                let compiled = read(planned, key);
                 assert_eq!(
                     compiled.sql.matches('?').count(),
                     compiled.params.len(),

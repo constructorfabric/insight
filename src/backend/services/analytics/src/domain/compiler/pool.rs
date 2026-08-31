@@ -356,8 +356,9 @@ mod tests {
         assert!(compiled.sql.contains("GROUP BY entity_id"));
     }
 
-    /// The compiler is the backstop behind the plan, which answers a question
-    /// nobody's identities reach without compiling anything at all.
+    /// The compiler is the backstop behind the plans, which answer a question
+    /// nobody's identities reach — a scope's or a comparison pool's — without
+    /// compiling anything at all.
     #[test]
     fn a_people_scope_no_identity_resolved_for_is_refused_rather_than_read_tenant_wide() {
         let mut request = query(ViewKind::SubjectTotal);
