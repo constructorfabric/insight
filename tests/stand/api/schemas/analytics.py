@@ -78,8 +78,10 @@ class ColumnKind(StrEnum):
 class CompareOffset(StrEnum):
     """
     How far back the compared window sits: `previous_period` shifts it by its
-    own length, and a calendar offset shifts both endpoints, clamping a day the
-    earlier month does not have to that month's last day.
+    own length, and a calendar offset shifts its first day back by that many
+    calendar months, clamping a day the earlier month does not have to that
+    month's last day. Either way the compared window spans as many days as the
+    one it is compared against.
     """
     previous_period = 'previous_period'
     month = 'month'

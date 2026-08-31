@@ -168,17 +168,23 @@ fn compared_window(
     to: NaiveDate,
     compare: Compare,
 ) -> Result<ComparedWindow, QueryError> {
+    let span = (to - from).num_days().unsigned_abs();
     let shifted = match compare.offset {
         CompareOffset::PreviousPeriod => {
-            let length = Days::new((to - from).num_days().unsigned_abs() + 1);
+            let length = Days::new(span + 1);
             from.checked_sub_days(length)
                 .zip(to.checked_sub_days(length))
         }
-        CompareOffset::Month | CompareOffset::Quarter | CompareOffset::Year => {
-            let months = Months::new(calendar_months(compare.offset));
-            from.checked_sub_months(months)
-                .zip(to.checked_sub_months(months))
-        }
+        // INVARIANT: a calendar shift clamps a day the earlier month does not
+        // have, so only the start is shifted and the end is measured out from
+        // it. Shifting both would silently shorten the compared window.
+        CompareOffset::Month | CompareOffset::Quarter | CompareOffset::Year => from
+            .checked_sub_months(Months::new(calendar_months(compare.offset)))
+            .and_then(|start| {
+                start
+                    .checked_add_days(Days::new(span))
+                    .map(|end| (start, end))
+            }),
     };
 
     let Some((from, to)) = shifted else {
@@ -578,25 +584,71 @@ mod tests {
         );
     }
 
+    fn date(parts: (i32, u32, u32)) -> NaiveDate {
+        NaiveDate::from_ymd_opt(parts.0, parts.1, parts.2).expect("valid date")
+    }
+
+    /// A calendar shift clamps a day the earlier month does not have, so the
+    /// window's first day is shifted and its last day measured out from there.
+    ///
+    /// INVARIANT: the compared window spans as many days as the one it is
+    /// compared against, asserted for every case below.
     #[test]
-    fn a_calendar_shift_clamps_a_day_the_earlier_month_does_not_have() {
-        let mut query = persons_query("total", "per_subject", serde_json::Value::Null);
-        query["time"] = serde_json::json!({
-            "from": "2026-03-31",
-            "to": "2026-03-31",
-            "grain": "total",
-        });
-        query["compare"] = serde_json::json!({ "offset": "month" });
+    fn every_offset_compares_against_a_window_of_the_same_length() {
+        let cases = [
+            (
+                CompareOffset::PreviousPeriod,
+                ((2026, 3, 5), (2026, 3, 6)),
+                ((2026, 3, 3), (2026, 3, 4)),
+            ),
+            (
+                CompareOffset::Month,
+                ((2026, 3, 29), (2026, 3, 31)),
+                ((2026, 2, 28), (2026, 3, 2)),
+            ),
+            (
+                CompareOffset::Month,
+                ((2026, 3, 31), (2026, 3, 31)),
+                ((2026, 2, 28), (2026, 2, 28)),
+            ),
+            (
+                CompareOffset::Quarter,
+                ((2026, 5, 31), (2026, 6, 2)),
+                ((2026, 2, 28), (2026, 3, 2)),
+            ),
+            (
+                CompareOffset::Year,
+                ((2024, 2, 29), (2024, 3, 1)),
+                ((2023, 2, 28), (2023, 3, 1)),
+            ),
+            (
+                CompareOffset::Year,
+                ((2025, 2, 28), (2025, 3, 2)),
+                ((2024, 2, 28), (2024, 3, 1)),
+            ),
+        ];
 
-        let validated = one(query).expect("the window shifts");
+        for (offset, (from, to), (compared_from, compared_to)) in cases {
+            let named = format!("{offset:?} over {from:?}..{to:?}");
+            let (from, to) = (date(from), date(to));
 
-        assert_eq!(
-            validated.compare,
-            Some(ComparedWindow {
-                from: NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date"),
-                to: NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date"),
-            })
-        );
+            let compared = compared_window(from, to, Compare { offset })
+                .unwrap_or_else(|error| panic!("should shift: {named} — {error}"));
+
+            assert_eq!(
+                compared,
+                ComparedWindow {
+                    from: date(compared_from),
+                    to: date(compared_to),
+                },
+                "should shift: {named}"
+            );
+            assert_eq!(
+                (compared.to - compared.from).num_days(),
+                (to - from).num_days(),
+                "both windows fold over the same number of days: {named}"
+            );
+        }
     }
 
     #[test]

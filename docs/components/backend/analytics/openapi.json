@@ -117,7 +117,7 @@
         "type": "object"
       },
       "CompareOffset": {
-        "description": "How far back the compared window sits: `previous_period` shifts it by its\nown length, and a calendar offset shifts both endpoints, clamping a day the\nearlier month does not have to that month's last day.",
+        "description": "How far back the compared window sits: `previous_period` shifts it by its\nown length, and a calendar offset shifts its first day back by that many\ncalendar months, clamping a day the earlier month does not have to that\nmonth's last day. Either way the compared window spans as many days as the\none it is compared against.",
         "enum": [
           "previous_period",
           "month",
