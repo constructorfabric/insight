@@ -728,6 +728,66 @@ class PutSettingsRequest(BaseModel):
     system_prompt: str
 
 
+class ReportColumnDataType(StrEnum):
+    text = 'text'
+    date = 'date'
+    number = 'number'
+
+
+class ReportColumnMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    data_type: ReportColumnDataType
+    format: MetricFormat | None = None
+    key: str
+    label: str
+    unit: str | None = None
+
+
+class ReportGranularity(StrEnum):
+    day = 'day'
+    week = 'week'
+    month = 'month'
+    quarter = 'quarter'
+    year = 'year'
+
+
+class ReportPeriod(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    from_: str = Field(..., alias='from')
+    to: str
+
+
+class Type7(StrEnum):
+    people = 'people'
+
+
+class ReportSubject1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    ids: list[UUID]
+    type: Type7
+
+
+class Type8(StrEnum):
+    tenant = 'tenant'
+
+
+class ReportSubject2(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    type: Type8
+
+
+class ReportSubject(RootModel[ReportSubject1 | ReportSubject2]):
+    root: ReportSubject1 | ReportSubject2
+
+
 class RollupValueDto(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -974,6 +1034,10 @@ class ValueTransform(BaseModel):
     clamp_min: float | None = None
     multiplier: float | None = None
     offset: float | None = None
+
+
+class Vec(RootModel[list[str | float | None]]):
+    root: list[str | float | None]
 
 
 class BreakdownValueDto(BaseModel):
@@ -1239,6 +1303,25 @@ class MetricSnapshot(BaseModel):
     trend: list[float | None] | None = Field(None, description="The sparkline's readings, oldest first.")
     until: str = Field(..., description='Inclusive end of the window, `YYYY-MM-DD`.')
     value: str = Field(..., description='The formatted value the tile shows.')
+
+
+class ReportPreviewResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    columns: list[ReportColumnMetadata]
+    rows: list[Vec]
+    total_rows: int = Field(..., ge=0)
+
+
+class ReportRecipe(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    granularity: ReportGranularity
+    metric_keys: list[str]
+    period: ReportPeriod
+    subject: ReportSubject
 
 
 class SavedQueryListResponse(BaseModel):
