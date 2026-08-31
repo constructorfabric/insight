@@ -18,7 +18,7 @@
 //! intensity; true insert times would need `system.part_log`, which is
 //! disabled on the clusters.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use axum::Json;
 use axum::extract::{Extension, Query};
@@ -26,6 +26,7 @@ use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use toolkit_canonical_errors::CanonicalError;
 
 use super::error::IngestionError;
@@ -39,6 +40,15 @@ const VIEW: &str = "insight.bronze_insert_events";
 /// GROUP BY over every bronze database is not a shape to hand a browser.
 /// The response reports when it clipped rather than lying by omission.
 const MAX_POINTS: usize = 50_000;
+
+/// Concurrent reads of this surface, and how long a caller waits for a slot.
+///
+/// Bounding one aggregation does not bound how many run at once, and every one
+/// of them scans across every bronze database — the widest read the service
+/// makes. The ceiling is lower than the drilldown's for that reason.
+const MAX_CONCURRENT_READS: usize = 4;
+const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+static READ_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_READS));
 
 /// Settings that bound the aggregation itself.
 ///
@@ -309,8 +319,12 @@ pub(crate) fn intensity_sql(grain: Grain, series: Series, scoped: bool) -> Strin
     // The cap is fetched with one extra row so a full page is distinguishable
     // from a clipped one without a second COUNT over the merge() scan.
     let limit = MAX_POINTS + 1;
+    // `toString(DateTime64)` formats in the SERVER's timezone. The column is
+    // timezone-less, the struct calls the result UTC and the chart appends a
+    // `Z` to it, so a cluster running on anything but UTC would slide every
+    // bucket by its offset. The zone is named here rather than assumed.
     format!(
-        "SELECT toString({bucket}) AS bucket, {key} AS `key`, count() AS `rows` \
+        "SELECT toString({bucket}, 'UTC') AS bucket, {key} AS `key`, count() AS `rows` \
          FROM {VIEW} \
          WHERE extracted_at >= parseDateTime64BestEffort(?, 3) \
          AND extracted_at < parseDateTime64BestEffort(?, 3){scope_clause} \
@@ -339,6 +353,10 @@ pub async fn get_ingestion_intensity(
 
     let from = Window::bound(window.from);
     let to = Window::bound(window.to);
+    // INVARIANT: the permit is held across the `.await` below, so it bounds the
+    // reads actually in flight rather than the calls that started one.
+    let _permit = acquire_read_permit().await?;
+
     let mut request = state
         .ch
         .query(&intensity_sql(grain, series, scope.is_some()));
@@ -369,6 +387,27 @@ pub async fn get_ingestion_intensity(
         truncated,
         points,
     }))
+}
+
+async fn acquire_read_permit() -> Result<tokio::sync::SemaphorePermit<'static>, CanonicalError> {
+    tokio::time::timeout(ACQUIRE_TIMEOUT, READ_SEMAPHORE.acquire())
+        .await
+        .map_err(|_| {
+            tracing::warn!(
+                capacity = MAX_CONCURRENT_READS,
+                available = READ_SEMAPHORE.available_permits(),
+                "ingestion intensity read capacity exhausted"
+            );
+            read_busy()
+        })?
+        .map_err(|_| read_busy())
+}
+
+fn read_busy() -> CanonicalError {
+    IngestionError::resource_exhausted("Ingestion intensity read capacity is busy.")
+        .with_quota_violation("ingestion intensity reads", "concurrency limit reached")
+        .with_quota_violation_retry_after_seconds(ACQUIRE_TIMEOUT.as_secs())
+        .create()
 }
 
 fn admin_only() -> CanonicalError {

@@ -232,6 +232,21 @@ fn sql_scopes_only_when_asked() {
 }
 
 #[test]
+fn the_bucket_is_formatted_in_utc_and_not_the_server_zone() {
+    // `toString(DateTime64)` uses the SERVER's timezone. The column carries
+    // none, the response calls the result UTC and the chart appends a `Z`, so
+    // on a cluster running any other zone every bucket would slide by its
+    // offset — with nothing in the payload to reveal it.
+    for grain in [Grain::FifteenMinutes, Grain::Second] {
+        let sql = intensity_sql(grain, Series::Connector, false);
+        assert!(
+            sql.contains(&format!("toString({}, 'UTC')", grain.bucket_expr())),
+            "the bucket is formatted without naming a zone: {sql}"
+        );
+    }
+}
+
+#[test]
 fn sql_never_deduplicates() {
     // Duplicate physical rows are the signal: a FINAL here would silently
     // convert insert intensity into logical row counts.

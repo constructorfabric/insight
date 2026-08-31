@@ -620,6 +620,8 @@ AS SELECT
     toString(_table) AS stream,
     _airbyte_extracted_at AS extracted_at
 FROM merge(REGEXP('^bronze_'), '.*')
+;
+
 CREATE OR REPLACE VIEW insight.identity_resolution_coverage
 (
     `source_key` String,
