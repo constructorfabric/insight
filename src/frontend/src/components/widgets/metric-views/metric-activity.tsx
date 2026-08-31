@@ -91,8 +91,11 @@ export function MetricActivity({
 
   return (
     <section className="flex flex-col gap-2 border-t py-4 first:border-t-0">
-      <header className="flex items-baseline justify-between gap-4">
-        <div className="min-w-0">
+      <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        {/* INVARIANT: a fixed basis, because a flex line breaks on content
+            size — with none, the untruncated description decides the width at
+            which the figures drop to their own line. */}
+        <div className="min-w-0 flex-[1_1_16rem]">
           <MetricName metric={metric} className="text-sm font-medium" />
           {help?.description ? (
             <p className="truncate text-xs text-muted-foreground">
@@ -100,7 +103,7 @@ export function MetricActivity({
             </p>
           ) : null}
         </div>
-        <div className="shrink-0 text-right">
+        <div className="ms-auto shrink-0 text-right">
           <div className="text-sm tabular-nums">{total}</div>
           {/* Both readings, stated and neither judged. The reader's own last
               period comes first because it is the one they can act on; the
