@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GearLane } from "@/api/gear-roadmap-client";
-import { buildGantt } from "@/lib/gears/gantt";
+import { buildGantt, monthTicks } from "@/lib/gears/gantt";
 
 const LANES: GearLane[] = [
   {
@@ -58,3 +58,18 @@ describe("buildGantt", () => {
     expect(chart.lanes).toHaveLength(0);
   });
 });
+
+describe("monthTicks", () => {
+  it("marks the first day of every month the chart covers", () => {
+    const ticks = monthTicks("2030-01-20", 45);
+
+    expect(ticks).toEqual([
+      { label: "2030-02", offsetDays: 12 },
+      { label: "2030-03", offsetDays: 40 },
+    ]);
+  });
+
+  it("has no ticks when the chart stays inside one month", () => {
+    expect(monthTicks("2030-01-02", 5)).toEqual([]);
+  });
+})

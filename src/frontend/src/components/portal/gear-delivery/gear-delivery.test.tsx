@@ -71,9 +71,18 @@ describe("GearSummary", () => {
   it("rolls the board up by subsystem", () => {
     render(<GearSummary />);
 
-    expect(screen.getByText("CORE")).toBeInTheDocument();
-    expect(screen.getByText("30")).toBeInTheDocument();
-    expect(screen.getByText("6")).toBeInTheDocument();
+    const row = screen.getByRole("row", { name: /^CORE/ });
+
+    expect(row).toHaveTextContent("30");
+    expect(row).toHaveTextContent("6");
+  });
+
+  it("totals every subsystem in a row of its own", () => {
+    render(<GearSummary />);
+
+    expect(
+      screen.getByRole("row", { name: /All subsystems/ }),
+    ).toHaveTextContent("30");
   });
 
   it("shows a dash where no gear carries that ladder", () => {
@@ -186,7 +195,7 @@ describe("GearSchedule", () => {
 
 describe("GearDeliveryView", () => {
   it("opens on the summary pane and states the assumed capacity", () => {
-    render(<GearDeliveryView item={null} />);
+    render(<GearDeliveryView config={{ title: "Gear delivery", board: "gear-summary" }} />);
 
     expect(
       screen.getByText("Capacity assumed: 1 man-day per person per day"),
@@ -197,7 +206,7 @@ describe("GearDeliveryView", () => {
   });
 
   it("renders the pane the zone item names", () => {
-    render(<GearDeliveryView item="schedule" />);
+    render(<GearDeliveryView config={{ title: "Gear schedule", board: "gear-schedule" }} />);
 
     expect(screen.getByText("dev-one")).toBeInTheDocument();
   });

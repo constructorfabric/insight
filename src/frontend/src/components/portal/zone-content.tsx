@@ -1,7 +1,6 @@
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { AiCostView } from "@/components/portal/ai-cost-view";
 import { DirectionView } from "@/components/portal/direction-view";
-import { GearDeliveryView } from "@/components/portal/gear-delivery-view";
 import { OverviewView } from "@/components/portal/overview-view";
 import { ManageView } from "@/components/portal/manage-view";
 import { PeopleView } from "@/components/portal/people-view";
@@ -45,8 +44,6 @@ export function ZoneContent() {
       return <PeopleView person={activePerson} item={item} />;
     case "manage":
       return <ManageView item={item} />;
-    case "gears":
-      return <GearDeliveryView item={item} />;
     case "reports":
       return item === "report-builder" ? (
         <ReportBuilderView />

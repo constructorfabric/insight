@@ -5,7 +5,6 @@ import {
   BookOpen,
   Boxes,
   Clock,
-  Cog,
   DollarSign,
   FileText,
   Filter,
@@ -68,7 +67,6 @@ export const ZONES: readonly Zone[] = [
   { id: "aicost", label: "AI & Cost", icon: DollarSign, kind: "theme" },
   { id: "scorecard", label: "Scorecard", icon: BarChart3, kind: "theme" },
   { id: "reports", label: "Reports", icon: FileText, kind: "theme" },
-  { id: "gears", label: "Gear delivery", icon: Cog, kind: "theme" },
   { id: "manage", label: "Manage", icon: Settings2, kind: "manage" },
 ];
 
@@ -118,6 +116,10 @@ export const DIRECTIONS: readonly Direction[] = [
       "Continuity",
       "Repositories",
       "Elements",
+      "Gear delivery",
+      "Gears",
+      "Gear roadmap",
+      "Gear schedule",
     ],
   },
   {
@@ -271,16 +273,6 @@ export const ZONE_SECTIONS: Record<string, readonly PaneGroup[]> = {
         { id: "fixed", label: "Fixed scorecard", icon: LayoutGrid },
         { id: "detailed", label: "Detailed breakdown", icon: Layers },
         { id: "quarterly", label: "Quarter over quarter", icon: TrendingUp },
-      ],
-    },
-  ],
-  gears: [
-    {
-      items: [
-        { id: "summary", label: "Summary", icon: LayoutGrid },
-        { id: "gears", label: "Gears", icon: Boxes },
-        { id: "roadmap", label: "Roadmap", icon: Layers },
-        { id: "schedule", label: "Schedule", icon: Clock },
       ],
     },
   ],

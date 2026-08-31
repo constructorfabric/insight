@@ -2225,6 +2225,7 @@ function DirectionCardsSection({
       // Overview lenses are person-grain by construction; a tenant entry here
       // would have no roster to preview, so it contributes no card.
       if (!entry || "comingSoon" in entry || "entity" in entry) return null;
+      if ("board" in entry) return null;
       const gated = visibleSections(entry, showPlanned);
       const headline = gated.sections.find(
         (s): s is Extract<SectionSpec, { kind: "headline" }> =>

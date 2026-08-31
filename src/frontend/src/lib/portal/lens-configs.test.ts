@@ -30,7 +30,8 @@ describe("DIRECTION_LENSES registry", () => {
   it("references only metric keys that exist in the groups registry", () => {
     for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
       for (const [lens, entry] of Object.entries(lenses)) {
-        if ("comingSoon" in entry || "entity" in entry) continue;
+        if ("comingSoon" in entry || "entity" in entry || "board" in entry)
+          continue;
         for (const key of sectionMetricKeys(entry)) {
           expect(KNOWN_KEYS.has(key), `${dir}/${lens}: ${key}`).toBe(true);
         }
@@ -101,7 +102,7 @@ describe("DIRECTION_LENSES registry", () => {
   it("stays under the API metric cap per lens", () => {
     for (const lenses of Object.values(DIRECTION_LENSES)) {
       for (const entry of Object.values(lenses)) {
-        if ("comingSoon" in entry) continue;
+        if ("comingSoon" in entry || "board" in entry) continue;
         const keys =
           "entity" in entry
             ? tenantSectionMetricKeys(entry)
@@ -124,7 +125,7 @@ describe("DIRECTION_LENSES registry", () => {
   it("gives every non-comingSoon entry at least one section", () => {
     for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
       for (const [lens, entry] of Object.entries(lenses)) {
-        if ("comingSoon" in entry) continue;
+        if ("comingSoon" in entry || "board" in entry) continue;
         expect(entry.sections.length, `${dir}/${lens}`).toBeGreaterThanOrEqual(1);
       }
     }
@@ -133,7 +134,7 @@ describe("DIRECTION_LENSES registry", () => {
   it("never has two composition sections sharing the same metric (compData is keyed by metric)", () => {
     for (const [dir, lenses] of Object.entries(DIRECTION_LENSES)) {
       for (const [lens, entry] of Object.entries(lenses)) {
-        if ("comingSoon" in entry) continue;
+        if ("comingSoon" in entry || "board" in entry) continue;
         const compMetrics = entry.sections
           .filter(
             (s): s is Extract<SectionSpec, { kind: "composition" }> => s.kind === "composition",

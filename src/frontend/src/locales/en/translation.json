@@ -669,7 +669,8 @@
       "impl": "Impl.",
       "effort": "Estimate (m*d)",
       "remaining": "Remaining (m*d)",
-      "unestimated": "Unestimated"
+      "unestimated": "Unestimated",
+      "total": "All subsystems"
     },
     "items": {
       "filter_placeholder": "Filter by gear, subsystem or assignee",
@@ -681,17 +682,20 @@
       "effort": "Estimate (m*d)",
       "remaining": "Remaining (m*d)",
       "milestone": "Milestone",
-      "assignees": "Assignees"
+      "assignees": "Assignees",
+      "count": "{{count}} gears"
     },
     "grid": {
-      "legend": "{{committed}} committed   {{planned}} planned, not committed",
       "overdue": "Overdue",
-      "later": "Later"
+      "later": "Later",
+      "committed_legend": "committed",
+      "planned_legend": "planned, not committed"
     },
     "gantt": {
       "explainer": "Every person is assumed to deliver {{capacity}} man-day per calendar day. {{days}} days from {{start}}.",
       "unassigned": "Unassigned",
-      "nothing_scheduled": "Nothing is left to schedule."
+      "nothing_scheduled": "Nothing is left to schedule.",
+      "lane": "Assignee"
     }
   }
 }
