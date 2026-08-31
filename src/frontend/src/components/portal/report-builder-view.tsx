@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
 
 import type {
   ReportGranularity,
@@ -7,7 +6,6 @@ import type {
   ReportRecipe,
 } from "@/api/reports-client";
 import { MAX_REPORT_PEOPLE } from "@/api/reports-client";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -18,6 +16,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ComingSoon } from "@/components/widgets/coming-soon";
+import { ReportBuilderActions } from "@/components/portal/report-builder-actions";
 import {
   ReportMetricPicker,
   type OfferedReportMetric,
@@ -32,7 +31,7 @@ import {
   clampGranularity,
   periodTooShortReason,
 } from "@/lib/reports/granularity-for-period";
-import { TEXT_LABEL, TEXT_TITLE } from "@/lib/type-scale";
+import { TEXT_LABEL } from "@/lib/type-scale";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
 import { useReportExport, useReportPreview } from "@/queries/reports";
 import { recordUsageEvent } from "@/telemetry";
@@ -192,140 +191,82 @@ export function ReportBuilderView() {
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">
-      <div className="flex flex-col gap-1">
-        <h1 className={TEXT_TITLE}>Report builder</h1>
-        <p className="text-sm text-muted-foreground">
-          {scope.label ? `${scope.label} · ` : ""}
-          {subject === "people"
-            ? `${people.length} ${people.length === 1 ? "person" : "people"} · one row per person per period`
-            : "Tenant-wide metrics · one row per period"}
-        </p>
-      </div>
-
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Scope</span>
-            <ToggleGroup
-              value={[subject]}
-              onValueChange={(value) => {
-                const next = Array.isArray(value) ? value[0] : value;
-                if (next === "people" || next === "tenant") setSubject(next);
-              }}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="people">People</ToggleGroupItem>
-              <ToggleGroupItem value="tenant">Tenant</ToggleGroupItem>
-            </ToggleGroup>
-            <span className="text-xs text-muted-foreground">
-              People reports use visible roster members. Tenant reports use
-              tenant-wide metrics.
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={TEXT_LABEL}>Granularity</span>
-            <TooltipProvider delay={300}>
+    <div className="flex flex-col gap-4 p-4 pb-24 md:p-6 md:pb-24">
+      <Card className="gap-0 py-0">
+        <CardContent className="flex flex-col p-0">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TEXT_LABEL}>Scope</span>
               <ToggleGroup
-                value={[granularity]}
+                value={[subject]}
                 onValueChange={(value) => {
                   const next = Array.isArray(value) ? value[0] : value;
-                  if (isReportGranularity(next)) setPickedGranularity(next);
+                  if (next === "people" || next === "tenant") setSubject(next);
                 }}
                 variant="outline"
                 size="sm"
               >
-                {GRANULARITIES.map((option) => {
-                  const reason = periodTooShortReason(option.value, dateRange);
-                  return (
-                    <Tooltip key={option.value}>
-                      <TooltipTrigger
-                        render={
-                          <ToggleGroupItem
-                            value={option.value}
-                            disabled={reason != null}
-                            title={reason ?? undefined}
-                          >
-                            {option.label}
-                          </ToggleGroupItem>
-                        }
-                      />
-                      {reason ? (
-                        <TooltipContent
-                          side="top"
-                          className="max-w-xs text-xs leading-relaxed"
-                        >
-                          {reason}
-                        </TooltipContent>
-                      ) : null}
-                    </Tooltip>
-                  );
-                })}
+                <ToggleGroupItem value="people">People</ToggleGroupItem>
+                <ToggleGroupItem value="tenant">Tenant</ToggleGroupItem>
               </ToggleGroup>
-            </TooltipProvider>
-            <span className="text-xs text-muted-foreground">
-              The period comes from the bar above.
-            </span>
-          </div>
+            </div>
 
-          <div className="flex flex-col gap-3">
-            <span className={TEXT_LABEL}>Metrics</span>
-            {definitions.isPending ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner className="size-4" /> Reading the catalogue…
-              </div>
-            ) : (
-              <ReportMetricPicker
-                families={families}
-                selected={selected}
-                setSelected={setSelected}
-              />
-            )}
-          </div>
+            <div className="hidden h-6 border-l md:block" />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              disabled={blocker != null || running}
-              onClick={() => void buildPreview()}
-            >
-              Preview report
-            </Button>
-            {blocker && !running ? (
-              <span className="text-sm text-muted-foreground">{blocker}</span>
-            ) : null}
-            {running ? (
-              <>
-                <span className="text-sm text-muted-foreground">
-                  Preparing report…
-                </span>
-                <Button
-                  type="button"
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={TEXT_LABEL}>Granularity</span>
+              <TooltipProvider delay={300}>
+                <ToggleGroup
+                  value={[granularity]}
+                  onValueChange={(value) => {
+                    const next = Array.isArray(value) ? value[0] : value;
+                    if (isReportGranularity(next)) setPickedGranularity(next);
+                  }}
                   variant="outline"
                   size="sm"
-                  onClick={() => abort.current?.abort()}
                 >
-                  <X className="size-4" /> Cancel
-                </Button>
-              </>
-            ) : null}
-            {selected.length > 0 && !running ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelected([])}
-              >
-                Clear selection
-              </Button>
-            ) : null}
+                  {GRANULARITIES.map((option) => {
+                    const reason = periodTooShortReason(option.value, dateRange);
+                    return (
+                      <Tooltip key={option.value}>
+                        <TooltipTrigger
+                          render={
+                            <ToggleGroupItem
+                              value={option.value}
+                              disabled={reason != null}
+                              title={reason ?? undefined}
+                            >
+                              {option.label}
+                            </ToggleGroupItem>
+                          }
+                        />
+                        {reason ? (
+                          <TooltipContent
+                            side="top"
+                            className="max-w-xs text-xs leading-relaxed"
+                          >
+                            {reason}
+                          </TooltipContent>
+                        ) : null}
+                      </Tooltip>
+                    );
+                  })}
+                </ToggleGroup>
+              </TooltipProvider>
+            </div>
           </div>
 
-          {failure ? (
-            <p className="text-sm text-destructive">{failure}</p>
-          ) : null}
+          {definitions.isPending ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <Spinner className="size-4" /> Reading the catalogue…
+            </div>
+          ) : (
+            <ReportMetricPicker
+              families={families}
+              selected={selected}
+              setSelected={setSelected}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -337,6 +278,17 @@ export function ReportBuilderView() {
         running={running}
         onOpenChange={setPreviewOpen}
         onExport={(format) => void exportReport(format)}
+      />
+
+      <ReportBuilderActions
+        selectedCount={selectedMetrics.length}
+        hasSelection={selected.length > 0}
+        blocker={blocker}
+        running={running}
+        failure={failure}
+        onClear={() => setSelected([])}
+        onCancel={() => abort.current?.abort()}
+        onPreview={() => void buildPreview()}
       />
     </div>
   );

@@ -140,15 +140,77 @@ describe("ReportBuilderView", () => {
     );
   });
 
-  it("shows applicable metric groups without family tabs", () => {
+  it("shows applicable metric groups together in the all-metrics tab", () => {
     render(<ReportBuilderView />);
 
+    expect(
+      screen.queryByRole("heading", { name: "Report builder" })
+    ).toBeNull();
+    expect(screen.queryByText(/one row per person per period/)).toBeNull();
+    expect(screen.queryByText("Visible roster members")).toBeNull();
+    expect(screen.queryByText("Tenant-wide metrics")).toBeNull();
+    expect(
+      screen.queryByText("Period comes from the bar above")
+    ).toBeNull();
     expect(screen.getByText("Scope")).toBeInTheDocument();
     expect(screen.queryByText("Subject")).toBeNull();
     expect(checkbox("Commits")).toBeInTheDocument();
     expect(checkbox("Issues closed")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "CI runs" })).toBeNull();
-    expect(screen.queryByRole("tab")).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: /All metrics/i })
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Git/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Delivery/i })).toBeInTheDocument();
+  });
+
+  it("filters the stacked metric groups with family tabs", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.click(screen.getByRole("tab", { name: /Git/i }));
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
+
+    await user.click(screen.getByRole("tab", { name: /All metrics/i }));
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+  });
+
+  it("filters metrics locally by search", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    await user.type(screen.getByRole("searchbox", { name: "Search metrics" }), "issues");
+
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Commits" })).toBeNull();
+    expect(mocks.preview).not.toHaveBeenCalled();
+  });
+
+  it("keeps selection actions available and clears the current selection", async () => {
+    const user = userEvent.setup();
+    render(<ReportBuilderView />);
+
+    expect(
+      screen.getByRole("status", { name: "0 selected" })
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Pick at least one metric")).toBeNull();
+    await user.click(checkbox("Commits"));
+    expect(
+      screen.getByRole("status", { name: "1 selected" })
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(checkbox("Commits")).not.toBeChecked();
+    expect(
+      screen.getByRole("status", { name: "0 selected" })
+    ).toBeInTheDocument();
   });
 
   it("omits metric groups hidden by the installation policy", () => {
