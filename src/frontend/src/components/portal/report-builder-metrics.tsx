@@ -2,7 +2,6 @@ import type { Dispatch, SetStateAction } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -20,24 +19,16 @@ export interface OfferedReportMetric extends MetricDefinition {
 
 interface ReportMetricPickerProps {
   families: MetricFamily<OfferedReportMetric>[];
-  activeFamily: string | null;
   selected: string[];
-  setActiveFamily: Dispatch<SetStateAction<string | null>>;
   setSelected: Dispatch<SetStateAction<string[]>>;
 }
 
 export function ReportMetricPicker({
   families,
-  activeFamily,
   selected,
-  setActiveFamily,
   setSelected,
 }: ReportMetricPickerProps) {
-  const visibleFamily =
-    families.find((family) => family.family === activeFamily) ??
-    families[0] ??
-    null;
-  if (!visibleFamily) {
+  if (families.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
         No metrics are available for this subject.
@@ -47,23 +38,16 @@ export function ReportMetricPicker({
 
   return (
     <TooltipProvider delay={300}>
-      <Tabs
-        value={visibleFamily.family}
-        onValueChange={(value) => setActiveFamily(String(value))}
-      >
-        <TabsList className="max-w-full overflow-x-auto">
-          {families.map((family) => (
-            <TabsTrigger key={family.family} value={family.family}>
-              {family.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        <MetricFamily
-          family={visibleFamily}
-          selected={selected}
-          setSelected={setSelected}
-        />
-      </Tabs>
+      <div className="flex flex-col gap-4">
+        {families.map((family) => (
+          <MetricFamily
+            key={family.family}
+            family={family}
+            selected={selected}
+            setSelected={setSelected}
+          />
+        ))}
+      </div>
     </TooltipProvider>
   );
 }
@@ -84,7 +68,7 @@ function MetricFamily({
     selectable.length > 0 && selectable.every((key) => selected.includes(key));
 
   return (
-    <div className="mt-3 flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className={TEXT_EYEBROW}>{family.name}</span>
         {selectable.length > 0 ? (

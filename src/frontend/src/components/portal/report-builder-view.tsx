@@ -57,7 +57,6 @@ export function ReportBuilderView() {
   const [selected, setSelected] = useState<string[]>([]);
   const [subject, setSubject] = useState<ReportSubjectKind>("people");
   const [granularity, setGranularity] = useState<ReportGranularity>("month");
-  const [activeFamily, setActiveFamily] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -73,10 +72,15 @@ export function ReportBuilderView() {
   );
   const offered = useMemo<OfferedReportMetric[]>(
     () =>
-      catalogue.map((metric) => ({
-        ...metric,
-        reason: metricReason(metric, subject),
-      })),
+      catalogue
+        .filter(
+          (metric) =>
+            metric.entity_type === (subject === "people" ? "person" : "tenant")
+        )
+        .map((metric) => ({
+          ...metric,
+          reason: metricReason(metric),
+        })),
     [catalogue, subject]
   );
   const families = useMemo(() => byFamily(offered), [offered]);
@@ -255,9 +259,7 @@ export function ReportBuilderView() {
             ) : (
               <ReportMetricPicker
                 families={families}
-                activeFamily={activeFamily}
                 selected={selected}
-                setActiveFamily={setActiveFamily}
                 setSelected={setSelected}
               />
             )}
@@ -333,20 +335,11 @@ export function ReportBuilderView() {
   );
 }
 
-function metricReason(
-  metric: {
-    entity_type: "person" | "tenant";
-    schema_status: string;
-    last_observed_date: string | null;
-    origin: string;
-  },
-  subject: ReportSubjectKind
-): string | null {
-  if (metric.entity_type !== (subject === "people" ? "person" : "tenant")) {
-    const reportKind =
-      metric.entity_type === "person" ? "People" : "tenant-wide";
-    return `This metric is available only in ${reportKind} reports`;
-  }
+function metricReason(metric: {
+  schema_status: string;
+  last_observed_date: string | null;
+  origin: string;
+}): string | null {
   if (metric.schema_status === "error")
     return "This metric is not computing on this installation";
   if (metric.origin !== "custom" && metric.last_observed_date == null) {

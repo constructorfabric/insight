@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   dateRange: { from: "2026-05-13", to: "2026-08-12" },
   preview: vi.fn(),
   export: vi.fn(),
+  metricVisible: vi.fn(),
   previewPending: false,
   exportPending: false,
 }));
@@ -37,6 +38,12 @@ vi.mock("@/queries/reports", () => ({
     mutateAsync: mocks.export,
   }),
 }));
+vi.mock("@/lib/portal/nav-policy", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/portal/nav-policy")
+  >("@/lib/portal/nav-policy");
+  return { ...actual, metricVisible: mocks.metricVisible };
+});
 vi.mock("@/telemetry", async () => {
   const actual =
     await vi.importActual<typeof import("@/telemetry")>("@/telemetry");
@@ -96,6 +103,7 @@ beforeEach(() => {
   mocks.export.mockReset().mockResolvedValue(undefined);
   mocks.previewPending = false;
   mocks.exportPending = false;
+  mocks.metricVisible.mockReset().mockReturnValue(true);
   usageMocks.recordUsageEvent.mockReset();
 });
 
@@ -104,6 +112,28 @@ function checkbox(name: string): HTMLElement {
 }
 
 describe("ReportBuilderView", () => {
+  it("shows applicable metric groups without family tabs", () => {
+    render(<ReportBuilderView />);
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(checkbox("Issues closed")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "CI runs" })).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
+  });
+
+  it("omits metric groups hidden by the installation policy", () => {
+    mocks.metricVisible.mockImplementation(
+      (metricKey) => metricKey !== "tasks.closed"
+    );
+    render(<ReportBuilderView />);
+
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
+    expect(screen.queryByText("Development · Delivery")).toBeNull();
+  });
+
   it("sends visible people IDs in a people recipe", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
@@ -129,7 +159,6 @@ describe("ReportBuilderView", () => {
     render(<ReportBuilderView />);
 
     await user.click(screen.getByRole("button", { name: "Tenant" }));
-    await user.click(screen.getByRole("tab", { name: "CI" }));
     await user.click(checkbox("CI runs"));
     await user.click(screen.getByRole("button", { name: "Preview report" }));
 
@@ -145,33 +174,17 @@ describe("ReportBuilderView", () => {
     );
   });
 
-  it("keeps mismatched metrics visible and disabled", async () => {
+  it("switches the grid to tenant metrics", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
 
     await user.click(screen.getByRole("button", { name: "Tenant" }));
 
-    expect(checkbox("Commits")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText("Commits").closest("label")).toHaveAttribute(
-      "title",
-      "This metric is available only in People reports"
-    );
-  });
-
-  it("does not make active metric tab part of the recipe", async () => {
-    const user = userEvent.setup();
-    render(<ReportBuilderView />);
-
-    await user.click(checkbox("Commits"));
-    await user.click(screen.getByRole("button", { name: "Preview report" }));
-    await screen.findByRole("dialog");
-    await user.keyboard("{Escape}");
-    await user.click(
-      screen.getByRole("tab", { name: /Development · Delivery/ })
-    );
-
-    expect(mocks.preview).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: /1 rows/ })).toBeInTheDocument();
+    expect(checkbox("CI runs")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Commits" })).toBeNull();
+    expect(
+      screen.queryByRole("checkbox", { name: "Issues closed" })
+    ).toBeNull();
   });
 
   it("leaves repository rows inert and absent from the recipe", async () => {
