@@ -8,6 +8,8 @@
 //! INVARIANT: [`FIXTURE_REASON`] must differ from `e2e-seed` — the e2e seeder
 //! deletes by reason with no tenant filter and would wipe fixtures mid-run.
 
+use std::collections::BTreeMap;
+
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, Value};
 use uuid::Uuid;
 
@@ -27,6 +29,15 @@ pub(crate) struct Fixture {
     pub(crate) db: DatabaseConnection,
     pub(crate) tenant: Uuid,
     pub(crate) source_id: Uuid,
+}
+
+pub(crate) struct ProjectedPerson<'a> {
+    pub email: Option<&'a str>,
+    pub username: Option<&'a str>,
+    pub display_name: Option<&'a str>,
+    pub first_name: Option<&'a str>,
+    pub last_name: Option<&'a str>,
+    pub attributes: &'a BTreeMap<String, String>,
 }
 
 pub(crate) async fn fixture_or_skip() -> anyhow::Result<Option<Fixture>> {
@@ -117,25 +128,46 @@ impl Fixture {
         first_name: Option<&str>,
         last_name: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.project_person_with_attributes(
+            person_id,
+            ProjectedPerson {
+                email,
+                username,
+                display_name,
+                first_name,
+                last_name,
+                attributes: &BTreeMap::new(),
+            },
+        )
+        .await
+    }
+
+    pub(crate) async fn project_person_with_attributes(
+        &self,
+        person_id: Uuid,
+        projected: ProjectedPerson<'_>,
+    ) -> anyhow::Result<()> {
         self.exec(
             "INSERT INTO people
                 (insight_tenant_id, person_id, email, username, display_name,
-                 first_name, last_name, valid_from)
-             VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
+                 first_name, last_name, attributes, valid_from)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))
              ON DUPLICATE KEY UPDATE
                  email = VALUES(email),
                  username = VALUES(username),
                  display_name = VALUES(display_name),
                  first_name = VALUES(first_name),
-                 last_name = VALUES(last_name)",
+                 last_name = VALUES(last_name),
+                 attributes = VALUES(attributes)",
             [
                 bytes(self.tenant),
                 bytes(person_id),
-                email.map(str::to_owned).into(),
-                username.map(str::to_owned).into(),
-                display_name.map(str::to_owned).into(),
-                first_name.map(str::to_owned).into(),
-                last_name.map(str::to_owned).into(),
+                projected.email.map(str::to_owned).into(),
+                projected.username.map(str::to_owned).into(),
+                projected.display_name.map(str::to_owned).into(),
+                projected.first_name.map(str::to_owned).into(),
+                projected.last_name.map(str::to_owned).into(),
+                serde_json::to_string(projected.attributes)?.into(),
             ],
         )
         .await

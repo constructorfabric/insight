@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS people (
     display_name VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
     first_name VARCHAR(320) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
     last_name VARCHAR(320) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+    attributes JSON NOT NULL,
     valid_from DATETIME(6) NOT NULL,
     valid_to DATETIME(6) NULL,
     current_person_id BINARY(16)

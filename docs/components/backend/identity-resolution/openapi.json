@@ -638,6 +638,15 @@
       },
       "PeopleListItemResponse": {
         "properties": {
+          "attributes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
           "display_name": {
             "type": [
               "string",
@@ -662,6 +671,13 @@
               "null"
             ]
           },
+          "manager_person_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "person_id": {
             "format": "uuid",
             "type": "string"
@@ -674,7 +690,8 @@
           }
         },
         "required": [
-          "person_id"
+          "person_id",
+          "attributes"
         ],
         "type": "object"
       },

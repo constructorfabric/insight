@@ -12,6 +12,7 @@
 //! covered by the plugin's own tests plus the compose e2e. Each test mints its
 //! own tenant, so the suite is parallel-safe.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Router;
@@ -29,7 +30,9 @@ use toolkit_security::SecurityContext;
 use super::AppState;
 use crate::config::{GearConfig, VisibilityPolicy};
 use crate::domain::resolution::EXCLUDED_PERSON;
-use crate::infra::db::test_fixture::{FIXTURE_REASON, Fixture, SOURCE_TYPE, fixture_or_skip};
+use crate::infra::db::test_fixture::{
+    FIXTURE_REASON, Fixture, ProjectedPerson, SOURCE_TYPE, fixture_or_skip,
+};
 use crate::infra::db::{ops_repo, person_roles_repo, resolution_repo, roles_repo, visibility_repo};
 
 type TestResult = anyhow::Result<()>;
@@ -683,6 +686,20 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
         Some("Person"),
     )
     .await?;
+    let profile_name = format!("Canonical {marker}");
+    let profile_attributes = BTreeMap::from([("department".to_owned(), "Engineering".to_owned())]);
+    f.project_person_with_attributes(
+        report,
+        ProjectedPerson {
+            email: Some("canonical@http-live.test"),
+            username: Some("canonical-handle"),
+            display_name: Some(&profile_name),
+            first_name: Some("Canonical"),
+            last_name: Some("Person"),
+            attributes: &profile_attributes,
+        },
+    )
+    .await?;
     f.reports_to(report, caller).await?;
     let identity_only = f
         .identity_only_person(&format!("observed-{marker}@http-live.test"))
@@ -701,6 +718,8 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
     assert_eq!(item["last_name"], "Person");
     assert_eq!(item["username"], "canonical-handle");
     assert_eq!(item["email"], "canonical@http-live.test");
+    assert_eq!(item["attributes"]["department"], "Engineering");
+    assert_eq!(item["manager_person_id"], caller.to_string());
     for legacy_field in ["provisional", "job_title", "status"] {
         assert!(
             item.get(legacy_field).is_none(),
@@ -715,6 +734,53 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
         !found_ids(&body)?.contains(&unrelated.to_string()),
         "caller visibility excludes unrelated roster people"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_org_chart_visibility_does_not_widen_without_an_edge() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let marker = Uuid::now_v7().simple().to_string();
+    let caller = f.person(&format!("caller-{marker}@http-live.test")).await?;
+    let other = f.person(&format!("other-{marker}@http-live.test")).await?;
+    let uri = format!("/v1/people?q={marker}");
+
+    let (status, body) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![caller.to_string()]);
+
+    let (status, body) = get(flat_app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    let mut ids = found_ids(&body)?;
+    ids.sort();
+    let mut expected = vec![caller.to_string(), other.to_string()];
+    expected.sort();
+    assert_eq!(ids, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("manager-hidden-caller@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let report = f
+        .person(&format!("manager-hidden-report-{marker}@http-live.test"))
+        .await?;
+    let manager = f
+        .person(&format!("manager-hidden-manager-{marker}@http-live.test"))
+        .await?;
+    f.reports_to(report, manager).await?;
+    f.grant(caller, Some(report)).await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![report.to_string()]);
+    assert!(body["items"][0]["manager_person_id"].is_null());
     Ok(())
 }
 

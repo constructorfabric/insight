@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -13,7 +14,9 @@ use super::AppState;
 use super::error::PersonSearchError;
 use super::gate::{require_admin, require_caller};
 use super::listing::{self, CursorRejected};
-use crate::infra::db::people_listing::{self, After, PersonListRow, Restrict, VisibleTo};
+use crate::infra::db::people_listing::{
+    self, After, ListQuery, PersonListRow, Restrict, VisibleTo,
+};
 
 const DEFAULT_LIMIT: u64 = 50;
 const MAX_LIMIT: u64 = 500;
@@ -67,6 +70,8 @@ pub struct PeopleListItemResponse {
     pub last_name: Option<String>,
     pub username: Option<String>,
     pub email: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+    pub manager_person_id: Option<Uuid>,
 }
 
 impl From<PersonListRow> for PeopleListItemResponse {
@@ -78,6 +83,8 @@ impl From<PersonListRow> for PeopleListItemResponse {
             last_name: person.last_name,
             username: person.username,
             email: person.email,
+            attributes: person.attributes,
+            manager_person_id: person.manager_person_id,
         }
     }
 }
@@ -117,14 +124,17 @@ pub async fn list_people(
     let rows = people_listing::list_persons(
         &state.db,
         tenant,
-        &values,
-        &named,
-        restrict,
-        resume.as_ref().map(|key| After {
-            order_key: &key.order_key,
-            person_id: key.person_id,
-        }),
-        limit + 1,
+        ListQuery {
+            org_chart_source_type: &state.config.org_chart_source_type,
+            terms: &values,
+            person_ids: &named,
+            restrict,
+            after: resume.as_ref().map(|key| After {
+                order_key: &key.order_key,
+                person_id: key.person_id,
+            }),
+            limit: limit + 1,
+        },
     )
     .await
     .map_err(|error| read_error(&error))?;

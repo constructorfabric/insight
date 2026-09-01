@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
 
-use super::seed::{PersonAssignment, SeedProfile};
+use super::seed::{IdentityInputRow, PersonAssignment, SeedProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonProjection {
@@ -13,6 +13,7 @@ pub struct PersonProjection {
     pub display_name: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
+    pub attributes: BTreeMap<String, String>,
     pub valid_from: DateTime,
 }
 
@@ -96,12 +97,11 @@ fn project(person_id: Uuid, profile: &SeedProfile) -> PersonProjection {
         display_name: profile_value(profile, "display_name"),
         first_name: profile_value(profile, "first_name"),
         last_name: profile_value(profile, "last_name"),
-        valid_from: profile
-            .observations
-            .iter()
+        attributes: profile_attributes(profile),
+        valid_from: profile_claims(profile)
             .map(|observation| observation.synced_at)
             .max()
-            .unwrap_or(membership_at),
+            .map_or(membership_at, |claim_at| claim_at.max(membership_at)),
     }
 }
 
@@ -114,6 +114,51 @@ fn profile_value(profile: &SeedProfile, value_type: &str) -> Option<String> {
         .max_by_key(|observation| observation.synced_at)
         .map(|observation| observation.value.clone())
         .filter(|value| !value.trim().is_empty())
+}
+
+fn profile_attributes(profile: &SeedProfile) -> BTreeMap<String, String> {
+    let mut attributes: BTreeMap<String, &IdentityInputRow> = BTreeMap::new();
+    for observation in profile_claims(profile) {
+        let Some(name) = observation.value_type.strip_prefix("person_") else {
+            continue;
+        };
+        if is_core_profile_field(name) || observation.value.trim().is_empty() {
+            continue;
+        }
+        let replace = attributes
+            .get(name)
+            .is_none_or(|current| current.synced_at <= observation.synced_at);
+        if replace {
+            attributes.insert(name.to_owned(), observation);
+        }
+    }
+    attributes
+        .into_iter()
+        .map(|(name, observation)| (name, observation.value.clone()))
+        .collect()
+}
+
+fn profile_claims(profile: &SeedProfile) -> impl Iterator<Item = &IdentityInputRow> {
+    profile.observations.iter().filter(|observation| {
+        observation
+            .value_type
+            .strip_prefix("person_")
+            .is_some_and(|name| !is_hierarchy_field(name))
+    })
+}
+
+fn is_core_profile_field(name: &str) -> bool {
+    matches!(
+        name,
+        "email" | "username" | "display_name" | "first_name" | "last_name"
+    )
+}
+
+fn is_hierarchy_field(name: &str) -> bool {
+    matches!(
+        name,
+        "id" | "parent_email" | "parent_id" | "parent_person_id"
+    )
 }
 
 fn person_id(change: &PersonChange) -> Uuid {
@@ -180,6 +225,88 @@ mod tests {
             panic!("active membership should upsert a person");
         };
         assert_eq!(projected.display_name.as_deref(), Some("Roster Name"));
+    }
+
+    #[test]
+    fn roster_profile_claims_project_attributes_without_hierarchy_or_activity_metadata() {
+        let timestamp = chrono::DateTime::UNIX_EPOCH.naive_utc();
+        let mut roster = profile("member", true, "Roster Name");
+        roster.observations[0].value_type = "person_display_name".to_owned();
+        roster.observations.extend([
+            IdentityInputRow {
+                value_type: "person_department".to_owned(),
+                value: "Engineering".to_owned(),
+                synced_at: timestamp + chrono::Duration::days(1),
+                ..roster.observations[0].clone()
+            },
+            IdentityInputRow {
+                value_type: "person_job_title".to_owned(),
+                value: "Engineer".to_owned(),
+                synced_at: timestamp + chrono::Duration::days(2),
+                ..roster.observations[0].clone()
+            },
+            IdentityInputRow {
+                value_type: "person_parent_email".to_owned(),
+                value: "manager@example.test".to_owned(),
+                synced_at: timestamp + chrono::Duration::days(3),
+                ..roster.observations[0].clone()
+            },
+            IdentityInputRow {
+                value_type: "department".to_owned(),
+                value: "Activity Department".to_owned(),
+                synced_at: timestamp + chrono::Duration::days(4),
+                ..roster.observations[0].clone()
+            },
+        ]);
+        let assignments = vec![PersonAssignment {
+            person_id: Uuid::from_u128(7),
+            kind: AssignmentKind::Minted,
+            profiles: vec![roster],
+        }];
+
+        let changes = changes(&assignments);
+
+        let PersonChange::Upsert(projected) = &changes[0] else {
+            panic!("active membership should upsert a person");
+        };
+        assert_eq!(
+            projected.attributes,
+            BTreeMap::from([
+                ("department".to_owned(), "Engineering".to_owned()),
+                ("job_title".to_owned(), "Engineer".to_owned()),
+            ])
+        );
+        assert_eq!(projected.valid_from, timestamp + chrono::Duration::days(2));
+    }
+
+    #[test]
+    fn roster_activation_bounds_the_profile_revision_start() {
+        let timestamp = chrono::DateTime::UNIX_EPOCH.naive_utc();
+        let mut roster = profile("member", true, "Roster Name");
+        roster.observations[0].value_type = "person_display_name".to_owned();
+        roster.observations[0].synced_at = timestamp + chrono::Duration::days(2);
+        roster.roster_membership = Some(RosterMembership {
+            active: true,
+            observed_at: timestamp + chrono::Duration::days(5),
+        });
+        roster.observations.push(IdentityInputRow {
+            value_type: "display_name".to_owned(),
+            value: "Later Activity Name".to_owned(),
+            synced_at: timestamp + chrono::Duration::days(7),
+            ..roster.observations[0].clone()
+        });
+        let assignments = vec![PersonAssignment {
+            person_id: Uuid::from_u128(7),
+            kind: AssignmentKind::Minted,
+            profiles: vec![roster],
+        }];
+
+        let changes = changes(&assignments);
+
+        let PersonChange::Upsert(projected) = &changes[0] else {
+            panic!("active membership should upsert a person");
+        };
+        assert_eq!(projected.valid_from, timestamp + chrono::Duration::days(5));
     }
 
     #[test]

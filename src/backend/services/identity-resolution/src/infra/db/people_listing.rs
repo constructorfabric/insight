@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use sea_orm::{ConnectionTrait as _, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
@@ -32,6 +34,8 @@ pub struct PersonListRow {
     pub display_name: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+    pub manager_person_id: Option<Uuid>,
     pub order_key: String,
 }
 
@@ -41,16 +45,22 @@ pub struct After<'a> {
     pub person_id: Uuid,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ListQuery<'a> {
+    pub org_chart_source_type: &'a str,
+    pub terms: &'a [String],
+    pub person_ids: &'a [Uuid],
+    pub restrict: Restrict<'a>,
+    pub after: Option<After<'a>>,
+    pub limit: u64,
+}
+
 pub async fn list_persons(
     db: &DatabaseConnection,
     tenant_id: Uuid,
-    terms: &[String],
-    person_ids: &[Uuid],
-    restrict: Restrict<'_>,
-    after: Option<After<'_>>,
-    limit: u64,
+    query: ListQuery<'_>,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    let (sql, values) = build_query(tenant_id, terms, person_ids, restrict, after, limit);
+    let (sql, values) = build_query(tenant_id, query);
     let statement = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
 
     rows_from(db.query_all_raw(statement).await?)
@@ -128,21 +138,107 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
     }
 }
 
-fn build_query(
-    tenant_id: Uuid,
-    terms: &[String],
-    person_ids: &[Uuid],
-    restrict: Restrict<'_>,
-    after: Option<After<'_>>,
-    limit: u64,
-) -> (String, Vec<sea_orm::Value>) {
-    let mut values = vec![tenant_id.as_bytes().to_vec().into()];
-    let scope = visible_scope(restrict.visible_to, tenant_id);
+fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::Value>) {
+    let mut values = vec![query.org_chart_source_type.to_owned().into()];
+    values.push(tenant_id.as_bytes().to_vec().into());
+    values.push(tenant_id.as_bytes().to_vec().into());
+    let protect_manager = query.restrict.visible_to.is_some();
+    let scope = visible_scope(query.restrict.visible_to, tenant_id);
     let recursive = scope.recursive;
     let visible_cte = scope.cte;
     let mut filters = String::from(scope.filter);
+    let manager_projection = manager_projection(protect_manager);
     values.extend(scope.values);
 
+    append_filters(&mut filters, &mut values, query.terms, query.person_ids);
+
+    let resume = query.after.map_or_else(String::new, |_| {
+        " WHERE (order_key > ? OR (order_key = ? AND person_id > ?))".to_owned()
+    });
+    if let Some(after) = query.after {
+        values.push(after.order_key.into());
+        values.push(after.order_key.into());
+        values.push(after.person_id.as_bytes().to_vec().into());
+    }
+    values.push(query.limit.into());
+
+    let sql = format!(
+        r"
+        WITH {recursive}ranked_managers AS (
+            SELECT child_person_id,
+                   parent_person_id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY child_person_id
+                       ORDER BY insight_source_id
+                   ) AS rn
+            FROM org_chart
+            WHERE insight_source_type = ?
+              AND insight_tenant_id = ?
+              AND valid_to IS NULL
+              AND parent_person_id IS NOT NULL
+        ),
+        presented_people AS (
+            SELECT p.person_id,
+                   p.email,
+                   p.username,
+                   p.attributes,
+                   oc.parent_person_id AS manager_person_id,
+                   COALESCE(
+                       NULLIF(TRIM(p.display_name), ''),
+                       NULLIF(TRIM(CONCAT_WS(' ',
+                           NULLIF(TRIM(p.first_name), ''),
+                           NULLIF(TRIM(p.last_name), '')
+                       )), '')
+                   ) AS display_name,
+                   p.first_name,
+                   p.last_name,
+                   COALESCE(
+                       NULLIF(TRIM(p.display_name), ''),
+                       NULLIF(TRIM(CONCAT_WS(' ',
+                           NULLIF(TRIM(p.first_name), ''),
+                           NULLIF(TRIM(p.last_name), '')
+                       )), ''),
+                       NULLIF(TRIM(p.username), ''),
+                       NULLIF(TRIM(p.email), '')
+                   ) AS label
+            FROM people p
+            LEFT JOIN ranked_managers oc
+              ON  oc.child_person_id = p.person_id
+              AND oc.rn = 1
+            WHERE p.insight_tenant_id = ? AND p.valid_to IS NULL
+        ){visible_cte}
+        SELECT person_id, email, username, display_name, first_name, last_name,
+               attributes, manager_person_id, order_key
+        FROM (
+            SELECT p.person_id,
+                   p.email,
+                   p.username,
+                   p.display_name,
+                   p.first_name,
+                   p.last_name,
+                   p.attributes,
+                   {manager_projection} AS manager_person_id,
+                   CONCAT(
+                       IF(p.label IS NULL, '1', '0'),
+                       LEFT(LOWER(COALESCE(p.label, '')), {ORDER_KEY_CHARS})
+                   ) AS order_key
+            FROM presented_people p
+            WHERE 1 = 1{filters}
+        ) keyed{resume}
+        ORDER BY order_key, person_id
+        LIMIT ?
+    "
+    );
+
+    (sql, values)
+}
+
+fn append_filters(
+    filters: &mut String,
+    values: &mut Vec<sea_orm::Value>,
+    terms: &[String],
+    person_ids: &[Uuid],
+) {
     if !person_ids.is_empty() {
         let placeholders = vec!["?"; person_ids.len()].join(", ");
         filters.push_str(" AND p.person_id IN (");
@@ -161,67 +257,33 @@ fn build_query(
              OR p.last_name LIKE ? ESCAPE '!' OR p.username LIKE ? ESCAPE '!' \
              OR p.email LIKE ? ESCAPE '!')",
         );
-        push_patterns(&mut values, term);
+        push_patterns(values, term);
     }
+}
 
-    let resume = after.map_or_else(String::new, |_| {
-        " WHERE (order_key > ? OR (order_key = ? AND person_id > ?))".to_owned()
-    });
-    if let Some(after) = after {
-        values.push(after.order_key.into());
-        values.push(after.order_key.into());
-        values.push(after.person_id.as_bytes().to_vec().into());
+fn manager_projection(protect_manager: bool) -> &'static str {
+    if protect_manager {
+        return r"
+                   CASE WHEN EXISTS (
+                       SELECT 1
+                       FROM visible_set vs
+                       WHERE vs.person_id = p.manager_person_id
+                   ) AND EXISTS (
+                       SELECT 1
+                       FROM people manager
+                       WHERE manager.insight_tenant_id = p.insight_tenant_id
+                         AND manager.person_id = p.manager_person_id
+                         AND manager.valid_to IS NULL
+                   ) THEN p.manager_person_id END";
     }
-    values.push(limit.into());
-
-    let sql = format!(
-        r"
-        WITH {recursive}presented_people AS (
-            SELECT person_id,
-                   email,
-                   username,
-                   COALESCE(
-                       NULLIF(TRIM(display_name), ''),
-                       NULLIF(TRIM(CONCAT_WS(' ',
-                           NULLIF(TRIM(first_name), ''),
-                           NULLIF(TRIM(last_name), '')
-                       )), '')
-                   ) AS display_name,
-                   first_name,
-                   last_name,
-                   COALESCE(
-                       NULLIF(TRIM(display_name), ''),
-                       NULLIF(TRIM(CONCAT_WS(' ',
-                           NULLIF(TRIM(first_name), ''),
-                           NULLIF(TRIM(last_name), '')
-                       )), ''),
-                       NULLIF(TRIM(username), ''),
-                       NULLIF(TRIM(email), '')
-                   ) AS label
-            FROM people
-            WHERE insight_tenant_id = ? AND valid_to IS NULL
-        ){visible_cte}
-        SELECT person_id, email, username, display_name, first_name, last_name, order_key
-        FROM (
-            SELECT p.person_id,
-                   p.email,
-                   p.username,
-                   p.display_name,
-                   p.first_name,
-                   p.last_name,
-                   CONCAT(
-                       IF(p.label IS NULL, '1', '0'),
-                       LEFT(LOWER(COALESCE(p.label, '')), {ORDER_KEY_CHARS})
-                   ) AS order_key
-            FROM presented_people p
-            WHERE 1 = 1{filters}
-        ) keyed{resume}
-        ORDER BY order_key, person_id
-        LIMIT ?
-    "
-    );
-
-    (sql, values)
+    r"
+                   CASE WHEN EXISTS (
+                       SELECT 1
+                       FROM people manager
+                       WHERE manager.insight_tenant_id = p.insight_tenant_id
+                         AND manager.person_id = p.manager_person_id
+                         AND manager.valid_to IS NULL
+                   ) THEN p.manager_person_id END"
 }
 
 fn push_patterns(values: &mut Vec<sea_orm::Value>, term: &str) {
@@ -253,6 +315,11 @@ fn rows_from(rows: Vec<QueryResult>) -> anyhow::Result<Vec<PersonListRow>> {
                 display_name: row.try_get("", "display_name")?,
                 first_name: row.try_get("", "first_name")?,
                 last_name: row.try_get("", "last_name")?,
+                attributes: serde_json::from_str(&row.try_get::<String>("", "attributes")?)?,
+                manager_person_id: row
+                    .try_get::<Option<Vec<u8>>>("", "manager_person_id")?
+                    .map(|value| Uuid::from_slice(&value))
+                    .transpose()?,
                 order_key: row.try_get("", "order_key")?,
             })
         })
@@ -269,7 +336,17 @@ mod tests {
         restrict: Restrict<'_>,
         after: Option<After<'_>>,
     ) -> (String, Vec<sea_orm::Value>) {
-        build_query(Uuid::from_u128(1), terms, person_ids, restrict, after, 50)
+        build_query(
+            Uuid::from_u128(1),
+            ListQuery {
+                org_chart_source_type: "directory",
+                terms,
+                person_ids,
+                restrict,
+                after,
+                limit: 50,
+            },
+        )
     }
 
     #[test]
@@ -277,6 +354,11 @@ mod tests {
         let (sql, values) = query(&[], &[], Restrict::UNRESTRICTED, None);
 
         assert!(sql.contains("valid_to IS NULL"));
+        assert!(sql.contains("manager_person_id"));
+        assert!(sql.contains("ROW_NUMBER() OVER"));
+        assert!(sql.contains("AND oc.rn = 1"));
+        assert!(sql.contains("AND parent_person_id IS NOT NULL"));
+        assert!(sql.contains("manager.valid_to IS NULL"));
         assert!(sql.contains("ORDER BY order_key, person_id"));
         assert!(sql.contains("NULLIF(TRIM(CONCAT_WS(' ',"));
         assert_eq!(sql.matches('?').count(), values.len());
@@ -312,6 +394,7 @@ mod tests {
 
         assert!(sql.contains("WITH RECURSIVE"));
         assert!(sql.contains("FROM visible_set vs"));
+        assert!(sql.contains("manager.valid_to IS NULL"));
         assert!(sql.contains("order_key > ?"));
         assert_eq!(sql.matches('?').count(), values.len());
     }

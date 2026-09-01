@@ -198,7 +198,7 @@ person_profile_upserts AS (
         _synced_at,
         _version
     FROM upserts
-    WHERE value_type IN ('email', 'username', 'display_name', 'first_name', 'last_name')
+    WHERE value_type NOT IN ('parent_email', 'parent_id', 'parent_person_id')
 ),
 {% endif %}
 

@@ -508,14 +508,15 @@ pub fn route_value(
         "status",
     ];
 
+    let classified_type = value_type.strip_prefix("person_").unwrap_or(value_type);
     let len = value.chars().count();
-    if VALUE_ID_TYPES.contains(&value_type) {
+    if VALUE_ID_TYPES.contains(&classified_type) {
         if len > MAX_VALUE_ID_LEN {
             return (None, None, None);
         }
         return (Some(value.to_owned()), None, None);
     }
-    if VALUE_FULL_TEXT_TYPES.contains(&value_type) {
+    if VALUE_FULL_TEXT_TYPES.contains(&classified_type) {
         if len > MAX_VALUE_FULL_TEXT_LEN {
             return (None, None, None);
         }
@@ -1081,6 +1082,10 @@ mod tests {
         assert_eq!(
             route_value("display_name", "Ann Smith"),
             (None, Some("Ann Smith".to_owned()), None)
+        );
+        assert_eq!(
+            route_value("person_department", "Engineering"),
+            (None, Some("Engineering".to_owned()), None)
         );
         assert_eq!(
             route_value("custom", "whatever"),

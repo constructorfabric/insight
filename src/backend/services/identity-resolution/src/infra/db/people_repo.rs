@@ -80,6 +80,7 @@ fn same_state(current: &PersonProjection, projected: &PersonProjection) -> bool 
         && current.display_name == projected.display_name
         && current.first_name == projected.first_name
         && current.last_name == projected.last_name
+        && current.attributes == projected.attributes
 }
 
 async fn current_people<C>(db: &C, tenant_id: Uuid) -> anyhow::Result<HashMap<Uuid, CurrentPerson>>
@@ -88,7 +89,7 @@ where
 {
     const SQL: &str = r"
         SELECT id, person_id, email, username, display_name,
-               first_name, last_name, valid_from
+               first_name, last_name, attributes, valid_from
         FROM people
         WHERE insight_tenant_id = ? AND valid_to IS NULL
     ";
@@ -116,6 +117,7 @@ fn decode_current(row: &QueryResult) -> anyhow::Result<CurrentPerson> {
             display_name: row.try_get("", "display_name")?,
             first_name: row.try_get("", "first_name")?,
             last_name: row.try_get("", "last_name")?,
+            attributes: serde_json::from_str(&row.try_get::<String>("", "attributes")?)?,
             valid_from: row.try_get("", "valid_from")?,
         },
     })
@@ -140,8 +142,8 @@ async fn insert(
     const SQL: &str = r"
         INSERT INTO people
             (insight_tenant_id, person_id, email, username, display_name,
-             first_name, last_name, valid_from, valid_to)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+             first_name, last_name, attributes, valid_from, valid_to)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     ";
     txn.execute_raw(Statement::from_sql_and_values(
         DbBackend::MySql,
@@ -154,6 +156,7 @@ async fn insert(
             person.display_name.clone().into(),
             person.first_name.clone().into(),
             person.last_name.clone().into(),
+            serde_json::to_string(&person.attributes)?.into(),
             valid_from.into(),
         ],
     ))
@@ -163,6 +166,8 @@ async fn insert(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn projection(days_after_epoch: i64) -> PersonProjection {
@@ -173,6 +178,7 @@ mod tests {
             display_name: Some("Example Person".to_owned()),
             first_name: Some("Example".to_owned()),
             last_name: Some("Person".to_owned()),
+            attributes: BTreeMap::default(),
             valid_from: chrono::DateTime::UNIX_EPOCH.naive_utc()
                 + chrono::Duration::days(days_after_epoch),
         }
@@ -188,6 +194,17 @@ mod tests {
         let current = projection(1);
         let mut changed = projection(2);
         changed.display_name = Some("Changed Person".to_owned());
+
+        assert!(!same_state(&current, &changed));
+    }
+
+    #[test]
+    fn an_attribute_change_creates_a_profile_revision() {
+        let current = projection(1);
+        let mut changed = projection(2);
+        changed
+            .attributes
+            .insert("department".to_owned(), "Engineering".to_owned());
 
         assert!(!same_state(&current, &changed));
     }
