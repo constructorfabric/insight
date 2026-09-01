@@ -77,7 +77,7 @@ pub async fn resolve_batch_profiles(
         persons_repo::current_profile_observations(db, tenant_id, &supervisor_ids).await?;
     let mut presentation_ids = person_ids.clone();
     presentation_ids.extend(supervisor_ids.iter().copied());
-    let presentation = people_repo::person_cards(db, tenant_id, &presentation_ids)
+    let presentation = people_repo::presentation_cards(db, tenant_id, &presentation_ids)
         .await
         .map_err(BatchProfilesError::PeopleRead)?;
 

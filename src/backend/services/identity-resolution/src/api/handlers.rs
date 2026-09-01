@@ -85,7 +85,7 @@ pub async fn resolve_profile(
                 parent,
                 subordinates,
             );
-            let cards = people_repo::person_cards(&state.db, tenant, &[*person_id])
+            let cards = people_repo::presentation_cards(&state.db, tenant, &[*person_id])
                 .await
                 .map_err(profile_read_error)?;
             if let Some(card) = cards.get(person_id) {
@@ -845,7 +845,7 @@ async fn resolve_parent(
                 CanonicalError::internal("profile assembly failed").create()
             })?;
 
-    let cards = people_repo::person_cards(&state.db, tenant, &[edge.parent_person_id])
+    let cards = people_repo::presentation_cards(&state.db, tenant, &[edge.parent_person_id])
         .await
         .map_err(profile_read_error)?;
     let card = cards.get(&edge.parent_person_id);
@@ -945,7 +945,7 @@ fn hydrate_person<'a>(
         if observations.is_empty() {
             return Ok(None);
         }
-        let cards = people_repo::person_cards(&state.db, tenant, &[person_id])
+        let cards = people_repo::presentation_cards(&state.db, tenant, &[person_id])
             .await
             .map_err(profile_read_error)?;
         let Some(card) = cards.get(&person_id) else {

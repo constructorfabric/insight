@@ -171,6 +171,25 @@ pub async fn person_cards(
     tenant_id: Uuid,
     person_ids: &[Uuid],
 ) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
+    let mut cards = presentation_cards(db, tenant_id, person_ids).await?;
+    let roster_ids = cards.keys().copied().collect::<Vec<_>>();
+    let attributes = persons_repo::person_cards(db, tenant_id, &roster_ids).await?;
+    for (person_id, card) in &mut cards {
+        let Some(attribute_card) = attributes.get(person_id) else {
+            continue;
+        };
+        card.job_title.clone_from(&attribute_card.job_title);
+        card.status.clone_from(&attribute_card.status);
+    }
+
+    Ok(cards)
+}
+
+pub async fn presentation_cards(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
     if person_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -194,20 +213,9 @@ pub async fn person_cards(
         ))
         .await?;
 
-    let mut cards = rows
-        .iter()
+    rows.iter()
         .map(decode_card)
-        .collect::<anyhow::Result<HashMap<_, _>>>()?;
-    let attributes = persons_repo::person_cards(db, tenant_id, person_ids).await?;
-    for (person_id, card) in &mut cards {
-        let Some(attribute_card) = attributes.get(person_id) else {
-            continue;
-        };
-        card.job_title.clone_from(&attribute_card.job_title);
-        card.status.clone_from(&attribute_card.status);
-    }
-
-    Ok(cards)
+        .collect::<anyhow::Result<HashMap<_, _>>>()
 }
 
 fn decode_card(row: &QueryResult) -> anyhow::Result<(Uuid, PersonCard)> {

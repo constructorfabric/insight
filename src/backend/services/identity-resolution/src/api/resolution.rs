@@ -809,29 +809,32 @@ pub async fn attention(
 
     let items = page
         .into_iter()
-        .map(|i| QueueItemResponse {
-            kind: kind_label(i.kind).to_owned(),
-            source: i.account.source_type,
-            source_id: i.account.source_id,
-            account_id: i.account.account_id,
-            email: i.email,
-            username: i.username,
-            display_name: i.description.display_name,
-            job_title: i.description.job_title,
-            department: i.description.department,
-            status: i.description.status,
-            manager_email: i.description.manager_email,
-            bound_to: i.bound_to,
-            candidates: person_card::in_requested_order(&i.candidates, &cards)
-                .into_iter()
-                .map(|card| {
-                    let is_provisional = provisional.contains(&card.person_id);
-                    PersonSummaryResponse {
-                        provisional: is_provisional,
-                        ..PersonSummaryResponse::from(card)
-                    }
-                })
-                .collect(),
+        .map(|i| {
+            let candidate_ids = visible_candidate_ids(&i, &cards);
+            QueueItemResponse {
+                kind: kind_label(i.kind).to_owned(),
+                source: i.account.source_type,
+                source_id: i.account.source_id,
+                account_id: i.account.account_id,
+                email: i.email,
+                username: i.username,
+                display_name: i.description.display_name,
+                job_title: i.description.job_title,
+                department: i.description.department,
+                status: i.description.status,
+                manager_email: i.description.manager_email,
+                bound_to: i.bound_to,
+                candidates: person_card::in_requested_order(&candidate_ids, &cards)
+                    .into_iter()
+                    .map(|card| {
+                        let is_provisional = provisional.contains(&card.person_id);
+                        PersonSummaryResponse {
+                            provisional: is_provisional,
+                            ..PersonSummaryResponse::from(card)
+                        }
+                    })
+                    .collect(),
+            }
         })
         .collect();
 
@@ -1357,9 +1360,48 @@ async fn candidate_cards(
         .into_iter()
         .collect();
 
-    people_repo::person_cards(&state.db, tenant, &ids)
+    let cards = people_repo::person_cards(&state.db, tenant, &ids)
         .await
-        .map_err(|e| internal(&e, "failed to read candidate cards"))
+        .map_err(|e| internal(&e, "failed to read candidate cards"))?;
+
+    Ok(include_current_binding_cards(cards, page))
+}
+
+fn include_current_binding_cards(
+    mut cards: HashMap<Uuid, PersonCard>,
+    page: &[review_queue::QueueItem],
+) -> HashMap<Uuid, PersonCard> {
+    for item in page {
+        let Some(person_id) = item.bound_to else {
+            continue;
+        };
+        if !item.candidates.contains(&person_id) {
+            continue;
+        }
+        cards.entry(person_id).or_insert_with(|| PersonCard {
+            person_id,
+            email: item.email.clone(),
+            username: item.username.clone(),
+            display_name: item.description.display_name.clone(),
+            first_name: None,
+            last_name: None,
+            job_title: item.description.job_title.clone(),
+            status: item.description.status.clone(),
+        });
+    }
+
+    cards
+}
+
+fn visible_candidate_ids(
+    item: &review_queue::QueueItem,
+    cards: &HashMap<Uuid, PersonCard>,
+) -> Vec<Uuid> {
+    item.candidates
+        .iter()
+        .copied()
+        .filter(|person_id| cards.contains_key(person_id))
+        .collect()
 }
 
 pub(super) fn evidence_reader(state: &AppState) -> ClickHouseEvidenceReader {
@@ -1382,6 +1424,27 @@ async fn read_evidence(state: &AppState) -> Result<EvidenceSnapshot, CanonicalEr
 mod tests {
     use super::*;
 
+    fn queue_item(bound_to: Option<Uuid>, candidates: Vec<Uuid>) -> review_queue::QueueItem {
+        review_queue::QueueItem {
+            kind: ItemKind::ProvisionedAtLogin,
+            account: SourceAccountKey {
+                source_type: "directory".to_owned(),
+                source_id: Uuid::from_u128(10),
+                account_id: "account-1".to_owned(),
+            },
+            email: Some("person@example.test".to_owned()),
+            username: Some("person".to_owned()),
+            description: review_queue::AccountDescription {
+                display_name: Some("Example Person".to_owned()),
+                job_title: Some("Engineer".to_owned()),
+                status: Some("active".to_owned()),
+                ..Default::default()
+            },
+            bound_to,
+            candidates,
+        }
+    }
+
     #[test]
     fn every_queue_kind_has_the_wire_label_its_consumers_switch_on() {
         // The console groups by this exact string and drops anything it does not
@@ -1397,5 +1460,33 @@ mod tests {
         ] {
             assert_eq!(kind_label(kind), expected, "wrong label for {kind:?}");
         }
+    }
+
+    #[test]
+    fn candidate_cards_describe_a_current_identity_only_binding_from_account_evidence() {
+        let bound = Uuid::from_u128(1);
+        let page = vec![queue_item(Some(bound), vec![bound])];
+        let cards = include_current_binding_cards(HashMap::new(), &page);
+
+        assert_eq!(cards[&bound].email.as_deref(), Some("person@example.test"));
+        assert_eq!(cards[&bound].username.as_deref(), Some("person"));
+        assert_eq!(
+            cards[&bound].display_name.as_deref(),
+            Some("Example Person")
+        );
+    }
+
+    #[test]
+    fn candidate_ids_keep_roster_targets_and_the_current_binding_only() {
+        let bound = Uuid::from_u128(1);
+        let roster = Uuid::from_u128(2);
+        let identity_only = Uuid::from_u128(3);
+        let item = queue_item(Some(bound), vec![bound, roster, identity_only]);
+        let cards = HashMap::from([
+            (bound, PersonCard::empty(bound)),
+            (roster, PersonCard::empty(roster)),
+        ]);
+
+        assert_eq!(visible_candidate_ids(&item, &cards), vec![bound, roster]);
     }
 }
