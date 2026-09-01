@@ -34,6 +34,10 @@ import {
   metricResultsHandler,
   RANGE,
 } from "@/components/widgets/metric-views/metric-timeseries.story-fixtures";
+import {
+  CARD_PX_AT_390,
+  expectNothingOverlaps,
+} from "@/test/storybook/layout";
 
 const TOP_REPOSITORIES = {
   default: "repository",
@@ -609,5 +613,49 @@ export const TestXlsxExport: Story = {
       "Commits: 10 · Lines added: 98"
     );
     await expect(sheet?.views[0]).toMatchObject({ xSplit: 1, ySplit: 2 });
+  },
+};
+
+/**
+ * On a card too narrow for both, the header stacks instead of overlapping.
+ *
+ * The failure this pins is invisible to a text query: with the toolbar holding
+ * its width and the title column free to collapse, the title was laid out
+ * under the buttons — every `getByText` still passed while the card could not
+ * be identified on screen. So this reads the boxes the browser produced.
+ */
+export const TestNarrowHeaderStacksInsteadOfOverlapping: Story = {
+  tags: ["test"],
+  args: { groupBy: TOP_REPOSITORIES, defaultPresentation: "table" },
+  decorators: [
+    (Story) => (
+      <div style={{ width: CARD_PX_AT_390 }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const title = await canvas.findByRole("heading", {
+      name: /By repository/,
+    });
+    // The header row only — the table below it scrolls sideways by design, and
+    // its cells are buttons that leave the card's box on purpose.
+    const header = title.closest('[data-slot="card"] > *');
+    await expect(header, "the card renders a header row").not.toBeNull();
+    const controls = Array.from(header!.querySelectorAll("button"));
+
+    await expect(controls.length, "the header has controls to clear").toBeGreaterThan(0);
+    expectNothingOverlaps(title, controls, (element) =>
+      element.getAttribute("aria-label") ?? element.textContent ?? "a control"
+    );
+
+    // Clearing the controls by shrinking the title to nothing would satisfy
+    // the check above; the title has to still be readable.
+    const label = title.querySelector("span");
+    await expect(label, "the title renders its truncating span").not.toBeNull();
+    await expect(
+      label!.scrollWidth,
+      `the title is clipped (${label!.scrollWidth}px of text in ${label!.clientWidth}px)`
+    ).toBeLessThanOrEqual(label!.clientWidth);
   },
 };

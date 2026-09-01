@@ -503,11 +503,14 @@ export function MetricTimeseriesView({
         data.isFetching && "opacity-60"
       )}
     >
-      <div className="flex items-center justify-between gap-2 border-b p-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 border-b p-2">
+        {/* INVARIANT: a fixed basis, because a flex line breaks on content
+            size — with none, the untruncated title decides the width at which
+            the controls drop to their own line. */}
+        <div className="flex min-w-0 flex-[1_1_8rem] flex-wrap items-center gap-2">
           {selectedMetric ? (
             shouldCombineMetrics ? (
-              <h3 className="px-2 text-sm font-semibold">
+              <h3 className="min-w-0 truncate px-2 text-sm font-semibold">
                 {model.metrics.map((metric) => metric.label).join(" & ")}
               </h3>
             ) : model.metrics.length > 1 && presentation === "chart" ? (
@@ -520,7 +523,7 @@ export function MetricTimeseriesView({
                 <SelectTrigger
                   size="sm"
                   aria-label="Metric"
-                  className="border-transparent bg-transparent ps-2 pe-2 font-semibold shadow-none hover:bg-muted/50 focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-muted/50 dark:bg-transparent dark:hover:bg-muted/50"
+                  className="min-w-0 max-w-full border-transparent bg-transparent ps-2 pe-2 font-semibold shadow-none hover:bg-muted/50 focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-muted/50 dark:bg-transparent dark:hover:bg-muted/50 [&>span]:truncate"
                 >
                   <SelectValue>{selectedMetric.label}</SelectValue>
                 </SelectTrigger>
@@ -540,20 +543,22 @@ export function MetricTimeseriesView({
               // columns. The count is load-bearing: such a table is usually
               // wider than the screen, and the grand total below covers groups
               // the reader cannot see.
-              <h3 className="px-2 text-sm font-semibold">
-                {breakdownHeading([selectedGroupBy])}
-                <span className="ps-1.5 font-normal text-muted-foreground">
+              <h3 className="flex min-w-0 items-baseline px-2 text-sm font-semibold">
+                <span className="truncate">
+                  {breakdownHeading([selectedGroupBy])}
+                </span>
+                <span className="shrink-0 ps-1.5 font-normal text-muted-foreground">
                   · {model.columns.length}
                 </span>
               </h3>
             ) : model.metrics.length === 1 ? (
-              <h3 className="px-2 text-sm font-semibold">
+              <h3 className="min-w-0 truncate px-2 text-sm font-semibold">
                 {selectedMetric.label}
               </h3>
             ) : null
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2">
+        <div className="ms-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
           {dimensionOptions.length > 1 || filterModels.length > 0 ? (
             <DimensionControls
               dimensions={dimensionOptions}
