@@ -440,10 +440,8 @@ fn record_addressless_group(
 ) {
     let vouched_for = group.profiles.iter().all(|profile| {
         states_a_bindable_id(profile)
-            && (profile
-                .roster_membership
-                .is_some_and(|membership| membership.active)
-                || roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type)))
+            && profile.roster_membership.is_some()
+            && roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type))
     });
     if !vouched_for {
         out.skipped_no_email += group.profiles.len();
@@ -451,7 +449,12 @@ fn record_addressless_group(
     }
 
     // Deactivated at its source: the roster lists no human to add.
-    if !group.profiles.iter().any(|p| !p.is_closed) {
+    if !group.profiles.iter().any(|profile| {
+        !profile.is_closed
+            && profile
+                .roster_membership
+                .is_some_and(|membership| membership.active)
+    }) {
         out.skipped_closed += group.profiles.len();
         return;
     }
@@ -1255,6 +1258,15 @@ mod tests {
         prof(source_type, account_id, None, closed)
     }
 
+    fn member(source_type: &str, account_id: &str, active: bool) -> SeedProfile {
+        let mut profile = rostered(source_type, account_id, !active);
+        profile.roster_membership = Some(RosterMembership {
+            active,
+            observed_at: epoch(),
+        });
+        profile
+    }
+
     #[test]
     fn a_blank_roster_setting_names_no_source() {
         for (case, configured) in [("unset", ""), ("spaces", "   "), ("a tab", "\t")] {
@@ -1278,7 +1290,7 @@ mod tests {
 
     #[test]
     fn the_roster_mints_a_person_for_an_account_with_no_address() {
-        let groups = group_by_email(vec![rostered("bamboohr", "e-1", false)]);
+        let groups = group_by_email(vec![member("bamboohr", "e-1", true)]);
 
         let out = resolve_assignments(
             groups,
@@ -1298,22 +1310,32 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_membership_mints_without_roster_configuration() {
-        let mut profile = rostered("directory", "e-1", false);
-        profile.roster_membership = Some(RosterMembership {
-            active: true,
-            observed_at: epoch(),
-        });
-
+    fn membership_without_roster_configuration_cannot_mint_a_person() {
         let out = resolve_without_roster(
-            group_by_email(vec![profile]),
+            group_by_email(vec![member("directory", "e-1", true)]),
             &HashMap::new(),
             &HashMap::new(),
             counter(),
         );
 
-        assert_eq!(out.minted_from_roster, 1);
-        assert_eq!(out.skipped_no_email, 0);
+        assert_eq!(out.minted_from_roster, 0);
+        assert_eq!(out.skipped_no_email, 1);
+        assert!(out.assignments.is_empty());
+    }
+
+    #[test]
+    fn configured_source_without_membership_cannot_mint_a_person() {
+        let out = resolve_assignments(
+            group_by_email(vec![rostered("bamboohr", "e-1", false)]),
+            &HashMap::new(),
+            &HashMap::new(),
+            RosterSource::parse("bamboohr").as_ref(),
+            counter(),
+        );
+
+        assert_eq!(out.minted_from_roster, 0);
+        assert_eq!(out.skipped_no_email, 1);
+        assert!(out.assignments.is_empty());
     }
 
     #[test]
@@ -1323,8 +1345,8 @@ mod tests {
         // minting from two rosters gives one addressless human two persons, and
         // nothing joins them after.
         let groups = group_by_email(vec![
-            rostered("bamboohr", "e-1", false),
-            rostered("zoom", "Z1", false),
+            member("bamboohr", "e-1", true),
+            member("zoom", "Z1", true),
         ]);
 
         let out = resolve_assignments(
@@ -1353,7 +1375,7 @@ mod tests {
     #[test]
     fn a_closed_roster_account_is_not_minted() {
         // The source has deactivated it, so there is no human to add.
-        let groups = group_by_email(vec![rostered("bamboohr", "e-1", true)]);
+        let groups = group_by_email(vec![member("bamboohr", "e-1", false)]);
 
         let out = resolve_assignments(
             groups,

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
 
+use super::roster::RosterSource;
 use super::seed::{IdentityInputRow, PersonAssignment, SeedProfile, route_value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +25,10 @@ pub enum PersonChange {
 }
 
 #[must_use]
-pub fn changes(assignments: &[PersonAssignment]) -> Vec<PersonChange> {
+pub fn changes(
+    assignments: &[PersonAssignment],
+    roster: Option<&RosterSource>,
+) -> Vec<PersonChange> {
     let mut profiles_by_person: HashMap<Uuid, Vec<&SeedProfile>> = HashMap::new();
     for assignment in assignments {
         profiles_by_person
@@ -35,19 +39,24 @@ pub fn changes(assignments: &[PersonAssignment]) -> Vec<PersonChange> {
 
     let mut changes = profiles_by_person
         .into_iter()
-        .filter_map(|(person_id, profiles)| change(person_id, &profiles))
+        .filter_map(|(person_id, profiles)| change(person_id, &profiles, roster))
         .collect::<Vec<_>>();
     changes.sort_by_key(person_id);
     changes
 }
 
-fn change(person_id: Uuid, profiles: &[&SeedProfile]) -> Option<PersonChange> {
-    if let Some(profile) = preferred_active_profile(profiles) {
+fn change(
+    person_id: Uuid,
+    profiles: &[&SeedProfile],
+    roster: Option<&RosterSource>,
+) -> Option<PersonChange> {
+    if let Some(profile) = preferred_active_profile(profiles, roster) {
         return Some(PersonChange::Upsert(project(person_id, profile)));
     }
 
     profiles
         .iter()
+        .filter(|profile| roster_profile(profile, roster))
         .filter_map(|profile| profile.roster_membership)
         .max_by_key(|membership| membership.observed_at)
         .map(|membership| PersonChange::Close {
@@ -56,10 +65,14 @@ fn change(person_id: Uuid, profiles: &[&SeedProfile]) -> Option<PersonChange> {
         })
 }
 
-fn preferred_active_profile<'a>(profiles: &[&'a SeedProfile]) -> Option<&'a SeedProfile> {
+fn preferred_active_profile<'a>(
+    profiles: &[&'a SeedProfile],
+    roster: Option<&RosterSource>,
+) -> Option<&'a SeedProfile> {
     profiles
         .iter()
         .copied()
+        .filter(|profile| roster_profile(profile, roster))
         .filter(|profile| {
             profile
                 .roster_membership
@@ -83,6 +96,10 @@ fn preferred_active_profile<'a>(profiles: &[&'a SeedProfile]) -> Option<&'a Seed
                 profile.account.account_id.as_str(),
             )
         })
+}
+
+fn roster_profile(profile: &SeedProfile, roster: Option<&RosterSource>) -> bool {
+    roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type))
 }
 
 fn project(person_id: Uuid, profile: &SeedProfile) -> PersonProjection {
@@ -176,6 +193,7 @@ fn person_id(change: &PersonChange) -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::roster::RosterSource;
     use crate::domain::seed::{
         AssignmentKind, IdentityInputRow, RosterMembership, SourceAccountKey,
     };
@@ -206,6 +224,13 @@ mod tests {
         }
     }
 
+    fn configured_roster() -> RosterSource {
+        let Some(roster) = RosterSource::parse("directory") else {
+            panic!("directory is a roster source");
+        };
+        roster
+    }
+
     #[test]
     fn only_person_profile_claims_control_presentation() {
         let mut roster = profile("member", true, "Roster Name");
@@ -224,7 +249,7 @@ mod tests {
             profiles: vec![activity, roster],
         }];
 
-        let changes = changes(&assignments);
+        let changes = changes(&assignments, Some(&configured_roster()));
 
         let PersonChange::Upsert(projected) = &changes[0] else {
             panic!("active membership should upsert a person");
@@ -311,7 +336,7 @@ mod tests {
             profiles: vec![roster],
         }];
 
-        let changes = changes(&assignments);
+        let changes = changes(&assignments, Some(&configured_roster()));
 
         let PersonChange::Upsert(projected) = &changes[0] else {
             panic!("active membership should upsert a person");
@@ -348,7 +373,7 @@ mod tests {
             profiles: vec![roster],
         }];
 
-        let changes = changes(&assignments);
+        let changes = changes(&assignments, Some(&configured_roster()));
 
         let PersonChange::Upsert(projected) = &changes[0] else {
             panic!("active membership should upsert a person");
@@ -365,8 +390,33 @@ mod tests {
         }];
 
         assert!(matches!(
-            changes(&assignments).as_slice(),
+            changes(&assignments, Some(&configured_roster())).as_slice(),
             [PersonChange::Close { person_id, .. }] if *person_id == Uuid::from_u128(7)
         ));
+    }
+
+    #[test]
+    fn membership_from_another_source_does_not_project_a_person() {
+        let assignments = vec![PersonAssignment {
+            person_id: Uuid::from_u128(7),
+            kind: AssignmentKind::ReusedKnown,
+            profiles: vec![profile("member", true, "Other Directory Member")],
+        }];
+        let Some(other_roster) = RosterSource::parse("other-directory") else {
+            panic!("other-directory is a roster source");
+        };
+
+        assert!(changes(&assignments, Some(&other_roster)).is_empty());
+    }
+
+    #[test]
+    fn no_source_is_a_roster_when_none_is_configured() {
+        let assignments = vec![PersonAssignment {
+            person_id: Uuid::from_u128(7),
+            kind: AssignmentKind::ReusedKnown,
+            profiles: vec![profile("member", true, "Directory Member")],
+        }];
+
+        assert!(changes(&assignments, None).is_empty());
     }
 }

@@ -12,7 +12,7 @@
 //! covered by the plugin's own tests plus the compose e2e. Each test mints its
 //! own tenant, so the suite is parallel-safe.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use axum::Router;
@@ -734,6 +734,81 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
         !found_ids(&body)?.contains(&unrelated.to_string()),
         "caller visibility excludes unrelated roster people"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_preserve_source_names_and_only_synthesize_a_missing_display_name() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-names-caller@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let explicit = f
+        .person(&format!("people-names-explicit-{marker}@http-live.test"))
+        .await?;
+    let parts = f
+        .person(&format!("people-names-parts-{marker}@http-live.test"))
+        .await?;
+    let single = f
+        .person(&format!("people-names-single-{marker}@http-live.test"))
+        .await?;
+    let explicit_display = format!("Source Display {marker}");
+    let parts_last = format!("Parts {marker}");
+    let single_first = format!("Mononym {marker}");
+    f.project_person(
+        explicit,
+        None,
+        None,
+        Some(&explicit_display),
+        Some("Separate"),
+        Some("Parts"),
+    )
+    .await?;
+    f.project_person(
+        parts,
+        None,
+        None,
+        None,
+        Some("Available"),
+        Some(&parts_last),
+    )
+    .await?;
+    f.project_person(single, None, None, None, Some(&single_first), None)
+        .await?;
+
+    let (status, body) = get(flat_app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    let items = body["items"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("no `items` array in {body}"))?;
+    let by_id = items
+        .iter()
+        .filter_map(|item| {
+            item["person_id"]
+                .as_str()
+                .map(|person_id| (person_id, item))
+        })
+        .collect::<HashMap<_, _>>();
+    let explicit_id = explicit.to_string();
+    let parts_id = parts.to_string();
+    let single_id = single.to_string();
+    assert_eq!(
+        by_id[explicit_id.as_str()]["display_name"],
+        explicit_display
+    );
+    assert_eq!(by_id[explicit_id.as_str()]["first_name"], "Separate");
+    assert_eq!(by_id[explicit_id.as_str()]["last_name"], "Parts");
+    assert_eq!(
+        by_id[parts_id.as_str()]["display_name"],
+        format!("Available {parts_last}")
+    );
+    assert_eq!(by_id[parts_id.as_str()]["first_name"], "Available");
+    assert_eq!(by_id[parts_id.as_str()]["last_name"], parts_last);
+    assert_eq!(by_id[single_id.as_str()]["display_name"], single_first);
+    assert_eq!(by_id[single_id.as_str()]["first_name"], single_first);
+    assert!(by_id[single_id.as_str()]["last_name"].is_null());
     Ok(())
 }
 

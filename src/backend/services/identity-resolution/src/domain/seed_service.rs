@@ -142,7 +142,7 @@ where
 
     // 3. Materialize the resolved observations and apply them.
     let observation_rows = assignments_to_rows(&outcome.assignments, author_person_id, &known);
-    let people_changes = people::changes(&outcome.assignments);
+    let people_changes = people::changes(&outcome.assignments, roster);
     tracing::info!(
         observation_rows = observation_rows.len(),
         "persons-seed: applying"
@@ -387,7 +387,10 @@ mod tests {
         // one, dropping the argument here leaves the feature dead and the suite
         // green.
         let at: DateTime = "2026-01-01T00:00:00".parse()?;
-        let rows = vec![input("bamboohr", "e-1", "id", "e-1", at)];
+        let rows = vec![
+            input("bamboohr", "e-1", "id", "e-1", at),
+            input("bamboohr", "e-1", "roster_membership", "active", at),
+        ];
         let store = FakeStore {
             known: HashMap::new(),
             emails: HashMap::new(),

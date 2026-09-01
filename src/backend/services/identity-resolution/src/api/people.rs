@@ -65,6 +65,8 @@ impl listing::PagePosition for PageKey {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PeopleListItemResponse {
     pub person_id: Uuid,
+    /// Source-provided display name, or the available source-provided name
+    /// parts joined together.
     pub display_name: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
