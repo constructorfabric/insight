@@ -72,26 +72,40 @@ def _account_path(account_id: str) -> str:
     )
 
 
-def _refused(response: ApiResponse, code: int, field: str | None = None) -> None:
+def _refused(
+    response: ApiResponse,
+    code: int,
+    field: str | None = None,
+    resource: str | None = None,
+) -> None:
     """A correction refusal is only actionable if the operator can read it.
 
-    Every handler refusal on this surface is built by `invalid()`, which
-    stamps `field_violations` into the problem document — that is what the
-    console turns into "which box you got wrong". Asserting the status alone
-    would keep passing if the body degraded to an unreadable rejection, and
-    the operator would see the generic failure text with every test green.
+    A validation refusal is built by `invalid()`, which stamps
+    `field_violations` into the problem document — what the console turns into
+    "which box you got wrong". A 404 instead names the thing that was not
+    found in `resource_name`, and that field is what separates two refusals
+    that read alike: both merge sides answer "person not found", so a merge
+    checking only its source would pass the target case on the source's
+    refusal. Asserting the status alone would keep passing through either
+    degradation, with the operator left on generic failure text.
     """
     assert response.status_code == code, f"{response.status_code} {response.text[:300]}"
 
     problem = response.parse(ProblemDocument)
     assert problem.status == code, problem
-    if field is None:
-        return
+    if field is not None:
+        violations = problem.context.get("field_violations")
+        assert violations, f"no field_violations to act on: {problem.context}"
+        named = [entry.get("field") for entry in violations]
+        assert field in named, (
+            f"refusal names {named}, not the field the caller got wrong ({field})"
+        )
 
-    violations = problem.context.get("field_violations")
-    assert violations, f"no field_violations to act on: {problem.context}"
-    named = [entry.get("field") for entry in violations]
-    assert field in named, f"refusal names {named}, not the field the caller got wrong ({field})"
+    if resource is not None:
+        assert problem.context.get("resource_name") == resource, (
+            f"the refusal names {problem.context.get('resource_name')!r} rather than the "
+            f"thing that was not found ({resource!r})"
+        )
 
 
 @pytest.mark.security
@@ -485,7 +499,11 @@ def test_the_verbs_that_need_an_account_refuse_one_nobody_ever_saw(
         identity_path(f"/v1/resolution/{verb}"),
         json_body={"account": _account("never-observed-account")},
     )
-    _refused(response, 404)
+    _refused(
+        response,
+        404,
+        resource=f"{SCRATCH_SOURCE_TYPE}:{SCRATCH_SOURCE_ID}:never-observed-account",
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
@@ -513,7 +531,10 @@ def test_merge_refuses_a_person_the_tenant_never_had(
     response = admin_operator_session.client.post(
         identity_path("/v1/resolution/merge"), json_body=body
     )
-    _refused(response, 404)
+    # Naming the id is what makes the two cases distinct. Both sides answer
+    # "person not found", so a merge that checked only its source would pass
+    # the target case on the source's own refusal.
+    _refused(response, 404, resource=UNKNOWN_PERSON)
 
 
 @pytest.mark.requires_seed("admin_operator")
