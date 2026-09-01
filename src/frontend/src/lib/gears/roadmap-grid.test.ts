@@ -20,7 +20,7 @@ function gear(overrides: Partial<Gear>): Gear {
 
 describe("buildRoadmap", () => {
   it("keeps an overdue gear out of the later column", () => {
-    const rows = buildRoadmap([gear({ placement: { kind: "overdue" } })], WINDOW_MONTHS);
+    const rows = buildRoadmap([gear({ placement: { kind: "overdue", days: 12 } })], WINDOW_MONTHS);
 
     expect(rows[0].overdue).toHaveLength(1);
     expect(rows[0].later).toHaveLength(0);

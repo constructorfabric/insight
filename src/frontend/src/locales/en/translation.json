@@ -649,17 +649,9 @@
     "failed": "Could not send your feedback. Try again."
   },
   "gear_roadmap": {
-    "title": "Gear delivery",
-    "nav_label": "Gear delivery",
     "capacity_note": "Capacity assumed: {{capacity}} man-day per person per day",
     "load_failed": "The gear board could not be read.",
     "committed": "committed",
-    "tabs": {
-      "overview": "Overview",
-      "items": "Gears",
-      "roadmap": "Roadmap",
-      "gantt": "Schedule"
-    },
     "overview": {
       "items": "Gears",
       "done": "Done",
@@ -670,7 +662,9 @@
       "effort": "Estimate (m*d)",
       "remaining": "Remaining (m*d)",
       "unestimated": "Unestimated",
-      "total": "All subsystems"
+      "total": "All subsystems",
+      "subsystem": "Subsystem",
+      "open_subsystem": "Open {{subsystem}} gears"
     },
     "items": {
       "filter_placeholder": "Filter by gear, subsystem or assignee",

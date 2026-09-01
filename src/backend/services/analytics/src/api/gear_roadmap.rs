@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::Extension;
+use axum::extract::{Extension, Query};
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use chrono::Utc;
@@ -19,10 +19,12 @@ use super::error::GearRoadmapError;
 use super::{ADMIN_ONLY, AppState, require_admin};
 use crate::domain::gear_roadmap::read::read_gears;
 use crate::domain::gear_roadmap::response;
+use crate::domain::gear_roadmap::sort::Sort;
 
 pub async fn get_gear_roadmap(
     Extension(state): Extension<Arc<AppState>>,
     headers: HeaderMap,
+    Query(sort): Query<Sort>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     require_admin(&state, &headers, admin_only).await?;
 
@@ -39,6 +41,7 @@ pub async fn get_gear_roadmap(
     Ok(Json(response::build(
         &gears,
         Utc::now().date_naive(),
+        sort,
         &state.external_links,
     )))
 }

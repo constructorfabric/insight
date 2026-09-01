@@ -15,7 +15,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
@@ -26,7 +25,14 @@ import {
 } from "@/components/portal/gear-delivery/parts";
 import { RecordLink } from "@/components/record-link";
 import { NO_METRIC_VALUE, formatMetricNumber } from "@/lib/format";
+import { SortableHead } from "@/components/portal/gear-delivery/sortable-head";
 import { UNGROUPED } from "@/lib/gears/roadmap-grid";
+import {
+  usePortalGearOrder,
+  usePortalNavActions,
+  usePortalSubsystem,
+} from "@/lib/portal/portal-nav";
+import type { SortState } from "@/lib/gears/sort";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
 
 const ALL = "__all__";
@@ -34,10 +40,18 @@ const ALL = "__all__";
 export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [chosen, setChosen] = useState(ALL);
+  const { setSubsystem, setGearOrder } = usePortalNavActions();
+  const chosen = usePortalSubsystem() || ALL;
+  const order = usePortalGearOrder();
+  const sort: SortState<GearColumn> = {
+    key: (order.sort || "gear") as GearColumn,
+    direction: order.direction === "desc" ? "desc" : "asc",
+  };
 
   const all = useMemo(() => roadmap.gears, [roadmap]);
   const subsystems = useMemo(() => countBySubsystem(all), [all]);
+  // Order comes from the server, so the table filters what it was handed and
+  // never re-sequences it.
   const gears = useMemo(
     () => filterGears(all, query, chosen),
     [all, query, chosen],
@@ -55,7 +69,12 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
           aria-label={t("gear_roadmap.items.filter_placeholder")}
           className="max-w-xs"
         />
-        <Select value={chosen} onValueChange={(value) => setChosen(value ?? ALL)}>
+        <Select
+          value={chosen}
+          onValueChange={(value) =>
+            setSubsystem(value && value !== ALL ? value : null)
+          }
+        >
           <SelectTrigger size="sm" aria-label="Subsystem" className="w-44">
             <SelectValue>
               {chosen === ALL ? t("gear_roadmap.items.all_subsystems") : chosen}
@@ -95,25 +114,17 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableHead>{t("gear_roadmap.items.gear")}</TableHead>
-              <TableHead>{t("gear_roadmap.items.subsystem")}</TableHead>
-              <TableHead className="w-28">
-                {t("gear_roadmap.items.spec")}
-              </TableHead>
-              <TableHead className="w-28">
-                {t("gear_roadmap.items.sdk")}
-              </TableHead>
-              <TableHead className="w-28">
-                {t("gear_roadmap.items.impl")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.items.effort")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.items.remaining")}
-              </TableHead>
-              <TableHead>{t("gear_roadmap.items.milestone")}</TableHead>
-              <TableHead>{t("gear_roadmap.items.assignees")}</TableHead>
+              {GEAR_COLUMNS.map((column) => (
+                <SortableHead
+                  key={column.key}
+                  column={column.key}
+                  label={t(`gear_roadmap.items.${column.key}`)}
+                  sort={sort}
+                  onSort={(next) => setGearOrder(next.key, next.direction)}
+                  numeric={column.numeric}
+                  className={column.width}
+                />
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -184,7 +195,7 @@ function Milestone({ gear }: { gear: Gear }) {
   if (gear.placement.kind === "overdue") {
     return (
       <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive tabular-nums">
-        {gear.milestone}
+        {gear.milestone} · {gear.placement.days}d
       </span>
     );
   }
@@ -209,6 +220,33 @@ function countBySubsystem(gears: Gear[]): [string, number][] {
     (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
   );
 }
+
+type GearColumn =
+  | "gear"
+  | "subsystem"
+  | "spec"
+  | "sdk"
+  | "impl"
+  | "effort"
+  | "remaining"
+  | "milestone"
+  | "assignees";
+
+const GEAR_COLUMNS: {
+  key: GearColumn;
+  numeric?: boolean;
+  width?: string;
+}[] = [
+  { key: "gear" },
+  { key: "subsystem" },
+  { key: "spec", width: "w-28" },
+  { key: "sdk", width: "w-28" },
+  { key: "impl", width: "w-28" },
+  { key: "effort", numeric: true },
+  { key: "remaining", numeric: true },
+  { key: "milestone" },
+  { key: "assignees" },
+];
 
 function filterGears(gears: Gear[], query: string, chosen: string): Gear[] {
   const needle = query.trim().toLowerCase();

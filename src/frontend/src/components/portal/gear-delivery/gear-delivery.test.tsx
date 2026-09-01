@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
+vi.mock("@tanstack/react-router", async () => {
+  const { portalRouterMock } = await import("@/test/portal-router");
+  return portalRouterMock();
+});
+
+import { portalRouter } from "@/test/portal-router";
+
 import type { Gear, GearRoadmap } from "@/api/gear-roadmap-client";
 
 let queryState: {
@@ -69,6 +76,7 @@ function roadmap(over: Partial<GearRoadmap> = {}): GearRoadmap {
 }
 
 beforeEach(() => {
+  portalRouter.reset();
   queryState = { data: roadmap(), isPending: false, isError: false };
 });
 
@@ -138,7 +146,7 @@ describe("RoadmapGrid", () => {
     queryState = {
       data: roadmap({
         gears: [
-          gear({ number: 1, placement: { kind: "overdue" } }),
+          gear({ number: 1, placement: { kind: "overdue", days: 12 } }),
           gear({ number: 2, title: "CORE - Later", placement: { kind: "backlog" } }),
         ],
       }),
@@ -260,7 +268,7 @@ describe("GearDeliveryView", () => {
 
     render(
       <GearDeliveryView
-        config={{ title: "Gear delivery", board: "gear-summary" }}
+        config={{ title: "Gear summary", board: "gear-summary" }}
       />,
     );
 
@@ -269,7 +277,7 @@ describe("GearDeliveryView", () => {
 
 
   it("opens on the summary pane and states the assumed capacity", () => {
-    render(<GearDeliveryView config={{ title: "Gear delivery", board: "gear-summary" }} />);
+    render(<GearDeliveryView config={{ title: "Gear summary", board: "gear-summary" }} />);
 
     expect(
       screen.getByText("Capacity assumed: 1 man-day per person per day"),
@@ -384,5 +392,87 @@ describe("GearsTable subsystem filter", () => {
     await user.click(await screen.findByRole("option", { name: "All subsystems" }));
 
     expect(screen.getByText("CORE - One")).toBeInTheDocument();
+  });
+});
+
+describe("sorting and drill-down", () => {
+  it("asks the server for the order a header names", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable roadmap={queryState.data!} />);
+
+    await user.click(screen.getByRole("button", { name: /Estimate/ }));
+    expect(portalRouter.search).toMatchObject({
+      sort: "effort",
+      dir_sort: "desc",
+    });
+
+    await user.click(screen.getByRole("button", { name: /Estimate/ }));
+    expect(portalRouter.search).toMatchObject({
+      sort: "effort",
+      dir_sort: "asc",
+    });
+  });
+
+  it("names the sorted column for a screen reader", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable roadmap={queryState.data!} />);
+
+    await user.click(screen.getByRole("button", { name: /Estimate/ }));
+
+    expect(
+      screen.getByRole("columnheader", { name: /Estimate/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+  });
+
+  it("says how many days late an overdue gear is", () => {
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({
+            milestone: "2030-05",
+            placement: { kind: "overdue", days: 62 },
+          }),
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+
+    render(<GearsTable roadmap={queryState.data!} />);
+
+    expect(screen.getByText(/2030-05 · 62d/)).toBeInTheDocument();
+  });
+});
+
+describe("subsystem drill-down", () => {
+  it("opens the gear list narrowed to the subsystem a summary row names", async () => {
+    const user = userEvent.setup();
+
+    render(<GearSummary roadmap={queryState.data!} />);
+    await user.click(screen.getByRole("row", { name: /^CORE/ }));
+
+    expect(portalRouter.search).toMatchObject({
+      lens: "Gear list",
+      subsystem: "CORE",
+    });
+  });
+
+  it("reads the chosen subsystem from the URL, so a filtered list is linkable", () => {
+    portalRouter.set({ subsystem: "BSS" });
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({ number: 1, subsystem: "CORE", title: "CORE - One" }),
+          gear({ number: 2, subsystem: "BSS", title: "BSS - Two" }),
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+
+    render(<GearsTable roadmap={queryState.data!} />);
+
+    expect(screen.getByText("BSS - Two")).toBeInTheDocument();
+    expect(screen.queryByText("CORE - One")).toBeNull();
   });
 });

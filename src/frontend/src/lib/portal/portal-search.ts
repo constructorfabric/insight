@@ -24,6 +24,11 @@ export interface PortalSearch {
   zone?: string;
   /** Selected item within a zone (an Overview view, a Manage surface). */
   item?: string;
+  /** Subsystem a gear board is narrowed to; absent means every subsystem. */
+  subsystem?: string;
+  /** Column a gear board is ordered by, and which way. */
+  sort?: string;
+  dir_sort?: string;
   /** Selected account inside the Identities surface (an opaque account key). */
   acct?: string;
   /** Which Identities mode is open (the review queue, a person). */
@@ -84,6 +89,9 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
   return {
     zone: str(raw.zone),
     item: str(raw.item),
+    subsystem: str(raw.subsystem),
+    sort: str(raw.sort),
+    dir_sort: str(raw.dir_sort),
     acct: str(raw.acct),
     mode: str(raw.mode),
     person: str(raw.person)?.toLowerCase(),
@@ -110,6 +118,9 @@ export function validatePortalSearch(raw: Record<string, unknown>): PortalSearch
 export const PORTAL_SEARCH_KEYS = [
   "zone",
   "item",
+  "subsystem",
+  "sort",
+  "dir_sort",
   "acct",
   "mode",
   "person",

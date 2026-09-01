@@ -14,7 +14,7 @@ const BASE =
  */
 export type GearPlacement =
   | { kind: "slot"; slot: number }
-  | { kind: "overdue" }
+  | { kind: "overdue"; days: number }
   | { kind: "future" }
   | { kind: "backlog" }
   | { kind: "unrecognized" }
@@ -80,8 +80,18 @@ export interface GearRoadmap {
   lanes: GearLane[];
 }
 
-export async function getGearRoadmap(): Promise<GearRoadmap> {
-  const res = await fetchWithAuth(`${BASE}/gear-roadmap`);
+/** The column the server orders gears by, and which way. */
+export interface GearOrder {
+  sort: string;
+  direction: "asc" | "desc";
+}
+
+export async function getGearRoadmap(order: GearOrder): Promise<GearRoadmap> {
+  const query = new URLSearchParams({
+    sort: order.sort,
+    direction: order.direction,
+  });
+  const res = await fetchWithAuth(`${BASE}/gear-roadmap?${query.toString()}`);
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
   }

@@ -77,6 +77,15 @@ impl Gear {
         }
     }
 
+    /// A milestone as one number, so months order against each other. Backlog
+    /// and unreadable titles carry none — they name no month to compare.
+    pub(crate) fn milestone_sort_key(&self) -> Option<f64> {
+        match self.milestone.as_ref()? {
+            Milestone::Due(month) => Some(f64::from(month.year) * 12.0 + f64::from(month.month)),
+            Milestone::Backlog | Milestone::Unrecognized(_) => None,
+        }
+    }
+
     pub(crate) fn remaining_man_days(&self) -> Option<f64> {
         let effort = self.effort_man_days?;
         let done = self

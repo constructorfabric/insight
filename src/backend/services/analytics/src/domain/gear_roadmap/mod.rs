@@ -4,3 +4,4 @@ pub(crate) mod model;
 pub(crate) mod progress;
 pub(crate) mod read;
 pub(crate) mod response;
+pub(crate) mod sort;

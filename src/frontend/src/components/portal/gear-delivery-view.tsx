@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import type { GearRoadmap } from "@/api/gear-roadmap-client";
 import type { BoardLensConfig } from "@/lib/portal/lens-configs";
+import { usePortalGearOrder } from "@/lib/portal/portal-nav";
 import { useGearRoadmap } from "@/queries/gear-roadmap";
 
 /**
@@ -17,7 +18,11 @@ import { useGearRoadmap } from "@/queries/gear-roadmap";
  */
 export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useGearRoadmap();
+  const order = usePortalGearOrder();
+  const { data, isPending, isError } = useGearRoadmap({
+    sort: order.sort || "gear",
+    direction: order.direction === "desc" ? "desc" : "asc",
+  });
 
   return (
     <div className="flex flex-col gap-6 p-6">

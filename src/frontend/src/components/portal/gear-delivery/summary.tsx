@@ -1,24 +1,38 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import type { GearRoadmap } from "@/api/gear-roadmap-client";
 import { ShareBar } from "@/components/portal/gear-delivery/parts";
 import { NO_METRIC_VALUE, formatMetricNumber } from "@/lib/format";
+import { SortableHead } from "@/components/portal/gear-delivery/sortable-head";
+import { sortRows, type SortState } from "@/lib/gears/sort";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
-import { summariseBySubsystem } from "@/lib/gears/summary";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
+import {
+  summariseBySubsystem,
+  type SubsystemSummary,
+} from "@/lib/gears/summary";
 
 export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
 
-  const rows = useMemo(() => summariseBySubsystem(roadmap.gears), [roadmap]);
+  const { openSubsystem } = usePortalNavActions();
+  const [sort, setSort] = useState<SortState<SummaryColumn>>({
+    key: "subsystem",
+    direction: "asc",
+  });
+
+  const rows = useMemo(
+    () => sortRows(summariseBySubsystem(roadmap.gears), sort, summaryValue),
+    [roadmap, sort],
+  );
 
 
   const totals = rows.reduce(
@@ -38,39 +52,29 @@ export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableHead>{t("gear_roadmap.items.subsystem")}</TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.overview.items")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.overview.done")}
-              </TableHead>
-              <TableHead className="w-40">
-                {t("gear_roadmap.overview.done_share")}
-              </TableHead>
-              <TableHead className="w-32">
-                {t("gear_roadmap.overview.spec")}
-              </TableHead>
-              <TableHead className="w-32">
-                {t("gear_roadmap.overview.sdk")}
-              </TableHead>
-              <TableHead className="w-32">
-                {t("gear_roadmap.overview.impl")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.overview.effort")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.overview.remaining")}
-              </TableHead>
-              <TableHead className="text-end">
-                {t("gear_roadmap.overview.unestimated")}
-              </TableHead>
+              {SUMMARY_COLUMNS.map((column) => (
+                <SortableHead
+                  key={column.key}
+                  column={column.key}
+                  label={t(`gear_roadmap.overview.${column.key}`)}
+                  sort={sort}
+                  onSort={setSort}
+                  numeric={column.numeric}
+                  className={column.width}
+                />
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.subsystem}>
+              <TableRow
+                key={row.subsystem}
+                onClick={() => openSubsystem(GEAR_LIST_LENS, row.subsystem)}
+                className="cursor-pointer"
+                title={t("gear_roadmap.overview.open_subsystem", {
+                  subsystem: row.subsystem,
+                })}
+              >
                 <TableCell>
                   <span
                     className={`rounded px-1.5 py-0.5 text-xs font-medium ${
@@ -137,4 +141,64 @@ export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
       </div>
     </section>
   );
+}
+
+/** The lens a subsystem row opens, by the name the registry gives it. */
+const GEAR_LIST_LENS = "Gear list";
+
+type SummaryColumn =
+  | "subsystem"
+  | "items"
+  | "done"
+  | "done_share"
+  | "spec"
+  | "sdk"
+  | "impl"
+  | "effort"
+  | "remaining"
+  | "unestimated";
+
+const SUMMARY_COLUMNS: {
+  key: SummaryColumn;
+  numeric?: boolean;
+  width?: string;
+}[] = [
+  { key: "subsystem" },
+  { key: "items", numeric: true },
+  { key: "done", numeric: true },
+  { key: "done_share", width: "w-40" },
+  { key: "spec", width: "w-32" },
+  { key: "sdk", width: "w-32" },
+  { key: "impl", width: "w-32" },
+  { key: "effort", numeric: true },
+  { key: "remaining", numeric: true },
+  { key: "unestimated", numeric: true },
+];
+
+function summaryValue(
+  row: SubsystemSummary,
+  key: SummaryColumn,
+): string | number | null {
+  switch (key) {
+    case "subsystem":
+      return row.subsystem;
+    case "items":
+      return row.items;
+    case "done":
+      return row.done;
+    case "done_share":
+      return row.donePercent;
+    case "spec":
+      return row.specReadiness;
+    case "sdk":
+      return row.sdkReadiness;
+    case "impl":
+      return row.implReadiness;
+    case "effort":
+      return row.effortManDays;
+    case "remaining":
+      return row.remainingManDays;
+    case "unestimated":
+      return row.unestimated;
+  }
 }

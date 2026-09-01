@@ -976,13 +976,13 @@ const DEV: Record<string, LensEntry> = {
     ],
   },
   Elements: SCREEN_GAP("Element-level (file/module) analytics"),
-  "Gear delivery": {
-    title: "Gear delivery",
+  "Gear summary": {
+    title: "Gear summary",
     tagline: "where every gear stands, by subsystem",
     board: "gear-summary",
   },
-  Gears: {
-    title: "Gears",
+  "Gear list": {
+    title: "Gear list",
     tagline: "one row per gear on the board",
     board: "gear-table",
   },

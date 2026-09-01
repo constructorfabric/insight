@@ -36,6 +36,17 @@ export function usePortalDir(): string {
   return usePortalSearch().dir ?? "";
 }
 
+/** The subsystem a board is narrowed to, or "" for every subsystem. */
+export function usePortalSubsystem(): string {
+  return usePortalSearch().subsystem ?? "";
+}
+
+/** The order a gear board is in: the column, and which way. */
+export function usePortalGearOrder(): { sort: string; direction: string } {
+  const { sort, dir_sort } = usePortalSearch();
+  return { sort: sort ?? "", direction: dir_sort ?? "" };
+}
+
 /** The active lens inside the open direction, or "" before one is picked. */
 export function usePortalLens(): string {
   return usePortalSearch().lens ?? "";
@@ -73,6 +84,10 @@ export interface PortalNavActions {
   setLens: (lens: string) => void;
   /** Open a direction on a lens — one write, so one screen and one history entry. */
   openDirection: (dir: string, lens: string) => void;
+  /** Open a lens of the current direction narrowed to one subsystem. */
+  openSubsystem: (lens: string, subsystem: string | null) => void;
+  setSubsystem: (subsystem: string | null) => void;
+  setGearOrder: (sort: string, direction: string) => void;
   setSlice: (slice: string) => void;
   setScope: (patch: Partial<OrgScope>) => void;
 }
@@ -112,6 +127,16 @@ export function usePortalNavActions(): PortalNavActions {
           item: undefined,
           acct: undefined,
         }),
+      openSubsystem: (lens, subsystem) =>
+        setSearch({
+          lens: lens || undefined,
+          subsystem: subsystem ?? undefined,
+          item: undefined,
+        }),
+      setSubsystem: (subsystem) =>
+        setSearch({ subsystem: subsystem ?? undefined }),
+      setGearOrder: (sort, direction) =>
+        setSearch({ sort: sort || undefined, dir_sort: direction || undefined }),
       setSlice: (slice) => {
         recordUsageEvent("cohort", slice || "none");
         setSearch({ slice: slice || undefined });
