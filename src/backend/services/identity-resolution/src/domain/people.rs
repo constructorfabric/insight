@@ -50,8 +50,12 @@ fn change(
     profiles: &[&SeedProfile],
     roster: Option<&RosterSource>,
 ) -> Option<PersonChange> {
-    if let Some(profile) = preferred_active_profile(profiles, roster) {
-        return Some(PersonChange::Upsert(project(person_id, profile)));
+    if let Some((profile, membership_at)) = preferred_active_profile(profiles, roster) {
+        return Some(PersonChange::Upsert(project(
+            person_id,
+            profile,
+            membership_at,
+        )));
     }
 
     profiles
@@ -68,17 +72,16 @@ fn change(
 fn preferred_active_profile<'a>(
     profiles: &[&'a SeedProfile],
     roster: Option<&RosterSource>,
-) -> Option<&'a SeedProfile> {
+) -> Option<(&'a SeedProfile, DateTime)> {
     profiles
         .iter()
         .copied()
-        .filter(|profile| roster_profile(profile, roster))
-        .filter(|profile| {
-            profile
-                .roster_membership
-                .is_some_and(|membership| membership.active)
+        .filter_map(|profile| {
+            let membership = profile.roster_membership?;
+            (roster_profile(profile, roster) && membership.active)
+                .then_some((profile, membership.observed_at))
         })
-        .max_by_key(|profile| {
+        .max_by_key(|(profile, _)| {
             let populated = [
                 "display_name",
                 "first_name",
@@ -102,11 +105,7 @@ fn roster_profile(profile: &SeedProfile, roster: Option<&RosterSource>) -> bool 
     roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type))
 }
 
-fn project(person_id: Uuid, profile: &SeedProfile) -> PersonProjection {
-    let membership_at = profile.roster_membership.map_or_else(
-        || chrono::DateTime::UNIX_EPOCH.naive_utc(),
-        |membership| membership.observed_at,
-    );
+fn project(person_id: Uuid, profile: &SeedProfile, membership_at: DateTime) -> PersonProjection {
     PersonProjection {
         person_id,
         email: profile_value(profile, "email"),

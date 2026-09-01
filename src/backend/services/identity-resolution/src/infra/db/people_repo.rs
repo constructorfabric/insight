@@ -47,6 +47,7 @@ pub async fn reconcile(
     retained_people: Option<&HashSet<Uuid>>,
 ) -> Result<ReconcileCounts, PeopleRepoError> {
     let current = current_people(txn, tenant_id).await?;
+    let previously_closed = previously_closed_people(txn, tenant_id).await?;
     let now = Utc::now().naive_utc();
     let mut counts = ReconcileCounts::default();
 
@@ -54,7 +55,12 @@ pub async fn reconcile(
         match change {
             PersonChange::Upsert(projected) => {
                 let Some(existing) = current.get(&projected.person_id) else {
-                    insert(txn, tenant_id, projected, projected.valid_from.min(now)).await?;
+                    let valid_from = opening_time(
+                        previously_closed.contains(&projected.person_id),
+                        projected.valid_from,
+                        now,
+                    );
+                    insert(txn, tenant_id, projected, valid_from).await?;
                     counts.opened += 1;
                     continue;
                 };
@@ -126,6 +132,17 @@ fn transition_time(
     requested.max(current_valid_from).min(now)
 }
 
+fn opening_time(
+    was_previously_closed: bool,
+    projected_valid_from: NaiveDateTime,
+    now: NaiveDateTime,
+) -> NaiveDateTime {
+    if was_previously_closed {
+        return now;
+    }
+    projected_valid_from.min(now)
+}
+
 fn same_state(current: &PersonProjection, projected: &PersonProjection) -> bool {
     current.email == projected.email
         && current.username == projected.username
@@ -159,6 +176,32 @@ where
         .map(decode_current)
         .map(|result| result.map(|person| (person.projection.person_id, person)))
         .collect()
+}
+
+async fn previously_closed_people<C>(
+    db: &C,
+    tenant_id: Uuid,
+) -> Result<HashSet<Uuid>, PeopleRepoError>
+where
+    C: ConnectionTrait,
+{
+    const SQL: &str = r"
+        SELECT DISTINCT person_id
+        FROM people
+        WHERE insight_tenant_id = ? AND valid_to IS NOT NULL
+    ";
+    db.query_all_raw(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        SQL,
+        [tenant_id.as_bytes().to_vec().into()],
+    ))
+    .await?
+    .iter()
+    .map(|row| {
+        let person_id = row.try_get::<Vec<u8>>("", "person_id")?;
+        Uuid::from_slice(&person_id).map_err(PeopleRepoError::from)
+    })
+    .collect()
 }
 
 fn decode_current(row: &QueryResult) -> Result<CurrentPerson, PeopleRepoError> {
@@ -227,7 +270,10 @@ async fn insert(
 mod tests {
     use std::collections::BTreeMap;
 
+    use sea_orm::TransactionTrait as _;
+
     use super::*;
+    use crate::infra::db::test_fixture::fixture_or_skip;
 
     fn projection(days_after_epoch: i64) -> PersonProjection {
         PersonProjection {
@@ -246,6 +292,105 @@ mod tests {
     #[test]
     fn a_new_observation_time_does_not_create_a_profile_revision() {
         assert!(same_state(&projection(1), &projection(2)));
+    }
+
+    #[test]
+    fn a_first_projection_starts_at_its_source_time() {
+        let source_time = projection(1).valid_from;
+        let now = projection(3).valid_from;
+
+        assert_eq!(opening_time(false, source_time, now), source_time);
+    }
+
+    #[test]
+    fn a_reopened_person_starts_a_new_interval_now() {
+        let old_source_time = projection(1).valid_from;
+        let now = projection(3).valid_from;
+
+        assert_eq!(opening_time(true, old_source_time, now), now);
+    }
+
+    #[test]
+    fn a_future_source_time_is_capped_at_now() {
+        let now = projection(1).valid_from;
+        let future_source_time = projection(3).valid_from;
+
+        assert_eq!(opening_time(false, future_source_time, now), now);
+    }
+
+    #[tokio::test]
+    async fn reopening_after_close_does_not_overlap_the_previous_interval() -> anyhow::Result<()> {
+        let Some(fixture) = fixture_or_skip().await? else {
+            return Ok(());
+        };
+        let person_id = Uuid::now_v7();
+        let projected = PersonProjection {
+            person_id,
+            ..projection(1)
+        };
+
+        let txn = fixture.db.begin().await?;
+        reconcile(
+            &txn,
+            fixture.tenant,
+            &[PersonChange::Upsert(projected.clone())],
+            None,
+        )
+        .await?;
+        txn.commit().await?;
+
+        let txn = fixture.db.begin().await?;
+        reconcile(
+            &txn,
+            fixture.tenant,
+            &[PersonChange::Close {
+                person_id,
+                valid_to: Utc::now().naive_utc(),
+            }],
+            None,
+        )
+        .await?;
+        txn.commit().await?;
+
+        let txn = fixture.db.begin().await?;
+        reconcile(
+            &txn,
+            fixture.tenant,
+            &[PersonChange::Upsert(projected)],
+            None,
+        )
+        .await?;
+        txn.commit().await?;
+
+        let rows = fixture
+            .db
+            .query_all_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                r"
+                    SELECT valid_from, valid_to
+                    FROM people
+                    WHERE insight_tenant_id = ? AND person_id = ?
+                    ORDER BY id
+                ",
+                [
+                    fixture.tenant.as_bytes().to_vec().into(),
+                    person_id.as_bytes().to_vec().into(),
+                ],
+            ))
+            .await?;
+
+        assert_eq!(rows.len(), 2);
+        let closed_at = rows[0]
+            .try_get::<Option<NaiveDateTime>>("", "valid_to")?
+            .ok_or_else(|| anyhow::anyhow!("first interval was not closed"))?;
+        let reopened_at = rows[1].try_get::<NaiveDateTime>("", "valid_from")?;
+        assert!(closed_at <= reopened_at);
+        assert!(
+            rows[1]
+                .try_get::<Option<NaiveDateTime>>("", "valid_to")?
+                .is_none()
+        );
+        Ok(())
     }
 
     #[test]
