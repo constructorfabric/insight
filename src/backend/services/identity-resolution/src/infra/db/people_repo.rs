@@ -1,15 +1,10 @@
 use std::collections::HashMap;
 
 use chrono::{NaiveDateTime, Utc};
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, QueryResult, Statement,
-};
+use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
 use crate::domain::people::{PersonChange, PersonProjection};
-use crate::domain::person_card::{PersonCard, compose_name};
-
-use super::persons_repo;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CurrentPerson {
@@ -164,121 +159,6 @@ async fn insert(
     ))
     .await?;
     Ok(())
-}
-
-pub async fn person_cards(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    person_ids: &[Uuid],
-) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
-    let mut cards = presentation_cards(db, tenant_id, person_ids).await?;
-    let roster_ids = cards.keys().copied().collect::<Vec<_>>();
-    let attributes = persons_repo::person_cards(db, tenant_id, &roster_ids).await?;
-    for (person_id, card) in &mut cards {
-        let Some(attribute_card) = attributes.get(person_id) else {
-            continue;
-        };
-        card.job_title.clone_from(&attribute_card.job_title);
-        card.status.clone_from(&attribute_card.status);
-    }
-
-    Ok(cards)
-}
-
-pub async fn presentation_cards(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    person_ids: &[Uuid],
-) -> anyhow::Result<HashMap<Uuid, PersonCard>> {
-    if person_ids.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let placeholders = vec!["?"; person_ids.len()].join(", ");
-    let sql = format!(
-        "SELECT person_id, email, username, display_name, first_name, last_name FROM people \
-         WHERE insight_tenant_id = ? AND valid_to IS NULL \
-         AND person_id IN ({placeholders})"
-    );
-    let mut values = vec![tenant_id.as_bytes().to_vec().into()];
-    values.extend(
-        person_ids
-            .iter()
-            .map(|person_id| person_id.as_bytes().to_vec().into()),
-    );
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            &sql,
-            values,
-        ))
-        .await?;
-
-    rows.iter()
-        .map(decode_card)
-        .collect::<anyhow::Result<HashMap<_, _>>>()
-}
-
-fn decode_card(row: &QueryResult) -> anyhow::Result<(Uuid, PersonCard)> {
-    let person_id = Uuid::from_slice(&row.try_get::<Vec<u8>>("", "person_id")?)?;
-    let first_name: Option<String> = row.try_get("", "first_name")?;
-    let last_name: Option<String> = row.try_get("", "last_name")?;
-    let stored_display_name: Option<String> = row.try_get("", "display_name")?;
-    let display_name =
-        stored_display_name.or_else(|| compose_name(first_name.clone(), last_name.clone()));
-    Ok((
-        person_id,
-        PersonCard {
-            person_id,
-            email: row.try_get("", "email")?,
-            username: row.try_get("", "username")?,
-            display_name,
-            first_name,
-            last_name,
-            job_title: None,
-            status: None,
-        },
-    ))
-}
-
-pub async fn people_in_tenant(
-    db: &DatabaseConnection,
-    tenant_id: Uuid,
-    requested: &[Uuid],
-) -> anyhow::Result<Vec<Uuid>> {
-    if requested.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = vec!["?"; requested.len()].join(", ");
-    let sql = format!(
-        "SELECT person_id FROM people WHERE insight_tenant_id = ? AND valid_to IS NULL \
-         AND person_id IN ({placeholders})"
-    );
-    let mut values = vec![tenant_id.as_bytes().to_vec().into()];
-    values.extend(
-        requested
-            .iter()
-            .map(|person_id| person_id.as_bytes().to_vec().into()),
-    );
-    let rows = db
-        .query_all_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            &sql,
-            values,
-        ))
-        .await?;
-    let current = rows
-        .iter()
-        .map(|row| {
-            let raw: Vec<u8> = row.try_get("", "person_id")?;
-            Ok(Uuid::from_slice(&raw)?)
-        })
-        .collect::<anyhow::Result<std::collections::HashSet<_>>>()?;
-
-    Ok(requested
-        .iter()
-        .copied()
-        .filter(|person_id| current.contains(person_id))
-        .collect())
 }
 
 #[cfg(test)]

@@ -21,13 +21,12 @@ use super::canonical_json::CanonicalJson;
 use super::error::ProfileError;
 use super::gate::{require_caller, require_service};
 use crate::domain::login_bootstrap;
-use crate::domain::person_card::PersonCard;
 use crate::domain::profile::{
     BatchProfilesRequest, ParentProjection, PersonResponse, ResolveProfileRequest, assemble_person,
-    assemble_profile,
+    assemble_profile, latest_values,
 };
 use crate::domain::profile_batch::{self, BatchProfilesError};
-use crate::infra::db::{people_repo, persons_repo, resolution_repo, roles_repo, subchart_repo};
+use crate::infra::db::{persons_repo, resolution_repo, roles_repo, subchart_repo};
 
 /// `POST /v1/profiles` — resolve one identity (email or source-native id) to a
 /// person, then assemble the profile.
@@ -77,22 +76,14 @@ pub async fn resolve_profile(
                     })?;
             let parent = resolve_parent(&state, tenant, *person_id).await?;
             let subordinates = resolve_subordinates(&state, tenant, *person_id).await?;
-            let mut profile = assemble_profile(
+            Ok(Json(assemble_profile(
                 *person_id,
                 tenant,
                 observations,
                 source_ids,
                 parent,
                 subordinates,
-            );
-            let cards = people_repo::presentation_cards(&state.db, tenant, &[*person_id])
-                .await
-                .map_err(profile_read_error)?;
-            if let Some(card) = cards.get(person_id) {
-                apply_profile_presentation(&mut profile, card);
-            }
-
-            Ok(Json(profile))
+            )))
         }
         ids => {
             // >1 match: include the resolved ids in the detail so operators can
@@ -151,16 +142,8 @@ async fn visible_person_ids(
     caller: Uuid,
     candidate_ids: Vec<Uuid>,
 ) -> Result<Vec<Uuid>, CanonicalError> {
-    let roster = people_repo::people_in_tenant(&state.db, tenant, &candidate_ids)
-        .await
-        .map_err(profile_read_error)?
-        .into_iter()
-        .collect::<HashSet<_>>();
     let mut visible = Vec::with_capacity(candidate_ids.len());
     for person_id in candidate_ids {
-        if !roster.contains(&person_id) {
-            continue;
-        }
         let can_see = subchart_repo::is_target_in_visible_set(
             &state.db,
             tenant,
@@ -837,6 +820,13 @@ async fn resolve_parent(
         return Ok(None);
     };
 
+    let parent_obs =
+        persons_repo::fetch_person_observations(&state.db, tenant, edge.parent_person_id)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "fetch parent observations failed");
+                CanonicalError::internal("profile assembly failed").create()
+            })?;
     let parent_ids =
         persons_repo::current_source_ids_for_person(&state.db, tenant, edge.parent_person_id)
             .await
@@ -845,10 +835,7 @@ async fn resolve_parent(
                 CanonicalError::internal("profile assembly failed").create()
             })?;
 
-    let cards = people_repo::presentation_cards(&state.db, tenant, &[edge.parent_person_id])
-        .await
-        .map_err(profile_read_error)?;
-    let card = cards.get(&edge.parent_person_id);
+    let latest = latest_values(parent_obs);
     // Parent's source-native id on the same source instance as the edge.
     let source_native_id = parent_ids
         .into_iter()
@@ -857,8 +844,8 @@ async fn resolve_parent(
 
     Ok(Some(ParentProjection {
         person_id: edge.parent_person_id,
-        email: card.and_then(|card| card.email.clone()),
-        display_name: card.and_then(|card| card.display_name.clone()),
+        email: latest.get("email").cloned(),
+        display_name: latest.get("display_name").cloned(),
         source_native_id,
     }))
 }
@@ -945,43 +932,15 @@ fn hydrate_person<'a>(
         if observations.is_empty() {
             return Ok(None);
         }
-        let cards = people_repo::presentation_cards(&state.db, tenant, &[person_id])
-            .await
-            .map_err(profile_read_error)?;
-        let Some(card) = cards.get(&person_id) else {
-            return Ok(None);
-        };
         let parent = resolve_parent(state, tenant, person_id).await?;
         let subordinates = hydrate_children(state, tenant, person_id, depth, visited).await?;
-        let mut person = assemble_person(person_id, observations, parent, subordinates);
-        apply_person_presentation(&mut person, card);
-        Ok(Some(person))
+        Ok(Some(assemble_person(
+            person_id,
+            observations,
+            parent,
+            subordinates,
+        )))
     })
-}
-
-fn apply_profile_presentation(
-    profile: &mut crate::domain::profile::ProfileResponse,
-    card: &PersonCard,
-) {
-    profile.email.clone_from(&card.email);
-    profile.username.clone_from(&card.username);
-    profile.display_name.clone_from(&card.display_name);
-    profile.first_name.clone_from(&card.first_name);
-    profile.last_name.clone_from(&card.last_name);
-}
-
-fn apply_person_presentation(person: &mut PersonResponse, card: &PersonCard) {
-    person.email = card.email.clone().unwrap_or_default();
-    person.username = card.username.clone().unwrap_or_default();
-    person.display_name = card.display_name.clone().unwrap_or_default();
-    person.first_name = card.first_name.clone().unwrap_or_default();
-    person.last_name = card.last_name.clone().unwrap_or_default();
-}
-
-#[expect(clippy::needless_pass_by_value, reason = "used directly as map_err")]
-fn profile_read_error(error: anyhow::Error) -> CanonicalError {
-    tracing::error!(%error, "people projection read failed");
-    CanonicalError::internal("profile assembly failed").create()
 }
 
 #[cfg(test)]

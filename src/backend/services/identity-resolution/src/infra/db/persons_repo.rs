@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, QueryFilter,
-    QueryResult, Statement,
+    QueryResult, QuerySelect, Statement,
 };
 use uuid::Uuid;
 
@@ -422,6 +422,38 @@ pub async fn resolve_person_ids_by_source_id(
 /// # Errors
 ///
 /// Returns an error if the query fails.
+/// The subset of `person_ids` with at least one observation in the tenant's
+/// persons log — the batch form of [`person_exists`], for the wildcard branch
+/// of the visible-persons filter: a wildcard grant covers everyone IN THE
+/// TENANT, so ids from another tenant (or from nowhere) must not be echoed
+/// back as visible.
+///
+/// # Errors
+///
+/// Returns an error if the query fails or a stored `person_id` is not 16 bytes.
+pub async fn persons_in_tenant(
+    db: &DatabaseConnection,
+    tenant_id: Uuid,
+    person_ids: &[Uuid],
+) -> Result<Vec<Uuid>, BatchProfileReadError> {
+    if person_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = persons::Entity::find()
+        .select_only()
+        .column(persons::Column::PersonId)
+        .filter(persons::Column::InsightTenantId.eq(tenant_id.as_bytes().to_vec()))
+        .filter(persons::Column::PersonId.is_in(person_ids.iter().map(|id| id.as_bytes().to_vec())))
+        .filter(persons::Column::PersonId.ne(EXCLUDED_PERSON.as_bytes().to_vec()))
+        .distinct()
+        .into_tuple::<Vec<u8>>()
+        .all(db)
+        .await?;
+
+    rows.iter().map(|raw| Ok(Uuid::from_slice(raw)?)).collect()
+}
+
 pub async fn person_exists(
     db: &DatabaseConnection,
     tenant_id: Uuid,

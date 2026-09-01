@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use super::person_listing::{self, After, PersonListRow, Restrict, VisibleTo};
+use super::person_listing::{self, After, Listed, PersonListRow, Restrict, VisibleTo};
 use super::test_fixture::{SOURCE_TYPE, fixture_or_skip};
 use crate::config::VisibilityPolicy;
 
@@ -21,9 +21,37 @@ async fn page(
     after: Option<After<'_>>,
     limit: u64,
 ) -> anyhow::Result<Vec<PersonListRow>> {
-    listed_page(f, viewer, policy, terms, after, limit).await
+    listed_page(
+        f,
+        viewer,
+        policy,
+        terms,
+        after,
+        limit,
+        Listed::EveryIdentity,
+    )
+    .await
 }
 
+/// The roster exactly as the endpoint asks for it.
+async fn only_account_holders(
+    f: &super::test_fixture::Fixture,
+    viewer: Uuid,
+    limit: u64,
+) -> anyhow::Result<Vec<PersonListRow>> {
+    listed_page(
+        f,
+        viewer,
+        VisibilityPolicy::Flat,
+        &[],
+        None,
+        limit,
+        Listed::AccountHolders,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn listed_page(
     f: &super::test_fixture::Fixture,
     viewer: Uuid,
@@ -31,6 +59,7 @@ async fn listed_page(
     terms: &[String],
     after: Option<After<'_>>,
     limit: u64,
+    listed: Listed,
 ) -> anyhow::Result<Vec<PersonListRow>> {
     person_listing::list_persons(
         &f.db,
@@ -38,6 +67,7 @@ async fn listed_page(
         terms,
         &[],
         Restrict {
+            listed,
             visible_to: Some(VisibleTo {
                 viewer_person_id: viewer,
                 org_source_type: SOURCE_TYPE,
@@ -112,14 +142,11 @@ async fn the_roster_is_ordered_by_label_and_a_cursor_resumes_after_it() -> TestR
     };
     // The label prefers a display name, so the order must ignore the address.
     let carol = f.person("zzz-1@roster.test").await?;
-    f.project_person(carol, None, None, Some("Carol"), None, None)
-        .await?;
+    f.observed(carol, "display_name", "Carol").await?;
     let alice = f.person("zzz-2@roster.test").await?;
-    f.project_person(alice, None, None, Some("Alice"), None, None)
-        .await?;
+    f.observed(alice, "display_name", "Alice").await?;
     let bob = f.person("zzz-3@roster.test").await?;
-    f.project_person(bob, None, None, Some("Bob"), None, None)
-        .await?;
+    f.observed(bob, "display_name", "Bob").await?;
 
     let first = page(&f, alice, VisibilityPolicy::Flat, &[], None, 2).await?;
     assert_eq!(ids(&first), vec![alice, bob], "alphabetical by label");
@@ -169,10 +196,9 @@ async fn a_search_term_narrows_the_roster_within_the_visible_set() -> TestResult
     };
     let viewer = f.person("searchable@roster.test").await?;
     let other = f.person("elsewhere@roster.test").await?;
-    f.project_person(viewer, None, None, Some("Findable Person"), None, None)
+    f.observed(viewer, "display_name", "Findable Person")
         .await?;
-    f.project_person(other, None, None, Some("Someone Else"), None, None)
-        .await?;
+    f.observed(other, "display_name", "Someone Else").await?;
 
     let rows = page(
         &f,
@@ -189,22 +215,27 @@ async fn a_search_term_narrows_the_roster_within_the_visible_set() -> TestResult
 }
 
 #[tokio::test]
-async fn the_roster_leaves_out_an_identity_without_a_people_projection() -> TestResult {
+async fn a_roster_of_account_holders_leaves_out_an_identity_nobody_claims() -> TestResult {
+    // The shape a git-only organisation is full of: an address a commit carried,
+    // which the journal turned into a person because that is what the journal
+    // does. Nobody here holds it — no connector ever claimed it as an account —
+    // so it is an observation, and a roster that lists it is a directory of
+    // strangers. The account holder beside it is what the roster IS.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let identity_only = f.identity_only_person("observed-only@roster.test").await?;
-    let roster_person = f.emailless_person().await?;
+    let observed_only = f.person("commit-author@roster.test").await?;
+    let account_holder = f.emailless_person().await?;
 
-    let listed = ids(&page(&f, roster_person, VisibilityPolicy::Flat, &[], None, PAGE).await?);
+    let listed = ids(&only_account_holders(&f, account_holder, PAGE).await?);
 
     assert!(
-        listed.contains(&roster_person),
-        "the projected person must be listed: {listed:?}"
+        listed.contains(&account_holder),
+        "the account holder must be listed: {listed:?}"
     );
     assert!(
-        !listed.contains(&identity_only),
-        "an identity observation must not reach the roster: {listed:?}"
+        !listed.contains(&observed_only),
+        "an unclaimed address must not reach the roster: {listed:?}"
     );
     Ok(())
 }

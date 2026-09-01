@@ -458,8 +458,7 @@ async fn batch_profiles_preserves_order_and_omits_hidden_or_unknown_people() -> 
     f.observed_from("github", github_only, "username", "github-only")
         .await?;
     f.observed(github_only, "department", "Engineering").await?;
-    f.project_person(manager, None, None, Some("Batch Manager"), None, None)
-        .await?;
+    f.observed(manager, "display_name", "Batch Manager").await?;
     f.reports_to(github_only, manager).await?;
 
     let unknown = Uuid::now_v7();
@@ -667,6 +666,126 @@ fn found_ids(payload: &Value) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
+#[tokio::test]
+async fn people_lists_only_current_roster_people_visible_to_the_caller() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-caller@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let report = f.person("people-report@http-live.test").await?;
+    f.project_person(
+        report,
+        Some("canonical@http-live.test"),
+        Some("canonical-handle"),
+        Some(&format!("Canonical {marker}")),
+        Some("Canonical"),
+        Some("Person"),
+    )
+    .await?;
+    f.reports_to(report, caller).await?;
+    let identity_only = f
+        .identity_only_person(&format!("observed-{marker}@http-live.test"))
+        .await?;
+    let unrelated = f
+        .person(&format!("unrelated-{marker}@http-live.test"))
+        .await?;
+
+    let (status, body) = get(app(&f, caller), &format!("/v1/people?q={marker}")).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![report.to_string()]);
+    let item = &body["items"][0];
+    assert_eq!(item["display_name"], format!("Canonical {marker}"));
+    assert_eq!(item["first_name"], "Canonical");
+    assert_eq!(item["last_name"], "Person");
+    assert_eq!(item["username"], "canonical-handle");
+    assert_eq!(item["email"], "canonical@http-live.test");
+    for legacy_field in ["provisional", "job_title", "status"] {
+        assert!(
+            item.get(legacy_field).is_none(),
+            "unexpected {legacy_field}: {item}"
+        );
+    }
+    assert!(
+        !found_ids(&body)?.contains(&identity_only.to_string()),
+        "identity evidence without a people projection is not roster membership"
+    );
+    assert!(
+        !found_ids(&body)?.contains(&unrelated.to_string()),
+        "caller visibility excludes unrelated roster people"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn tenant_people_visibility_requires_admin_and_lists_the_tenant_roster() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-plain@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    let unrelated = f.person(&format!("tenant-{marker}@http-live.test")).await?;
+    let uri = format!("/v1/people?visibility=tenant&q=tenant-{marker}");
+
+    let (status, _) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    grant_admin(&f, caller).await?;
+    let (status, body) = get(app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&body)?, vec![unrelated.to_string()]);
+
+    let (status, _) = get(app(&f, caller), "/v1/people?visibility=all").await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn people_cursor_resumes_only_the_listing_that_issued_it() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = f.person("people-page-caller@http-live.test").await?;
+    let marker = Uuid::now_v7().simple().to_string();
+    for index in 0..2 {
+        let person = f
+            .person(&format!("people-page-{marker}-{index}@http-live.test"))
+            .await?;
+        f.project_person(
+            person,
+            None,
+            None,
+            Some(&format!("People Page {marker} {index}")),
+            None,
+            None,
+        )
+        .await?;
+    }
+
+    let uri = format!("/v1/people?q={marker}&limit=1");
+    let (status, first) = get(flat_app(&f, caller), &uri).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&first)?.len(), 1);
+    let cursor = first["next_cursor"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("expected next cursor: {first}"))?;
+
+    let (status, second) = get(flat_app(&f, caller), &format!("{uri}&cursor={cursor}")).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found_ids(&second)?.len(), 1);
+    assert_ne!(found_ids(&first)?, found_ids(&second)?);
+
+    grant_admin(&f, caller).await?;
+    let (status, _) = get(
+        flat_app(&f, caller),
+        &format!("/v1/people?visibility=tenant&q={marker}&limit=1&cursor={cursor}"),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    Ok(())
+}
+
 async fn admin_operator(f: &Fixture) -> anyhow::Result<Uuid> {
     let operator = f.person("operator@http-live.test").await?;
     grant_admin(f, operator).await?;
@@ -730,7 +849,10 @@ async fn a_person_is_found_by_a_current_email_fragment() -> TestResult {
 }
 
 #[tokio::test]
-async fn activity_email_does_not_override_the_roster_email() -> TestResult {
+async fn a_superseded_email_no_longer_finds_its_old_owner() -> TestResult {
+    // The moved-mailbox case: the old owner observed a NEWER email from the
+    // same source, so the old address is theirs no more — only the person the
+    // address currently belongs to comes back.
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -750,14 +872,10 @@ async fn activity_email_does_not_override_the_roster_email() -> TestResult {
     let (status, body) = get(app(&f, operator), &format!("/v1/persons?q=moved-{marker}")).await?;
 
     assert_eq!(status, StatusCode::OK);
-    let found = found_ids(&body)?;
-    assert!(found.contains(&old_owner.to_string()));
-    assert!(found.contains(&new_owner.to_string()));
-
-    let (_, activity) = get(app(&f, operator), &format!("/v1/persons?q=fresh-{marker}")).await?;
-    assert!(
-        found_ids(&activity)?.is_empty(),
-        "activity metadata must not rename the roster person"
+    assert_eq!(
+        found_ids(&body)?,
+        vec![new_owner.to_string()],
+        "the old owner's claim is superseded by their own fresher email"
     );
     Ok(())
 }
@@ -796,15 +914,8 @@ async fn every_term_must_match_though_not_the_same_value() -> TestResult {
     let operator = admin_operator(&f).await?;
     let marker = Uuid::now_v7().simple().to_string();
     let person = f.person(&format!("multi-{marker}@http-live.test")).await?;
-    f.project_person(
-        person,
-        Some(&format!("multi-{marker}@http-live.test")),
-        None,
-        Some(&format!("Terman Findable {marker}")),
-        None,
-        None,
-    )
-    .await?;
+    f.observed(person, "display_name", &format!("Terman Findable {marker}"))
+        .await?;
 
     let by_both = format!("/v1/persons?q=multi-{marker}%20findable");
     let (status, body) = get(app(&f, operator), &by_both).await?;
@@ -845,15 +956,8 @@ async fn the_listing_is_ordered_by_the_label_each_row_shows() -> TestResult {
     let named = f
         .person(&format!("aaa-order-{marker}@http-live.test"))
         .await?;
-    f.project_person(
-        named,
-        None,
-        None,
-        Some(&format!("Zzz Named {marker}")),
-        None,
-        None,
-    )
-    .await?;
+    f.observed(named, "display_name", &format!("Zzz Named {marker}"))
+        .await?;
     let unlabelled = f.emailless_person().await?;
 
     let (status, body) = get(app(&f, operator), "/v1/persons").await?;
@@ -1004,9 +1108,7 @@ async fn the_roster_leaves_out_an_identity_nobody_claims() -> TestResult {
         return Ok(());
     };
     let holder = f.account_holder("roster-holder@http-live.test").await?;
-    let observed_only = f
-        .identity_only_person("roster-observed@http-live.test")
-        .await?;
+    let observed_only = f.person("roster-observed@http-live.test").await?;
 
     let (status, body) = get(flat_app(&f, holder), "/v1/visible-persons").await?;
 
@@ -1054,7 +1156,7 @@ async fn a_roster_cursor_resumes_after_the_page_it_was_issued_for() -> TestResul
 }
 
 #[tokio::test]
-async fn a_sign_in_minted_identity_is_not_a_roster_person() -> TestResult {
+async fn a_sign_in_minted_person_is_listed_by_their_login_and_marked() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
@@ -1071,12 +1173,10 @@ async fn a_sign_in_minted_identity_is_not_a_roster_person() -> TestResult {
                 .iter()
                 .find(|item| item["person_id"].as_str() == Some(&minted.to_string()))
         })
-        .cloned();
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("a login-minted person is still a person: {body}"))?;
 
-    assert!(
-        entry.is_none(),
-        "login evidence alone is not the roster: {body}"
-    );
+    assert_eq!(entry["provisional"], true, "offered, and marked as thin");
     Ok(())
 }
 

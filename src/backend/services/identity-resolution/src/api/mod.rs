@@ -9,6 +9,7 @@ mod handlers;
 mod http_live_tests;
 mod listing;
 pub mod me;
+pub mod people;
 pub mod person_roles;
 pub mod persons;
 pub mod resolution;
@@ -173,6 +174,41 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         )
         .standard_errors(openapi)
         .handler(me::get_me)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/v1/people")
+        .operation_id("identity_resolution.people.list")
+        .summary("List current roster people")
+        .authenticated()
+        .query_param(
+            "visibility",
+            false,
+            "`caller` (default) returns people visible to the caller; `tenant` returns the entire tenant roster and requires admin",
+        )
+        .query_param(
+            "q",
+            false,
+            "Search display name, first name, last name, username, or email; every whitespace-separated term must match",
+        )
+        .query_param_typed(
+            "limit",
+            false,
+            "Cap on returned people (1..=500, default 50)",
+            "integer",
+        )
+        .query_param(
+            "cursor",
+            false,
+            "Opaque `next_cursor` from the previous page; valid only for the same caller, visibility, and query",
+        )
+        .no_license_required()
+        .json_response_with_schema::<people::PeopleListResponse>(
+            openapi,
+            StatusCode::OK,
+            "One page of current roster people",
+        )
+        .standard_errors(openapi)
+        .handler(people::list_people)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/v1/persons")
@@ -705,6 +741,10 @@ mod openapi_tests {
     fn the_document_builds_without_state_or_backends() -> anyhow::Result<()> {
         let document = openapi_document()?;
 
+        assert!(
+            document.paths.paths.contains_key("/v1/people"),
+            "the additive people listing must be described"
+        );
         assert!(
             document.paths.paths.contains_key("/v1/resolution/bind"),
             "the correction surface must be described: {:?}",

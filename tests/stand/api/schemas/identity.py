@@ -160,6 +160,26 @@ class MergeRequest(BaseModel):
     target_person_id: UUID = Field(..., description='The surviving person, named explicitly by the operator.')
 
 
+class PeopleListItemResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    display_name: str | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    person_id: UUID
+    username: str | None = None
+
+
+class PeopleListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    items: list[PeopleListItemResponse]
+    next_cursor: str | None = None
+
+
 class PersonAccountEntry(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -239,9 +259,7 @@ class PersonSummaryResponse(BaseModel):
     )
     display_name: str | None = None
     email: str | None = None
-    first_name: str | None = None
     job_title: str | None = None
-    last_name: str | None = None
     person_id: UUID
     provisional: bool | None = Field(None, description='The journal holds nothing but an automatic mint for this person — a\nsign-in that needed somebody to enter as, or a roster listing an account\nwith no address. They may duplicate one the roster knows, so they are not\na merge target: the history is on the other side.')
     status: str | None = None

@@ -114,8 +114,6 @@ export interface PersonSummary {
   email?: string | null;
   username?: string | null;
   display_name?: string | null;
-  first_name?: string | null;
-  last_name?: string | null;
   job_title?: string | null;
   status?: string | null;
 }

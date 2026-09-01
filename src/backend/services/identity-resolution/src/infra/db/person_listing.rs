@@ -1,15 +1,68 @@
-//! Ordered, searchable, keyset-paginated reads over the current `people`
-//! projection. The projection is the roster; identity observations that have
-//! no active roster membership never enter this query.
+//! The operator's person listing — one ordered, keyset-paginated query behind
+//! both browsing every person and searching for one.
 //!
-//! The displayed and ordered label is display name, composed first/last name,
-//! username, then email. Search uses the same five projected fields. A bounded
-//! probe avoids ranking the whole tenant for selective searches.
+//! Browse and search are the same set with a different filter, so they are one
+//! query: an operator narrowing the terms must not get a differently ordered
+//! list, and a page boundary must fall in the same place either way.
+//!
+//! **The order is the card's own label** — display name, else the composed
+//! first/last, else the source-native handle, else the address — folded to
+//! lower case, with the people the journal knows by nothing but an id last.
+//! Ordering by anything else would sort the list by a value the rows do not
+//! show.
+//!
+//! The address is the LAST resort, behind the handle: a source that hides a
+//! member's e-mail still reports one for their commits, and a generated address
+//! naming an account (`<id>+<handle>@…`) is not what anybody calls that person.
+//! The handle is.
+//!
+//! INVARIANT: the label follows `person_card`'s rule exactly, including where
+//! that rule leaves an attribute absent. Both rank every observation of a value
+//! type and only then discard a blank winner — dropping blanks first would
+//! promote a value the card does not show, and the list would sort a row under a
+//! name nobody sees.
+//!
+//! The filter deliberately matches a WIDER surface than the order: every value
+//! that is current **for its own source**, not just the globally latest one.
+//! A person renamed in one system stays findable by the name another system
+//! still reports, which is exactly what an operator arrives holding.
+//!
+//! A substring match over the journal cannot use a B-tree, and the ranking is
+//! the expensive half — two window passes over every observation it is handed.
+//! So a term is answered in two steps: a probe over the raw rows names the
+//! persons it could possibly reach, and the ranking is restricted to those.
+//!
+//! INVARIANT: the probe must stay a SUPERSET of the exact filter. It reads raw
+//! observations where the filter reads current ones, so it can only ever admit
+//! too many, and the filter below still decides who is returned. Narrowing the
+//! probe to current values would drop rows the filter would have kept — a wrong
+//! answer rather than a slow one.
+//!
+//! A term half the roster matches is not narrowed by anything, so the probe
+//! stops at [`MAX_CANDIDATES`] and the ranking reads the tenant instead. Its own
+//! LIMIT makes finding that out nearly free, which is what keeps the two-step
+//! shape from costing more than it saves. Note what reaches the cap: the probe
+//! counts persons a SUPERSEDED value matched too, so a long-lived journal gets
+//! there on accumulated history and not only on how common the term is. That
+//! costs a fallback, never a wrong answer.
+//!
+//! An id-named search skips the probe entirely: the ids ARE the set, and the
+//! tightest one there is.
+//!
+//! A listing restricted to one caller's visible set narrows the ranking too, but
+//! never the probe: the probe only has to stay a superset, and a visibility
+//! filter it does not carry can only leave it wider than it needs to be.
+//!
+//! Browsing with no terms has nothing to narrow by and ranks the whole tenant —
+//! the page bounds what is returned, not the work. That is the one case a
+//! derived current-values table would fix, and it is a cache to keep in sync
+//! with every write path, so it waits until the roster outgrows one operator.
 
 use sea_orm::{ConnectionTrait as _, DatabaseConnection, DbBackend, QueryResult, Statement};
 use uuid::Uuid;
 
 use crate::config::VisibilityPolicy;
+use crate::domain::resolution::EXCLUDED_PERSON;
 
 /// How much of the label the order key carries.
 ///
@@ -33,16 +86,64 @@ const MAX_CANDIDATES: usize = 2_000;
 /// One row past the cap — what tells a complete candidate set from a cut one.
 const PROBE_LIMIT: u64 = MAX_CANDIDATES as u64 + 1;
 
-/// Whose view narrows a listing. Without a viewer, the whole tenant roster is
-/// returned.
+/// Observation attributes a term may match — the same five the card's label is
+/// built from, so everything searchable is also visible on the row that answers.
+const FILTERABLE_VALUE_TYPES: [&str; 5] = [
+    "email",
+    "username",
+    "display_name",
+    "first_name",
+    "last_name",
+];
+
+/// The value type a connector writes for an account it holds — ADR-0002's
+/// canonical binding, and the only thing in the journal that separates a person
+/// some system claims from an address someone else's data merely mentioned.
+const CANONICAL_BINDING: &str = "id";
+
+/// Which persons a listing is about.
+///
+/// The journal is an observation log: a commit author's address enters it and
+/// becomes a person whether or not anybody in the organisation holds that
+/// address. Both readings of that set are legitimate, and they are different
+/// questions, so the caller has to say which one it is asking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listed {
+    /// Every identity the journal holds, claimed or merely observed. The
+    /// operator's surface: an unclaimed address is precisely what arrives
+    /// needing to be attached to the person it belongs to.
+    EveryIdentity,
+    /// Only persons a connector claims as an account holder — those carrying a
+    /// [`CANONICAL_BINDING`]. The roster: who the organisation IS, rather than
+    /// every address its data has ever named.
+    ///
+    /// Says nothing about whether they still belong to it. Roster removal
+    /// reaches the journal as no observation at all, so a departed member keeps
+    /// the binding they earned; this admits everyone who has ever held an
+    /// account, which is a superset of the current roster.
+    AccountHolders,
+}
+
+/// What narrows a listing: which persons it is about, and whose view of them.
+///
+/// The two are orthogonal — one asks whether an unclaimed address counts as a
+/// person to list, the other whose data this caller may see — and they travel
+/// together everywhere, so they arrive together rather than as two more
+/// positional arguments.
 #[derive(Debug, Clone, Copy)]
 pub struct Restrict<'a> {
+    pub listed: Listed,
+    /// Absent, the listing is the tenant's.
     pub visible_to: Option<VisibleTo<'a>>,
 }
 
 impl Restrict<'_> {
+    /// The operator's listing: every identity, unfiltered by any viewer.
     #[cfg(test)]
-    pub(super) const UNRESTRICTED: Self = Self { visible_to: None };
+    pub(super) const EVERY_IDENTITY: Self = Self {
+        listed: Listed::EveryIdentity,
+        visible_to: None,
+    };
 }
 
 /// Restrict a listing to what one caller may see. Absent, it is the tenant's.
@@ -108,9 +209,10 @@ pub struct After<'a> {
 /// One page of the tenant's persons, ordered by their card label.
 ///
 /// `terms` empty lists every person; otherwise every term must match some
-/// projected value. `within` (when non-empty) restricts the set to those ids —
-/// the id-named search path. `visible_to` restricts it to one caller's visible
-/// set. `after` resumes a previous page.
+/// current value. `within` (when non-empty) restricts the set to those ids —
+/// the id-named search path. `listed` says whether unclaimed identities count.
+/// `visible_to` restricts it to one caller's visible set. `after` resumes a
+/// previous page.
 ///
 /// Two statements when there are terms and no ids: the probe, then the page over
 /// what it named. One when there is nothing to narrow by.
@@ -198,7 +300,7 @@ fn from_probe(candidates: Vec<Uuid>) -> Narrowing {
 }
 
 /// Every person a term could possibly reach, read straight off the raw
-/// people projection. One row past the cap is enough to know
+/// observations with no window in sight. One row past the cap is enough to know
 /// the term is not selective, so that is where the probe stops.
 async fn candidate_persons(
     db: &DatabaseConnection,
@@ -222,25 +324,32 @@ async fn candidate_persons(
 /// per surviving person. Ordering does not matter — the caller only counts and
 /// restricts by the set.
 fn build_probe(tenant_id: Uuid, first: &str, rest: &[String]) -> (String, Vec<sea_orm::Value>) {
+    let type_list = searched_types();
     let mut values: Vec<sea_orm::Value> = vec![tenant_id.as_bytes().to_vec().into()];
-    let matches = "(display_name LIKE ? ESCAPE '!' OR first_name LIKE ? ESCAPE '!' \
-         OR last_name LIKE ? ESCAPE '!' OR username LIKE ? ESCAPE '!' \
-         OR email LIKE ? ESCAPE '!')";
-    push_patterns(&mut values, first);
-    let also = format!("\n          AND {matches}").repeat(rest.len());
-    for term in rest {
-        push_patterns(&mut values, term);
-    }
+
+    values.push(like_pattern(first).into());
+
+    // Every further term is the same clause with its own placeholder, so the
+    // text repeats and only the binds differ — in the order the clauses appear.
+    let clause = format!(
+        "\n              AND EXISTS (SELECT 1 FROM persons t \
+         WHERE t.insight_tenant_id = p.insight_tenant_id \
+           AND t.person_id = p.person_id \
+           AND t.value_type IN ({type_list}) \
+           AND t.value_effective LIKE ? ESCAPE '!')"
+    );
+    let also = clause.repeat(rest.len());
+    values.extend(rest.iter().map(|term| like_pattern(term).into()));
 
     values.push(PROBE_LIMIT.into());
 
     let sql = format!(
         r"
-        SELECT p.person_id
-        FROM people p
+        SELECT DISTINCT p.person_id
+        FROM persons p
         WHERE p.insight_tenant_id = ?
-          AND p.valid_to IS NULL
-          AND {matches}{also}
+          AND p.value_type IN ({type_list})
+          AND p.value_effective LIKE ? ESCAPE '!'{also}
         LIMIT ?
     "
     );
@@ -252,7 +361,7 @@ fn build_probe(tenant_id: Uuid, first: &str, rest: &[String]) -> (String, Vec<se
 /// more than [`MAX_CANDIDATES`] persons falls back to.
 ///
 /// Test-only: the fallback must answer exactly what the narrowed path answers,
-/// and only a live case can say whether it does.
+/// and only a live case over a real journal can say whether it does.
 #[cfg(test)]
 pub(super) async fn list_persons_unnarrowed(
     db: &DatabaseConnection,
@@ -266,12 +375,63 @@ pub(super) async fn list_persons_unnarrowed(
         tenant_id,
         terms,
         None,
-        Restrict::UNRESTRICTED,
+        Restrict::EVERY_IDENTITY,
         after,
         limit,
     )
     .await
 }
+
+fn searched_types() -> String {
+    FILTERABLE_VALUE_TYPES
+        .iter()
+        .map(|t| format!("'{t}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The label half of the listing, the same for every query it serves: the value
+/// current for each person × source × attribute, then the latest of those per
+/// attribute, pivoted into the one label the row shows.
+///
+/// INVARIANT: this is `person_card`'s rule, and the module doc says why the two
+/// steps cannot collapse into one.
+const LABEL_CTES: &str = r"
+        current_vals AS (
+            SELECT person_id, value_type, value_effective, created_at, id
+            FROM ranked
+            WHERE rn = 1
+        ),
+        latest_vals AS (
+            SELECT person_id, value_type, value_effective,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM current_vals
+        ),
+        card AS (
+            SELECT person_id,
+                   COALESCE(
+                       NULLIF(TRIM(display_name), ''),
+                       NULLIF(TRIM(CONCAT_WS(' ',
+                           NULLIF(TRIM(first_name), ''),
+                           NULLIF(TRIM(last_name), ''))), ''),
+                       NULLIF(TRIM(username), ''),
+                       NULLIF(TRIM(email), '')
+                   ) AS label
+            FROM (
+                SELECT person_id,
+                       MAX(CASE WHEN value_type = 'display_name' THEN value_effective END) AS display_name,
+                       MAX(CASE WHEN value_type = 'first_name'   THEN value_effective END) AS first_name,
+                       MAX(CASE WHEN value_type = 'last_name'    THEN value_effective END) AS last_name,
+                       MAX(CASE WHEN value_type = 'email'        THEN value_effective END) AS email,
+                       MAX(CASE WHEN value_type = 'username'     THEN value_effective END) AS username
+                FROM latest_vals
+                WHERE rn = 1
+                GROUP BY person_id
+            ) pivoted
+        )";
 
 struct VisibleScopeSql {
     /// `RECURSIVE `, so the `WITH` admits the recursive CTE.
@@ -323,14 +483,50 @@ fn build_query(
     after: Option<After<'_>>,
     limit: u64,
 ) -> (String, Vec<sea_orm::Value>) {
-    let mut values = vec![tenant_id.as_bytes().to_vec().into()];
-    let within = match narrowed_to {
+    // INVARIANT: values are pushed in the order their placeholders appear in the
+    // assembled statement — the roster, the ranking, the visible set, the
+    // filters, the resume position, the limit. A fragment moved in the text moves
+    // here too; a mismatch does not fail, it shifts every later binding by one.
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    let type_list = searched_types();
+
+    values.push(tenant_id.as_bytes().to_vec().into());
+    values.push(EXCLUDED_PERSON.as_bytes().to_vec().into());
+    let roster = match narrowed_to {
         None => String::new(),
         Some(ids) => {
             let placeholders = vec!["?"; ids.len()].join(", ");
             values.extend(ids.iter().map(|id| id.as_bytes().to_vec().into()));
             format!("\n              AND person_id IN ({placeholders})")
         }
+    };
+
+    // In the roster itself rather than the outer filter: it decides who exists
+    // for this listing, so the ranking has less to rank as well. `idx_value_id`
+    // leads on (tenant, value_type), which is exactly this lookup.
+    let claimed = match restrict.listed {
+        Listed::EveryIdentity => String::new(),
+        Listed::AccountHolders => {
+            values.push(tenant_id.as_bytes().to_vec().into());
+            format!(
+                "\n              AND person_id IN (\
+                 \n                  SELECT person_id FROM persons \
+                 \n                  WHERE insight_tenant_id = ? AND value_type = '{CANONICAL_BINDING}'\
+                 \n              )"
+            )
+        }
+    };
+
+    values.push(tenant_id.as_bytes().to_vec().into());
+    // Ranking a narrowed roster is the whole point; reaching an unnarrowed one
+    // through a semi-join is not — with nothing to narrow by, the plain scan the
+    // browse case had all along stays. Either narrowing earns the semi-join: a
+    // roster browsed with no terms is still a fraction of the identities the
+    // journal holds.
+    let ranked_within = if roster.is_empty() && claimed.is_empty() {
+        ""
+    } else {
+        "\n              AND person_id IN (SELECT person_id FROM people)"
     };
 
     let scope = visible_scope(restrict.visible_to, tenant_id);
@@ -341,11 +537,10 @@ fn build_query(
     let mut filters = String::from(scope.filter);
     for term in terms {
         filters.push_str(
-            " AND (p.display_name LIKE ? ESCAPE '!' OR p.first_name LIKE ? ESCAPE '!' \
-             OR p.last_name LIKE ? ESCAPE '!' OR p.username LIKE ? ESCAPE '!' \
-             OR p.email LIKE ? ESCAPE '!')",
+            " AND EXISTS (SELECT 1 FROM current_vals t \
+             WHERE t.person_id = p.person_id AND t.value_effective LIKE ? ESCAPE '!')",
         );
-        push_patterns(&mut values, term);
+        values.push(like_pattern(term).into());
     }
 
     let mut resume = String::new();
@@ -360,31 +555,30 @@ fn build_query(
 
     let sql = format!(
         r"
-        WITH {recursive}roster_people AS (
-            SELECT person_id, email, username, display_name, first_name, last_name
-            FROM people
-            WHERE insight_tenant_id = ? AND valid_to IS NULL{within}
+        WITH {recursive}people AS (
+            SELECT DISTINCT person_id
+            FROM persons
+            WHERE insight_tenant_id = ? AND person_id != ?{roster}{claimed}
         ),
-        presented_people AS (
-            SELECT person_id, email, username, display_name, first_name, last_name,
-                   COALESCE(
-                       NULLIF(TRIM(display_name), ''),
-                       NULLIF(TRIM(CONCAT_WS(' ',
-                           NULLIF(TRIM(first_name), ''),
-                           NULLIF(TRIM(last_name), '')
-                       )), ''),
-                       NULLIF(TRIM(username), ''),
-                       NULLIF(TRIM(email), '')
-                   ) AS label
-            FROM roster_people
-        ){visible_cte}
+        ranked AS (
+            SELECT person_id, value_type, value_effective, created_at, id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY person_id, insight_source_type, insight_source_id, value_type
+                       ORDER BY created_at DESC, id DESC
+                   ) AS rn
+            FROM persons
+            WHERE insight_tenant_id = ?
+              AND value_type IN ({type_list}){ranked_within}
+        ),
+{LABEL_CTES}{visible_cte}
         SELECT person_id, order_key FROM (
             SELECT p.person_id AS person_id,
                    CONCAT(
-                       IF(p.label IS NULL, '1', '0'),
-                       LEFT(LOWER(COALESCE(p.label, '')), {ORDER_KEY_CHARS})
+                       IF(c.label IS NULL, '1', '0'),
+                       LEFT(LOWER(COALESCE(c.label, '')), {ORDER_KEY_CHARS})
                    ) AS order_key
-            FROM presented_people p
+            FROM people p
+            LEFT JOIN card c ON c.person_id = p.person_id
             WHERE 1 = 1{filters}
         ) keyed{resume}
         ORDER BY order_key, person_id
@@ -393,17 +587,6 @@ fn build_query(
     );
 
     (sql, values)
-}
-
-fn push_patterns(values: &mut Vec<sea_orm::Value>, term: &str) {
-    let pattern = like_pattern(term);
-    values.extend([
-        pattern.clone().into(),
-        pattern.clone().into(),
-        pattern.clone().into(),
-        pattern.clone().into(),
-        pattern.into(),
-    ]);
 }
 
 /// `%…%` LIKE pattern for a term, with the wildcard characters neutralised via
@@ -438,7 +621,7 @@ mod tests {
             Uuid::nil(),
             terms,
             narrowed_to,
-            Restrict::UNRESTRICTED,
+            Restrict::EVERY_IDENTITY,
             after,
             50,
         )
@@ -451,6 +634,7 @@ mod tests {
             &[],
             None,
             Restrict {
+                listed: Listed::EveryIdentity,
                 visible_to: Some(VisibleTo {
                     viewer_person_id: Uuid::from_u128(7),
                     org_source_type: "bamboohr",
@@ -461,6 +645,85 @@ mod tests {
             50,
         )
         .0
+    }
+
+    fn listed_query(listed: Listed) -> String {
+        build_query(
+            Uuid::nil(),
+            &[],
+            None,
+            Restrict {
+                listed,
+                visible_to: None,
+            },
+            None,
+            50,
+        )
+        .0
+    }
+
+    #[test]
+    fn a_roster_admits_only_the_persons_a_connector_claims() {
+        // An address a commit carried is an observation, not a member of the
+        // organisation: it reaches the journal without ever earning the
+        // canonical binding a roster connector writes for an account it holds.
+        let sql = listed_query(Listed::AccountHolders);
+
+        assert!(
+            sql.contains("value_type = 'id'"),
+            "the roster must require a canonical binding: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_operator_surface_still_lists_an_identity_nobody_claims() {
+        // The unclaimed address is the whole reason the picker exists — it is
+        // what an operator arrives holding, to attach to the person it belongs
+        // to. Hiding it would hide the work.
+        let sql = listed_query(Listed::EveryIdentity);
+
+        assert!(
+            !sql.contains("value_type = 'id'"),
+            "the picker must not require a binding: {sql}"
+        );
+    }
+
+    #[test]
+    fn the_binding_requirement_binds_after_the_roster_it_narrows() {
+        // Its placeholder sits in the roster CTE, after the ids the caller
+        // named — so its tenant lands there too, or every later value shifts.
+        let tenant = Uuid::from_u128(0xA1);
+        let within = [Uuid::from_u128(0xB2)];
+
+        let (sql, values) = build_query(
+            tenant,
+            &[],
+            Some(&within),
+            Restrict {
+                listed: Listed::AccountHolders,
+                visible_to: None,
+            },
+            None,
+            50,
+        );
+
+        let bytes = |id: Uuid| sea_orm::Value::from(id.as_bytes().to_vec());
+        assert_eq!(sql.matches('?').count(), values.len());
+        assert_eq!(
+            values,
+            vec![
+                // the roster: the tenant, the sentinel, the named ids…
+                bytes(tenant),
+                bytes(EXCLUDED_PERSON),
+                bytes(within[0]),
+                // …then the binding requirement that narrows it
+                bytes(tenant),
+                // the ranking over that roster
+                bytes(tenant),
+                sea_orm::Value::from(50u64),
+            ],
+            "the bind order drifted from the order the placeholders appear in"
+        );
     }
 
     #[test]
@@ -482,9 +745,9 @@ mod tests {
         let sql = query(&terms, None, None);
 
         assert_eq!(
-            sql.matches("p.display_name LIKE ?").count(),
+            sql.matches("FROM current_vals t").count(),
             terms.len(),
-            "each term must add one match group: {sql}"
+            "the exact filter must probe once per term: {sql}"
         );
         assert!(
             !sql.contains("OR EXISTS"),
@@ -505,6 +768,10 @@ mod tests {
             sql.contains("AND person_id IN (?, ?)"),
             "the roster must be cut to the named persons: {sql}"
         );
+        assert!(
+            sql.contains("AND person_id IN (SELECT person_id FROM people)"),
+            "the ranking must read the cut roster: {sql}"
+        );
     }
 
     #[test]
@@ -519,8 +786,8 @@ mod tests {
             "an unnarrowed roster must stay a plain scan: {sql}"
         );
         assert!(
-            sql.contains("p.display_name LIKE ?"),
-            "filter still applies: {sql}"
+            sql.contains("FROM current_vals t"),
+            "the exact filter still applies: {sql}"
         );
     }
 
@@ -532,14 +799,10 @@ mod tests {
 
         assert_eq!(
             sql.matches("LIKE ?").count(),
-            terms.len() * 5,
-            "five projected fields per term: {sql}"
-        );
-        assert_eq!(
-            sql.matches("AND (display_name LIKE ?").count(),
             terms.len(),
-            "terms are ANDed: {sql}"
+            "one probe per term: {sql}"
         );
+        assert!(!sql.contains("OR "), "terms are ANDed, never ORed: {sql}");
         assert!(
             sql.contains("LIMIT ?"),
             "the probe must stop at the cap: {sql}"
@@ -582,7 +845,7 @@ mod tests {
             tenant,
             &terms,
             Some(&within),
-            Restrict::UNRESTRICTED,
+            Restrict::EVERY_IDENTITY,
             Some(After {
                 order_key: "0ivanov",
                 person_id: resuming,
@@ -599,12 +862,13 @@ mod tests {
         assert_eq!(
             values,
             vec![
+                // the roster, cut to the persons the caller narrowed to
                 bytes(tenant),
+                bytes(EXCLUDED_PERSON),
                 bytes(within[0]),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
+                // the ranking over that roster
+                bytes(tenant),
+                // the exact filter, then the page position
                 sea_orm::Value::from("%iva%".to_owned()),
                 sea_orm::Value::from("0ivanov".to_owned()),
                 sea_orm::Value::from("0ivanov".to_owned()),
@@ -683,6 +947,7 @@ mod tests {
             &["iva".to_owned()],
             Some(&within),
             Restrict {
+                listed: Listed::EveryIdentity,
                 visible_to: Some(VisibleTo {
                     viewer_person_id: viewer,
                     org_source_type: "bamboohr",
@@ -698,8 +963,13 @@ mod tests {
         assert_eq!(
             values,
             vec![
+                // the roster, cut to the persons the caller narrowed to
                 bytes(tenant),
+                bytes(EXCLUDED_PERSON),
                 bytes(within[0]),
+                // the ranking over that roster
+                bytes(tenant),
+                // the visible-set union
                 bytes(viewer),
                 bytes(tenant),
                 bytes(viewer),
@@ -709,10 +979,7 @@ mod tests {
                 bytes(viewer),
                 bytes(tenant),
                 sea_orm::Value::from("bamboohr"),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
-                sea_orm::Value::from("%iva%".to_owned()),
+                // then the filters it narrows
                 sea_orm::Value::from("%iva%".to_owned()),
                 sea_orm::Value::from(50u64),
             ],
@@ -731,6 +998,7 @@ mod tests {
                 &[],
                 None,
                 Restrict {
+                    listed: Listed::EveryIdentity,
                     visible_to: Some(VisibleTo {
                         viewer_person_id: Uuid::from_u128(7),
                         org_source_type: "bamboohr",
