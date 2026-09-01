@@ -79,6 +79,13 @@ spec:
                 - name: data
                   mountPath: /app/data
               envFrom:
+                # Umbrella observability contract (OTEL_* / APP__opentelemetry__*):
+                # the seed job runs outside the server bootstrap and installs its
+                # own meter provider (#2891), so it needs the same export config
+                # the deployment gets. Optional so standalone installs schedule.
+                - configMapRef:
+                    name: {{ .Release.Name }}-platform
+                    optional: true
                 # Same Secret as the deployment: database_url, clickhouse_*,
                 # tenant_default_id — everything the seed needs.
                 - secretRef:

@@ -1233,3 +1233,29 @@ models:
         description: "Distinct entity_id (emails) behind the unresolved rows"
       - name: match_rate_pct
         description: "Share of source rows that resolve to a person, percent (1 decimal)"
+
+  - name: bronze_insert_events
+    description: >
+      Ops/monitoring view over every bronze connector database (one row per
+      physical bronze record) exposing the Airbyte extraction timestamp and
+      its origin. Built for ingestion-intensity charts and ad-hoc sync
+      debugging; aggregate on top with any toStartOfInterval() grain.
+      Documented exception to the layer conventions: reads bronze directly
+      (an ops relation measuring ingestion itself) and intentionally performs
+      no dedup — duplicate physical rows are the signal. extracted_at is
+      stamped by the source at extraction time, not at ClickHouse insert
+      time; destination flushes can land rows up to ~1h later.
+    columns:
+      - name: source_database
+        description: >
+          Bronze database the row lives in (e.g. bronze_bamboohr). Preferred
+          scope filter: conditions on this column map to the merge() virtual
+          column _database and prune non-matching tables before reading.
+      - name: connector
+        description: "Connector slug: source_database without the bronze_ prefix"
+      - name: stream
+        description: >
+          Airbyte stream = table name inside the connector database (merge()
+          virtual column _table, also prunes when filtered).
+      - name: extracted_at
+        description: "Source-side extraction timestamp (_airbyte_extracted_at)"

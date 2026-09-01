@@ -20,7 +20,6 @@ schemas:
       source_id: *id001
       data_source: *id001
       collected_at: *id001
-      snapshot_date: *id001
       project_id: *id001
       project_number: &id002
         type: integer

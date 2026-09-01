@@ -108,6 +108,70 @@ models:
         tests:
           - not_null
 
+  - name: class_task_links
+    description: >
+      Links between work items as INTERVALS, one row per link occurrence: `valid_from` when it appeared,
+      `valid_to` when it went away, NULL while it is still there. The links over a window are a range
+      predicate — `valid_from < :to AND (valid_to IS NULL OR valid_to > :from)` — and the links at an
+      instant are the same predicate with one point. A link removed and re-added is two rows, so
+      `valid_from` is part of the key rather than a version of one row. Both directions are stored: a
+      parent-child pair yields a `sub_issue` row on the parent and a `parent` row on the child.
+    columns:
+      - name: unique_key
+        description: "Source, item, link type, target and `valid_from` — the occurrence, not the link."
+        tests:
+          - not_null
+      - name: insight_source_id
+        tests:
+          - not_null
+      - name: data_source
+        description: "Vendor that recorded the link; `github` today."
+        tests:
+          - not_null
+      - name: id_readable
+        description: "The item the link belongs to, as the tracker addresses it (`owner/repo#12`)."
+        tests:
+          - not_null
+      - name: link_type
+        description: "parent | sub_issue | blocked_by | blocking | duplicate_of | connected | closed_by_pr."
+        tests:
+          - not_null
+      - name: target_type
+        description: "What sits at the other end: issue | pull_request."
+      - name: target_readable
+        description: "The other end, addressed the same way. Carries its own repository, because a link may cross repositories."
+        tests:
+          - not_null
+      - name: valid_from
+        description: "When the link appeared. A lower bound rather than a fact when `valid_from_known = 0`."
+        tests:
+          - not_null
+      - name: valid_to
+        description: "When it went away; NULL while it is still there."
+      - name: valid_from_known
+        description: >
+          1 when the vendor stated the moment the link appeared. 0 when the link was already there before
+          collection began, or is known only from successive observations — the interval is still usable,
+          but its lower edge is a bound. Filtering these out drops the oldest links.
+      - name: evidence
+        description: >
+          `event` — folded from the vendor's own add and remove events, exact to the second.
+          `observation` — bounded by first-seen and last-seen across snapshots, so each edge lies between
+          two syncs. No link type is ever built from both, because their precision differs.
+        tests:
+          - accepted_values:
+              values: ['event', 'observation']
+      - name: is_cross_repository
+        description: "The two ends live in different repositories. Derived by comparing them, because only some event types report it."
+      - name: added_by
+        description: "Who created the link, where the vendor names an actor; NULL for an observed link or an addition that predates collection."
+      - name: removed_by
+        description: "Who removed it; NULL while the link is still there."
+      - name: origin_event_id
+        description: "The vendor event the interval was folded from; NULL for an observed interval."
+      - name: collected_at
+        description: "When the evidence behind this row was collected."
+
   - name: class_task_statuses
     description: "Unified, source-neutral status dimension. Maps each source status id to the reconciled lifecycle `status_category` (new/in_progress/done/undefined). Jira derives it from statusCategory; YouTrack from the State bundle `isResolved` flag. Gold detects a closed task via `status_category='done'` — never a localized status name (issue #1541)."
     columns:

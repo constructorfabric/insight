@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
+import type { MetricDrilldownRequest } from "@/api/metric-drilldown-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
 import type {
   CustomMetric,
@@ -9,7 +10,12 @@ import type {
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { buildMetricDefinitions } from "./metric-definitions-factory";
+import {
+  buildMetricDrilldownCsv,
+  buildMetricDrilldownResponse,
+} from "./metric-drilldown-factory";
 import { buildMetricResultsResponse } from "./metric-results-factory";
+import { buildIngestionIntensity } from "./ingestion-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
@@ -467,6 +473,35 @@ export const handlers = [
     }
     return HttpResponse.json(buildMetricResultsResponse(body));
   }),
+  // The records behind a figure. Order and narrowing are the server's since
+  // #2470, so the factory does both — a mock that answered every request with
+  // the same page would hide the whole change.
+  http.post("/api/analytics/v1/metric-drilldown", async ({ request }) => {
+    const body = (await request
+      .json()
+      .catch(() => null)) as MetricDrilldownRequest | null;
+    if (!body?.metric_key || !body.entity || !body.period) {
+      return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+    }
+    return HttpResponse.json(buildMetricDrilldownResponse(body));
+  }),
+  http.post(
+    "/api/analytics/v1/metric-drilldown/export",
+    async ({ request }) => {
+      const body = (await request
+        .json()
+        .catch(() => null)) as MetricDrilldownRequest | null;
+      if (!body?.metric_key || !body.entity || !body.period) {
+        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+      }
+      return new HttpResponse(buildMetricDrilldownCsv(body), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${body.metric_key}.csv"`,
+        },
+      });
+    },
+  ),
   // The demo viewer is an identity admin, so mock mode exercises the admin
   // surfaces (Manage → Identities). The role id is the backend's seeded
   // `roles_repo::ADMIN_ROLE_ID` migration constant.
@@ -918,9 +953,54 @@ export const handlers = [
   ...customMetricHandlers(),
   ...connectorHealthHandlers(),
   ...usageHandlers(),
+  ...ingestionHandlers(),
   ...feedbackHandlers(),
   ...aiAssistHandlers(),
 ];
+
+// ── Ingestion intensity (`/v1/ingestion/intensity`) ────────────
+// The admin ops lens has no mock path otherwise: its data comes from a
+// merge() over every bronze database, which no seeded stand carries (compose
+// seeds silver/gold directly and runs no connector). Without this the surface
+// can only be seen against a warehouse that has actually ingested something.
+//
+// The grain/series sets are closed server-side, so they are refused here too —
+// a 200 for a value the service would reject would hide a client-side bug.
+const INGESTION_GRAINS = new Set(["15m", "1s"]);
+const INGESTION_SERIES = new Set(["connector", "stream", "total"]);
+const BRONZE_SLUG = /^bronze_[a-z0-9_]{1,120}$/;
+
+function ingestionHandlers() {
+  return [
+    http.get("/api/analytics/v1/ingestion/intensity", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const grain = params.get("grain") ?? "15m";
+      const series = params.get("series");
+      const scope = params.get("scope");
+
+      const bad =
+        !INGESTION_GRAINS.has(grain) ||
+        (series !== null && !INGESTION_SERIES.has(series)) ||
+        (scope !== null && scope !== "" && !BRONZE_SLUG.test(scope));
+      if (bad) {
+        return HttpResponse.json(
+          { status: 400, title: "Bad Request", detail: "unsupported ingestion parameter" },
+          { status: 400 },
+        );
+      }
+
+      return HttpResponse.json(
+        buildIngestionIntensity({
+          grain: grain as "15m" | "1s",
+          series: (series ?? undefined) as never,
+          scope,
+          from: params.get("from"),
+          to: params.get("to"),
+        }),
+      );
+    }),
+  ];
+}
 
 // ── Product feedback (`/v1/feedback`) ──────────────────────────
 // An in-memory store, so the dialog's send and the usage surface's listing

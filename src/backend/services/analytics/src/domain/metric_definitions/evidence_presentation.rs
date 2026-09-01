@@ -48,12 +48,31 @@ impl EvidencePresentation {
     }
 
     fn parse(json: &str) -> Option<Self> {
-        serde_json::from_str(json).ok()
+        let presentation: Self = serde_json::from_str(json).ok()?;
+        presentation
+            .detail_columns
+            .iter()
+            .all(|column| is_column_key(&column.key))
+            .then_some(presentation)
     }
 
     pub fn detail_keys(&self) -> impl Iterator<Item = &str> {
         self.detail_columns.iter().map(|column| column.key.as_str())
     }
+}
+
+/// SAFETY: a column key is inlined into generated SQL as a string literal, and
+/// the ClickHouse driver scans the raw query text for `?` without regard for
+/// quoting — a key carrying one would add a bind slot and shift every later
+/// parameter, returning wrong rows with no error. The stored declaration is
+/// free-form JSON, so the shape is enforced here rather than assumed: lowercase
+/// snake case, which admits neither `?` nor a quote nor a backslash.
+fn is_column_key(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !key.starts_with(|first: char| first.is_ascii_digit() || first == '_')
 }
 
 /// What a measure row holds under `evidence_presentation`. Three states rather
@@ -90,6 +109,25 @@ impl StoredPresentation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_declaration_whose_column_key_could_reach_sql_is_unreadable() {
+        for key in ["pr?ref", "pr'ref", "pr\\ref", "PrRef", "1ref", "_ref", ""] {
+            let json = format!(
+                r#"{{"show_value":false,"detail_columns":[{{"key":"{key}","label":"Ref"}}]}}"#
+            );
+            assert_eq!(
+                StoredPresentation::read(Some(&json)),
+                StoredPresentation::Unreadable,
+                "should refuse: {key:?}"
+            );
+        }
+        let json = r#"{"show_value":false,"detail_columns":[{"key":"pr_ref","label":"Ref"}]}"#;
+        assert!(matches!(
+            StoredPresentation::read(Some(json)),
+            StoredPresentation::Declared(_)
+        ));
+    }
 
     #[test]
     fn an_undeclared_event_measure_withholds_the_value_column() {

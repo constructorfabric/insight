@@ -52,10 +52,5 @@ spec:
           - {{ `"--clickhouse-user={{inputs.parameters.clickhouse_user}}"` }}
           - {{ `"--batch-size={{inputs.parameters.batch_size}}"` }}
         resources:
-          requests:
-            cpu: "500m"
-            memory: "1Gi"
-          limits:
-            cpu: "2"
-            memory: "2Gi"
+          {{- toYaml (required "ingestion.jiraEnrich.resources is required" .Values.ingestion.jiraEnrich.resources) | nindent 10 }}
 {{- end }}

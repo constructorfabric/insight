@@ -18,6 +18,12 @@ describe("validatePortalSearch", () => {
     expect(
       validatePortalSearch({ zone: "directions", dir: "dev", lens: "Delivery" }),
     ).toMatchObject({ zone: "directions", dir: "dev", lens: "Delivery" });
+    // A repository is carried by its dimension VALUE, so a shared link
+    // reproduces the one that was opened even when two share a display name.
+    expect(
+      validatePortalSearch({ lens: "Repositories", repo: "src-a:acme/api" }),
+    ).toMatchObject({ lens: "Repositories", repo: "src-a:acme/api" });
+    expect(validatePortalSearch({ repo: "" }).repo).toBeUndefined();
   });
 
   it("lowercases the scope — an email is case-insensitive but our keys are not", () => {
@@ -75,6 +81,28 @@ describe("validatePortalSearch", () => {
         validatePortalSearch({ from: "2026-13-45", to: "2026-13-46" }),
       ).not.toHaveProperty("from");
     });
+  });
+});
+
+describe("the ingestion drill-down key", () => {
+  it("keeps a connector slug", () => {
+    expect(validatePortalSearch({ conn: "bamboohr" }).conn).toBe("bamboohr");
+    expect(validatePortalSearch({ conn: "claude_enterprise" }).conn).toBe(
+      "claude_enterprise",
+    );
+  });
+
+  it("drops anything the endpoint would refuse as a scope", () => {
+    // A hand-edited value must degrade to the overview, not reach the API and
+    // come back a 400 the reader cannot act on.
+    for (const raw of ["Jira", "bronze jira", "jira;drop", "jira/../x", ""]) {
+      expect(validatePortalSearch({ conn: raw }).conn, raw).toBeUndefined();
+    }
+  });
+
+  it("is retained across navigation", () => {
+    // Without this the drill-down is lost the moment anything else navigates.
+    expect(PORTAL_SEARCH_KEYS).toContain("conn");
   });
 });
 

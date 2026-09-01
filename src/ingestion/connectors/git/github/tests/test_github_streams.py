@@ -1503,10 +1503,11 @@ def test_project_fields_mark_the_issue_mirrors(http_mocker: HttpMocker) -> None:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_project_fields_key_carries_the_snapshot_day(http_mocker: HttpMocker) -> None:
-    """GitHub keeps no history of an option rename, so a succession of daily
-    snapshots is the only record of one. Without the day in the key a rename
-    erases the name every earlier status event carries."""
+def test_project_fields_key_is_the_field_so_bronze_holds_the_present(http_mocker: HttpMocker) -> None:
+    """Bronze states what is true now and the ReplacingMergeTree collapses each
+    re-collection onto it. History belongs to the SCD2 snapshot downstream, not
+    to the row key: keying by day would keep every version permanently current
+    (ADR-0001, ADR-0004)."""
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
     http_mocker.post(
@@ -1539,8 +1540,9 @@ def test_project_fields_key_carries_the_snapshot_day(http_mocker: HttpMocker) ->
 
     assert not output.errors
     key = output.records[0].record.data["unique_key"]
-    assert key.endswith(":project:PVT_1:field:F_est:2026-07-01"), key
-    assert output.records[0].record.data["snapshot_date"] == "2026-07-01"
+    assert key.endswith(":project:PVT_1:field:F_est"), key
+    assert "2026-07-01" not in key, "a collection day in the key would defeat the RMT collapse"
+    assert "snapshot_date" not in output.records[0].record.data
 
 
 @freezegun.freeze_time(_FROZEN)
@@ -1655,11 +1657,10 @@ def test_project_items_drop_a_draft_card_but_keep_an_unreadable_one(http_mocker:
 
 
 @freezegun.freeze_time(_FROZEN)
-def test_project_item_key_carries_the_day_the_card_changed(http_mocker: HttpMocker) -> None:
-    """No API exposes the history of a non-status board field, so the record is
-    a succession of snapshots. The day comes from the card's own updatedAt, so
-    re-reading an unchanged card inside the overlap window rewrites its row
-    instead of adding one."""
+def test_project_item_key_is_the_card_so_a_re_read_collapses(http_mocker: HttpMocker) -> None:
+    """The cursor re-reads a day on every sync by design. That is free only
+    while the key is the card itself: the re-read collapses onto the row
+    already there instead of appending a version."""
     config = GithubConfigBuilder().build()
     _mock_projects_parent(http_mocker, [{"id": "PVT_1", "number": 40}])
     http_mocker.post(
@@ -1689,9 +1690,8 @@ def test_project_item_key_carries_the_day_the_card_changed(http_mocker: HttpMock
 
     assert not output.errors
     keys = [r.record.data["unique_key"] for r in output.records]
-    assert keys[0].endswith(":project:PVT_1:item:PVTI_1:2026-06-20")
-    assert keys[1].endswith(":project:PVT_1:item:PVTI_1:2026-06-21")
-    assert keys[0] != keys[1], "one row per day the card changed, not one row ever"
+    assert keys[0].endswith(":project:PVT_1:item:PVTI_1")
+    assert keys[0] == keys[1], "the same card twice is the same row, whatever day it moved"
     first = output.records[0].record.data
     assert first["content_number"] == 7
     assert first["content_repo_full_name"] == "acme/app"
@@ -1819,3 +1819,187 @@ def test_status_change_names_the_board_it_happened_on(http_mocker: HttpMocker) -
     assert by_event["E_removed"]["project_id"] == "PVT_2"
     assert by_event["E_added"]["new_value"] == ""
     _no_literal_none(output.records)
+
+
+def _issue_links_body(cursor: str | None = None) -> dict:
+    return _graphql_body("issue_links", {"owner": "acme", "name": "app"}, cursor)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_link_events_collapse_six_payload_shapes_into_one_target(http_mocker: HttpMocker) -> None:
+    """Each link event names the other end under its own key — subIssue,
+    parent, blockingIssue, blockedIssue, subject, canonical. Downstream has to
+    fold adds against removes, which it cannot do while the target's location
+    depends on which of the twelve types carried it."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo()]), status_code=200),
+    )
+    http_mocker.get(
+        HttpRequest(f"{GH_URL}/repos/acme/app/issues", query_params=ANY_QUERY_PARAMS),
+        HttpResponse(
+            body=json.dumps([{"id": 901, "number": 7, "updated_at": "2026-06-20T00:00:00Z"}]), status_code=200
+        ),
+    )
+    actor = {"login": "alice", "databaseId": 1001}
+    other = {"number": 11, "repository": {"nameWithOwner": "acme/app"}}
+    cross = {"number": 3, "repository": {"nameWithOwner": "acme/other"}}
+    nodes = [
+        {
+            "__typename": "SubIssueAddedEvent",
+            "id": "L1",
+            "createdAt": "2026-06-01T00:00:00Z",
+            "actor": actor,
+            "subIssue": other,
+        },
+        {
+            "__typename": "SubIssueRemovedEvent",
+            "id": "L2",
+            "createdAt": "2026-06-02T00:00:00Z",
+            "actor": actor,
+            "subIssue": other,
+        },
+        {
+            "__typename": "ParentIssueAddedEvent",
+            "id": "L3",
+            "createdAt": "2026-06-03T00:00:00Z",
+            "actor": actor,
+            "parent": cross,
+        },
+        {
+            "__typename": "BlockedByAddedEvent",
+            "id": "L4",
+            "createdAt": "2026-06-04T00:00:00Z",
+            "actor": actor,
+            "blockingIssue": other,
+        },
+        {
+            "__typename": "BlockingAddedEvent",
+            "id": "L5",
+            "createdAt": "2026-06-05T00:00:00Z",
+            "actor": actor,
+            "blockedIssue": other,
+        },
+        {
+            "__typename": "ConnectedEvent",
+            "id": "L6",
+            "createdAt": "2026-06-06T00:00:00Z",
+            "actor": actor,
+            "isCrossRepository": False,
+            "subject": {"__typename": "PullRequest", "number": 42, "repository": {"nameWithOwner": "acme/app"}},
+        },
+        {
+            "__typename": "MarkedAsDuplicateEvent",
+            "id": "L7",
+            "createdAt": "2026-06-07T00:00:00Z",
+            "actor": actor,
+            "isCrossRepository": True,
+            "canonical": {"__typename": "Issue", "number": 9, "repository": {"nameWithOwner": "acme/other"}},
+        },
+    ]
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_timeline_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issue": {
+                                "timelineItems": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": nodes}
+                            }
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_timeline_events", config)
+
+    assert not output.errors
+    by_event = {r.record.data["event_id"]: r.record.data for r in output.records}
+    assert set(by_event) == {"L1", "L2", "L3", "L4", "L5", "L6", "L7"}
+    for event_id in ("L1", "L2", "L4", "L5"):
+        assert by_event[event_id]["link_target_number"] == 11, event_id
+        assert by_event[event_id]["link_target_repo_full_name"] == "acme/app", event_id
+        assert by_event[event_id]["link_target_type"] == "Issue", event_id
+    # A hierarchy link may cross repositories, so the target's repository is
+    # part of its identity and not decoration.
+    assert by_event["L3"]["link_target_repo_full_name"] == "acme/other"
+    # Only the connect and duplicate pairs state a __typename of their own.
+    assert by_event["L6"]["link_target_type"] == "PullRequest"
+    assert by_event["L6"]["link_target_number"] == 42
+    assert by_event["L7"]["link_target_type"] == "Issue"
+    assert by_event["L7"]["is_cross_repository"] is True
+    # An event that is not a link leaves the columns empty rather than guessing.
+    _no_literal_none(output.records)
+
+
+@freezegun.freeze_time(_FROZEN)
+def test_issue_links_snapshot_carries_every_link_set(http_mocker: HttpMocker) -> None:
+    """A pull request that closes an issue has no reliable event — the timeline
+    may call it a connection, a cross-reference that claims it will NOT close
+    the issue, or say nothing. Observing the connection is the only way to know
+    it, so the snapshot must carry it alongside the sets the timeline does
+    cover."""
+    config = GithubConfigBuilder().build()
+    http_mocker.get(
+        HttpRequest(_REPOS_URL, query_params=ANY_QUERY_PARAMS),
+        HttpResponse(body=json.dumps([_repo()]), status_code=200),
+    )
+    node = {
+        "number": 7,
+        "updatedAt": "2026-06-20T10:00:00Z",
+        "parent": {"number": 1, "repository": {"nameWithOwner": "acme/app"}},
+        "subIssues": {
+            "totalCount": 2,
+            "nodes": [
+                {"number": 8, "repository": {"nameWithOwner": "acme/app"}},
+                {"number": 9, "repository": {"nameWithOwner": "acme/other"}},
+            ],
+        },
+        "blockedBy": {"totalCount": 1, "nodes": [{"number": 5, "repository": {"nameWithOwner": "acme/app"}}]},
+        "blocking": {"totalCount": 0, "nodes": []},
+        "closedByPullRequestsReferences": {
+            "totalCount": 1,
+            "nodes": [{"number": 42, "repository": {"nameWithOwner": "acme/app"}}],
+        },
+    }
+    http_mocker.post(
+        HttpRequest(f"{GH_URL}/graphql", body=_issue_links_body()),
+        HttpResponse(
+            body=json.dumps(
+                {
+                    "data": {
+                        "repository": {
+                            "issues": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node]}
+                        }
+                    }
+                }
+            ),
+            status_code=200,
+        ),
+    )
+
+    output = read_stream(_CONNECTOR, "issue_links", config)
+
+    assert not output.errors
+    row = output.records[0].record.data
+    assert row["item_number"] == 7
+    assert row["repo_full_name"] == "acme/app"
+    assert json.loads(row["parent_json"])["number"] == 1
+    assert [n["number"] for n in json.loads(row["sub_issues_json"])] == [8, 9]
+    assert [n["number"] for n in json.loads(row["blocked_by_json"])] == [5]
+    assert json.loads(row["blocking_json"]) == [], "an empty set is empty, never absent"
+    assert [n["number"] for n in json.loads(row["closed_by_pull_requests_json"])] == [42]
+    # The vendor's own counts travel with the sets: a nested connection cannot
+    # be paginated here, so the count is the only way a truncated set is
+    # visible at all.
+    assert row["sub_issues_total"] == 2
+    assert row["blocking_total"] == 0
+    assert row["closed_by_pull_requests_total"] == 1
+    assert row["unique_key"].endswith(":acme/app:issue_links:7")
+    _no_literal_none(output.records)
+    assert_records_conform(output.records, _CONNECTOR, "issue_links", strict=True)

@@ -37,6 +37,14 @@ const mocks = vi.hoisted(() => ({
     refetch: vi.fn(),
   },
   call: 0,
+  /** Every collection the view asked for, in call order. */
+  requested: [] as Array<{
+    metrics: Array<{
+      key: string;
+      filters?: Array<{ dimension: string; values: string[] }>;
+      views: unknown[];
+    }>;
+  }>,
   collectionSet: new Map<string, unknown>(),
   definitions: [] as unknown[],
   collections: [] as Array<{
@@ -80,13 +88,18 @@ vi.mock("@/queries/visible-roster", () => ({
 vi.mock("@/queries/member-grid", () => ({
   useMemberGridData: () => mocks.grid,
 }));
-// DomainLensView calls useMetricCollection four times (trend, composition,
-// event-histogram, dimension-table rollup) in that order on every render. The
-// counter is reset per test (see beforeEach): left running, each caller's slot
-// would depend on how many renders every earlier test happened to do.
+// DomainLensView calls useMetricCollection five times (trend, composition,
+// event-histogram, dimension-table rollup, hour-block heatmap) in that order on
+// every render. The counter is reset per test (see beforeEach): left running,
+// each caller's slot would depend on how many renders every earlier test
+// happened to do.
+const COLLECTION_CALLS = 5;
 vi.mock("@/queries/metric-results", () => ({
-  useMetricCollection: () => {
-    const r = mocks.collections[mocks.call % 4] ?? emptyCollection();
+  useMetricCollection: (collection: unknown) => {
+    mocks.requested.push(
+      collection as (typeof mocks.requested)[number],
+    );
+    const r = mocks.collections[mocks.call % COLLECTION_CALLS] ?? emptyCollection();
     mocks.call += 1;
     return r;
   },
@@ -202,11 +215,12 @@ const HEADLINE_CONFIG: LensConfig = {
 
 beforeEach(() => {
   mocks.call = 0;
+  mocks.requested = [];
   seedHappyOrg();
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
   act(() => {
-    portalRouter.set({ slice: undefined });
+    portalRouter.set({ slice: undefined, repo: undefined });
     portalRouter.set({ scope: undefined, direct: false });
   });
 });
@@ -216,11 +230,12 @@ afterEach(() => vi.clearAllMocks());
 /* ── tests ───────────────────────────────────────────────────────────── */
 
 describe("headline (rules 1–2: per-capita + PoP delta)", () => {
-  it("shows the per-active-person value, the team total and the delta", () => {
+  it("leads with the team total the dialog explains, and keeps the per-person read", () => {
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 commits over 4 active people = 25/person; halved from last period.
-    expect(screen.getByText("25 commits")).toBeInTheDocument();
-    expect(screen.getByText(/100 commits team total/)).toBeInTheDocument();
+    // The figure is the roster's, because that is the set the evidence dialog
+    // lists; 100 commits over 4 active people = 25/person underneath.
+    expect(screen.getByText("100 commits")).toBeInTheDocument();
+    expect(screen.getByText(/25 commits per active person/)).toBeInTheDocument();
     expect(screen.getByText("-50%")).toBeInTheDocument();
     // header carries the scope size + tagline
     expect(screen.getByText(/4 people · test lens/)).toBeInTheDocument();
@@ -232,8 +247,8 @@ describe("headline (rules 1–2: per-capita + PoP delta)", () => {
     ]);
     mocks.grid.previousByKey = new Map();
     render(<DomainLensView config={HEADLINE_CONFIG} />);
-    // 100 total / 2 active = 50, not 25
-    expect(screen.getByText("50 commits")).toBeInTheDocument();
+    // 100 total / 2 active = 50 per person, not 25
+    expect(screen.getByText(/50 commits per active person/)).toBeInTheDocument();
   });
 });
 
@@ -600,6 +615,229 @@ describe("composition (rule 7: only real server dimensions)", () => {
       screen.getByText("First rule that matches wins."),
     ).toBeInTheDocument();
     expect(screen.getByText("Code — everything else.")).toBeInTheDocument();
+  });
+
+  it("opens the records the clicked bar stands for, filtered to it", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = vi.fn();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/api", label: "acme/api" },
+              {
+                key: "branch_scope",
+                value: "default",
+                label: "Default branch",
+              },
+            ],
+            value: 30,
+          },
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/web", label: "acme/web" },
+              {
+                key: "branch_scope",
+                value: "non_default",
+                label: "Other branches",
+              },
+            ],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric(
+          "t.commits",
+          IDS.map((id) => [id, 10] as [string, number]),
+          {
+            label: "Commits",
+            drilldown: { granularity: ["event"] },
+            selection: {
+              metric_key: "t.commits",
+              entity: { type: "person", ids: IDS },
+              period: { from: "2026-07-20", to: "2026-07-26" },
+              filters: [],
+            },
+          } as Partial<NormalizedMetricResult>
+        ),
+      ],
+    ]);
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView
+          config={{
+            title: "T",
+            sections: [
+              {
+                kind: "composition",
+                metric: "t.commits",
+                dimension: "repository",
+                splitBy: "branch_scope",
+                title: "Lines by repository",
+              },
+            ],
+          }}
+        />
+      </EvidenceDialogContext.Provider>
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /acme\/api · Default branch/ })
+    );
+
+    expect(openEvidenceTargets).toHaveBeenCalledTimes(1);
+    const [targets] = openEvidenceTargets.mock.calls[0]!;
+    // Narrowed to the repository AND the segment: a bar that opened the
+    // unfiltered metric would answer a different question from the one asked.
+    expect(targets[0].selection.filters).toEqual([
+      { dimension: "repository", values: ["src:acme/api"] },
+      { dimension: "branch_scope", values: ["default"] },
+    ]);
+    // And the row says which slice it belongs to.
+    expect(targets[0].selection.display_dimensions).toEqual([
+      "branch_scope",
+      "repository",
+    ]);
+  });
+
+  it("leaves a segment the response never named inert", async () => {
+    const openEvidenceTargets = vi.fn();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/api", label: "acme/api" },
+              { key: "branch_scope", value: "default", label: "Default branch" },
+            ],
+            value: 30,
+          },
+          // No `branch_scope` at all: the row lands in the synthetic segment.
+          {
+            entity_id: id,
+            dimensions: [
+              { key: "repository", value: "src:acme/web", label: "acme/web" },
+            ],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", IDS.map((id) => [id, 10] as [string, number]), {
+          label: "Commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        } as Partial<NormalizedMetricResult>),
+      ],
+    ]);
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView
+          config={{
+            title: "T",
+            sections: [
+              {
+                kind: "composition",
+                metric: "t.commits",
+                dimension: "repository",
+                splitBy: "branch_scope",
+                title: "Lines by repository",
+              },
+            ],
+          }}
+        />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    // The named segment offers its records; the unnamed one has no value to
+    // filter on, so it must not offer a dialog that would come back empty.
+    expect(
+      screen.getByRole("button", { name: /acme\/api · Default branch/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /acme\/web · unsplit/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves the bars inert when the carrier's records cannot be read", () => {
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: IDS.flatMap((id) => [
+          {
+            entity_id: id,
+            dimensions: [{ key: "category", value: "docs" }],
+            value: 30,
+          },
+          {
+            entity_id: id,
+            dimensions: [{ key: "category", value: "code" }],
+            value: 10,
+          },
+        ]),
+      },
+    } as never);
+    mocks.collections = [emptyCollection(), comp, emptyCollection()];
+    render(
+      <DomainLensView
+        config={{
+          title: "T",
+          sections: [
+            {
+              kind: "composition",
+              metric: "t.commits",
+              dimension: "category",
+              title: "By category",
+            },
+          ],
+        }}
+      />
+    );
+
+    // An affordance that opens an empty dialog is worse than none.
+    expect(
+      screen.queryByRole("button", { name: /Open the records behind/ })
+    ).not.toBeInTheDocument();
   });
 
   it("shows a retryable error card when the breakdown request fails", () => {
@@ -989,6 +1227,35 @@ describe("dimension-table (rollup: one row per dimension value)", () => {
     expect(screen.queryByText(/Repositories ranked/)).not.toBeInTheDocument();
   });
 
+  it("opens the tail from the remainder row, and folds it back", async () => {
+    const user = userEvent.setup();
+    const table = emptyCollection();
+    table.byKey.set(
+      "t.commits",
+      rollup("t.commits", [
+        ["r1", "org/one", 40, 3],
+        ["r2", "org/two", 60, 2],
+        ["r3", "org/three", 10, 1],
+      ])
+    );
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      table,
+    ];
+    render(<DomainLensView config={TABLE_CONFIG} />);
+
+    // The limit is 2, so org/three is inside the remainder and nowhere else:
+    // without this control the tail is unreachable.
+    expect(screen.queryByText("org/three")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Other (1)" }));
+    expect(screen.getByText("org/three")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show top 2" }));
+    expect(screen.queryByText("org/three")).not.toBeInTheDocument();
+  });
+
   it("shows a retryable error card when the rollup request fails", () => {
     const table = emptyCollection();
     table.isError = true;
@@ -1053,6 +1320,72 @@ describe("ownership (concentration risk per dimension value)", () => {
     expect(screen.queryByText("a")).not.toBeInTheDocument();
   });
 
+  it("keeps the names out of the row and puts them on the segment", async () => {
+    const user = userEvent.setup();
+    const comp = emptyCollection();
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: [
+          breakdownRow(pid("a"), "alpha", 70),
+          breakdownRow(pid("b"), "alpha", 20),
+          breakdownRow(pid("c"), "alpha", 10),
+          breakdownRow(pid("a"), "beta", 30),
+          breakdownRow(pid("b"), "beta", 40),
+        ],
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      comp,
+      emptyCollection(),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+
+    // Nothing on the row names anyone, which is the section's standing rule.
+    expect(screen.queryByText(/Top person ·/)).not.toBeInTheDocument();
+
+    // Hovering is the reader asking who, and the answer names the leader of
+    // that value — a section that withheld it could not inform the decision
+    // it exists for.
+    const bar = screen.getByRole("img", { name: /alpha: top person 70%/ });
+    await user.hover(bar.firstElementChild as Element);
+    expect(await screen.findByText(/Top person · 70% · a/)).toBeInTheDocument();
+  });
+
+  it("reaches the rows beyond the first few, and folds them back", async () => {
+    const user = userEvent.setup();
+    const comp = emptyCollection();
+    // One value more than the section shows, so the control is the only way in.
+    const repos = Array.from({ length: 13 }, (_, i) => `repo-${i}`);
+    comp.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      breakdown: {
+        view: "breakdown",
+        values: repos.flatMap((repo, i) => [
+          breakdownRow(pid("a"), repo, 100 - i),
+          breakdownRow(pid("b"), repo, 10),
+        ]),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      comp,
+      emptyCollection(),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={OWNERSHIP_CONFIG} />);
+
+    const hidden = repos[repos.length - 1]!;
+    expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^\+\d+ more$/ }));
+    expect(screen.getByText(hidden)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Show top \d+$/ }));
+    expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+  });
+
   it("renders nothing with fewer than two values", () => {
     const comp = emptyCollection();
     comp.byKey.set("t.commits", {
@@ -1065,5 +1398,236 @@ describe("ownership (concentration risk per dimension value)", () => {
     mocks.collections = [emptyCollection(), comp, emptyCollection(), emptyCollection()];
     render(<DomainLensView config={OWNERSHIP_CONFIG} />);
     expect(screen.queryByText("Ownership concentration")).not.toBeInTheDocument();
+  });
+});
+
+describe("descending into one dimension value", () => {
+  const SCOPED_CONFIG: LensConfig = {
+    title: "Dev · Repositories",
+    tagline: "activity, reach & risk",
+    sections: [
+      { kind: "headline", metrics: ["t.commits"] },
+      {
+        kind: "dimension-table",
+        title: "Repositories ranked",
+        dimension: "repository",
+        noun: "repositories",
+        limit: 2,
+        metrics: ["t.commits"],
+      },
+    ],
+    drilldown: {
+      dimension: "repository",
+      tagline: "one repository",
+      sections: [
+        { kind: "headline", metrics: ["t.commits"] },
+        {
+          kind: "contributors",
+          metric: "t.commits",
+          title: "Top contributors",
+        },
+        {
+          kind: "heatmap-hours",
+          metric: "t.commits",
+          title: "When commits land",
+          caption: "Weekday × two-hour block, in UTC.",
+        },
+      ],
+    },
+  };
+
+  function rollupOf(values: Array<[string, string, number, number]>) {
+    const table = emptyCollection();
+    table.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      rollup: {
+        view: "rollup",
+        dimensions: ["repository"],
+        values: values.map(([value, label, v, persons]) => ({
+          dimensions: [{ key: "repository", value, label }],
+          value: v,
+          contributing_entity_count: persons,
+        })),
+      },
+    } as never);
+    return table;
+  }
+
+  it("opens the value from a table row and comes back through the breadcrumb", async () => {
+    const user = userEvent.setup();
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      rollupOf([
+        ["src:acme/api", "acme/api", 60, 3],
+        ["src:acme/web", "acme/web", 40, 2],
+      ]),
+      emptyCollection(),
+    ];
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    await user.click(screen.getByRole("button", { name: "acme/api" }));
+    expect(portalRouter.search.repo).toBe("src:acme/api");
+
+    // The URL is what makes a shared link reproduce this screen, so the id and
+    // not the label is what it carries — the heading shows the label.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "acme/api" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Repositories ranked · 2 repositories"),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Dev · Repositories" }),
+    );
+    expect(portalRouter.search.repo).toBeUndefined();
+  });
+
+  it("filters every request it makes to the value under inspection", () => {
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    const asked = mocks.requested.flatMap((c) => c.metrics);
+    expect(asked.length).toBeGreaterThan(0);
+    // Not one request may answer about the whole tenant: a section that
+    // forgot the filter would read as this repository carrying everyone's work.
+    for (const metric of asked) {
+      expect(metric.filters, metric.key).toEqual([
+        { dimension: "repository", values: ["src:acme/api"] },
+      ]);
+    }
+  });
+
+  it("opens an hour block from its column, and leaves the cells inert", async () => {
+    const user = userEvent.setup();
+    const openEvidenceTargets = vi.fn();
+    const hours = emptyCollection();
+    hours.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      timeseries: {
+        view: "timeseries",
+        bucket: "day",
+        dimensions: ["hour_block"],
+        series: IDS.map((id) => ({
+          entity_id: id,
+          dimensions: [{ key: "hour_block", value: "08", label: "08–10" }],
+          points: [{ bucket_start: "2026-10-05", value: 3 }],
+        })),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      hours,
+    ];
+    mocks.grid.byKey = new Map([
+      [
+        "t.commits",
+        metric("t.commits", IDS.map((id) => [id, 10] as [string, number]), {
+          label: "Commits",
+          drilldown: { granularity: ["event"] },
+          selection: {
+            metric_key: "t.commits",
+            entity: { type: "person", ids: IDS },
+            period: { from: "2026-07-20", to: "2026-07-26" },
+            filters: [],
+          },
+        } as Partial<NormalizedMetricResult>),
+      ],
+    ]);
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+
+    render(
+      <EvidenceDialogContext.Provider
+        value={{
+          openEvidence: vi.fn(),
+          openEvidenceTargets,
+          openEvidencePeople: vi.fn(),
+        }}
+      >
+        <DomainLensView config={SCOPED_CONFIG} />
+      </EvidenceDialogContext.Provider>,
+    );
+
+    // Every block is openable, not only the labelled ones: the density choice
+    // must not take six of twelve drilldowns with it.
+    expect(
+      screen.getAllByRole("button", { name: /Open the records from the/ }),
+    ).toHaveLength(12);
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Open the records from the 08:00 block",
+      }),
+    );
+
+    const [targets] = openEvidenceTargets.mock.calls[0]!;
+    // The block across the period, and still inside the repository. A CELL is
+    // that block on ONE weekday, which the request has no predicate for — so
+    // the cells stay inert rather than answering a wider question.
+    expect(targets[0].selection.filters).toEqual([
+      { dimension: "repository", values: ["src:acme/api"] },
+      { dimension: "hour_block", values: ["08"] },
+    ]);
+    expect(screen.getByTitle(/^Mon 08:00/).tagName).toBe("DIV");
+  });
+
+  it("ignores a value the lens has no screen for", () => {
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(
+      <DomainLensView
+        config={{
+          title: "Dev · Test",
+          sections: [{ kind: "headline", metrics: ["t.commits"] }],
+        }}
+      />,
+    );
+
+    // A `repo` left over from another lens must not turn this one into a
+    // screen about a value it does not group by.
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Dev · Test" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    for (const metric of mocks.requested.flatMap((c) => c.metrics)) {
+      expect(metric.filters, metric.key).toBeUndefined();
+    }
+  });
+
+  it("draws the heatmap from the hour blocks the metric reported", () => {
+    const hours = emptyCollection();
+    hours.byKey.set("t.commits", {
+      ...metric("t.commits", []),
+      timeseries: {
+        view: "timeseries",
+        bucket: "day",
+        dimensions: ["hour_block"],
+        series: IDS.map((id) => ({
+          entity_id: id,
+          dimensions: [{ key: "hour_block", value: "08", label: "08–10" }],
+          // 2026-10-05 is a Monday.
+          points: [{ bucket_start: "2026-10-05", value: 3 }],
+        })),
+      },
+    } as never);
+    mocks.collections = [
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      emptyCollection(),
+      hours,
+    ];
+    act(() => portalRouter.set({ repo: "src:acme/api" }));
+    render(<DomainLensView config={SCOPED_CONFIG} />);
+
+    // 4 members × 3 = 12, all in Monday's 08 block.
+    expect(screen.getByText(/When commits land · 12/)).toBeInTheDocument();
+    expect(screen.getByTitle(/^Mon 08:00 · 12/)).toBeInTheDocument();
+    // A block nobody committed in stays empty rather than borrowing a number.
+    expect(screen.getByTitle(/^Tue 08:00 · 0/)).toBeInTheDocument();
   });
 });

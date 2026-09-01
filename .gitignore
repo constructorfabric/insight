@@ -29,6 +29,8 @@ uv.lock
 # fresh clone without this file cannot install the suite at all — and the point
 # of the lock is that the host runner and the container resolve identically.
 !tests/uv.lock
+# ...and the seeder's: the demo population it generates depends on the resolved versions.
+!src/ingestion/tools/seed/uv.lock
 .DS_Store
 local
 access

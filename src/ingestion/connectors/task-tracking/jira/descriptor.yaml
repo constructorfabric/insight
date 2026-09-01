@@ -27,7 +27,7 @@ name: jira
 # only reaches rows the binary writes, and it skips any issue that already has
 # them — the deploy hook empties the staging table and the one-shot sync a major
 # dispatches is what re-bootstraps every issue with its summary (#2738).
-version: "5.1.0"
+version: "5.2.0"
 schedule: "0 3 * * *"
 workflow: sync
 # CI build metadata + runtime image refs (ADR-0016). The `images:` block is
@@ -42,7 +42,7 @@ images:
     name: insight-jira-enrich
     dockerfile: ./enrich/Dockerfile
     context: ./enrich
-    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.08.28.03.39-409fa5f"
+    image: "ghcr.io/constructorfabric/insight-jira-enrich:2026.08.31.13.02-70c7342"
 # Silver routing (class_task_*) is delivered by the task-tracking Silver layer
 # package, not by this connector. The pipeline runs the jira-rust path:
 # dbt(tag:jira) → tt-enrich-jira-run → dbt(<selector below>). The selector is

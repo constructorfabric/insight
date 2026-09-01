@@ -23,7 +23,19 @@ name: github
 #   collected after the change — recovering them for history means clearing the
 #   `issue_timeline_events` cursor and re-walking, which is a rollout step, not
 #   a version bump.
-version: "6.1.0"
+# 7.0.0: work-item links, and a correction to how the two Projects V2 streams
+#   are keyed. MAJOR for the keys: `project_fields` and `project_items` no
+#   longer carry a collection day in `unique_key`, so bronze holds the present
+#   and the ReplacingMergeTree collapses onto it, with history moved to the
+#   shared SCD2 snapshot macros (ADR-0001, ADR-0004 forbid a version in the
+#   key). Rows written under the old day-keyed scheme cannot collapse onto the
+#   new ones and must be dropped: TRUNCATE both bronze relations before the
+#   first sync on this version. `project_fields` also loses `snapshot_date`;
+#   the column survives on existing installations as NULL because nothing
+#   drops a bronze column.
+#   Additive alongside: a new `issue_links` stream, twelve link event types on
+#   `issue_timeline_events`, and four columns for the link target.
+version: "7.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

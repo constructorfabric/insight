@@ -20,6 +20,7 @@ WORKDIR /build
 #     real code. ---
 COPY Cargo.toml Cargo.lock ./
 COPY libs/insight-clickhouse/Cargo.toml ./libs/insight-clickhouse/Cargo.toml
+COPY libs/insight-http-metrics/Cargo.toml ./libs/insight-http-metrics/Cargo.toml
 COPY libs/authenticator-sdk/Cargo.toml ./libs/authenticator-sdk/Cargo.toml
 COPY libs/insight-migration/Cargo.toml ./libs/insight-migration/Cargo.toml
 COPY services/analytics/Cargo.toml ./services/analytics/Cargo.toml
@@ -34,6 +35,7 @@ COPY services/previews/Cargo.toml ./services/previews/Cargo.toml
 COPY tools/routegen/Cargo.toml ./tools/routegen/Cargo.toml
 
 RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/src/lib.rs && \
+    mkdir -p libs/insight-http-metrics/src && echo "" > libs/insight-http-metrics/src/lib.rs && \
     mkdir -p libs/authenticator-sdk/src && echo "" > libs/authenticator-sdk/src/lib.rs && \
     mkdir -p libs/insight-migration/src && echo "" > libs/insight-migration/src/lib.rs && \
     mkdir -p services/analytics/src && echo "fn main() {}" > services/analytics/src/main.rs && \
@@ -46,11 +48,13 @@ RUN mkdir -p libs/insight-clickhouse/src && echo "" > libs/insight-clickhouse/sr
 RUN cargo build --release --bin authenticator 2>/dev/null || true
 
 # --- Source layer ---
-RUN rm -rf libs/authenticator-sdk/src services/authenticator/src \
+RUN rm -rf libs/authenticator-sdk/src libs/insight-http-metrics/src services/authenticator/src \
+    target/release/deps/insight_http_metrics* target/release/deps/libinsight_http_metrics* \
     target/release/authenticator target/release/deps/authenticator* \
     target/release/deps/libauthenticator*
 
 COPY libs/authenticator-sdk/src/ ./libs/authenticator-sdk/src/
+COPY libs/insight-http-metrics/src/ ./libs/insight-http-metrics/src/
 COPY services/authenticator/src/ ./services/authenticator/src/
 COPY services/authenticator/config/ ./services/authenticator/config/
 

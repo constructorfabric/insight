@@ -20,10 +20,28 @@ export interface MetricEvidenceSelection {
   display_dimensions: string[];
 }
 
+export type MetricEvidenceSortDirection = "asc" | "desc";
+
+export interface MetricEvidenceSort {
+  key: string;
+  direction: MetricEvidenceSortDirection;
+}
+
+/** How a page is narrowed and ordered — the part of a read the reader drives. */
+export interface MetricEvidenceView {
+  sort?: MetricEvidenceSort;
+  search?: string;
+}
+
 export interface MetricEvidenceColumn {
   key: string;
   label: string;
   type: "string" | "number" | "date";
+  /**
+   * Whether the server can order by this column. Absent on a server that
+   * predates server-side ordering, where no column is clickable.
+   */
+  sortable?: boolean;
 }
 
 export interface MetricEvidenceRow {
@@ -32,15 +50,32 @@ export interface MetricEvidenceRow {
 }
 
 export interface MetricDrilldownResponse {
-  selection: MetricEvidenceSelection;
+  /**
+   * The selection as the server read it. `sort` is the effective order and is
+   * never null on a server that orders — its absence is the signal that this
+   * one cannot, and that the table's headers must stay inert.
+   */
+  selection: MetricEvidenceSelection & {
+    sort?: MetricEvidenceSort;
+    search?: string | null;
+  };
   columns: MetricEvidenceColumn[];
   rows: MetricEvidenceRow[];
   next_cursor: string | null;
 }
 
-export interface MetricDrilldownRequest extends MetricEvidenceSelection {
+export interface MetricDrilldownRequest
+  extends MetricEvidenceSelection,
+    MetricEvidenceView {
   cursor?: string;
   limit: number;
+}
+
+/** True once the answer came from a server that orders and narrows its own rows. */
+export function servesOrderedRows(
+  page: MetricDrilldownResponse | undefined
+): boolean {
+  return page?.selection?.sort != null;
 }
 
 async function parseResponseJson<T>(
@@ -90,12 +125,16 @@ export async function queryMetricDrilldown(
 export async function downloadMetricDrilldown(
   selection: MetricEvidenceSelection,
   format: "csv" | "xlsx",
+  view: MetricEvidenceView = {},
   signal?: AbortSignal
 ): Promise<void> {
   const res = await fetchWithAuth(`${BASE}/metric-drilldown/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...selection, format }),
+    // INVARIANT: the file holds the rows the screen holds, in the order the
+    // screen holds them — an export that ignored the view would answer a
+    // question the reader stopped asking.
+    body: JSON.stringify({ ...selection, ...view, format }),
     signal,
   });
   if (!res.ok) throw await errorFor(res);
@@ -129,7 +168,11 @@ export const MAX_EVIDENCE_PERSONS = 1000;
  * would be a different figure from the one on the card, silently.
  */
 export function personsEvidenceSelection(
-  canonical: MetricCanonicalSelection | undefined,
+  // Only the parts a roster read needs: the entity of the figure this came
+  // from is replaced by the roster itself.
+  canonical:
+    | Pick<MetricCanonicalSelection, "metric_key" | "period" | "filters">
+    | undefined,
   personIds: readonly string[],
   period?: { from: string; to: string },
   filters?: MetricDimensionFilter[],

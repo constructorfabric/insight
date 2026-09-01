@@ -710,6 +710,14 @@
         ],
         "type": "object"
       },
+      "Grain": {
+        "description": "Bucket width. The set is closed and validated server-side: the view is a\n`merge()` over every bronze database, so an operator-supplied interval\nexpression would be a direct route into that scan.",
+        "enum": [
+          "15m",
+          "1s"
+        ],
+        "type": "string"
+      },
       "HistogramBinDto": {
         "properties": {
           "count": {
@@ -793,6 +801,72 @@
         "required": [
           "imported",
           "skipped"
+        ],
+        "type": "object"
+      },
+      "IngestionIntensityResponse": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "grain": {
+            "$ref": "#/components/schemas/Grain",
+            "description": "Echoed resolved, not as asked: the caller may have pinned neither bound."
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/IngestionPoint"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "description": "The `source_database` the read was scoped to; absent when org-wide.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "series": {
+            "$ref": "#/components/schemas/Series"
+          },
+          "to": {
+            "type": "string"
+          },
+          "truncated": {
+            "description": "The group cap clipped the tail: the window is too wide for this grain\nand series to plot honestly. Never silently true — the UI says so.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "grain",
+          "series",
+          "from",
+          "to",
+          "truncated",
+          "points"
+        ],
+        "type": "object"
+      },
+      "IngestionPoint": {
+        "properties": {
+          "bucket": {
+            "description": "Bucket start as `YYYY-MM-DD HH:MM:SS`, always UTC — the reader's own\nzone would re-cut buckets the server already decided.",
+            "type": "string"
+          },
+          "key": {
+            "description": "Connector slug, stream name, or `all`, per the resolved `series`.",
+            "type": "string"
+          },
+          "rows": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket",
+          "key",
+          "rows"
         ],
         "type": "object"
       },
@@ -1041,6 +1115,10 @@
           "label": {
             "type": "string"
           },
+          "sortable": {
+            "description": "Whether the query can order by this column. A column the evidence row\ndoes not carry in a form SQL can compare is shown, not sorted.",
+            "type": "boolean"
+          },
           "type": {
             "$ref": "#/components/schemas/MetricDrilldownColumnType"
           }
@@ -1048,7 +1126,8 @@
         "required": [
           "key",
           "label",
-          "type"
+          "type",
+          "sortable"
         ],
         "type": "object"
       },
@@ -1150,6 +1229,22 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricDrilldownSort"
+              }
+            ]
           }
         },
         "required": [
@@ -1228,6 +1323,22 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MetricDrilldownSort"
+              }
+            ]
           }
         },
         "required": [
@@ -1315,6 +1426,16 @@
           },
           "period": {
             "$ref": "#/components/schemas/MetricDrilldownPeriod"
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sort": {
+            "$ref": "#/components/schemas/MetricDrilldownSort",
+            "description": "Always the effective order, never the caller's omission — a client that\nfinds this field missing is talking to a server that cannot sort at all."
           }
         },
         "required": [
@@ -1322,9 +1443,32 @@
           "entity",
           "period",
           "filters",
-          "display_dimensions"
+          "display_dimensions",
+          "sort"
         ],
         "type": "object"
+      },
+      "MetricDrilldownSort": {
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/MetricDrilldownSortDirection"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "MetricDrilldownSortDirection": {
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
       },
       "MetricFormat": {
         "enum": [
@@ -2614,6 +2758,15 @@
         "enum": [
           "tenant",
           "person"
+        ],
+        "type": "string"
+      },
+      "Series": {
+        "description": "What one plotted band counts. `Total` exists because the full-period trend\nplots a single line: grouping it by connector would multiply 400 days of\n15-minute buckets by the connector count for a series the chart then sums\nback down anyway.",
+        "enum": [
+          "connector",
+          "stream",
+          "total"
         ],
         "type": "string"
       },
@@ -4620,6 +4773,146 @@
           }
         ],
         "summary": "Send product feedback"
+      }
+    },
+    "/v1/ingestion/intensity": {
+      "get": {
+        "operationId": "analytics_api.ingestion.intensity",
+        "parameters": [
+          {
+            "description": "Bucket width: 15m or 1s",
+            "in": "query",
+            "name": "grain",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Bronze database to scope to, e.g. bronze_bamboohr",
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "What one band counts: connector, stream or total",
+            "in": "query",
+            "name": "series",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive lower bound, RFC 3339",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive upper bound, RFC 3339",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionIntensityResponse"
+                }
+              }
+            },
+            "description": "Extraction intensity buckets"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Bronze extraction intensity per bucket"
       }
     },
     "/v1/metric-definitions": {

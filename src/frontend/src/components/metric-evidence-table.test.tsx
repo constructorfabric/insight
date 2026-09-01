@@ -26,9 +26,9 @@ vi.mock("@/components/ui/sonner", () => ({
 }));
 
 const columns = [
-  { key: "ref", label: "Ref", type: "string" as const },
-  { key: "value", label: "Value", type: "number" as const },
-  { key: "active", label: "Active", type: "string" as const },
+  { key: "ref", label: "Ref", type: "string" as const, sortable: true },
+  { key: "value", label: "Value", type: "number" as const, sortable: true },
+  { key: "active", label: "Active", type: "string" as const, sortable: true },
 ];
 
 const rows = [
@@ -127,6 +127,28 @@ describe("MetricEvidenceTable", () => {
 
     await user.click(screen.getByRole("button", { name: "Value" }));
     expect(onSortChange).toHaveBeenCalledWith("value");
+  });
+
+  // A control that does nothing when clicked is worse than a label: the
+  // reader spends the click finding out.
+  // Announcing the served order means a click on a header changes nothing on
+  // screen until the rows land; the busy state is what acknowledges it.
+  it("says it is busy while the rows it shows are being replaced", () => {
+    renderTable({ reordering: true });
+
+    expect(screen.getByRole("table")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("leaves a column the server cannot order by as a plain label", () => {
+    renderTable({
+      columns: [
+        { key: "person", label: "Who", type: "string" as const },
+        ...columns,
+      ],
+    });
+
+    expect(screen.queryByRole("button", { name: "Who" })).toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Who" })).toBeDefined();
   });
 
   describe("the full record", () => {

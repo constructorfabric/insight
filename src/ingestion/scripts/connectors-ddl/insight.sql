@@ -607,6 +607,21 @@ ORDER BY (tenant_id, source_key, entity_type, entity_id, measure_key, metric_dat
 SETTINGS replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
+CREATE OR REPLACE VIEW insight.bronze_insert_events
+(
+    `source_database` LowCardinality(String),
+    `connector` LowCardinality(String),
+    `stream` LowCardinality(String),
+    `extracted_at` DateTime64(3)
+)
+AS SELECT
+    toString(_database) AS source_database,
+    replaceOne(toString(_database), 'bronze_', '') AS connector,
+    toString(_table) AS stream,
+    _airbyte_extracted_at AS extracted_at
+FROM merge(REGEXP('^bronze_'), '.*')
+;
+
 CREATE OR REPLACE VIEW insight.identity_resolution_coverage
 (
     `source_key` String,

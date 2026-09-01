@@ -24,9 +24,8 @@ toolkit-canonical-errors = { workspace = true }
 # Pinned to match the `ToSchema` the toolkit OperationBuilder compiles against.
 utoipa = { version = "5.5" }
 chrono = { workspace = true }
-# Pinned to the toolkit's major: instruments must register against the global
-# meter provider the host installs, and a different major is a different global.
-opentelemetry = "0.32"
+insight-http-metrics = { workspace = true }
+opentelemetry = { workspace = true }
 # statvfs: the volume is the ground truth the per-entry accounting cannot
 # see. rustix rather than libc — the workspace forbids unsafe code.
 rustix = { version = "1.1", features = ["fs"] }

@@ -88,6 +88,8 @@ export interface PortalNavActions {
   openSubsystem: (lens: string, subsystem: string | null) => void;
   setSubsystem: (subsystem: string | null) => void;
   setGearOrder: (sort: string | null, direction: string | null) => void;
+  /** Descend into one repository of the current lens, or leave it (""). */
+  openRepository: (repo: string) => void;
   setSlice: (slice: string) => void;
   setScope: (patch: Partial<OrgScope>) => void;
 }
@@ -117,8 +119,12 @@ export function usePortalNavActions(): PortalNavActions {
         ),
       setItem: (item) => setSearch({ item: item ?? undefined, acct: undefined }),
       setAcct: (acct) => setSearch({ acct: acct ?? undefined }),
-      setDir: (dir) => setSearch({ dir: dir || undefined }),
-      setLens: (lens) => setSearch({ lens: lens || undefined, item: undefined }),
+      // `repo` drops with the direction and the lens the same way `item` drops
+      // with the zone: one repository under inspection means nothing on another
+      // screen, and a retained param would reopen it on the way back.
+      setDir: (dir) => setSearch({ dir: dir || undefined, repo: undefined }),
+      setLens: (lens) =>
+        setSearch({ lens: lens || undefined, item: undefined, repo: undefined }),
       openDirection: (dir, lens) =>
         setSearch({
           zone: "directions",
@@ -126,6 +132,7 @@ export function usePortalNavActions(): PortalNavActions {
           lens: lens || undefined,
           item: undefined,
           acct: undefined,
+          repo: undefined,
         }),
       openSubsystem: (lens, subsystem) =>
         setSearch({
@@ -140,6 +147,7 @@ export function usePortalNavActions(): PortalNavActions {
           sort: sort ?? undefined,
           dir_sort: direction ?? undefined,
         }),
+      openRepository: (repo) => setSearch({ repo: repo || undefined }),
       setSlice: (slice) => {
         recordUsageEvent("cohort", slice || "none");
         setSearch({ slice: slice || undefined });

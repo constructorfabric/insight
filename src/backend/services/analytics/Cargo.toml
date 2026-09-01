@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 insight-clickhouse = { workspace = true }
+insight-http-metrics = { workspace = true }
 insight-migration = { workspace = true }
 # Direct `clickhouse` dep is for the `Row` derive on `system.columns` probe
 # rows (Refs #521 schema-validator). `insight-clickhouse` wraps the client
@@ -79,7 +80,7 @@ csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-opentelemetry = "0.31"
+opentelemetry = { workspace = true }
 clap = { workspace = true }
 
 [dev-dependencies]

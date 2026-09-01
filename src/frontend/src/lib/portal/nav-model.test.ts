@@ -77,6 +77,30 @@ describe("resolveZoneItem", () => {
  * The non-admin list must stay a strict subset — dropping a shared item or
  * reordering would silently reshape the pane every operator already knows.
  */
+describe("the ingestion lens", () => {
+  it("is admin-only: bronze rows carry no tenant to scope it by", () => {
+    const item = MANAGE_ITEMS.find((i) => i.id === "ingestion");
+    expect(item?.adminOnly).toBe(true);
+    const shows = (isAdmin: boolean) =>
+      manageItemsFor({ isAdmin, canManagePreviews: false }).some(
+        (i) => i.id === "ingestion",
+      );
+    expect(shows(false)).toBe(false);
+    expect(shows(true)).toBe(true);
+  });
+
+  it("is its own lens, beside connector health rather than inside it", () => {
+    // The two read different things and must not be conflated: connector
+    // health reports what the mover says about its syncs, this reports the rows
+    // that actually landed in bronze. A sync the mover calls successful and one
+    // that wrote rows are not the same claim.
+    const ids = MANAGE_ITEMS.map((i) => i.id);
+    expect(ids).toContain("connector-health");
+    expect(ids).toContain("ingestion");
+    expect(ids.indexOf("ingestion")).not.toBe(ids.indexOf("connector-health"));
+  });
+});
+
 describe("manageItemsFor", () => {
   it("gives a viewer passing every gate the full pane", () => {
     expect(

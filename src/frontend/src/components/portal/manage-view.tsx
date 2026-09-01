@@ -18,6 +18,7 @@ import type {
 } from "@/api/metric-definitions-client";
 import { ConnectorHealthPane } from "@/components/portal/connector-health";
 import { IdentitiesView } from "@/components/portal/identities-view";
+import { IngestionView } from "@/components/portal/ingestion-view";
 import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
@@ -61,6 +62,12 @@ export function ManageView({ item }: { item: string | null }) {
     return (
       <AdminGate>
         <PlatformUsage />
+      </AdminGate>
+    );
+  if (item === "ingestion")
+    return (
+      <AdminGate>
+        <IngestionView />
       </AdminGate>
     );
   if (item === "ai-assistant") return <AiAssistantBody />;

@@ -155,6 +155,21 @@ class TestDiffTasks:
         # the default ref contributes nothing, the branch still has to be walked
         assert seen == [({"project_id": 1, "ref": "H1..H2"}, frozenset({404}))]
 
+    def test_a_branch_the_stream_has_not_seen_is_walked_from_the_default_head(self):
+        parent = FakeParent([({"mode": "instance"}, [self._project()])])
+        stream = _stream(
+            parent=parent,
+            branches=FakeBranches({1: [
+                {"name": "main", "commit_sha": "H1"},
+                {"name": "feat", "commit_sha": "H2"},
+            ]}),
+        )
+        stream.state = {"projects": {"1": {"default_head": "H1", "branches": {}}}}
+        seen = self._capture(stream, ["sha1"])
+        tasks = list(stream._diff_tasks(_HeadFrontier(stream)))
+        assert seen == [({"project_id": 1, "ref": "H1..H2"}, frozenset({404}))]
+        assert tasks == [{"project_id": 1, "sha": "sha1", "ref_key": (1, "feat")}]
+
     def test_branch_at_the_default_head_is_skipped(self):
         parent = FakeParent([({"mode": "instance"}, [self._project()])])
         stream = _stream(
@@ -185,6 +200,24 @@ class TestDiffTasks:
         seen = self._capture(stream)
         assert list(stream._diff_tasks(_HeadFrontier(stream))) == []
         assert seen == []
+
+    def test_a_branch_whose_head_moved_since_the_last_sync_is_walked_again(self):
+        parent = FakeParent([({"mode": "instance"}, [self._project()])])
+        stream = _stream(
+            parent=parent,
+            branches=FakeBranches({1: [
+                {"name": "main", "commit_sha": "H1"},
+                {"name": "feat", "commit_sha": "H3"},
+            ]}),
+        )
+        stream.state = {
+            "projects": {"1": {"default_head": "H1", "branches": {"feat": "H2"}}}
+        }
+        seen = self._capture(stream, ["sha1"])
+        tasks = list(stream._diff_tasks(_HeadFrontier(stream)))
+        # anchored on the current default head, not on the branch's stored head
+        assert seen == [({"project_id": 1, "ref": "H1..H3"}, frozenset({404}))]
+        assert tasks == [{"project_id": 1, "sha": "sha1", "ref_key": (1, "feat")}]
 
     def test_deleted_branch_is_pruned_from_state(self):
         parent = FakeParent([({"mode": "instance"}, [self._project()])])

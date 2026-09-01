@@ -318,6 +318,7 @@ async fn query_summary(
          FROM system.query_log \
          WHERE type = 'QueryFinish' AND startsWith(log_comment, ?)",
         &[log_prefix.to_owned()],
+        crate::infra::metrics::QueryKind::Report,
         "benchmark:report-query-summary",
     )
     .await?;

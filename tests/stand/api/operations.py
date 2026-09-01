@@ -133,6 +133,10 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("POST", "/v1/usage/events"),
     _a("GET", "/v1/usage/config"),
     _a("GET", "/v1/usage/summary"),
+    # Ingestion intensity (ops). `.authenticated()` at the edge; the admin gate
+    # is inside the handler, so it is invisible here and asserted in
+    # test_ingestion.py.
+    _a("GET", "/v1/ingestion/intensity"),
     # Product feedback. The listing's admin gate is inside the handler, so it is
     # invisible here and asserted in test_feedback.py.
     _a("POST", "/v1/feedback"),

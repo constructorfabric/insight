@@ -52,7 +52,11 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     state: Arc<AppState>,
 ) -> Router {
-    let api = build_operations(Router::new(), openapi).layer(Extension(state));
+    let api = build_operations(Router::new(), openapi)
+        .layer(Extension(state))
+        .layer(insight_http_metrics::ServerMetricsLayer::new(
+            "identity-resolution",
+        ));
 
     host_router.merge(api)
 }

@@ -21,6 +21,11 @@ each variant is the STRONGEST statement provable from the serving path:
   place they legitimately can, which is why those metrics get an inequality and
   not an equality.
 
+Most metrics are one person's, and the sweep drives them with a single seeded
+fixture. An org-wide metric has no person to scope by, so `entity` carries which
+question to ask and the tenant rows reconcile the same two sides over the
+tenant's own evidence.
+
 Kept as a literal rather than derived from a live response so that collection
 stays offline, matching the rest of this suite, and so that adding a metric
 without deciding what its evidence means is a failure rather than a silent gap.
@@ -32,6 +37,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+
+
+class EntityKind(StrEnum):
+    """Whose records the drilldown and the metric read are scoped by."""
+
+    #: One person's rows, scoped to the fixture the sweep drives with.
+    PERSON = "person"
+    #: The tenant's own rows. An org-wide metric has no person to scope by, and
+    #: its evidence keys on the tenant itself.
+    TENANT = "tenant"
 
 
 class Tier(StrEnum):
@@ -52,6 +67,9 @@ class Tier(StrEnum):
     #: Percentile over event rows passed through one-for-one, like
     #: `EXACT_MEDIAN` but at a quantile the expectation carries.
     EXACT_PERCENTILE = "exact_percentile"
+    #: Sample standard deviation over event rows passed through one-for-one:
+    #: the projected values recompute the scalar, `stddevSamp` on both sides.
+    EXACT_STDDEV = "exact_stddev"
     #: Ratio of two additive measures: the summed numerator over the summed
     #: denominator, scaled, then transformed.
     EXACT_RATIO = "exact_ratio"
@@ -103,6 +121,8 @@ class Expectation:
     metric_key: str
     source: str
     tier: Tier
+    #: Which entity's records the sweep asks for.
+    entity: EntityKind = EntityKind.PERSON
     #: Ratio scale, from the definition's computation.
     scale: float | None = None
     #: Quantile of an `EXACT_PERCENTILE` metric, as the registry declares it.
@@ -112,6 +132,7 @@ class Expectation:
     derived_from: tuple[str, ...] = ()
 
 
+_TENANT = EntityKind.TENANT
 _PERCENT = Transform(clamp_max=100.0)
 _INVERTED_PERCENT = Transform(multiplier=-1.0, offset=100.0, clamp_min=0.0, clamp_max=100.0)
 
@@ -132,6 +153,19 @@ MATRIX: Sequence[Expectation] = (
     Expectation("ai.removed_lines", "ai", Tier.EXACT_SUM),
     Expectation("ai.seat_cost", "ai_cost", Tier.EXACT_SUM),
     Expectation("ai.tool_acceptance_rate", "ai", Tier.EXACT_RATIO, scale=100.0),
+    Expectation("ci.commits_observed", "ci", Tier.EXACT_COUNT, entity=_TENANT),
+    Expectation("ci.deployments", "ci", Tier.EXACT_COUNT, entity=_TENANT),
+    Expectation("ci.gate_first_try_pass_rate", "ci", Tier.EXACT_RATIO, entity=_TENANT, scale=100.0),
+    Expectation("ci.gate_pass_rate", "ci", Tier.EXACT_RATIO, entity=_TENANT, scale=100.0),
+    Expectation("ci.gate_retry_share", "ci", Tier.EXACT_RATIO, entity=_TENANT, scale=100.0),
+    Expectation("ci.run_duration_min", "ci", Tier.EXACT_MEDIAN, entity=_TENANT),
+    Expectation(
+        "ci.run_duration_min_p90", "ci", Tier.EXACT_PERCENTILE, entity=_TENANT, quantile=0.9
+    ),
+    Expectation("ci.run_duration_min_stddev", "ci", Tier.EXACT_STDDEV, entity=_TENANT),
+    Expectation("ci.run_hours", "ci", Tier.EXACT_SUM, entity=_TENANT),
+    Expectation("ci.runs", "ci", Tier.EXACT_COUNT, entity=_TENANT),
+    Expectation("ci.runs_matched_commit", "ci", Tier.EXACT_COUNT, entity=_TENANT),
     Expectation("collab.active_days", "collab", Tier.EXACT_DISTINCT_DATES),
     Expectation("collab.adhoc_meetings", "collab", Tier.EXACT_SUM),
     Expectation("collab.breadth", "collab", Tier.STRUCTURAL_ONLY),
@@ -223,6 +257,12 @@ MATRIX: Sequence[Expectation] = (
     Expectation("wiki.edits", "wiki", Tier.EXACT_SUM),
     Expectation("wiki.pages_created", "wiki", Tier.EXACT_COUNT),
     Expectation("wiki.pages_edited", "wiki", Tier.EXACT_SUM),
+)
+
+#: Metrics the endpoint refuses evidence for today (#2989). Their sweep cases
+#: are strict xfails, so this set retires itself the moment they serve.
+EVIDENCE_BLOCKED: frozenset[str] = frozenset(
+    expectation.metric_key for expectation in MATRIX if expectation.source == "ci"
 )
 
 #: A metric the stand serves but has no evidence for: its measure reads

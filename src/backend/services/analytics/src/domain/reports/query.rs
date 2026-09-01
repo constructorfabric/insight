@@ -8,6 +8,7 @@ use crate::domain::metric_results::compiler::{
     CompiledQuery, QueryBucket, TimeseriesQueryRow, compile_report_timeseries_query,
 };
 use crate::domain::metric_results::query_row_limit;
+use crate::infra::metrics::QueryKind;
 use crate::infra::query::{QueryFetchError, fetch_json_rows};
 
 use super::period::ReportBucket;
@@ -65,6 +66,7 @@ impl ReportQueryRunner for ClickHouseReportQueryRunner<'_> {
             self.client,
             &query.compiled.sql,
             &query.compiled.params,
+            QueryKind::Report,
             &log_comment,
         )
         .await

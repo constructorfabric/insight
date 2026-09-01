@@ -195,14 +195,14 @@ ingestion:
   # `serviceaccount "argo-workflow" not found`.
   templates:
     enabled: true
-  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.08.30.11.24-61c5ed1" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
+  toolboxImage: "ghcr.io/constructorfabric/insight-toolbox:2026.09.01.02.55-2a1a78a" # e.g. "ghcr.io/constructorfabric/insight-toolbox:2026.04.28.10.34-b08b460"
   # The sample-data seeder's image, for TEST stands only. Nothing in the chart
   # runs it: `src/ingestion/tools/seed/seed-stand.sh` reads this value to render
   # a one-shot Job. Its own image rather than the toolbox on purpose — the
   # toolbox runs migrations on real stands and does not carry demo data. Empty
   # (the default) means the stand cannot be seeded until an operator names an
   # image, either here or with the script's `--image` flag.
-  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.08.30.11.24-61c5ed1" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
+  seedImage: "ghcr.io/constructorfabric/insight-seed:2026.09.01.02.55-2a1a78a" # e.g. "ghcr.io/constructorfabric/insight-seed:2026.04.28.10.34-b08b460"
   # airbyte-sync poll-job tunables — see templates/ingestion/airbyte-sync.yaml.
   # The poll loop replaces a wall-clock deadline with a progress watchdog:
   # it tracks (status, bytesEmitted, recordsEmitted, stateMessagesEmitted)
@@ -212,6 +212,21 @@ ingestion:
   airbyteSync:
     pollIntervalSeconds: 30
     idleThresholdSeconds: 1800 # 30 min without any byte/record/state movement → fail
+  # jira-enrich (templates/ingestion/tt-enrich-jira-run.yaml). Phase 1 of the
+  # binary holds the whole reference set in memory — field metadata, every
+  # issue snapshot, and the last known value of each field it must diff
+  # against — before the first row is written, so its peak scales with the
+  # size of the Jira corpus rather than with the run's backlog. An instance
+  # whose journal has outgrown the default OOM-kills in that phase, having
+  # written nothing; raise the limit here rather than editing the template.
+  jiraEnrich:
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "8Gi"
   # Data-quality checks: a CronWorkflow runs the dbt check catalog (the
   # `data_quality` selector — tests tagged data_quality, not every dbt test) on
   # a schedule, independent of the per-connector pipeline. See

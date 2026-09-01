@@ -985,6 +985,8 @@ verify-ci-credential: vpn-up kube-ctx
 		|| { echo "$(C_RED)ERROR$(C_RST): no kubeconfig at $(CI_DEPLOYER_OUT) — run 'make provision-ci ENV=$(ENV)' first"; exit 1; }
 	@test -n "$(AIRBYTE_NAMESPACE)" \
 		|| { echo "$(C_RED)ERROR$(C_RST): airbyte.namespace is empty in $(VALUES) — nothing to verify the airbyte supplement against"; exit 1; }
+	@test -n "$(NS_PREVIEWS)" \
+		|| { echo "$(C_RED)ERROR$(C_RST): namespaces.previews is empty in $(INVENTORY) — nothing to verify the previews supplement against"; exit 1; }
 	@FAILURES=0; \
 	check() { \
 		WANT=$$1; DESC=$$2; shift 2; \
@@ -1009,6 +1011,11 @@ verify-ci-credential: vpn-up kube-ctx
 	check yes "create Roles in $(AIRBYTE_NAMESPACE)"                         create roles.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check yes "create RoleBindings in $(AIRBYTE_NAMESPACE) (the chart's airbyte-auth-reader)" create rolebindings.rbac.authorization.k8s.io -n $(AIRBYTE_NAMESPACE); \
 	check no  "read pods in $(AIRBYTE_NAMESPACE) (the exception is RBAC-only)" get pods -n $(AIRBYTE_NAMESPACE); \
+	check yes "create Roles in $(NS_PREVIEWS) (the chart's experiments RBAC lands there)" create roles.rbac.authorization.k8s.io -n $(NS_PREVIEWS); \
+	check yes "create RoleBindings in $(NS_PREVIEWS) (same object, the binding half)" create rolebindings.rbac.authorization.k8s.io -n $(NS_PREVIEWS); \
+	check yes "create Deployments in $(NS_PREVIEWS) (escalation prevention: the chart's Role grants it)" create deployments.apps -n $(NS_PREVIEWS); \
+	check yes "create HTTPRoutes in $(NS_PREVIEWS) (escalation prevention: the chart's Role grants it)" create httproutes.gateway.networking.k8s.io -n $(NS_PREVIEWS); \
+	check no  "read pods in $(NS_PREVIEWS) (the exception is RBAC-only)"     get pods -n $(NS_PREVIEWS); \
 	check no  "anything, anywhere (the blanket check)"                       '*' '*' --all-namespaces; \
 	check no  "list namespaces at cluster scope"                            list namespaces --all-namespaces; \
 	check no  "create namespaces (hence the --create-namespace limitation)" create namespaces --all-namespaces; \

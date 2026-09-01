@@ -812,7 +812,26 @@ SELECT
     if(message = '', commit_hash, message) AS record_label,
     toNullable(toFloat64(commit_measure.2)) AS contribution,
     CAST(NULL AS Nullable(String)) AS subject_key,
-    source_dimensions AS dimensions,
+    -- The hour block rides HERE and not on git_authored_commits: the
+    -- `commit_day` rows group by that model's own dimension tuple, so a
+    -- dimension added there would split one active day into one row per
+    -- block and inflate every active-day reading.
+    --
+    -- INVARIANT: the appended element is CAST to the array's own named tuple
+    -- type. `arrayConcat` with an anonymous or wider-nullability tuple widens
+    -- the whole column to `Tuple(String, Nullable(String), Nullable(String))`,
+    -- which changes this table's DDL and every relation that unions it.
+    arrayConcat(
+        source_dimensions,
+        CAST(
+            [tuple(
+                'hour_block',
+                coalesce({{ hour_block_value('observed_at') }}, '__unknown__'),
+                toNullable(coalesce({{ hour_block_label('observed_at') }}, 'Unknown'))
+            )]
+            AS Array(Tuple(key String, value String, label Nullable(String)))
+        )
+    ) AS dimensions,
     map(
         'source_id', coalesce(toString(source_id), ''),
         'ref', commit_hash,
