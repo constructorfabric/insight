@@ -1,13 +1,13 @@
 """The operator correction surface — the manual-resolution routes on the deployed path.
 
     GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
-    GET  /v1/resolution/accounts                          200 search + holder + by source · 403 realm admin
+    GET  /v1/resolution/accounts                          200 search + holder + by source · 400 stale cursor · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
     POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
-    POST /v1/resolution/merge                             400 source == target · excluded sentinel (validation, no write)
+    POST /v1/resolution/merge                             400 source == target · excluded sentinel · 404 unknown person, either side (validation, no write)
     POST /v1/resolution/detach                            404 unseen account (no write)
-    POST /v1/resolution/exclude                           200 applied (the round trip's cleanup)
+    POST /v1/resolution/exclude                           200 applied (the round trip's cleanup) · 404 unseen account
 
 The verbs append to an append-only journal, so the scratch policy cannot be
 "create and delete". The round trip instead ends in `exclude`, whose end state
@@ -21,13 +21,19 @@ Merge and detach are exercised through pure-validation refusals: proving the
 route answers with a session without moving a single seeded binding — the
 stand must read the same before and after this module.
 
+Every refusal here is asserted through `_refused`, which reads the problem
+document rather than the status line alone: the console renders
+`field_violations` as "which box you got wrong", so a refusal that degraded
+to an unreadable body would leave the operator staring at generic failure
+text with the status assertion still green.
+
 The 401 half is in `test_gateway.py`, swept over every operation.
 """
 
 from __future__ import annotations
 
 import pytest
-from insight_stand import ApiClient, Manifest, PersonaSession, identity_path
+from insight_stand import ApiClient, ApiResponse, Manifest, PersonaSession, identity_path
 
 from .. import scratch
 from ..schemas import (
@@ -36,6 +42,7 @@ from ..schemas import (
     AttentionResponse,
     CorrectionResponse,
     PersonAccountsResponse,
+    ProblemDocument,
 )
 from ..scratch import SCRATCH_SOURCE_ID, SCRATCH_SOURCE_TYPE
 
@@ -48,6 +55,10 @@ ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
 #: guard.
 EXCLUDED_PERSON = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
+#: Well-formed, right type, names nobody — so the refusal it draws is the
+#: existence check rather than the uuid parser.
+UNKNOWN_PERSON = "00000000-0000-0000-0000-000000000000"
+
 
 def _account(account_id: str) -> dict[str, str]:
     """One account under the suite's own connector instance — the only place a
@@ -59,6 +70,28 @@ def _account_path(account_id: str) -> str:
     return identity_path(
         f"/v1/resolution/accounts/{SCRATCH_SOURCE_TYPE}/{SCRATCH_SOURCE_ID}/{account_id}"
     )
+
+
+def _refused(response: ApiResponse, code: int, field: str | None = None) -> None:
+    """A correction refusal is only actionable if the operator can read it.
+
+    Every handler refusal on this surface is built by `invalid()`, which
+    stamps `field_violations` into the problem document — that is what the
+    console turns into "which box you got wrong". Asserting the status alone
+    would keep passing if the body degraded to an unreadable rejection, and
+    the operator would see the generic failure text with every test green.
+    """
+    assert response.status_code == code, f"{response.status_code} {response.text[:300]}"
+
+    problem = response.parse(ProblemDocument)
+    assert problem.status == code, problem
+    if field is None:
+        return
+
+    violations = problem.context.get("field_violations")
+    assert violations, f"no field_violations to act on: {problem.context}"
+    named = [entry.get("field") for entry in violations]
+    assert field in named, f"refusal names {named}, not the field the caller got wrong ({field})"
 
 
 @pytest.mark.security
@@ -389,7 +422,7 @@ def test_merge_refuses_a_person_merged_into_themselves(
         identity_path("/v1/resolution/merge"),
         json_body={"source_person_id": lead.uuid, "target_person_id": lead.uuid},
     )
-    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+    _refused(response, 400, field="target_person_id")
 
 
 @pytest.mark.requires_seed("admin_operator")
@@ -411,7 +444,7 @@ def test_the_excluded_sentinel_is_not_a_bind_target(
             ]
         },
     )
-    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+    _refused(response, 400, field="person_id")
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead")
@@ -429,18 +462,81 @@ def test_the_excluded_sentinel_is_not_a_merge_side(
     response = admin_operator_session.client.post(
         identity_path("/v1/resolution/merge"), json_body=body
     )
-    assert response.status_code == 400, f"{response.status_code} {response.text[:300]}"
+    _refused(response, 400, field=side)
 
 
 @pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
-def test_detach_refuses_an_account_nobody_ever_saw(
-    admin_operator_session: PersonaSession,
+@pytest.mark.parametrize("verb", ["detach", "exclude"])
+def test_the_verbs_that_need_an_account_refuse_one_nobody_ever_saw(
+    admin_operator_session: PersonaSession, verb: str
 ) -> None:
-    """Binding an unseen account is allowed (pre-registration); detaching one
-    is not — there is nothing to detach. 404, and no write happens."""
+    """#2486 scenario 3. Binding an unseen account is allowed — that is
+    pre-registration, the one deliberate asymmetry of the grammar. Detaching
+    or excluding one is a typo: there is nothing to detach, and an excluded
+    binding for an account no connector ever reported is a decision about
+    nobody.
+
+    Both verbs share `require_known_account`, so the pair is what proves the
+    guard rather than one caller of it: a refactor that moves the check into
+    `detach` alone would leave `exclude` minting journal rows for typos.
+    """
     response = admin_operator_session.client.post(
-        identity_path("/v1/resolution/detach"),
+        identity_path(f"/v1/resolution/{verb}"),
         json_body={"account": _account("never-observed-account")},
     )
-    assert response.status_code == 404, f"{response.status_code} {response.text[:300]}"
+    _refused(response, 404)
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+@pytest.mark.parametrize("unknown_side", ["source_person_id", "target_person_id"])
+def test_merge_refuses_a_person_the_tenant_never_had(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest, unknown_side: str
+) -> None:
+    """#2486 scenario 3. A merge may not invent either of its two people.
+
+    `bind` proves `require_known_person` for its own single target; merge
+    calls the same guard twice, and the two calls are not one test. The
+    target side is the one that would go unnoticed: an unknown SOURCE merges
+    an empty set of accounts and looks like a harmless no-op, while an
+    unknown TARGET would rebind every account of a real person onto an id
+    nobody holds — accounts alive in the journal and attached to no one.
+
+    Pure validation: the guard runs before any account is read, so the stand
+    reads the same before and after.
+    """
+    lead = stand_manifest.fixture("dev_lead")
+    body = {"source_person_id": lead.uuid, "target_person_id": lead.uuid}
+    body[unknown_side] = UNKNOWN_PERSON
+
+    response = admin_operator_session.client.post(
+        identity_path("/v1/resolution/merge"), json_body=body
+    )
+    _refused(response, 404)
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_a_cursor_issued_for_another_needle_is_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """#2486 scenario 3. The account listing's cursor is bound to the search
+    that issued it — the response schema says so in its own description
+    ("Only valid for the query that issued it — narrowing `q` starts over").
+
+    Resuming a narrowed search where a wider one left off would skip every
+    account before that position, silently, and only for the operator who
+    typed one more letter into the box. `/v1/persons` refuses it; this is the
+    same rule on the surface where the accounts an operator is deciding about
+    actually live.
+    """
+    first = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"limit": 1})
+    assert first.status_code == 200, f"{first.status_code} {first.text[:300]}"
+    cursor = first.parse(AccountSearchResponse).next_cursor
+    assert cursor, "a one-row page of the observed accounts must offer a next page"
+
+    resumed = admin_operator_session.client.get(
+        ACCOUNT_SEARCH, params={"limit": 1, "q": "nobody-by-this-name", "cursor": cursor}
+    )
+    _refused(resumed, 400, field="cursor")

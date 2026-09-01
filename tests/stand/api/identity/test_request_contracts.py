@@ -48,6 +48,16 @@ MALFORMED_QUERY_ADMIN_ROUTES: tuple[str, ...] = (
     "/v1/persons-sync?limit=abc",
     "/v1/person-roles?person=not-a-uuid",
     "/v1/visibility?active=maybe",
+    # The reads an operator's console works from, which take the same `limit`
+    # and were outside this table: a silently dropped page size on the review
+    # queue is a shorter list read as a shorter backlog. `/v1/visible-persons`
+    # is `.authenticated()` rather than admin-gated, and belongs here anyway —
+    # the extractor refuses before any gate runs, which is the property under
+    # test.
+    "/v1/resolution/attention?limit=abc",
+    "/v1/resolution/accounts?limit=abc",
+    "/v1/persons?limit=abc",
+    "/v1/visible-persons?limit=abc",
 )
 
 #: `/v1/subchart` is `.authenticated()`, not admin-gated.
