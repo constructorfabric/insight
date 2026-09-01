@@ -152,6 +152,15 @@ pub(crate) fn partition_person_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String
     (person_ids, values)
 }
 
+pub(crate) fn person_terms_name_nobody(
+    terms: &[String],
+    person_ids: &[Uuid],
+    values: &[String],
+) -> bool {
+    (!terms.is_empty() && person_ids.is_empty() && values.is_empty())
+        || person_ids.windows(2).any(|ids| ids[0] != ids[1])
+}
+
 /// The position a cursor carries, or nothing when none was presented.
 pub(crate) fn resume_from<K: PagePosition>(
     cursor: Option<&str>,

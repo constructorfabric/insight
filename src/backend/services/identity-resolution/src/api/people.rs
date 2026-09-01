@@ -123,23 +123,27 @@ pub async fn list_people(
         }),
     };
 
-    let rows = people_listing::list_persons(
-        &state.db,
-        tenant,
-        ListQuery {
-            org_chart_source_type: &state.config.org_chart_source_type,
-            terms: &values,
-            person_ids: &named,
-            restrict,
-            after: resume.as_ref().map(|key| After {
-                order_key: &key.order_key,
-                person_id: key.person_id,
-            }),
-            limit: limit + 1,
-        },
-    )
-    .await
-    .map_err(|error| read_error(&error))?;
+    let rows = if listing::person_terms_name_nobody(&terms, &named, &values) {
+        Vec::new()
+    } else {
+        people_listing::list_persons(
+            &state.db,
+            tenant,
+            ListQuery {
+                org_chart_source_type: &state.config.org_chart_source_type,
+                terms: &values,
+                person_ids: &named,
+                restrict,
+                after: resume.as_ref().map(|key| After {
+                    order_key: &key.order_key,
+                    person_id: key.person_id,
+                }),
+                limit: limit + 1,
+            },
+        )
+        .await
+        .map_err(|error| read_error(&error))?
+    };
 
     let (rows, next_cursor) =
         listing::cut_to_page(rows, limit, tenant, &query, |row: &PersonListRow| PageKey {

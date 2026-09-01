@@ -50,8 +50,9 @@
 {% endif %}
 {#
   Generates identity_inputs rows from a fields_history model.
-  Produces UPSERT rows for identity-relevant field changes, and DELETE rows
-  for all identity fields when a deactivation condition is met.
+  Produces UPSERT rows for non-empty identity field changes, and DELETE rows
+  for all identity fields when a deactivation condition is met. Roster profile
+  fields additionally emit a DELETE when their source value is cleared.
 
   Roster emitters also produce `roster_membership` and explicitly allowlisted,
   source-qualified `person_*` profile claims. Those claims keep activity
@@ -126,11 +127,11 @@ WITH history AS (
     {% endif %}
 ),
 
--- UPSERT: identity field changed.
+-- Current-value event: identity field changed or was cleared.
 -- DISTINCT: one member appearing as several history entities at one instant
 -- (e.g. a GitHub member of two configured orgs) is one observation, not two
 -- rows sharing a unique_key.
-upserts AS (
+identity_field_events AS (
     {% for f in identity_fields %}
     SELECT DISTINCT
         CAST(concat(
@@ -139,7 +140,7 @@ upserts AS (
             '{{ source_type }}', '-',
             coalesce(entity_id, ''), '-',
             '{{ f.value_type }}', '-',
-            'UPSERT-',
+            if(new_value = '', 'DELETE-', 'UPSERT-'),
             toString(toUnixTimestamp64Milli(toDateTime64(updated_at, 3)))
         ) AS String) AS unique_key,
         toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
@@ -149,17 +150,33 @@ upserts AS (
         '{{ f.value_type }}' AS value_type,
         new_value AS value,
         '{{ f.value_field_name }}' AS value_field_name,
-        'UPSERT' AS operation_type,
+        if(new_value = '', 'DELETE', 'UPSERT') AS operation_type,
         toDateTime64(updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(updated_at, 3)) AS _version
     FROM history
     WHERE field_name = '{{ f.field }}'
-      AND new_value != ''
       -- A row without an account key can never bind (the persons-seed fails
       -- the whole run on a NULL source_account_id).
       AND entity_id IS NOT NULL AND entity_id != ''
     {{ 'UNION ALL' if not loop.last }}
     {% endfor %}
+),
+
+upserts AS (
+    SELECT
+        unique_key,
+        insight_tenant_id,
+        insight_source_id,
+        insight_source_type,
+        source_account_id,
+        value_type,
+        value,
+        value_field_name,
+        operation_type,
+        _synced_at,
+        _version
+    FROM identity_field_events
+    WHERE operation_type = 'UPSERT'
 ),
 
 -- DELETE: account deactivation detected — emit DELETE for all identity fields
@@ -249,7 +266,7 @@ roster_membership_deletes AS (
     FROM roster_inactivation_events d
 ),
 
-person_profile_upserts AS (
+person_profile_events AS (
     SELECT
         concat(unique_key, '-person-profile') AS unique_key,
         insight_tenant_id,
@@ -262,7 +279,7 @@ person_profile_upserts AS (
         operation_type,
         _synced_at,
         _version
-    FROM upserts
+    FROM identity_field_events
     WHERE value_type IN (
         {% for profile_field in person_profile_fields %}
         '{{ profile_field }}'{{ ',' if not loop.last }}
@@ -452,7 +469,7 @@ SELECT
     operation_type,
     _synced_at,
     _version
-FROM person_profile_upserts
+FROM person_profile_events
 {% endif %}
 
 {% endmacro %}

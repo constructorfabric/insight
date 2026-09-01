@@ -229,16 +229,9 @@ fn append_filters(
     terms: &[String],
     person_ids: &[Uuid],
 ) {
-    if !person_ids.is_empty() {
-        let placeholders = vec!["?"; person_ids.len()].join(", ");
-        filters.push_str(" AND p.person_id IN (");
-        filters.push_str(&placeholders);
-        filters.push(')');
-        values.extend(
-            person_ids
-                .iter()
-                .map(|person_id| person_id.as_bytes().to_vec().into()),
-        );
+    for person_id in person_ids {
+        filters.push_str(" AND p.person_id = ?");
+        values.push(person_id.as_bytes().to_vec().into());
     }
 
     for term in terms {
@@ -361,11 +354,20 @@ mod tests {
         let terms = ["50%".to_owned(), "name_with_underscore".to_owned()];
         let (sql, values) = query(&terms, &[person_id], Restrict::UNRESTRICTED, None);
 
-        assert!(sql.contains("p.person_id IN (?)"));
+        assert!(sql.contains("p.person_id = ?"));
         assert_eq!(sql.matches("p.display_name LIKE ?").count(), terms.len());
         assert_eq!(sql.matches('?').count(), values.len());
         assert!(values.contains(&sea_orm::Value::from("%50!%%".to_owned())));
         assert!(values.contains(&sea_orm::Value::from("%name!_with!_underscore%".to_owned())));
+    }
+
+    #[test]
+    fn distinct_person_ids_are_separate_match_requirements() {
+        let person_ids = [Uuid::from_u128(2), Uuid::from_u128(3)];
+        let (sql, values) = query(&[], &person_ids, Restrict::UNRESTRICTED, None);
+
+        assert_eq!(sql.matches("p.person_id = ?").count(), person_ids.len());
+        assert_eq!(sql.matches('?').count(), values.len());
     }
 
     #[test]

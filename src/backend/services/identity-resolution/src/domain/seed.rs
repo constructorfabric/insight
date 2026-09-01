@@ -4,7 +4,7 @@
 //! per-account bindings (classified by binding author) instead of collapsing
 //! onto the first binding.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
@@ -37,9 +37,9 @@ pub struct IdentityInputRow {
     pub is_delete: bool,
 }
 
-/// One account folded from the raw input stream: its current email, whether it
-/// is closed (latest observation is a tombstone), and the upsert observations
-/// to persist once the group's `person_id` is resolved.
+/// One account folded from the raw input stream: its current email, whether its
+/// binding is closed, and the current upsert observations to persist once the
+/// group's `person_id` is resolved.
 #[derive(Debug, Clone)]
 pub struct SeedProfile {
     pub account: SourceAccountKey,
@@ -529,16 +529,18 @@ pub fn route_value(
 }
 
 /// Fold the raw input stream (delivered **latest-first per account**) into one
-/// [`SeedProfile`] per source account: the first row seen marks the account
-/// closed (tombstone latest), the first email row's value is the current email,
-/// and tombstone rows are signal-only (never persisted).
+/// [`SeedProfile`] per source account: the latest row for each value type is
+/// current, the current id row determines whether the account is closed when
+/// present, and tombstone rows are signal-only (never persisted).
 #[must_use]
 pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
     struct Acc {
         latest_email: Option<String>,
-        is_closed: bool,
+        latest_event_is_delete: bool,
+        id_is_closed: Option<bool>,
         roster_membership: Option<RosterMembership>,
         saw_any: bool,
+        seen_value_types: HashSet<String>,
         upserts: Vec<IdentityInputRow>,
     }
 
@@ -551,14 +553,22 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         };
         let acc = by_account.entry(key).or_insert_with(|| Acc {
             latest_email: None,
-            is_closed: false,
+            latest_event_is_delete: false,
+            id_is_closed: None,
             roster_membership: None,
             saw_any: false,
+            seen_value_types: HashSet::new(),
             upserts: Vec::new(),
         });
         if !acc.saw_any {
-            acc.is_closed = row.is_delete; // first row = latest observation
+            acc.latest_event_is_delete = row.is_delete;
             acc.saw_any = true;
+        }
+        if !acc.seen_value_types.insert(row.value_type.clone()) {
+            continue;
+        }
+        if row.value_type == BINDING_VALUE_TYPE {
+            acc.id_is_closed = Some(row.is_delete);
         }
         if row.value_type == "email" && acc.latest_email.is_none() && !row.value.trim().is_empty() {
             acc.latest_email = Some(row.value.clone()); // stored as-is (ADR-0011)
@@ -579,7 +589,7 @@ pub fn build_profiles(rows: Vec<IdentityInputRow>) -> Vec<SeedProfile> {
         .map(|(account, acc)| SeedProfile {
             account,
             latest_email: acc.latest_email,
-            is_closed: acc.is_closed,
+            is_closed: acc.id_is_closed.unwrap_or(acc.latest_event_is_delete),
             roster_membership: acc.roster_membership,
             observations: acc.upserts,
         })
@@ -1115,7 +1125,11 @@ mod tests {
         let p = &profiles[0];
         assert_eq!(p.latest_email.as_deref(), Some("new@corp.com"));
         assert!(!p.is_closed);
-        assert_eq!(p.observations.len(), 3, "tombstone is not persisted");
+        assert_eq!(
+            p.observations.len(),
+            2,
+            "only the latest current value per type is persisted"
+        );
         Ok(())
     }
 
@@ -1130,6 +1144,33 @@ mod tests {
         );
         // Email is still captured even from a tombstone row.
         assert_eq!(profiles[0].latest_email.as_deref(), Some("x@y.com"));
+        Ok(())
+    }
+
+    #[test]
+    fn build_profiles_applies_tombstones_per_value_type() -> anyhow::Result<()> {
+        let older: DateTime = "2026-01-01T00:00:00".parse()?;
+        let newer: DateTime = "2026-02-01T00:00:00".parse()?;
+        let profiles = build_profiles(vec![
+            input("directory", "U1", "person_display_name", "", true, newer),
+            input("directory", "U1", "id", "U1", false, newer),
+            input(
+                "directory",
+                "U1",
+                "person_display_name",
+                "Old Name",
+                false,
+                older,
+            ),
+        ]);
+
+        assert!(!profiles[0].is_closed);
+        assert!(
+            profiles[0]
+                .observations
+                .iter()
+                .all(|row| row.value_type != "person_display_name")
+        );
         Ok(())
     }
 

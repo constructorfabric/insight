@@ -90,7 +90,7 @@ pub async fn search_persons(
 
     // Terms that named nobody must answer nobody. Without this the page would
     // fall through to the unfiltered listing and hand back the whole tenant.
-    let rows = if names_nobody(&terms, &named, &values) {
+    let rows = if listing::person_terms_name_nobody(&terms, &named, &values) {
         Vec::new()
     } else {
         page_of_persons(&state, tenant, &values, &named, resume.as_ref(), limit).await?
@@ -182,11 +182,6 @@ fn resume_from(
         .map_err(|rejected: CursorRejected| invalid("cursor", rejected.message()))
 }
 
-/// The caller typed something, and none of it can name a person.
-fn names_nobody(terms: &[String], named: &[Uuid], values: &[String]) -> bool {
-    !terms.is_empty() && named.is_empty() && values.is_empty()
-}
-
 /// Split `q` into terms: non-empty, whitespace-separated, capped in count and
 /// total length. An absent or blank `q` is the whole roster, not an error.
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
@@ -273,7 +268,7 @@ mod tests {
         assert!(named.is_empty());
         assert!(values.is_empty(), "not matched as a value either");
         assert!(
-            names_nobody(&terms, &named, &values),
+            listing::person_terms_name_nobody(&terms, &named, &values),
             "a query that named nobody must answer nobody, not everybody"
         );
     }
@@ -283,9 +278,20 @@ mod tests {
     #[test]
     fn browsing_is_not_a_query_that_named_nobody() {
         assert!(
-            !names_nobody(&[], &[], &[]),
+            !listing::person_terms_name_nobody(&[], &[], &[]),
             "an empty query is the roster, not an empty answer"
         );
+    }
+
+    #[test]
+    fn distinct_person_ids_name_nobody() {
+        let terms = vec![
+            Uuid::from_u128(1).to_string(),
+            Uuid::from_u128(2).to_string(),
+        ];
+        let (named, values) = listing::partition_person_terms(&terms);
+
+        assert!(listing::person_terms_name_nobody(&terms, &named, &values));
     }
 
     #[test]

@@ -14,6 +14,9 @@ models:
     columns:
       - name: unique_key
         description: "Stable identity-observation event key."
+        tests:
+          - not_null
+          - unique
       - name: insight_tenant_id
         description: "Insight tenant receiving the observation."
       - name: insight_source_id

@@ -50,10 +50,10 @@ fn change(
     profiles: &[&SeedProfile],
     roster: Option<&RosterSource>,
 ) -> Option<PersonChange> {
-    if let Some((profile, membership_at)) = preferred_active_profile(profiles, roster) {
+    if let Some((active_profiles, membership_at)) = active_roster_profiles(profiles, roster) {
         return Some(PersonChange::Upsert(project(
             person_id,
-            profile,
+            &active_profiles,
             membership_at,
         )));
     }
@@ -69,77 +69,67 @@ fn change(
         })
 }
 
-fn preferred_active_profile<'a>(
+fn active_roster_profiles<'a>(
     profiles: &[&'a SeedProfile],
     roster: Option<&RosterSource>,
-) -> Option<(&'a SeedProfile, DateTime)> {
-    profiles
+) -> Option<(Vec<&'a SeedProfile>, DateTime)> {
+    let profiles = profiles
         .iter()
         .copied()
         .filter_map(|profile| {
             let membership = profile.roster_membership?;
-            (roster_profile(profile, roster) && membership.active)
-                .then_some((profile, membership.observed_at))
+            (roster_profile(profile, roster) && membership.active).then_some(profile)
         })
-        .max_by_key(|(profile, _)| {
-            let populated = [
-                "display_name",
-                "first_name",
-                "last_name",
-                "username",
-                "email",
-            ]
-            .into_iter()
-            .filter(|value_type| profile_value(profile, value_type).is_some())
-            .count();
-            (
-                populated,
-                profile.account.source_type.as_str(),
-                profile.account.source_id,
-                profile.account.account_id.as_str(),
-            )
-        })
+        .collect::<Vec<_>>();
+    let membership_at = profiles
+        .iter()
+        .filter_map(|profile| profile.roster_membership)
+        .map(|membership| membership.observed_at)
+        .max()?;
+    Some((profiles, membership_at))
 }
 
 fn roster_profile(profile: &SeedProfile, roster: Option<&RosterSource>) -> bool {
     roster.is_some_and(|roster| roster.speaks_for(&profile.account.source_type))
 }
 
-fn project(person_id: Uuid, profile: &SeedProfile, membership_at: DateTime) -> PersonProjection {
+fn project(
+    person_id: Uuid,
+    profiles: &[&SeedProfile],
+    membership_at: DateTime,
+) -> PersonProjection {
     PersonProjection {
         person_id,
-        email: profile_value(profile, "email"),
-        username: profile_value(profile, "username"),
-        display_name: profile_value(profile, "display_name"),
-        first_name: profile_value(profile, "first_name"),
-        last_name: profile_value(profile, "last_name"),
-        attributes: profile_attributes(profile),
-        valid_from: profile_claims(profile)
+        email: profile_value(profiles, "email"),
+        username: profile_value(profiles, "username"),
+        display_name: profile_value(profiles, "display_name"),
+        first_name: profile_value(profiles, "first_name"),
+        last_name: profile_value(profiles, "last_name"),
+        attributes: profile_attributes(profiles),
+        valid_from: profile_claims(profiles)
             .map(|observation| observation.synced_at)
             .max()
             .map_or(membership_at, |claim_at| claim_at.max(membership_at)),
     }
 }
 
-fn profile_value(profile: &SeedProfile, value_type: &str) -> Option<String> {
+fn profile_value(profiles: &[&SeedProfile], value_type: &str) -> Option<String> {
     let person_value_type = format!("person_{value_type}");
-    profile
-        .observations
-        .iter()
+    profile_claims(profiles)
         .filter(|observation| observation.value_type == person_value_type)
         .filter(|observation| {
             let (value_id, value_full_text, value) =
                 route_value(&observation.value_type, &observation.value);
             value_id.is_some() || value_full_text.is_some() || value.is_some()
         })
-        .max_by_key(|observation| observation.synced_at)
+        .max_by_key(|observation| claim_order(observation))
         .map(|observation| observation.value.clone())
         .filter(|value| !value.trim().is_empty())
 }
 
-fn profile_attributes(profile: &SeedProfile) -> BTreeMap<String, String> {
+fn profile_attributes(profiles: &[&SeedProfile]) -> BTreeMap<String, String> {
     let mut attributes: BTreeMap<String, &IdentityInputRow> = BTreeMap::new();
-    for observation in profile_claims(profile) {
+    for observation in profile_claims(profiles) {
         let Some(name) = observation.value_type.strip_prefix("person_") else {
             continue;
         };
@@ -148,7 +138,7 @@ fn profile_attributes(profile: &SeedProfile) -> BTreeMap<String, String> {
         }
         let replace = attributes
             .get(name)
-            .is_none_or(|current| current.synced_at <= observation.synced_at);
+            .is_none_or(|current| claim_order(current) <= claim_order(observation));
         if replace {
             attributes.insert(name.to_owned(), observation);
         }
@@ -159,13 +149,27 @@ fn profile_attributes(profile: &SeedProfile) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn profile_claims(profile: &SeedProfile) -> impl Iterator<Item = &IdentityInputRow> {
-    profile.observations.iter().filter(|observation| {
-        observation
-            .value_type
-            .strip_prefix("person_")
-            .is_some_and(|name| !is_hierarchy_field(name))
+fn profile_claims<'a>(
+    profiles: &'a [&'a SeedProfile],
+) -> impl Iterator<Item = &'a IdentityInputRow> {
+    profiles.iter().flat_map(|profile| {
+        profile.observations.iter().filter(|observation| {
+            observation
+                .value_type
+                .strip_prefix("person_")
+                .is_some_and(|name| !is_hierarchy_field(name))
+        })
     })
+}
+
+fn claim_order(observation: &IdentityInputRow) -> (DateTime, &str, Uuid, &str, &str) {
+    (
+        observation.synced_at,
+        observation.source_type.as_str(),
+        observation.source_id,
+        observation.source_account_id.as_str(),
+        observation.value.as_str(),
+    )
 }
 
 fn is_core_profile_field(name: &str) -> bool {
@@ -257,6 +261,35 @@ mod tests {
     }
 
     #[test]
+    fn each_profile_field_uses_the_latest_active_roster_claim() {
+        let timestamp = chrono::DateTime::UNIX_EPOCH.naive_utc();
+        let mut older_richer = profile("older", true, "Older Name");
+        older_richer.observations[0].value_type = "person_display_name".to_owned();
+        older_richer.observations.push(IdentityInputRow {
+            value_type: "person_username".to_owned(),
+            value: "stable-handle".to_owned(),
+            ..older_richer.observations[0].clone()
+        });
+        let mut newer = profile("newer", true, "Newer Name");
+        newer.observations[0].value_type = "person_display_name".to_owned();
+        newer.observations[0].synced_at = timestamp + chrono::Duration::days(1);
+        let assignments = vec![PersonAssignment {
+            person_id: Uuid::from_u128(7),
+            kind: AssignmentKind::ReusedKnown,
+            profiles: vec![older_richer, newer],
+        }];
+
+        let changes = changes(&assignments, Some(&configured_roster()));
+
+        let PersonChange::Upsert(projected) = &changes[0] else {
+            panic!("active membership should upsert a person");
+        };
+        assert_eq!(projected.display_name.as_deref(), Some("Newer Name"));
+        assert_eq!(projected.username.as_deref(), Some("stable-handle"));
+        assert_eq!(projected.valid_from, timestamp + chrono::Duration::days(1));
+    }
+
+    #[test]
     fn typed_profile_values_accept_their_column_limits() {
         for (value_type, limit) in [
             ("email", 320),
@@ -270,7 +303,7 @@ mod tests {
             roster.observations[0].value = "x".repeat(limit);
 
             assert_eq!(
-                profile_value(&roster, value_type),
+                profile_value(&[&roster], value_type),
                 Some("x".repeat(limit)),
                 "should accept {value_type} at its column limit"
             );
@@ -291,7 +324,7 @@ mod tests {
             roster.observations[0].value = "x".repeat(limit + 1);
 
             assert_eq!(
-                profile_value(&roster, value_type),
+                profile_value(&[&roster], value_type),
                 None,
                 "should reject {value_type} above its column limit"
             );
