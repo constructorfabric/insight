@@ -8,9 +8,9 @@ no commitment.
 
 - **Personas** — the target user groups of VISION §6.1, as five *reach* personas across the two
   visibility modes the product ships, plus the administrator role, which is a role and not a reach.
-- **Scenarios** — ten, in three tiers, ordered by what the product is for.
-- **Underneath** — the detailed user scenarios (Appendix A): thirty concrete questions, one person
-  asking one thing at one moment, each traced to the scenario it belongs to.
+- **Scenarios** — ten, in three tiers, ordered by what the product is for. Each one is a class of
+  user scenarios: the concrete questions people bring, and what each persona does and must never meet
+  while answering them.
 
 ## The three tiers
 
@@ -34,22 +34,19 @@ means four different things:
 - a **team manager** sees their team, the people in it by name, and groups recalculated for that team
   rather than carried over from the organization;
 - an **executive** sees the whole organization;
-- a **member** of a flat organization sees everyone, because there is no tree to bound them — the
+- a **peer** in a flat organization sees everyone, because there is no tree to bound them — the
   customer chose that mode, and the boundary is the organization itself.
 
 The activity is shared. The boundary is not, and the boundary is the part that gets lost in
 implementation. That is why it is written down as a statement rather than left implied.
 
-**How to read a scenario block**
+**How to read this document**
 
-- **The scenario** — what holds for everyone, whoever is looking.
-- **Per persona** — what each of them does, and what must never happen to them. Only the personas the
-  scenario concerns are listed.
-- **Not this** — what the scenario deliberately does not do, so it is not promised in a demo.
-- **Detail** — the user-scenario IDs from Appendix A that belong here. It lists the detailed
-  *questions*, not the source of every persona line: reach comes from VISION §6.1, what an
-  administrator may configure from §9. So a persona can appear in a scenario with no question of its
-  own beneath it — usually stating a limit rather than claiming a need.
+- A **persona block** has fixed labels in a fixed order, so the same label answers the same question
+  for every persona.
+- A **scenario block** is a title, one sentence that holds for everyone, the user scenarios in the
+  class with who asks each, a table of what each persona does here and what they must never meet, and
+  *Not this* — what the scenario deliberately does not do, so it is not promised in a demo.
 
 ---
 
@@ -61,70 +58,72 @@ chosen per installation by the identity service's `visibility_policy`.
 | Mode | Where reach comes from | Reach personas |
 |---|---|---|
 | `org_chart` | Reporting lines. A viewer sees themselves, the people who report to them, and whatever they have been granted on top. | EXEC · LEAD · IC |
-| `flat` | The organization. Every viewer sees everyone and the organization roll-up — the mode for a roster that carries no reporting lines. | MEMBER |
+| `flat` | The organization. Every viewer sees everyone and the organization roll-up — the mode for a roster that carries no reporting lines. | PEER |
 
 The mode belongs to the installation, not to a person, and the identity service reports it to every
-client (`GET /v1/me`), so a surface never infers it from an empty list of reports — a leaf IC and a
-MEMBER are served the same empty `subordinates`, and the policy is what tells them apart. Grants keep
-their meaning under either mode: underlying records, person-level data, cost and recommendations are
-still granted one by one (S-9).
+client (`GET /v1/me`) — a leaf IC and a PEER are served the same empty `subordinates`, and the policy
+is what tells them apart. Grants keep their meaning under either mode: underlying records, aggregates,
+person-level data, cost and recommendations are still granted one by one (S-9).
 
 **ADMIN is orthogonal to both.** Administration is a role, not a reach. An administrator is also an
-IC, LEAD, EXEC or MEMBER underneath, and the role adds no visibility of its own — the visible-set
+IC, LEAD, EXEC or PEER underneath, and the role adds no visibility of its own — the visible-set
 predicate in the identity service has no role term (ADR-0015).
 
-| Code | Group (VISION §6.1) | Mode | Arrives asking | What a failure costs them | How the product knows it is them |
-|---|---|---|---|---|---|
-| **EXEC** | Executives and portfolio leaders | `org_chart` | "Did it get better, or did we just get busier?" | A board-level number that is wrong or unexplained | A manager whose subtree is the whole organization |
-| **LEAD** | Functional leaders and team managers | `org_chart` | "Where exactly is work blocked, and what can I do?" | Acting on a jam that is a data artefact | A manager whose subtree is smaller than the organization |
-| **IC** | Functional teams and individual contributors | `org_chart` | "How does my own work look, and what is in my way?" | Seeing a colleague's activity, or their own work misattributed | Nobody reports to them |
-| **MEMBER** | Functional teams and individual contributors, in a flat organization | `flat` | "How are we doing, and where do I stand?" | A comparison shown to the whole company that was never meant as a ranking | Any viewer, when the policy is `flat` |
-| **ADMIN** | Data stewards and administrators | both | "Which of these numbers can be trusted, and who may see them?" | Shipping a customer that silently proves nothing | Holds the admin role, whatever their reach |
+**Function is the second axis.** Reach says how far a person may see; function says what they are
+looking at. VISION §6.2 lists nine — Engineering / R&D, Product Management, Design / UX, DevOps / SRE,
+QA, Support, Sales, Marketing, Finance / FinOps — and a function is applied per user scenario, never
+per persona: a line reads `LEAD · Sales` or `EXEC · Finance`. Finance and product management are
+therefore not personas; their questions are carried by a reach persona in that function.
 
-**EXEC and LEAD are one code path.** The product knows a manager and the size of their subtree; it
-does not know a title. Whatever §1.1 gives EXEC and withholds from LEAD — comparison across functions,
-organization-wide cost — holds because the subtree happens to be the whole organization, not because a
-rule enforces it. An EXEC-only rule cannot be enforced today, and a scenario that needs one should say
-so.
+#### EXEC · an executive or portfolio leader
 
-**ADMIN carries two jobs, and the persona says so rather than splitting.** The steward's — who is who
-(S-8), who may see what (S-9), which recommendation families are on (S-3) — and the operator's —
-install, upgrade, migrate (S-10), wire sources (S-7). At most customers these are different people;
-in the product they are one role, and the persona keeps them together until the product can tell them
-apart.
+**Who:** a manager whose subtree is the whole organization — the product tells an executive from a
+manager only by how much of the organization reports to them, never by a title
+**Mode:** org_chart
+**Lands on:** the organization roll-up
+**Asks:** "Did it get better, or did we just get busier?"
+**Sees:** the whole organization; anyone by name where person-level access is granted
+**May compare:** functions, teams and people with one another
 
-### 1.1 Reach
+#### LEAD · a functional leader or team manager
 
-The boundary each persona carries into every scenario below.
+**Who:** a manager whose subtree is smaller than the organization
+**Mode:** org_chart
+**Lands on:** their team's roll-up
+**Asks:** "Where exactly is work blocked, and what can I do?"
+**Sees:** their own team at any depth, the people in it by name, and no further
+**May compare:** groups inside their own team, and their own reports with one another
 
-| | EXEC | LEAD | IC | MEMBER | ADMIN |
-|---|---|---|---|---|---|
-| **How far they see** | The whole organization | Their own team, and no further | Themselves | The whole organization — the same as EXEC | Settings, not people's data |
-| **How far they zoom** | Organization, function, team, person | Team, sub-team, group, their own reports | Themselves, with the department or cohort as a median | Organization, group, person | n/a |
-| **People by name** | Anyone, where person-level access is granted | The people reporting to them — that is what a team view is for | Themselves | Anyone in the roster | Only while resolving who is who |
-| **Comparison** | Between functions, teams and people | Between groups inside their own team, and between their own reports | Against a median, never against a named colleague | Between anyone, themselves included, against named colleagues | n/a |
-| **Cost figures** | Where granted | Where granted | No | Where granted | Where granted |
-| **Conclusions and advice** | Reads conclusions | Reads conclusions, receives recommendations | Neither | Where granted | Neither |
-| **Never** | A default view that ranks people against one another · a number with no statement of coverage and confidence | Anything outside their own team · a default view that ranks their reports · group figures carried over from the organization instead of recalculated for the team | Any other person's activity · any team metric beyond the median they are placed against · their own place in a ranking | A group figure below four people · a number with no statement of coverage and confidence · the IC boundary is **not** on this list — a flat organization has chosen transparency over it, and the surface says so instead of implying the median-only rule still holds | Administrative rights do **not** carry the right to see data — each kind is granted separately (VISION §9) |
+#### IC · an individual contributor in a hierarchy
 
-**Naming and ranking are different things, and only one is restricted.** People are named wherever
-person-level access has been granted: a manager's team view names their reports, and that is the point
-of it. What VISION §3 rules out is a *default* view that ranks named individuals against one another,
-or an unexplained productivity score. The line is the default surface and the granted scope — not the
-name.
+**Who:** nobody reports to them
+**Mode:** org_chart
+**Lands on:** their own page
+**Asks:** "How does my own work look, and what is in my way?"
+**Sees:** themselves, with the department or cohort as a median; no cost figures, and no conclusions
+or advice
+**May compare:** nothing — they are placed against a department or cohort median, never against a
+named colleague
 
-**Flat mode is where that line needs an explicit answer.** A MEMBER sees every other member's position
-band on the same screen. Whether that is a comparison the customer opted into by choosing the mode, or
-the default ranking §3 rules out, is undecided (Appendix C) — and it has to be decided in the document,
-not discovered in a demo.
+#### PEER · a member of a flat organization
 
-### 1.2 Function — the second axis
+**Who:** any signed-in person when the visibility policy is `flat`
+**Mode:** flat
+**Lands on:** the organization roll-up, the same landing as a manager
+**Asks:** "How are we doing, and where do I stand among my peers?"
+**Sees:** the whole organization, everyone by name, themselves included
+**May compare:** anyone with anyone; the organization is the only cohort
 
-Reach says how far a person may see. Function says what they are looking at. VISION §6.2 lists nine:
-Engineering / R&D, Product Management, Design / UX, DevOps / SRE, QA, Support, Sales, Marketing,
-Finance / FinOps. A function is applied per scenario, never per persona — a line reads `LEAD · Sales`
-or `EXEC · Finance`. Finance and product management are therefore not personas: their questions are
-carried by a reach persona in that function, and Appendix A names which.
+#### ADMIN · a data steward or administrator
+
+**Who:** holds the admin role, whatever their reach. Two jobs in one persona — the *steward* decides
+who is who and who may see what; the *operator* installs, upgrades, migrates and wires sources. At
+most customers these are different people; in the product they are one role
+**Mode:** both
+**Lands on:** Manage
+**Asks:** "Which of these numbers can be trusted, and who may see them?"
+**Sees:** settings, not people's data — the role adds no visibility of its own
+**May compare:** nothing — the role sees settings, not people
 
 ---
 
@@ -134,131 +133,88 @@ The loop the product exists for: measure → diagnose → recommend → validate
 
 ## S-1 · Metrics review · Main
 
-**The scenario.** Someone opens the product to see how things are going. Every number carries a
-governed definition, unit, granularity, confidence and stated limitations, and is worked out the same
-way for every persona and every scope (VISION §8.4).
+Every number carries a governed definition, unit, granularity, confidence and stated limitations, and
+is worked out the same way for every persona and every scope (VISION §8.4).
 
-**EXEC** — See how the organization as a whole is doing.
-- organization, function and team, with change over time
-- coverage counted from people who actually have data behind the figure, never by treating missing
-  data as zero
-- never a default view that ranks people against one another
+**User scenarios in this class**
+- What is visible about me, and what is in my way? — IC
+- What changed for my team over the period? — LEAD
+- Where is work stalling? — LEAD
+- What falls apart if a specific person drops out? — LEAD, EXEC
+- Where are we improving, and where just getting busier? — EXEC
+- How much does AI cost, who spends it, in what form? — EXEC · Finance
+- How much goes into coordination instead of work? — LEAD
+- How are we doing, and where do I stand among my peers? — PEER
 
-**LEAD** — See how their team is doing and where work is stuck.
-- their own team at any depth, and the people in it by name
-- groups recalculated for the team in view, not carried over from the organization
-- a group of fewer than four people is not shown at all — that is what keeps an individual
-  unidentifiable behind a group figure
-- concentration read with the meaning of its domain: in code and documentation a high top-decile
-  share is a bus-factor risk, in communication it is a load imbalance. Same arithmetic, different
-  conclusion, and the surface says which one it means
-- never a team they do not manage
+| Who | Does here | Must never meet |
+|---|---|---|
+| **EXEC** | organization, function and team, with change over time; coverage counted from people who actually have data, never by treating missing data as zero | a default view that ranks people against one another · a number without its coverage |
+| **LEAD** | their own team at any depth, the people in it by name; groups recalculated for the team in view; concentration read with the meaning of its domain — in code and documentation a high top-decile share is a bus-factor risk, in communication a load imbalance, and the surface says which | a team they do not manage · a group figure below four people · a group figure carried over from the organization |
+| **IC** | their own activity, flow and AI usage, with the department or cohort as a median | another person's activity · any team metric beyond that median · their own rank |
+| **PEER** | the whole organization as one scope, themselves included, every member named; their own page against the organization as the median | a peer comparison below five people |
+| **ADMIN** | nothing by default | data visibility from the role alone |
 
-**IC** — See their own work, with a reference point.
-- their own activity, flow and AI usage
-- the department or cohort as a median to place themselves against
-- never another person's activity, never a team metric beyond that median, never their own rank
-
-**ADMIN** — Nothing by default.
-- never gains data visibility implicitly from administrative rights
-
-**Not this.** No single "value of AI" number: seat-based and usage-based cost are not summed into one
-figure, and unattributed cost stays its own line rather than being spread across the rest
+**Not this:** no single "value of AI" number — seat-based and usage-based cost are never summed into
+one figure, and unattributed cost stays its own line rather than being spread across the rest
 (VISION §6.2.9, §11.4).
-
-**Detail.** B1 (own context), B2 (team over a period), B3 (where work is stuck), B4 (knowledge
-concentration), B5 (organization roll-up), B6 (AI cost), B8 (cost of coordination).
 
 ## S-2 · Analysis and diagnosis · Main
 
-**The scenario.** The product stops showing shape and starts asserting a relationship — bottlenecks,
-risks, anomalies, cost drivers, quality issues, role and activity mismatches — and says which kind of
-claim it is making, with confidence and limitations (VISION §8.5). It rests on lineage: work is
-followed across the systems it passes through, and **lineage comes before attribution** (VISION §7.3)
-— what cannot be traced is shown as an evidence gap, never converted into a confident claim. Where
-observed work diverges from the configured role model, the divergence is surfaced here; the role model
-it is measured against belongs to S-8.
+The product stops showing shape and starts asserting a relationship — bottlenecks, risks, anomalies,
+cost drivers, quality issues, role and activity mismatches — and says which kind of claim it is making,
+with confidence and limitations (VISION §8.5). It rests on lineage, and lineage comes before
+attribution (VISION §7.3): what cannot be traced is shown as an evidence gap, never converted into a
+confident claim. Looking forward is the same scenario in the other direction — deciding what to commit
+to, from the organization's own delivery history rather than generic assumptions (VISION §1).
 
-**LEAD** — Understand why, not just what.
-- a conclusion for their team or cohort, with the evidence behind it
-- where the chain of evidence breaks in their own area, and what would repair it
-- never a verdict about a named individual
-- a comparative conclusion needs at least eight people on each side. Below that the surface does not
-  render it, and says why — the threshold is higher than the four that protects a group figure,
-  because a conclusion claims more than a number does
-- never built on a metric known to be defective: it is excluded by name, and the exclusion is stated
+**User scenarios in this class**
+- Did throughput rise where AI was adopted, and what did it cost? — LEAD, EXEC
+- Is speed limited by writing code or by reviewing it? — LEAD
+- Speed went up — did quality hold? — LEAD · Product
+- Is this ticket spike caused by what we shipped? — LEAD · Support
+- Activity rose — did the deals move? — LEAD, EXEC · Sales
+- Development got cheaper — did the cost move somewhere else? — EXEC · Finance
+- Is it feasible, what will it cost, how long, what risks? — EXEC, LEAD · Product
+- Where is the effect larger for less effort? — EXEC · Product
 
-**EXEC** — The same at organization level, plus a forecast for proposed work.
-- cost and outcome followed to the function, team, product or service — as far as the trail goes
-- never attribution stronger than the lineage supports
-- never a causal claim where the evidence supports a correlation
-- never a forecast presented as a guarantee
-
-**IC** — Not an audience for diagnosis, and never a named example inside one (VISION §6.1).
+| Who | Does here | Must never meet |
+|---|---|---|
+| **LEAD** | a conclusion for their team or cohort, with the evidence behind it; where the chain of evidence breaks in their own area, and what would repair it; for proposed work, feasibility, cost, duration and risk from the organization's own history | a verdict about a named individual · a comparative conclusion with fewer than eight people on each side — the surface does not render it, and says why · a conclusion built on a metric known to be defective; it is excluded by name, and the exclusion is stated |
+| **EXEC** | the same at organization level; cost and outcome followed to the function, team, product or service as far as the trail goes; ranked opportunities where the expected effect is larger for less effort | attribution stronger than the lineage supports · a causal claim where the evidence supports a correlation · a forecast presented as a guarantee — it is an extrapolation that strengthens as history and lineage improve |
+| **PEER** | the same as EXEC at organization level, with one cohort: the comparison is against the organization's own history, because there is no second group to compare with | the same as EXEC |
+| **IC** | not an audience for diagnosis | a named example inside one |
 
 What limits a conclusion — which sources are missing, which windows do not overlap, which metric is
 under a known defect — is an administrator's view, and it lives in S-7.
 
-### Looking forward — the other direction of the same scenario
-
-VISION §1 treats forward-looking work as a direction of its own, not an afterthought to diagnosis:
-looking back, the product improves work that has already happened; looking forward, it helps decide
-what to commit to. Both are analysis, which is why they sit in one scenario — but the questions differ.
-
-**EXEC, LEAD** — Decide what to take on.
-- is this feasible, what will it cost, how long will it take, what are the risks
-- the answer built from the organization's own delivery history, not from generic assumptions
-- ranked opportunities: where the expected effect is larger for less effort
-- the same evidence model, confidence and stated limitations as everything else
-- never a forecast presented as a guarantee — it is an extrapolation, and it strengthens as history
-  and lineage improve
-
-**Not this.** "AI sped up development by X%" is not a claim Insight makes; what it can say is that a
+**Not this:** "AI sped up development by X%" is not a claim Insight makes; what it can say is that a
 cohort with high usage differs from one with low usage in stated ways, correlationally — with the word
-said on the surface, not in a footnote. Attribution also has a ceiling, and the ceiling is stated
-rather than worked around: it reaches person × day × tool, and no further, so "this change was written
-by AI" and "this change cost $N" are not claims Insight makes.
-
-**Detail.** C1 (AI gain and price together), C2 (review as a bottleneck), C3 (did quality hold),
-C4 (support load vs release), C5 (sales activity vs pipeline), C6 (cost moved rather than fell),
-E1 (assess a feature before starting), E2 (where to invest next).
+said on the surface, not in a footnote. Attribution reaches person × day × tool and no further, so
+"this change was written by AI" and "this change cost $N" are not claims Insight makes either.
 
 ## S-3 · Conclusions: recommendation and validation · Main
 
-**The scenario.** A recommendation is a structured improvement object (VISION §1): observed problem,
-affected area, evidence and confidence, recommended action, owner, expected metric movement, and the
-follow-up window used to check it. Its origin is declared — evidence-derived from the customer's own
-data, or heuristic. Afterwards the product reads the outcome from the measured system.
+A recommendation is a structured improvement object (VISION §1): observed problem, affected area,
+evidence and confidence, recommended action, owner, expected metric movement, and the follow-up window
+used to check it. Its origin is declared — evidence-derived from the customer's own data, or heuristic
+— and afterwards the product reads the outcome from the measured system.
 
-**LEAD** — Get an action, not an observation.
-- one lever they can own, drawn from a fixed set rather than composed freely — three in the first
-  version: reduce change size, spread review load, raise AI adoption where it is low at comparable load
-- with it: how the lever itself is measured, what should move as a result, which guardrail must not
-  slip, and when it is checked — four weeks, computed automatically
-- never a recommendation that passes judgement on a named individual rather than on a process, team or
-  cohort — a named *owner* is expected, a named *subject* is not
-- never a recommendation whose origin is unstated
+**User scenarios in this class**
+- I can see the problem — what do I do? — LEAD
+- Was it applied? Did it help? — LEAD, EXEC
+- We had a reorg that month — how do I say so? — LEAD
 
-**EXEC** — Know whether it worked.
-- whether the lever moved, whether the outcome moved, and the honest fourth answer: not enough data
-- never a result assembled from metrics chosen after the fact — they are fixed when the recommendation
-  is issued
-- read over a fixed window, four weeks before against four weeks after, rather than by a detector
-  hunting for a shift — on a team of ten a detector finds noise
-- read against a control: a comparable group that received no recommendation, so a company-wide trend
-  is not mistaken for an effect
+| Who | Does here | Must never meet |
+|---|---|---|
+| **LEAD** | one lever they can own, from a fixed set rather than composed freely — three in the first version: reduce change size, spread review load, raise AI adoption where it is low at comparable load — with how the lever is measured, what should move, which guardrail must not slip, and when it is checked: four weeks, computed automatically | a recommendation that passes judgement on a named individual rather than a process, team or cohort — a named *owner* is expected, a named *subject* is not · a recommendation whose origin is unstated |
+| **EXEC** | whether the lever moved, whether the outcome moved, and the honest fourth answer: not enough data; read over a fixed window, four weeks before against four weeks after, and against a control — a comparable group that received no recommendation | a result assembled from metrics chosen after the fact — they are fixed when the recommendation is issued · a detector hunting for a shift, which on a team of ten finds noise |
+| **PEER** | undecided — a recommendation names an owner, and a flat organization has no lead to own a lever (Appendix C) | — |
+| **ADMIN** | which recommendation families are enabled, who owns them, and how validation windows are defined (VISION §9) | — |
+| **IC** | — | being the subject of a recommendation |
 
-**ADMIN** — Configure which recommendation families are enabled, who owns them, and how validation
-windows are defined (VISION §9).
-
-**IC** — Never the subject of a recommendation.
-
-**Not this.** No surveys, and no self-reporting of any kind as an input — not because opinions do not
+**Not this:** no surveys, and no self-reporting of any kind as an input — not because opinions do not
 matter, but because a validation that depends on people filling in a form does not run. Validation is
 read from the measured system. Insight recommends; it does not execute (VISION §13.3).
-
-**Detail.** D1 (a recommendation, not an observation), D2 (did it work, a month later), D3 (context
-the system cannot see).
 
 ---
 
@@ -268,75 +224,59 @@ Everything here extends the main loop. None of it is where a customer starts.
 
 ## S-4 · Dashboards, views and exploration · Secondary
 
-**The scenario.** Someone builds a view rather than reading one: composing dashboards from the metric
-and recommendation catalog (VISION §8.7, §9), slicing by an attribute, defining a cohort, and following
-a figure back to how it was calculated (VISION §2 — customers can see how metrics are calculated).
-Exploration moves the question, never the boundary.
+Someone builds a view rather than reading one: composing dashboards from the metric and recommendation
+catalog (VISION §8.7, §9), slicing by an attribute, defining a cohort, and following a figure back to
+how it was calculated (VISION §2). Exploration moves the question, never the boundary. Here a cohort is
+something a person builds — the attribute, the comparison group, the scope — where in S-1 it is the
+fixed backdrop a person is placed against; the machinery is shared, the activity is not.
 
-Two parts of this scenario go beyond what the vision states today and are proposals rather than
-restatements: **saving a composed view and sharing it with someone else**, and the access rule that
-follows from sharing. Both are marked in Appendix C.
+**User scenarios in this class**
+- How does group A differ from group B in the same scope? — LEAD, EXEC
+- The slicing side of every S-1 question — who asks it there asks it here
 
-**Cohorts appear in two roles, and only one of them is here.** In S-1 a cohort is a fixed backdrop —
-the median an individual is placed against, computed for them. Here a cohort is something a person
-builds: choosing the attribute, the comparison group and the scope. The machinery is shared; the
-activity is not.
+| Who | Does here | Must never meet |
+|---|---|---|
+| **LEAD** | compose from the catalog; slice by attribute; define cohorts and comparison groups; follow any figure back to how it was calculated; groups recalculated for whatever is on screen at the time | an exploration path that reaches outside their own team · a group figure below four people |
+| **EXEC** | the same, at organization and function level | — |
+| **PEER** | views over the whole organization; the same as EXEC | — |
+| **IC** | their own context only | — |
+| **ADMIN** | which metrics and thresholds exist, which cohorts are valid, who may publish a shared view (VISION §9) | — |
 
-**LEAD** — Build the view their team actually needs.
-- compose from the catalog; slice by attribute; define cohorts and comparison groups
-- follow any figure back to how it was calculated
-- groups recalculated for whatever is on screen at the time, and still suppressed below four people
-- never an exploration path that reaches outside their own team
-
-**EXEC** — Build the portfolio view.
-- the same, at organization and function level
-
-**IC** — Explore their own context only.
-
-**ADMIN** — Curate what can be built (VISION §9).
-- which metrics and thresholds exist, which cohorts are valid, who may publish a shared view
-
-**Not this.** A view carries the definitions and coverage of the metrics in it, not bare numbers.
-
-**Proposed, and the reason S-4 is worth arguing about.** If a view can be shared, it must not become a
-way around access rules: what a viewer sees would have to be re-evaluated for that viewer, so the same
-saved dashboard shows each person only what they may see. Neither the vision nor the scenario draft
-says this today — which is exactly why it needs deciding before view sharing is built rather than
-after.
-
-**Detail.** B7 (compare cohorts), and the slicing side of B2–B5.
+**Not this:** a view carries the definitions and coverage of the metrics in it, never bare numbers.
+Saving a composed view and sharing it are proposals rather than restatements (Appendix C): if a view
+can be shared, what a viewer sees has to be re-evaluated for that viewer, so a shared dashboard cannot
+become a way around access rules — which is why it needs deciding before view sharing is built.
 
 ## S-5 · Sharing and reuse · Secondary
 
-**The scenario.** A number keeps its meaning when it leaves the product — views, summaries, APIs and
-governed data access carry the definition, coverage and confidence with the number (VISION §8.8).
+A number keeps its meaning when it leaves the product — views, summaries, APIs and governed data access
+carry the definition, coverage and confidence with the number (VISION §8.8).
 
-**ADMIN** — Take Insight's output elsewhere.
-- API and governed data access, under the same access rules that apply inside the product
-- never a number stripped of its definition and confidence, so that outside the product it becomes a
-  fact without caveats
+**User scenarios in this class**
+- How do we pull this into our BI, a report, or a bot? — ADMIN, LEAD
 
-**LEAD** — Use a conclusion in their own report or review.
-
-**Detail.** G2 (use conclusions in another system).
+| Who | Does here | Must never meet |
+|---|---|---|
+| **ADMIN** | API and governed data access, under the same access rules that apply inside the product | a number stripped of its definition and confidence, so that outside the product it becomes a fact without caveats |
+| **LEAD** | a conclusion in their own report or review | — |
 
 ## S-6 · External comparison · Secondary
 
-**The scenario.** Comparison against the organization's own history by default; opt-in comparison
-against peers and public data where enabled. Every benchmark declares its source, cohort definition,
-coverage and confidence (VISION §8.9, §12).
+Comparison against the organization's own history by default; opt-in comparison against peers and
+public data where enabled. Every benchmark declares its source, cohort definition, coverage and
+confidence (VISION §8.9, §12).
 
-**EXEC** — Know whether a number is bad or normal.
-- own history first, which requires sharing nothing
-- peer comparison only where the customer has opted in
+**User scenarios in this class**
+- Our three-day cycle — is that bad? — EXEC
 
-**ADMIN** — Turn participation on and off; it is revocable (VISION §12).
+| Who | Does here | Must never meet |
+|---|---|---|
+| **EXEC** | own history first, which requires sharing nothing; peer comparison only where the customer has opted in | — |
+| **ADMIN** | participation on and off; it is revocable (VISION §12) | — |
 
-**Not this.** Raw customer data never leaves the customer boundary. Only anonymized aggregates at
+**Not this:** raw customer data never leaves the customer boundary. Only anonymized aggregates at
 cohort, team or organization level are shared — never individual data, never stack ranking
 (VISION §3, §12.2).
-
-**Detail.** F1 (are we slow, or is this normal).
 
 ---
 
@@ -352,114 +292,90 @@ evidence, validate. Listed last by importance; met first in time.
 
 ## S-7 · Sources and evidence coverage · Service
 
-**The scenario.** Whatever the wiring state, the product says so plainly: what is connected, what that
-unlocks, and — where an answer is not possible — the cause and the smallest set of fixes with the
-largest gain in confidence (readiness mode, VISION §7.5).
+Whatever the wiring state, the product says so plainly: what is connected, what that unlocks, and —
+where an answer is not possible — the cause and the smallest set of fixes with the largest gain in
+confidence (readiness mode, VISION §7.5).
 
-**ADMIN** — Know what can be proven.
-- all eight evidence categories as connected, partly connected or absent — people, work,
-  communication, delivery, support, sales, cost, AI — and which metrics each one unlocks
-- what each source declares about itself: fields, window, freshness, blind spots, and which level it
-  supports — measurement, diagnosis, recommendation or validation (VISION §10.10)
-- which links between systems are weak or broken, and what would repair them
-- never left to guess why a screen is empty
+**User scenarios in this class**
+- Which questions can I already ask, and which not? — ADMIN
+- Why is this empty, and what would make it not empty? — ADMIN, LEAD
+- Is this an event in the business, or a break in the data? — ADMIN, LEAD, EXEC
 
-**LEAD, EXEC** — Meet a gap and know what to do about it.
-- the cause named directly: which source is missing, which identities are unresolved, which link is
-  broken — plus the minimal fix
-- never a comparison across two periods whose source windows do not overlap
+| Who | Does here | Must never meet |
+|---|---|---|
+| **ADMIN** | all eight evidence categories as connected, partly connected or absent — people, work, communication, delivery, support, sales, cost, AI — and which metrics each unlocks; what each source declares about itself: fields, window, freshness, blind spots, and which level it supports — measurement, diagnosis, recommendation or validation (VISION §10.10); which links between systems are weak or broken, and what would repair them | being left to guess why a screen is empty |
+| **LEAD, EXEC** | the cause named directly — which source is missing, which identities are unresolved, which link is broken — plus the minimal fix | a comparison across two periods whose source windows do not overlap |
+| **IC** | the same guarantee on their own context | — |
+| **PEER** | the same guarantee, on the whole organization at once | — |
 
-**IC** — The same guarantee on their own context.
-
-**Not this.** No zero in place of missing data — a zero looks like a measurement and raises a false
+**Not this:** no zero in place of missing data — a zero looks like a measurement and raises a false
 alarm. And no "rough estimate for now": the honest answer to a missing source is what is missing.
-
-**Detail.** A1 (what can be proven), A4 (no answer, but what to connect), C8 (event in the business or
-break in the data).
 
 ## S-8 · Identity, roles and organization model · Service
 
-**The scenario.** Someone who appears separately in code, tickets, chat and the HR system is
-recognised as one person, with a stated confidence. The customer can correct the result, the correction
-survives the next sync, and role and team history is preserved so past periods are not recalculated
-under a model that was not valid at the time (VISION §8.2, §7.2).
+Someone who appears separately in code, tickets, chat and the HR system is recognised as one person,
+with a stated confidence. The customer can correct the result, the correction survives the next sync,
+and role and team history is preserved so past periods are not recalculated under a model that was not
+valid at the time (VISION §8.2, §7.2).
 
-**ADMIN** — Sort out who is who.
-- sees what was matched automatically, where the system is unsure, and where it got it wrong
-- merges and splits reversibly
-- defines roles, several roles per person, and role history
-- never loses a manual correction to the next sync
+**User scenarios in this class**
+- Which identity links did the system make, where is it unsure, where wrong? — ADMIN
+- How do I tell the product who is supposed to do what here? — ADMIN
+- Someone is listed in one role and does another — error or reality? — LEAD, ADMIN
 
-**LEAD, EXEC** — Trust the tree they roll up into (VISION §7.2 — temporal team membership).
-- never a subtree quietly reshaped by re-resolution, with past periods recalculated underneath it
+| Who | Does here | Must never meet |
+|---|---|---|
+| **ADMIN** | what was matched automatically, where the system is unsure, and where it got it wrong; merges and splits, reversibly; roles, several per person, and role history | losing a manual correction to the next sync |
+| **LEAD, EXEC** | a tree they can trust to roll up into (VISION §7.2 — temporal team membership) | a subtree quietly reshaped by re-resolution, with past periods recalculated underneath it |
+| **IC, PEER** | being one person, not four | their work attributed to a duplicate of themselves |
 
-**IC** — Be one person, not four.
-- never has their work attributed to a duplicate of themselves
-
-**Not this.** Where observed work does not match the configured role model, Insight recommends
+**Not this:** where observed work does not match the configured role model, Insight recommends
 changing the configuration — not the person (VISION §9).
-
-**Detail.** A2 (identity queue), A3 (roles and expected activities), C7 (role vs observed work).
 
 ## S-9 · Configuration and access · Service
 
-**The scenario.** The customer configures roles, activities, sources, metrics, thresholds, cohorts,
-dashboards, localization and access rules (VISION §9). Access to raw, people-level, aggregate, cost and
-recommendation data is role-based and policy-controlled, and the boundary holds on every surface.
+The customer configures roles, activities, sources, metrics, thresholds, cohorts, dashboards,
+localization and access rules (VISION §9). Access to raw, people-level, aggregate, cost and
+recommendation data is role-based and policy-controlled, and the boundary holds on every surface. Where
+a setting cannot yet be honoured, the gap is shown rather than implied — timezone is the live example:
+dates are bucketed in UTC while a period is chosen in the viewer's own zone, so an event near local
+midnight can land a day either side, and until sources carry people's timezones the divergence is
+labelled on the surface.
 
-**ADMIN** — Decide who gets what.
-- grants the five kinds of data one by one
-- adapts roles, metrics and thresholds without engineering involvement
-- sets language, date, number, currency and timezone rules
-- never holds all five kinds implicitly; a refusal is enforced by the system, not only hidden on screen
+**User scenarios in this class**
+- How do I give a lead their team and nothing more? — ADMIN
+- Can we work in our own language and timezone? — everyone
+- The configuration half of "who is supposed to do what here" — ADMIN
 
-**Where a setting cannot yet be honoured, the gap is shown rather than implied.** Timezone is the live
-example: dates are bucketed in UTC while a period is chosen in the viewer's own zone, so an event near
-local midnight can land a day either side. Until sources actually carry people's timezones, the
-divergence is labelled on the surface instead of being quietly absorbed — the same rule as evidence
-gaps in §5.
+| Who | Does here | Must never meet |
+|---|---|---|
+| **ADMIN** | grants the five kinds of data one by one; adapts roles, metrics and thresholds without engineering involvement; sets language, date, number, currency and timezone rules | holding all five kinds implicitly · a refusal only hidden on screen rather than enforced by the system |
+| **LEAD** | their own team, in full, at every depth | one level up, or sideways — the limit is structural, not a filter on a screen |
+| **EXEC** | the organization as a whole: aggregates, and people where person-level access is granted; the underlying records only where granted | raw access as a privilege of rank — it is one of the five grants |
+| **PEER** | the organization as a whole, everyone by name — person-level sight is what the mode grants | records, cost or recommendations without their own grant |
+| **IC** | themselves — named to their own management chain and to anyone else granted person-level access for their part of the organization | being named to anyone outside it |
 
-**LEAD** — Their own team, in full.
-- every depth inside it
-- never one level up, and never sideways — the limit is structural, not a filter on a screen
-
-**EXEC** — The organization as a whole.
-- aggregates, and people where person-level access is granted
-- the underlying records only where granted — raw access is one of the five grants, not a privilege of rank
-
-**IC** — Themselves.
-- named to their own management chain and to anyone else granted person-level access for their part of
-  the organization — and to nobody outside it
-
-**Not this.** Insight is read-only towards connected systems: it writes its own configuration and
+**Not this:** Insight is read-only towards connected systems: it writes its own configuration and
 annotations, nothing else (VISION §13.3).
-
-**Detail.** G1 (who sees what), G3 (language and timezone), and the configuration half of A3.
 
 ## S-10 · Deployment, upgrade and migration · Service
 
-**The scenario.** The product is installed, updated, upgraded and — where it replaces something —
-migrated into, without losing what already worked. Deployment models differ (Constructor-hosted,
-customer cloud, private cloud, customer-operated), and in all of them customer data stays under
-customer control (VISION §1, §14.1, §15.2).
+The product is installed, updated, upgraded and — where it replaces something — migrated into, without
+losing what already worked. Deployment models differ (Constructor-hosted, customer cloud, private
+cloud, customer-operated), and in all of them customer data stays under customer control (VISION §1,
+§14.1, §15.2).
 
-**ADMIN** — Run it.
-- install, configure, update and upgrade a customer-operated deployment
-- inventory what exists first, then keep / rename / replace / retire
-- import history where retention allows, and check parity over an agreed period
-- never lose a surface that worked before an upgrade — what was live before it is checked after it
+**User scenarios in this class**
+- How do we replace what we have without losing history? — ADMIN, EXEC
 
-**EXEC** — Replace the previous system with confidence.
-- parity stated openly, including what could not be reproduced
-- never a parity claim that quietly omits it
+| Who | Does here | Must never meet |
+|---|---|---|
+| **ADMIN** | install, configure, update and upgrade a customer-operated deployment; inventory what exists first, then keep, rename, replace or retire; import history where retention allows, and check parity over an agreed period | losing a surface that worked before an upgrade — what was live before it is checked after it |
+| **EXEC** | the previous system replaced with confidence — parity stated openly, including what could not be reproduced | a parity claim that quietly omits what could not be reproduced |
+| **LEAD, IC, PEER** | their history kept across the change (VISION §7.2) | a past period silently recalculated under a new model |
 
-**LEAD, IC** — Keep their history across the change (VISION §7.2 — past periods stay under the model valid at the time).
-- never a past period silently recalculated under a new model
-
-**Not this.** Insight does not require Constructor to have default access to customer data in order to
-operate (VISION §1).
-
-**Detail.** G4 (migrate off a legacy system).
+**Not this:** Insight does not require Constructor to have default access to customer data in order
+to operate (VISION §1).
 
 ---
 
@@ -487,7 +403,9 @@ From the vision, stated once here instead of repeated in each scenario.
    compared, never conflated; history is kept under the model valid at the time.
 10. **Two group-size thresholds, and they are different** — a group figure is not shown below **four**
     people, and a comparative conclusion is not drawn below **eight** on each side. The first keeps an
-    individual unidentifiable behind a number; the second keeps a claim from resting on a handful.
+    individual unidentifiable behind a number; the second keeps a claim from resting on a handful. The
+    one threshold the product enforces today sits between them: a peer comparison — the median and
+    quartiles behind a person's position — is not computed below **five** observed people.
 11. **A metric with a known defect says so on the metric itself** — and where a conclusion would rest
     on it, the metric is excluded by name rather than quietly included.
 12. **A group figure is computed for the group in view** — never inherited from a wider scope. This is
@@ -495,53 +413,6 @@ From the vision, stated once here instead of repeated in each scenario.
     that is correct rather than a discrepancy.
 
 ---
-
-## Appendix A · The detailed user scenarios
-
-Thirty concrete questions — one person, one question, one moment — from the product scenario draft of
-2026-08-04. They are the level at which features are specified and tested; the scenarios in §2–§4 are
-what all of them must obey. Availability is deliberately not recorded here: it changes per release and
-per customer, since the connected source set differs.
-
-| ID | The question behind it | Who asks | Scenario |
-|---|---|---|---|
-| B1 | What is visible about me, and what is in my way? | IC | S-1 |
-| B2 | What changed for my team over the period? | LEAD | S-1 |
-| B3 | Where is work stalling? | LEAD | S-1 |
-| B4 | What falls apart if a specific person drops out? | LEAD, EXEC | S-1 |
-| B5 | Where are we improving, and where just getting busier? | EXEC | S-1 |
-| B6 | How much does AI cost, who spends it, in what form? | EXEC · Finance | S-1 |
-| B8 | How much goes into coordination instead of work? | LEAD | S-1 |
-| C1 | Did throughput rise where AI was adopted, and what did it cost? | LEAD, EXEC | S-2 |
-| C2 | Is speed limited by writing code or by reviewing it? | LEAD | S-2 |
-| C3 | Speed went up — did quality hold? | LEAD · Product | S-2 |
-| C4 | Is this ticket spike caused by what we shipped? | LEAD · Support | S-2 |
-| C5 | Activity rose — did the deals move? | LEAD, EXEC | S-2 |
-| C6 | Development got cheaper — did the cost move somewhere else? | EXEC · Finance | S-2 |
-| E1 | Is it feasible, what will it cost, how long, what risks? | EXEC, LEAD · Product | S-2 |
-| E2 | Where is the effect larger for less effort? | EXEC · Product | S-2 |
-| D1 | I can see the problem — what do I do? | LEAD | S-3 |
-| D2 | Was it applied? Did it help? | LEAD, EXEC | S-3 |
-| D3 | We had a reorg that month — how do I say so? | LEAD | S-3 |
-| B7 | How does group A differ from group B in the same scope? | LEAD, EXEC | S-4 |
-| G2 | How do we pull this into our BI, a report, or a bot? | ADMIN, LEAD | S-5 |
-| F1 | Our three-day cycle — is that bad? | EXEC | S-6 |
-| A1 | Which questions can I already ask, and which not? | ADMIN | S-7 |
-| A4 | Why is this empty, and what would make it not empty? | ADMIN, LEAD | S-7 |
-| C8 | Is this an event in the business, or a break in the data? | ADMIN, LEAD, EXEC | S-7 |
-| A2 | Which identity links did the system make, where is it unsure, where wrong? | ADMIN | S-8 |
-| A3 | How do I tell the product who is supposed to do what here? | ADMIN | S-8, S-9 |
-| C7 | Someone is listed in one role and does another — error or reality? | LEAD, ADMIN | S-8 |
-| G1 | How do I give a lead their team and nothing more? | ADMIN | S-9 |
-| G3 | Can we work in our own language and timezone? | all | S-9 |
-| G4 | How do we replace what we have without losing history? | ADMIN, EXEC | S-10 |
-
-All thirty map to a scenario. S-6 is the only scenario with no concrete question behind it yet.
-
-Six questions arrive from a function rather than a reach — finance (B6, C6) and product management
-(C3, C4, E1, E2). Each is carried by a reach persona in that function (§1.2). In a `flat`
-installation, MEMBER may ask any question listed for EXEC, LEAD or IC; the reach personas name the
-`org_chart` case.
 
 ---
 
@@ -566,16 +437,22 @@ deployment comes from elsewhere in the vision.
 
 ---
 
+---
+
 ## Appendix C · Open points
 
 Several claims in this document go beyond what VISION.md and the scenario draft state. They are written
 as requirements because the alternative is to leave them undecided, but each needs a decision rather
 than a nod.
 
-- **Administrative rights and data visibility** — settled. §1.1 asserts that ADMIN gains no data
+- **Administrative rights and data visibility** — settled. §1 asserts that ADMIN gains no data
   visibility implicitly, and the access model agrees: the identity service's visible-set predicate
   carries no role term (ADR-0015), under either visibility mode.
-- **Ranking in flat mode.** A MEMBER sees every other member's position band. VISION §3 rules out a
+- **An executive is a manager with a larger subtree.** The product tells EXEC from LEAD only by how
+  much of the organization reports to them, so anything this document gives EXEC and withholds from
+  LEAD holds by scope, not by rule. An EXEC-only rule cannot be enforced until the product knows a
+  title.
+- **Ranking in flat mode.** A PEER sees every other member's position band. VISION §3 rules out a
   default view that ranks named individuals; a flat organization has opted into seeing everyone.
   Which of the two this is has to be decided before the mode is sold as a feature — and if the bands
   are a ranking, whether flat mode suppresses them or the customer accepts them.
@@ -585,9 +462,13 @@ than a nod.
 - **An identity correction surviving the next sync** (S-8). The draft says merges and splits are
   reversible; neither document says a correction is not undone by re-resolution. Stated here as a
   requirement, because a correction that does not survive is not a correction.
-- **The two group-size thresholds** (§5, rule 10) are four for a group figure and eight per side for a
-  comparative conclusion. Both come from the scenario draft rather than from the vision, and they are
-  worth confirming as product rules — including whether a customer may configure them.
+- **The group-size thresholds** (§5, rule 10). The four for a group figure and the eight per side for a
+  comparative conclusion come from the scenario draft rather than from the vision, and are worth
+  confirming as product rules — including whether a customer may configure them. The five for a peer
+  comparison is the product's own, and is the only one of the three confirmed to be enforced.
+- **Recommendation ownership in a flat organization.** S-3 expects a named owner for every lever. A
+  flat organization has no lead, so either the owner is chosen some other way, or recommendations are
+  not offered under `flat` — and the mode should say which.
 - **IC has the narrowest surface and the tightest boundary.** Everything an IC sees is their own or a
   median — the combination that is easiest to get wrong quietly.
 - **S-6 has no surface yet.** Listed so the capability stays planned for, not to imply it exists.
