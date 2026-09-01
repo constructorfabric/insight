@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_links
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.issue_links
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_github.issue_timeline_events
@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.project_fields
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -359,7 +359,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.project_fields
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_github.project_items
@@ -368,7 +368,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.project_items
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -390,7 +390,7 @@ CREATE TABLE IF NOT EXISTS bronze_github.project_items
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_github.projects_v2

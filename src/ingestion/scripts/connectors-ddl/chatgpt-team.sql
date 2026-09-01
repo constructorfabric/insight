@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_account_settings
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `snapshot_date` Nullable(String),
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_account_settings
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_chat_activity
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_sessions_daily
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `date` Nullable(String),
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_sessions_daily
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily
@@ -139,7 +139,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily_org
     `_airbyte_generation_id` UInt32,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `collected_at` Nullable(String),
     `data_source` Nullable(String),
     `date` Nullable(String),
@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_codex_user_daily_org
 )
 ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
 ORDER BY unique_key
-SETTINGS allow_nullable_key = 1, index_granularity = 8192
+SETTINGS index_granularity = 8192
 ;
 
 CREATE TABLE IF NOT EXISTS bronze_chatgpt_team.chatgpt_team_seats

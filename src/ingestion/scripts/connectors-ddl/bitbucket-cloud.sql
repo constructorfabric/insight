@@ -379,7 +379,7 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repository_visibility
     `_airbyte_extracted_at` DateTime64(3),
     `_airbyte_meta` String,
     `_airbyte_generation_id` UInt32,
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `data_source` Nullable(String),
@@ -387,8 +387,8 @@ CREATE TABLE IF NOT EXISTS bronze_bitbucket_cloud.repository_visibility
     `workspace` Nullable(String),
     `repository_uuid` Nullable(String)
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
 SETTINGS index_granularity = 8192
 ;
 

@@ -591,7 +591,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pr_review_events
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
@@ -695,7 +695,7 @@ CREATE TABLE IF NOT EXISTS silver.class_git_pull_requests_reviewers
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
@@ -1323,7 +1323,7 @@ CREATE TABLE IF NOT EXISTS silver.fct_git_review
 (
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String),
+    `unique_key` String,
     `project_key` String,
     `repo_slug` String,
     `pr_id` Int64,
