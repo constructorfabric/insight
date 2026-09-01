@@ -6,7 +6,8 @@ The vision says what Insight is and what it can do. This document says **who is 
 it, what they are there to do, and how far each of them may reach**. It adds no capability and changes
 no commitment.
 
-- **Personas** — the four target user groups of VISION §6.1.
+- **Personas** — the target user groups of VISION §6.1, as five *reach* personas across the two
+  visibility modes the product ships, plus the administrator role, which is a role and not a reach.
 - **Scenarios** — ten, in three tiers, ordered by what the product is for.
 - **Underneath** — the detailed user scenarios (Appendix A): thirty concrete questions, one person
   asking one thing at one moment, each traced to the scenario it belongs to.
@@ -26,13 +27,15 @@ product. **Secondary and service do not mean low priority on a roadmap**; they m
 not arrive for them.
 
 **Why split by persona.** A capability is not one scenario. "Review metrics" is a single tier, but it
-means three different things:
+means four different things:
 
 - an **individual contributor** sees their own work against a department or cohort median, and no team
   metrics at all;
 - a **team manager** sees their team, the people in it by name, and groups recalculated for that team
   rather than carried over from the organization;
-- an **executive** sees the whole organization.
+- an **executive** sees the whole organization;
+- a **member** of a flat organization sees everyone, because there is no tree to bound them — the
+  customer chose that mode, and the boundary is the organization itself.
 
 The activity is shared. The boundary is not, and the boundary is the part that gets lost in
 implementation. That is why it is written down as a statement rather than left implied.
@@ -52,39 +55,76 @@ implementation. That is why it is written down as a statement rather than left i
 
 ## 1. Personas
 
-The four target user groups of VISION §6.1, with the short codes used throughout.
+A persona here is a **reach** — how far someone may see — and reach comes from one of two sources,
+chosen per installation by the identity service's `visibility_policy`.
 
-| Code | Group (VISION §6.1) | Arrives asking |
+| Mode | Where reach comes from | Reach personas |
 |---|---|---|
-| **EXEC** | Executives and portfolio leaders | "Did it get better, or did we just get busier?" |
-| **LEAD** | Functional leaders and team managers | "Where exactly is work blocked, and what can I do?" |
-| **IC** | Functional teams and individual contributors | "How does my own work look, and what is in my way?" |
-| **ADMIN** | Data stewards and administrators | "Which of these numbers can be trusted, and who may see them?" |
+| `org_chart` | Reporting lines. A viewer sees themselves, the people who report to them, and whatever they have been granted on top. | EXEC · LEAD · IC |
+| `flat` | The organization. Every viewer sees everyone and the organization roll-up — the mode for a roster that carries no reporting lines. | MEMBER |
 
-Finance and product management are not separate personas here. Their questions are carried by these
-four: cost by EXEC, forward-looking planning by EXEC and LEAD. VISION §6.2 lists nine functions —
-engineering, product, design, DevOps, QA, support, sales, marketing, finance — and a functional lead
-in any of them is a LEAD.
+The mode belongs to the installation, not to a person, and the identity service reports it to every
+client (`GET /v1/me`), so a surface never infers it from an empty list of reports — a leaf IC and a
+MEMBER are served the same empty `subordinates`, and the policy is what tells them apart. Grants keep
+their meaning under either mode: underlying records, person-level data, cost and recommendations are
+still granted one by one (S-9).
+
+**ADMIN is orthogonal to both.** Administration is a role, not a reach. An administrator is also an
+IC, LEAD, EXEC or MEMBER underneath, and the role adds no visibility of its own — the visible-set
+predicate in the identity service has no role term (ADR-0015).
+
+| Code | Group (VISION §6.1) | Mode | Arrives asking | What a failure costs them | How the product knows it is them |
+|---|---|---|---|---|---|
+| **EXEC** | Executives and portfolio leaders | `org_chart` | "Did it get better, or did we just get busier?" | A board-level number that is wrong or unexplained | A manager whose subtree is the whole organization |
+| **LEAD** | Functional leaders and team managers | `org_chart` | "Where exactly is work blocked, and what can I do?" | Acting on a jam that is a data artefact | A manager whose subtree is smaller than the organization |
+| **IC** | Functional teams and individual contributors | `org_chart` | "How does my own work look, and what is in my way?" | Seeing a colleague's activity, or their own work misattributed | Nobody reports to them |
+| **MEMBER** | Functional teams and individual contributors, in a flat organization | `flat` | "How are we doing, and where do I stand?" | A comparison shown to the whole company that was never meant as a ranking | Any viewer, when the policy is `flat` |
+| **ADMIN** | Data stewards and administrators | both | "Which of these numbers can be trusted, and who may see them?" | Shipping a customer that silently proves nothing | Holds the admin role, whatever their reach |
+
+**EXEC and LEAD are one code path.** The product knows a manager and the size of their subtree; it
+does not know a title. Whatever §1.1 gives EXEC and withholds from LEAD — comparison across functions,
+organization-wide cost — holds because the subtree happens to be the whole organization, not because a
+rule enforces it. An EXEC-only rule cannot be enforced today, and a scenario that needs one should say
+so.
+
+**ADMIN carries two jobs, and the persona says so rather than splitting.** The steward's — who is who
+(S-8), who may see what (S-9), which recommendation families are on (S-3) — and the operator's —
+install, upgrade, migrate (S-10), wire sources (S-7). At most customers these are different people;
+in the product they are one role, and the persona keeps them together until the product can tell them
+apart.
 
 ### 1.1 Reach
 
 The boundary each persona carries into every scenario below.
 
-| | EXEC | LEAD | IC | ADMIN |
-|---|---|---|---|---|
-| **How far they see** | The whole organization | Their own team, and no further | Themselves | Settings, not people's data |
-| **How far they zoom** | Organization, function, team, person | Team, sub-team, group, their own reports | Themselves, with the department or cohort as a median | n/a |
-| **People by name** | Anyone, where person-level access is granted | The people reporting to them — that is what a team view is for | Themselves | Only while resolving who is who |
-| **Comparison** | Between functions, teams and people | Between groups inside their own team, and between their own reports | Against a median, never against a named colleague | n/a |
-| **Cost figures** | Where granted | Where granted | No | Where granted |
-| **Conclusions and advice** | Reads conclusions | Reads conclusions, receives recommendations | Neither | Neither |
-| **Never** | A default view that ranks people against one another · a number with no statement of coverage and confidence | Anything outside their own team · a default view that ranks their reports · group figures carried over from the organization instead of recalculated for the team | Any other person's activity · any team metric beyond the median they are placed against · their own place in a ranking | Administrative rights do **not** carry the right to see data — each kind is granted separately (VISION §9) |
+| | EXEC | LEAD | IC | MEMBER | ADMIN |
+|---|---|---|---|---|---|
+| **How far they see** | The whole organization | Their own team, and no further | Themselves | The whole organization — the same as EXEC | Settings, not people's data |
+| **How far they zoom** | Organization, function, team, person | Team, sub-team, group, their own reports | Themselves, with the department or cohort as a median | Organization, group, person | n/a |
+| **People by name** | Anyone, where person-level access is granted | The people reporting to them — that is what a team view is for | Themselves | Anyone in the roster | Only while resolving who is who |
+| **Comparison** | Between functions, teams and people | Between groups inside their own team, and between their own reports | Against a median, never against a named colleague | Between anyone, themselves included, against named colleagues | n/a |
+| **Cost figures** | Where granted | Where granted | No | Where granted | Where granted |
+| **Conclusions and advice** | Reads conclusions | Reads conclusions, receives recommendations | Neither | Where granted | Neither |
+| **Never** | A default view that ranks people against one another · a number with no statement of coverage and confidence | Anything outside their own team · a default view that ranks their reports · group figures carried over from the organization instead of recalculated for the team | Any other person's activity · any team metric beyond the median they are placed against · their own place in a ranking | A group figure below four people · a number with no statement of coverage and confidence · the IC boundary is **not** on this list — a flat organization has chosen transparency over it, and the surface says so instead of implying the median-only rule still holds | Administrative rights do **not** carry the right to see data — each kind is granted separately (VISION §9) |
 
 **Naming and ranking are different things, and only one is restricted.** People are named wherever
 person-level access has been granted: a manager's team view names their reports, and that is the point
 of it. What VISION §3 rules out is a *default* view that ranks named individuals against one another,
 or an unexplained productivity score. The line is the default surface and the granted scope — not the
 name.
+
+**Flat mode is where that line needs an explicit answer.** A MEMBER sees every other member's position
+band on the same screen. Whether that is a comparison the customer opted into by choosing the mode, or
+the default ranking §3 rules out, is undecided (Appendix C) — and it has to be decided in the document,
+not discovered in a demo.
+
+### 1.2 Function — the second axis
+
+Reach says how far a person may see. Function says what they are looking at. VISION §6.2 lists nine:
+Engineering / R&D, Product Management, Design / UX, DevOps / SRE, QA, Support, Sales, Marketing,
+Finance / FinOps. A function is applied per scenario, never per persona — a line reads `LEAD · Sales`
+or `EXEC · Finance`. Finance and product management are therefore not personas: their questions are
+carried by a reach persona in that function, and Appendix A names which.
 
 ---
 
@@ -470,16 +510,16 @@ per customer, since the connected source set differs.
 | B3 | Where is work stalling? | LEAD | S-1 |
 | B4 | What falls apart if a specific person drops out? | LEAD, EXEC | S-1 |
 | B5 | Where are we improving, and where just getting busier? | EXEC | S-1 |
-| B6 | How much does AI cost, who spends it, in what form? | EXEC † | S-1 |
+| B6 | How much does AI cost, who spends it, in what form? | EXEC · Finance | S-1 |
 | B8 | How much goes into coordination instead of work? | LEAD | S-1 |
 | C1 | Did throughput rise where AI was adopted, and what did it cost? | LEAD, EXEC | S-2 |
 | C2 | Is speed limited by writing code or by reviewing it? | LEAD | S-2 |
-| C3 | Speed went up — did quality hold? | LEAD † | S-2 |
-| C4 | Is this ticket spike caused by what we shipped? | LEAD † | S-2 |
+| C3 | Speed went up — did quality hold? | LEAD · Product | S-2 |
+| C4 | Is this ticket spike caused by what we shipped? | LEAD · Support | S-2 |
 | C5 | Activity rose — did the deals move? | LEAD, EXEC | S-2 |
-| C6 | Development got cheaper — did the cost move somewhere else? | EXEC † | S-2 |
-| E1 | Is it feasible, what will it cost, how long, what risks? | EXEC, LEAD † | S-2 |
-| E2 | Where is the effect larger for less effort? | EXEC † | S-2 |
+| C6 | Development got cheaper — did the cost move somewhere else? | EXEC · Finance | S-2 |
+| E1 | Is it feasible, what will it cost, how long, what risks? | EXEC, LEAD · Product | S-2 |
+| E2 | Where is the effect larger for less effort? | EXEC · Product | S-2 |
 | D1 | I can see the problem — what do I do? | LEAD | S-3 |
 | D2 | Was it applied? Did it help? | LEAD, EXEC | S-3 |
 | D3 | We had a reorg that month — how do I say so? | LEAD | S-3 |
@@ -498,9 +538,10 @@ per customer, since the connected source set differs.
 
 All thirty map to a scenario. S-6 is the only scenario with no concrete question behind it yet.
 
-**†** The source draft tags this question with a persona this document does not keep separate —
-product management or finance. The row shows the persona carrying it here (§1). Six such rows: B6 and
-C6 were finance, C3, C4, E1 and E2 were product management.
+Six questions arrive from a function rather than a reach — finance (B6, C6) and product management
+(C3, C4, E1, E2). Each is carried by a reach persona in that function (§1.2). In a `flat`
+installation, MEMBER may ask any question listed for EXEC, LEAD or IC; the reach personas name the
+`org_chart` case.
 
 ---
 
@@ -527,12 +568,17 @@ deployment comes from elsewhere in the vision.
 
 ## Appendix C · Open points
 
-Four claims in this document go beyond what VISION.md and the scenario draft state. They are written
+Several claims in this document go beyond what VISION.md and the scenario draft state. They are written
 as requirements because the alternative is to leave them undecided, but each needs a decision rather
 than a nod.
 
-- **Administrative rights and data visibility.** §1.1 asserts that ADMIN gains no data visibility
-  implicitly. Worth confirming against the access model rather than the interface.
+- **Administrative rights and data visibility** — settled. §1.1 asserts that ADMIN gains no data
+  visibility implicitly, and the access model agrees: the identity service's visible-set predicate
+  carries no role term (ADR-0015), under either visibility mode.
+- **Ranking in flat mode.** A MEMBER sees every other member's position band. VISION §3 rules out a
+  default view that ranks named individuals; a flat organization has opted into seeing everyone.
+  Which of the two this is has to be decided before the mode is sold as a feature — and if the bands
+  are a ranking, whether flat mode suppresses them or the customer accepts them.
 - **Saved and shared views** (S-4). Composing a view is in the vision; *saving* it and *sharing* it are
   not. If sharing exists, the access rule has to come with it — what each viewer sees, re-evaluated for
   them — and that is far cheaper to decide before the feature than after.
