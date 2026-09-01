@@ -2094,3 +2094,145 @@ async fn every_operator_route_refuses_a_caller_the_gateway_did_not_name() -> Tes
     }
     Ok(())
 }
+
+/// The four correction verbs, each with a body its extractor accepts — so a
+/// case below varies ONE thing and the refusal is about that thing.
+fn correction_verbs(f: &Fixture, person: Uuid) -> Vec<(&'static str, Value)> {
+    let account = json!({"account": account_ref(f, "acct-extractor")});
+    vec![
+        (
+            "/v1/resolution/bind",
+            bind_body(f, "acct-extractor", person),
+        ),
+        (
+            "/v1/resolution/merge",
+            json!({
+                "source_person_id": person.to_string(),
+                "target_person_id": Uuid::now_v7().to_string(),
+            }),
+        ),
+        ("/v1/resolution/detach", account.clone()),
+        ("/v1/resolution/exclude", account),
+    ]
+}
+
+#[tokio::test]
+async fn a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("extractor@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    for (uri, _) in correction_verbs(&f, person) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from("{not json"))?;
+        let resp = app(&f, caller).oneshot(req).await?;
+        let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = to_bytes(resp.into_body(), usize::MAX).await?;
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        assert!(
+            content_type.starts_with("application/problem+json"),
+            "{uri} answered {content_type} — the console reads the problem \
+             document to say what went wrong, and gets nothing from a plain \
+             extractor rejection"
+        );
+        assert_eq!(
+            body["context"]["field_violations"][0]["field"], "body",
+            "{uri}: {body}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_correction_without_a_json_content_type_is_refused_on_the_media_type() -> TestResult {
+    // Held before the extractor swap too — axum's own `Json` refuses on the
+    // media type as well. Kept as the guard that the swap did not trade the
+    // 415 away for a parse attempt, not as a rule this change introduced.
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("media-type@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    for (uri, body) in correction_verbs(&f, person) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .body(Body::from(body.to_string()))?;
+        let resp = app(&f, caller).oneshot(req).await?;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{uri} parsed a body that declared no media type"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_comment_past_the_cap_is_refused_before_the_correction_applies() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+    let person = f.person("comment-cap@http-live.test").await?;
+    f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
+        .await?;
+
+    // `journal()` records on failure alone, so an oversize comment that reached
+    // the store would apply the binding and lose the only explanation of why.
+    let oversize = "c".repeat(501);
+    for (uri, mut body) in correction_verbs(&f, person) {
+        body["comment"] = Value::String(oversize.clone());
+        let (status, answer) = post(app(&f, caller), uri, &body).await?;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {answer}");
+        assert_eq!(
+            answer["context"]["field_violations"][0]["field"], "comment",
+            "{uri}: {answer}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_account_search_needle_past_the_cap_is_refused() -> TestResult {
+    let Some(f) = fixture_or_skip().await? else {
+        return Ok(());
+    };
+    let caller = operator(&f).await?;
+
+    // `/v1/persons` and `/v1/visible-persons` both bound their needle at 200
+    // characters; this listing handed the raw one to the evidence reader.
+    let needle = "n".repeat(201);
+    let (status, body) = get(
+        app(&f, caller),
+        &format!("/v1/resolution/accounts?q={needle}"),
+    )
+    .await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["context"]["field_violations"][0]["field"], "q",
+        "{body}"
+    );
+    Ok(())
+}

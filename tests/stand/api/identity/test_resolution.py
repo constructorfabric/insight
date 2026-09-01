@@ -46,6 +46,17 @@ from ..schemas import (
 )
 from ..scratch import SCRATCH_SOURCE_ID, SCRATCH_SOURCE_TYPE
 
+#: The correction verbs, each with a body its extractor accepts, so a case
+#: that varies one thing draws a refusal about that thing. The ids name
+#: nobody — a refusal at the extractor or a validator must not depend on the
+#: referenced rows existing.
+CORRECTION_VERBS: tuple[tuple[str, str], ...] = (
+    ("bind", "bindings"),
+    ("merge", "source_person_id"),
+    ("detach", "account"),
+    ("exclude", "account"),
+)
+
 ATTENTION = identity_path("/v1/resolution/attention")
 ACCOUNT_SEARCH = identity_path("/v1/resolution/accounts")
 
@@ -561,3 +572,69 @@ def test_a_cursor_issued_for_another_needle_is_refused(
         ACCOUNT_SEARCH, params={"limit": 1, "q": "nobody-by-this-name", "cursor": cursor}
     )
     _refused(resumed, 400, field="cursor")
+
+
+def _verb_body(verb: str, person_id: str) -> dict[str, object]:
+    if verb == "bind":
+        return {"bindings": [{"account": _account("never-observed-account"), "person_id": person_id}]}
+    if verb == "merge":
+        return {"source_person_id": person_id, "target_person_id": UNKNOWN_PERSON}
+    return {"account": _account("never-observed-account")}
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+@pytest.mark.parametrize("verb", [v for v, _ in CORRECTION_VERBS])
+def test_a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape(
+    admin_operator_session: PersonaSession, verb: str
+) -> None:
+    """#2486 scenario 3. A mistyped correction is answered in the shape the
+    console can read.
+
+    These four verbs took axum's own `Json`, while every other write route on
+    the service takes the canonical extractor — so a body that would not parse
+    answered below the canonical error layer, as `text/plain` with no problem
+    document at all. The console extracts its message from that document, so
+    an operator saw the generic failure text and no reason.
+    """
+    response = admin_operator_session.client.post(
+        identity_path(f"/v1/resolution/{verb}"),
+        content=b"{not json",
+        headers={"Content-Type": "application/json"},
+    )
+    _refused(response, 400, field="body")
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+@pytest.mark.parametrize("verb", [v for v, _ in CORRECTION_VERBS])
+def test_a_comment_past_the_cap_is_refused_before_the_correction_applies(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest, verb: str
+) -> None:
+    """#2486 scenario 3. The audit field is bounded, like `reason` on the
+    grant routes.
+
+    A correction's comment is the only explanation of the decision that
+    reaches whoever reads the journal later, and the journal records on
+    failure alone — so an unchecked comment loses the audit row while the
+    binding still applies. Refused before any lookup, so no write happens.
+    """
+    body = _verb_body(verb, stand_manifest.fixture("dev_lead").uuid)
+    body["comment"] = "c" * 501
+
+    response = admin_operator_session.client.post(
+        identity_path(f"/v1/resolution/{verb}"), json_body=body
+    )
+    _refused(response, 400, field="comment")
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.reliability
+def test_an_account_search_needle_past_the_cap_is_refused(
+    admin_operator_session: PersonaSession,
+) -> None:
+    """#2486 scenario 3. `/v1/persons` and `/v1/visible-persons` both bound
+    their needle at 200 characters; this listing handed the raw one to the
+    evidence reader."""
+    response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": "n" * 201})
+    _refused(response, 400, field="q")

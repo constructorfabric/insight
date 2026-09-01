@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::AppState;
+use super::canonical_json::CanonicalJson;
 use super::error::CorrectionError;
 use super::gate::require_admin;
 use crate::domain::person_card::{self, PersonCard};
@@ -39,6 +40,12 @@ const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 /// How many accounts one bulk call may carry — a prepared matching table is
 /// pasted by a human, not streamed.
 pub(super) const MAX_BULK_ITEMS: usize = 1_000;
+
+/// The same ceiling `reason` carries on the grant routes. A correction's
+/// comment is the only explanation of the decision that reaches whoever reads
+/// the journal later, and `journal()` records on failure alone — so an
+/// unchecked comment loses the audit row while the binding still applies.
+const MAX_COMMENT_LEN: usize = 500;
 
 /// A source-native account, as named by the caller.
 ///
@@ -135,11 +142,12 @@ impl toolkit::api::api_dto::ResponseApiDto for CorrectionResponse {}
 pub async fn bind(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<BindRequest>,
+    CanonicalJson(req): CanonicalJson<BindRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     reject_empty(req.bindings.is_empty(), "bindings")?;
     reject_oversized(req.bindings.len())?;
 
@@ -190,11 +198,12 @@ pub async fn bind(
 pub async fn merge(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<MergeRequest>,
+    CanonicalJson(req): CanonicalJson<MergeRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     if req.source_person_id == req.target_person_id {
         return Err(invalid(
             "target_person_id",
@@ -238,11 +247,12 @@ pub async fn merge(
 pub async fn detach(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<AccountRequest>,
+    CanonicalJson(req): CanonicalJson<AccountRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     let account = SourceAccountKey::from(&req.account);
     require_known_account(&state, tenant, &account).await?;
 
@@ -280,11 +290,12 @@ pub async fn detach(
 pub async fn exclude(
     Extension(state): Extension<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<AccountRequest>,
+    CanonicalJson(req): CanonicalJson<AccountRequest>,
 ) -> Result<impl IntoResponse, CanonicalError> {
     let operator = require_admin(&state.db, &ctx).await?;
     let tenant = ctx.subject_tenant_id();
 
+    reject_long_comment(&req.comment)?;
     let account = SourceAccountKey::from(&req.account);
     require_known_account(&state, tenant, &account).await?;
 
@@ -622,6 +633,16 @@ fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalE
         return Err(invalid(
             field,
             "the reserved excluded person cannot take part in a correction; use the exclude verb",
+        ));
+    }
+    Ok(())
+}
+
+fn reject_long_comment(comment: &str) -> Result<(), CanonicalError> {
+    if comment.chars().count() > MAX_COMMENT_LEN {
+        return Err(invalid(
+            "comment",
+            &format!("at most {MAX_COMMENT_LEN} characters are accepted"),
         ));
     }
     Ok(())
@@ -988,6 +1009,15 @@ pub async fn search_accounts(
     let tenant = ctx.subject_tenant_id();
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
+    if needle.chars().count() > super::listing::MAX_QUERY_CHARS {
+        return Err(invalid(
+            "q",
+            &format!(
+                "at most {} characters are accepted",
+                super::listing::MAX_QUERY_CHARS
+            ),
+        ));
+    }
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,
