@@ -22,7 +22,7 @@ SVC=${1:?usage: render-system-values.sh <svc> <env> <out-dir>}
 ENV_NAME=${2:?usage: render-system-values.sh <svc> <env> <out-dir>}
 OUT_DIR=${3:?usage: render-system-values.sh <svc> <env> <out-dir>}
 
-NS_VARS=(NS_INFRA NS_MONITORING)
+NS_VARS=(NS_INFRA NS_MONITORING NS_APP)
 
 SED_ARGS=()
 for v in "${NS_VARS[@]}"; do

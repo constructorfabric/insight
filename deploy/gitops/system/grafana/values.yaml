@@ -131,8 +131,10 @@ datasources:
           password: $CLICKHOUSE_GRAFANA_PASSWORD
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
-# Provisioned into the "Insight" folder. Sources are LOG-based (LogQL over
-# the gateway access_log and pod logs) — no Prometheus needed yet.
+# Provisioned into the "Insight" folder. Sources: LogQL over the gateway
+# access_log and pod logs, and PromQL over VictoriaMetrics (cAdvisor +
+# kube-state-metrics, the services' http.server.request.duration histogram,
+# and the gateway's nginx exporter — #2893).
 # Deploy markers: every umbrella deploy runs the insight-post-upgrade hook
 # pod; its log lines drive the dashboard annotations. The "deploy output"
 # panel shows what scripts/push-deploy-log.sh ships ({job="deploy-insight"}).
@@ -263,6 +265,198 @@ dashboards:
              "datasource": {"type": "loki", "uid": "loki"},
              "options": {"showTime": true, "wrapLogMessage": true, "sortOrder": "Ascending"},
              "targets": [{"refId": "A", "expr": "{job=\"deploy-insight\"}"}]}
+          ]
+        }
+    insight-services:
+      json: |
+        {
+          "uid": "insight-services",
+          "title": "Insight · Service health",
+          "schemaVersion": 39,
+          "time": {"from": "now-6h", "to": "now"},
+          "refresh": "1m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "timeseries", "title": "CPU by service (cores)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{container}}", "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"insight\", container=~\"gateway|authenticator|keycloak|analytics|identity-resolution|previews|git-cli-proxy|frontend\"}[$__rate_interval]))"}
+             ]},
+            {"id": 2, "type": "timeseries", "title": "Memory by service (working set)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{container}}", "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"insight\", container=~\"gateway|authenticator|keycloak|analytics|identity-resolution|previews|git-cli-proxy|frontend\"})"}
+             ]},
+            {"id": 3, "type": "timeseries", "title": "Container restarts",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{container}}", "expr": "sum by (container) (increase(kube_pod_container_status_restarts_total{namespace=\"insight\"}[$__rate_interval])) > 0"}
+             ]},
+            {"id": 4, "type": "timeseries", "title": "Ready vs desired replicas",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 0}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{deployment}} ready", "expr": "sum by (deployment) (kube_deployment_status_replicas_ready{namespace=\"insight\"})"},
+               {"refId": "B", "legendFormat": "{{deployment}} desired", "expr": "sum by (deployment) (kube_deployment_spec_replicas{namespace=\"insight\"})"}
+             ]},
+            {"id": 5, "type": "timeseries", "title": "Unready pods",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{pod}}", "expr": "kube_pod_status_ready{namespace=\"insight\", condition=\"false\"} == 1"}
+             ]},
+            {"id": 6, "type": "timeseries", "title": "OOM kills / abnormal terminations",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{container}} {{reason}}", "expr": "sum by (container, reason) (kube_pod_container_status_last_terminated_reason{namespace=\"insight\", reason!=\"Completed\"})"}
+             ]}
+          ]
+        }
+    insight-red:
+      json: |
+        {
+          "uid": "insight-red",
+          "title": "Insight · RED by service",
+          "schemaVersion": 39,
+          "time": {"from": "now-6h", "to": "now"},
+          "refresh": "1m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "timeseries", "title": "Request rate by service",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}}", "expr": "sum by (job) (rate(http_server_request_duration_seconds_count[$__rate_interval]))"}
+             ]},
+            {"id": 2, "type": "timeseries", "title": "Error ratio by service (5xx, %)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}}", "expr": "100 * sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[$__rate_interval])) / sum by (job) (rate(http_server_request_duration_seconds_count[$__rate_interval]))"}
+             ]},
+            {"id": 3, "type": "timeseries", "title": "Duration p50 / p99 by service",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}} p50", "expr": "histogram_quantile(0.5, sum by (le, job) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))"},
+               {"refId": "B", "legendFormat": "{{job}} p99", "expr": "histogram_quantile(0.99, sum by (le, job) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))"}
+             ]},
+            {"id": 4, "type": "timeseries", "title": "Duration p95 by route",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}} {{http_route}}", "expr": "histogram_quantile(0.95, sum by (le, job, http_route) (rate(http_server_request_duration_seconds_bucket[$__rate_interval])))"}
+             ]},
+            {"id": 5, "type": "timeseries", "title": "Request rate by route (top 10)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}} {{http_route}}", "expr": "topk(10, sum by (job, http_route) (rate(http_server_request_duration_seconds_count[$__rate_interval])))"}
+             ]},
+            {"id": 6, "type": "timeseries", "title": "Error rate by route (4xx / 5xx)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{job}} {{http_route}} {{http_response_status_code}}", "expr": "sum by (job, http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"[45]..\"}[$__rate_interval])) > 0"}
+             ]}
+          ]
+        }
+    insight-gateway:
+      json: |
+        {
+          "uid": "insight-gateway",
+          "title": "Insight · Gateway traffic",
+          "schemaVersion": 39,
+          "time": {"from": "now-6h", "to": "now"},
+          "refresh": "1m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "timeseries", "title": "Request rate (nginx)",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{pod}}", "expr": "sum by (pod) (rate(nginx_http_requests_total{job=\"gateway-nginx\"}[$__rate_interval]))"}
+             ]},
+            {"id": 2, "type": "timeseries", "title": "Proxied responses by status class (rps)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{status_class}}", "expr": "sum by (status_class) (label_replace(rate(http_server_request_duration_seconds_count[$__rate_interval]), \"status_class\", \"${1}xx\", \"http_response_status_code\", \"([0-9])..\"))"}
+             ]},
+            {"id": 3, "type": "timeseries", "title": "Connections",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{pod}} active", "expr": "nginx_connections_active{job=\"gateway-nginx\"}"},
+               {"refId": "B", "legendFormat": "{{pod}} reading", "expr": "nginx_connections_reading{job=\"gateway-nginx\"}"},
+               {"refId": "C", "legendFormat": "{{pod}} writing", "expr": "nginx_connections_writing{job=\"gateway-nginx\"}"},
+               {"refId": "D", "legendFormat": "{{pod}} waiting", "expr": "nginx_connections_waiting{job=\"gateway-nginx\"}"}
+             ]},
+            {"id": 4, "type": "timeseries", "title": "Connections accepted vs handled (per second)",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "cps", "min": 0, "custom": {"drawStyle": "line", "fillOpacity": 10}}, "overrides": []},
+             "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{pod}} accepted", "expr": "rate(nginx_connections_accepted{job=\"gateway-nginx\"}[$__rate_interval])"},
+               {"refId": "B", "legendFormat": "{{pod}} handled", "expr": "rate(nginx_connections_handled{job=\"gateway-nginx\"}[$__rate_interval])"}
+             ]},
+            {"id": 5, "type": "stat", "title": "Exporter up",
+             "gridPos": {"h": 4, "w": 12, "x": 0, "y": 16},
+             "datasource": {"type": "prometheus", "uid": "vm"},
+             "fieldConfig": {"defaults": {"unit": "short", "mappings": [
+               {"type": "value", "options": {"0": {"text": "down", "color": "red"}, "1": {"text": "up", "color": "green"}}}
+             ]}, "overrides": []},
+             "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}},
+             "targets": [
+               {"refId": "A", "legendFormat": "{{pod}}", "expr": "nginx_up{job=\"gateway-nginx\"}"}
+             ]}
           ]
         }
 
