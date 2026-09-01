@@ -1,4 +1,4 @@
-import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -52,6 +52,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { nextSort } from "@/lib/metrics/evidence-rows";
+import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";
 import { SEARCH_DEBOUNCE_MS } from "@/queries/identity-resolution";
 
 /** A records read taken out of a people list, and whose records they are. */
@@ -135,8 +136,9 @@ export function MetricEvidenceDialog({
     [sort, needle]
   );
 
+  const queryKey = ["metric-drilldown", sessionScope, selection, view];
   const query = useInfiniteQuery({
-    queryKey: ["metric-drilldown", sessionScope, selection, view],
+    queryKey,
     queryFn: ({ pageParam, signal }) => {
       if (!selection) throw new Error("Metric evidence selection is missing");
       return queryMetricDrilldown(
@@ -149,8 +151,12 @@ export function MetricEvidenceDialog({
     // A new order or a new needle is a new query key. Without this the table —
     // and the search box in the header above it — is replaced by a spinner on
     // every header click and every pause in typing, which loses the caret
-    // mid-word.
-    placeholderData: keepPreviousData,
+    // mid-word. A new SUBJECT gets the spinner: rows held over from the metric
+    // the reader just closed would sit under the new one's title as its answer.
+    placeholderData: (previous, previousQuery) =>
+      sameEvidenceSubject(previousQuery?.queryKey, queryKey)
+        ? previous
+        : undefined,
     enabled:
       sessionScope != null &&
       selection != null &&

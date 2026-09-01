@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { keepPreviousData } from "@tanstack/react-query";
 
 import { AnalyticsApiError } from "@/api/analytics-client";
 import {
@@ -118,6 +117,17 @@ function renderDialog(next: TrendDrilldownState = state) {
   return render(<TrendDrilldownDialog state={next} onClose={vi.fn()} />);
 }
 
+/** What the query would show while a read keyed `previousKey` is replaced. */
+function placeholderAgainst(previousKey: unknown[]): unknown {
+  const placeholderData = mocks.queryOptions?.placeholderData as (
+    previous: unknown,
+    previousQuery: { queryKey: unknown[] }
+  ) => unknown;
+  return placeholderData("the rows already on screen", {
+    queryKey: previousKey,
+  });
+}
+
 describe("TrendDrilldownDialog", () => {
   beforeEach(() => {
     mocks.query = readyQuery();
@@ -176,7 +186,28 @@ describe("TrendDrilldownDialog", () => {
 
   it("keeps the rows on screen while a new order is fetched", () => {
     renderDialog();
-    expect(mocks.queryOptions?.placeholderData).toBe(keepPreviousData);
+    const key = mocks.queryOptions?.queryKey as unknown[];
+
+    expect(
+      placeholderAgainst([
+        ...key.slice(0, -1),
+        { sort: { key: "ref", direction: "asc" } },
+      ])
+    ).toBe("the rows already on screen");
+  });
+
+  // Another chart, another member set, another period: a new question, whose
+  // answer waits for the spinner rather than borrowing the last one's rows.
+  it("drops the rows when another chart is opened", () => {
+    renderDialog();
+    const key = mocks.queryOptions?.queryKey as unknown[];
+    const otherChart = [
+      ...key.slice(0, 3),
+      { ...(key[3] as object), metric_key: "git.lines_added" },
+      key[4],
+    ];
+
+    expect(placeholderAgainst(otherChart)).toBeUndefined();
   });
 
   // A scope with nobody in it has no records; telling its reader to narrow it

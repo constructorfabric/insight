@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 
 import { AnalyticsApiError } from "@/api/analytics-client";
 import {
@@ -29,6 +29,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatMetricNumber } from "@/lib/format";
 import { nextSort } from "@/lib/metrics/evidence-rows";
+import { sameEvidenceSubject } from "@/lib/metrics/evidence-placeholder";
 import { type BucketBreakdownRow } from "@/lib/portal/trend-drilldown";
 
 const PAGE_LIMIT = 100;
@@ -128,8 +129,9 @@ function Records({
     [metricKey, state.members, state.period],
   );
   const view = useMemo(() => (sort ? { sort } : {}), [sort]);
+  const queryKey = ["metric-drilldown", "trend", sessionScope, selection, view];
   const query = useInfiniteQuery({
-    queryKey: ["metric-drilldown", "trend", sessionScope, selection, view],
+    queryKey,
     queryFn: ({ pageParam, signal }) => {
       if (!selection) throw new Error("Metric evidence selection is missing");
       return queryMetricDrilldown(
@@ -140,8 +142,13 @@ function Records({
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     // Re-ordering re-reads rows already on screen; without this the table
-    // blanks to a spinner on every header click.
-    placeholderData: keepPreviousData,
+    // blanks to a spinner on every header click. A different chart, member set
+    // or period is a different question, and its answer waits for the spinner
+    // rather than borrowing the last one's rows.
+    placeholderData: (previous, previousQuery) =>
+      sameEvidenceSubject(previousQuery?.queryKey, queryKey)
+        ? previous
+        : undefined,
     enabled: sessionScope != null && selection != null,
     // A busy drilldown answers 429, and asking again immediately is what made
     // it busy.

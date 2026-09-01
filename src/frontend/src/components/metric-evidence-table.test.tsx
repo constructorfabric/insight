@@ -65,6 +65,32 @@ describe("MetricEvidenceTable", () => {
     });
   });
 
+  // A row that sized its own cells drifted out of the headings above it as
+  // soon as the two had different space to grow into, and put its last cell on
+  // a line of its own. One template decides both.
+  it("lays the headings and the rows out on one set of columns", () => {
+    renderTable();
+    const [header, ...body] = screen.getAllByRole("row");
+    const template = header!.style.gridTemplateColumns;
+
+    expect(template).not.toBe("");
+    for (const row of body) {
+      expect(row.style.gridTemplateColumns).toBe(template);
+      expect(row.style.flexWrap).toBe("");
+    }
+  });
+
+  // A column the reader can widen must widen in both places or the values slide
+  // out from under their heading.
+  it("gives every column a track, expander included", () => {
+    renderTable();
+    const header = screen.getAllByRole("row")[0]!;
+
+    expect(header.style.gridTemplateColumns.split(/\s+(?![^(]*\))/)).toHaveLength(
+      columns.length + 1
+    );
+  });
+
   it("renders a branch column the server sent, value and header alike", () => {
     // The branch is server-driven like every other column (#2806): the table
     // must not need to know the key to show it.

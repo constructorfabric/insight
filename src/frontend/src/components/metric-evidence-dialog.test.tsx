@@ -3,7 +3,6 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { keepPreviousData } from "@tanstack/react-query";
 
 import { AnalyticsApiError } from "@/api/analytics-client";
 import type { EvidenceDialogState } from "@/components/metric-evidence-context";
@@ -900,6 +899,23 @@ describe("MetricEvidenceDialog", () => {
       act(() => onSortChange(key));
     }
 
+    /** What the query would show while a read keyed `previousKey` is replaced. */
+    function placeholderAgainst(previousKey: unknown[]): unknown {
+      const placeholderData = mocks.queryOptions?.placeholderData as (
+        previous: unknown,
+        previousQuery: { queryKey: unknown[] }
+      ) => unknown;
+      return placeholderData("the rows already on screen", {
+        queryKey: previousKey,
+      });
+    }
+
+    /** The same read, asked for under a different order or needle. */
+    function placeholderFor(view: Record<string, unknown>): unknown {
+      const key = mocks.queryOptions?.queryKey as unknown[];
+      return placeholderAgainst([...key.slice(0, -1), view]);
+    }
+
     it("counts the records it is showing", () => {
       renderDialog();
       expect(screen.getByText("3 records")).toBeInTheDocument();
@@ -910,7 +926,25 @@ describe("MetricEvidenceDialog", () => {
     // mid-word and the scroll position with it.
     it("keeps the rows on screen while a new order is fetched", () => {
       renderDialog();
-      expect(mocks.queryOptions?.placeholderData).toBe(keepPreviousData);
+
+      expect(placeholderFor({ sort: { key: "ref", direction: "asc" } })).toBe(
+        "the rows already on screen"
+      );
+    });
+
+    // Closing one metric's records and opening another's asks a new question.
+    // Rows held over from the last one render under the new title, where they
+    // read as its answer until the real ones land.
+    it("drops the rows when the records of another metric are opened", () => {
+      renderDialog();
+      const key = mocks.queryOptions?.queryKey as unknown[];
+      const otherMetric = [
+        ...key.slice(0, 2),
+        { ...(key[2] as object), metric_key: "git.lines_added" },
+        key[3],
+      ];
+
+      expect(placeholderAgainst(otherMetric)).toBeUndefined();
     });
 
     // The debounce delays ASKING. A cleared box is not an ask, and leaving the

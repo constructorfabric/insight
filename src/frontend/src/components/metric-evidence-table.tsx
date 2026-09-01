@@ -117,6 +117,17 @@ export function MetricEvidenceTable({
   const minimumWidth = columns.reduce((total, column) => {
     return total + columnLayout(column).basisRem;
   }, EXPANDER_REM);
+  // INVARIANT: the header and every body row lay out on THIS template. Two
+  // rows sizing themselves independently drift apart as soon as one of them
+  // has different free space to grow into, and a value under the wrong
+  // heading is worse than no value.
+  const gridTemplate = useMemo(() => {
+    const tracks = columns.map((column) => {
+      const { basisRem, grow } = columnLayout(column);
+      return grow > 0 ? `minmax(${basisRem}rem, ${grow}fr)` : `${basisRem}rem`;
+    });
+    return [`${EXPANDER_REM}rem`, ...tracks].join(" ");
+  }, [columns]);
 
   function toggleRow(key: string): void {
     setExpanded((current) => {
@@ -168,17 +179,16 @@ export function MetricEvidenceTable({
         >
           <TableRow
             role="row"
-            className="flex w-full border-b-0 hover:bg-transparent"
+            className="grid w-full border-b-0 hover:bg-transparent"
+            style={{ gridTemplateColumns: gridTemplate }}
           >
             <TableHead
               role="columnheader"
-              className="flex h-10 shrink-0 items-center p-0"
-              style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+              className="flex h-10 items-center p-0"
             >
               <span className="sr-only">Expand record</span>
             </TableHead>
             {columns.map((column) => {
-              const layout = columnLayout(column);
               const state = sort?.key === column.key ? sort.direction : null;
               const numeric = column.type === "number";
               const label = (
@@ -210,9 +220,6 @@ export function MetricEvidenceTable({
                       ? "justify-end text-right"
                       : "justify-start text-left"
                   )}
-                  style={{
-                    flex: `${layout.grow} 0 ${layout.basisRem}rem`,
-                  }}
                 >
                   {/* A header the server cannot order by is a label, not a
                       control that does nothing when clicked. */}
@@ -257,15 +264,15 @@ export function MetricEvidenceTable({
                 aria-rowindex={virtualRow.index + 2}
                 aria-expanded={isOpen}
                 onClick={() => toggleRow(key)}
-                className="absolute top-0 left-0 flex w-full cursor-pointer flex-wrap hover:bg-muted/20"
+                className="absolute top-0 left-0 grid w-full cursor-pointer hover:bg-muted/20"
                 style={{
+                  gridTemplateColumns: gridTemplate,
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
                 <TableCell
                   role="cell"
-                  className="flex h-11 shrink-0 items-center justify-center p-0"
-                  style={{ flex: `0 0 ${EXPANDER_REM}rem` }}
+                  className="flex h-11 items-center justify-center p-0"
                 >
                   <Button
                     type="button"
@@ -285,7 +292,6 @@ export function MetricEvidenceTable({
                   </Button>
                 </TableCell>
                 {columns.map((column) => {
-                  const layout = columnLayout(column);
                   const value = row.values[column.key];
                   const text = cellText(value, column.type);
                   const full = summaryLine(text);
@@ -304,9 +310,6 @@ export function MetricEvidenceTable({
                         "h-11 min-w-0 truncate px-3 py-3 tabular-nums",
                         column.type === "number" && "text-right"
                       )}
-                      style={{
-                        flex: `${layout.grow} 0 ${layout.basisRem}rem`,
-                      }}
                       title={full}
                     >
                       {column.key === "ref" && value != null ? (
@@ -335,7 +338,10 @@ export function MetricEvidenceTable({
                     // INVARIANT: selecting text here must not reach the row's
                     // expand toggle.
                     onClick={(event) => event.stopPropagation()}
-                    className="w-full basis-full cursor-auto border-t bg-muted/40 px-3 py-3"
+                    className="cursor-auto border-t bg-muted/40 px-3 py-3"
+                    // The record entire, under the row it belongs to: a track
+                    // of its own across every column.
+                    style={{ gridColumn: "1 / -1" }}
                   >
                     {/* INVARIANT: a fixed cap, not a vh — the window can
                         exceed the table's own height. */}
