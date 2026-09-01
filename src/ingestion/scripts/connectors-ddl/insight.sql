@@ -413,7 +413,7 @@ CREATE TABLE IF NOT EXISTS insight.git_review_events
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
     `event_kind` String,
-    `event_key` Nullable(String),
+    `event_key` String,
     `pr_id` Int64,
     `pr_number` Int64,
     `entity_id` String,
