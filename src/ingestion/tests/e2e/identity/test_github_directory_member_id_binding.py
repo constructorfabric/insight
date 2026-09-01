@@ -161,6 +161,23 @@ def _run_connector_dbt_path(
     tracked_models.run(["identity_inputs"], worker_ctx=worker_ctx)
 
 
+def _person_id_by_email(identity_svc, email: str) -> str | None:
+    """The person an address names, the second way in.
+
+    Used to say WHICH person a member id must resolve to: the id and the
+    roster address are two independent handles on one member, so agreeing on
+    a person is a claim `is not None` cannot make.
+    """
+    with identity_svc.client(
+        sub=str(seed.SEED_ADMIN), tenant=str(seed.SEED_TENANT), sub_type="service", roles="service"
+    ) as svc:
+        r = svc.get("/internal/persons/by-email-override", params={"email": email})
+    if r.status_code == 404:
+        return None
+    assert r.status_code == 200, f"status={r.status_code} body={r.text}"
+    return r.json()["insight_source_id"]
+
+
 def _resolve_by_external_id(identity_svc, external_id: str) -> str | None:
     """Resolve exactly as the authenticator's login-bootstrap does."""
     with identity_svc.client(
@@ -236,9 +253,21 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)
     assert res.returncode == 0, f"rc={res.returncode}\n{res.stdout}\n{res.stderr}"
 
-    assert _resolve_by_external_id(identity_svc, str(member_id)) is not None, (
+    resolved = _resolve_by_external_id(identity_svc, str(member_id))
+    assert resolved is not None, (
         "persons carries no row the login-bootstrap lookup can find for "
         f"(source_type=github, external_id={member_id})"
+    )
+
+    # WHICH person, not merely some person. The member id and the roster
+    # address are two independent handles on the same member, so a sign-in
+    # landing on a real-but-wrong person — the failure this criterion exists
+    # to rule out — satisfies `is not None` and fails this.
+    by_address = _person_id_by_email(identity_svc, f"pipeline.dev.{run_tag}@e2e.test")
+    assert by_address is not None, "the roster address names no person"
+    assert resolved == by_address, (
+        f"the member id resolves to {resolved}, the roster address to {by_address} — "
+        "a sign-in through this connector lands on someone other than the member"
     )
 
 

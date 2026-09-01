@@ -180,15 +180,28 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
 
         console.person_search().fill(new_holder.display_name)
         console.person_option(new_holder.display_name).click()
-        expect(console.confirmation("Bind this account?")).to_be_visible()
-        console.confirm("Bind").click()
+        confirmation = console.confirmation("Bind this account?")
+        expect(confirmation).to_be_visible()
 
-        # The correction closing its own window is the SPA saying the request
-        # came back. Without waiting for it, what follows races the POST: the
-        # console clears `?acct=` on success, so a navigation issued too early
-        # either reloads a url that still names the account and reads a store
-        # that has not been written yet, or reloads one that no longer does.
-        expect(window).not_to_be_visible()
+        # Wait for the RESPONSE, not for a dialog. An open confirmation hides
+        # the window behind it from role queries (the SPA's own suite says so
+        # in `person-dialog.test.tsx`), so "the account window went away" is
+        # already true the moment the confirmation opened — before the click —
+        # and would be no wait at all. Navigating on that would cancel the
+        # request in flight or cross the teardown.
+        with page.expect_response(
+            lambda response: response.request.method == "POST"
+            and response.url.endswith("/v1/resolution/bind")
+        ) as bind_call:
+            console.confirm("Bind").click()
+        assert bind_call.value.status == 200, (
+            f"the correction the console sent was refused: {bind_call.value.status}"
+        )
+
+        # And then for the SPA to have acted on it: the confirmation closes on
+        # success, which is what tells a reader the console believed the answer
+        # rather than merely receiving it.
+        expect(confirmation).not_to_be_visible()
 
         # A fresh document at the same link — a stronger form of "survives a
         # reload" than `reload()`, since nothing of the previous page's state

@@ -36,7 +36,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from insight_stand import ApiClient, ApiResponse, Manifest, PersonaSession, identity_path
+from insight_stand import (
+    ApiClient,
+    ApiResponse,
+    JsonValue,
+    Manifest,
+    PersonaSession,
+    identity_path,
+)
 
 from .. import scratch
 from ..schemas import (
@@ -75,7 +82,7 @@ EXCLUDED_PERSON = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 UNKNOWN_PERSON = "00000000-0000-0000-0000-000000000000"
 
 
-def _account(account_id: str) -> dict[str, str]:
+def _account(account_id: str) -> dict[str, JsonValue]:
     """One account under the suite's own connector instance — the only place a
     correction this module writes may land (`scratch.py` rule 5)."""
     return {"source": SCRATCH_SOURCE_TYPE, "source_id": SCRATCH_SOURCE_ID, "id": account_id}
@@ -496,7 +503,10 @@ def test_the_excluded_sentinel_is_not_a_merge_side(
     at once (as source), or mass-excludes a person's accounts while the
     journal records a merge (as target). Refused as validation, no write."""
     lead = stand_manifest.fixture("dev_lead")
-    body = {"source_person_id": lead.uuid, "target_person_id": lead.uuid}
+    body: dict[str, JsonValue] = {
+        "source_person_id": lead.uuid,
+        "target_person_id": lead.uuid,
+    }
     body[side] = EXCLUDED_PERSON
     response = admin_operator_session.client.post(
         identity_path("/v1/resolution/merge"), json_body=body
@@ -550,7 +560,10 @@ def test_merge_refuses_a_person_the_tenant_never_had(
     reads the same before and after.
     """
     lead = stand_manifest.fixture("dev_lead")
-    body = {"source_person_id": lead.uuid, "target_person_id": lead.uuid}
+    body: dict[str, JsonValue] = {
+        "source_person_id": lead.uuid,
+        "target_person_id": lead.uuid,
+    }
     body[unknown_side] = UNKNOWN_PERSON
 
     response = admin_operator_session.client.post(
@@ -588,7 +601,7 @@ def test_a_cursor_issued_for_another_needle_is_refused(
     _refused(resumed, 400, field="cursor")
 
 
-def _verb_body(verb: str, person_id: str) -> dict[str, object]:
+def _verb_body(verb: str, person_id: str) -> dict[str, JsonValue]:
     if verb == "bind":
         return {"bindings": [{"account": _account("never-observed-account"), "person_id": person_id}]}
     if verb == "merge":
@@ -613,7 +626,7 @@ def test_a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape
     """
     response = admin_operator_session.client.post(
         identity_path(f"/v1/resolution/{verb}"),
-        content=b"{not json",
+        content="{not json",
         headers={"Content-Type": "application/json"},
     )
     _refused(response, 400, field="body")
@@ -670,7 +683,7 @@ def test_a_correction_without_a_json_content_type_is_refused_on_the_media_type(
     body = _verb_body(verb, stand_manifest.fixture("dev_lead").uuid)
     response = admin_operator_session.client.post(
         identity_path(f"/v1/resolution/{verb}"),
-        content=json.dumps(body).encode(),
+        content=json.dumps(body),
         headers={"Content-Type": "text/plain"},
     )
     assert response.status_code == 415, f"{response.status_code} {response.text[:300]}"
