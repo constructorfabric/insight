@@ -105,6 +105,40 @@ alloy:
         forward_to      = [prometheus.relabel.drop_noise.receiver]
       }
 
+      // ── Gateway nginx — connection + request rates (#2892) ──────────────
+      // Pod discovery, not the Service address: two replicas behind one
+      // Service would interleave counters from different pods into one series.
+      discovery.kubernetes "gateway_pods" {
+        role = "pod"
+        namespaces {
+          names = ["${NS_APP}"]
+        }
+        selectors {
+          role  = "pod"
+          label = "app.kubernetes.io/name=gateway"
+        }
+      }
+
+      discovery.relabel "gateway_metrics" {
+        targets = discovery.kubernetes.gateway_pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_port_name"]
+          regex         = "metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "gateway_nginx" {
+        targets         = discovery.relabel.gateway_metrics.output
+        job_name        = "gateway-nginx"
+        scrape_interval = "30s"
+        forward_to      = [prometheus.relabel.drop_noise.receiver]
+      }
+
       // ── Series-level pruning, then remote_write ─────────────────────────
       prometheus.relabel "drop_noise" {
         // kubelet /metrics/resource re-exports cAdvisor's container_cpu/
