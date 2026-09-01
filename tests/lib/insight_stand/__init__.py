@@ -71,6 +71,14 @@ from .personas import (
     resolve_by_realm_role,
     verify_realm_roles,
 )
+from .scratch_identity import (
+    RUN_TAG,
+    SCRATCH_PREFIX,
+    SCRATCH_SOURCE_ID,
+    SCRATCH_SOURCE_TYPE,
+    issued_names,
+    scratch_name,
+)
 from .service_token import (
     ASSERTION_TYPE,
     IDENTITY_URL_ENV,
@@ -122,6 +130,10 @@ __all__: Sequence[str] = (
     "PASSWORD_ENV",
     "REALM_EXPORT_PATH",
     "ROLE_TO_REALM_ROLES",
+    "RUN_TAG",
+    "SCRATCH_PREFIX",
+    "SCRATCH_SOURCE_ID",
+    "SCRATCH_SOURCE_TYPE",
     "SERVICE_NAME",
     "SESSION_COOKIE_NAME",
     "SUPPORTED_MANIFEST_VERSION",
@@ -156,6 +168,7 @@ __all__: Sequence[str] = (
     "expected_realm_roles",
     "governs_vector",
     "identity_path",
+    "issued_names",
     "load_manifest",
     "open_service_session",
     "open_session",
@@ -164,6 +177,7 @@ __all__: Sequence[str] = (
     "resolve_base_url",
     "resolve_by_realm_role",
     "resolve_endpoint",
+    "scratch_name",
     "verify_realm_roles",
     "wait_for",
     "wait_until",

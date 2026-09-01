@@ -12,15 +12,18 @@ unprovable by construction: a reload there restarts the mock.
 So this journey is the only place where the console, the gateway, the service
 and the store are the real ones at the same time.
 
-**The account is reassigned and put back, not attached from nothing.** A
-seeded stand has no unbound account to attach — every observed account
-belongs to the employee it was reported for — and staging one would mean
-changing seed data the whole suite reads. Reassignment is the same verb
-through the same screen, and it is the only correction whose undo restores
-the visible state exactly: the account returns to the holder it had. What
-remains is journal rows, which is what every operator decision leaves behind
-by design (`tests/stand/api/identity/test_resolution.py` says the same about
-its own round trip).
+**The account is the journey's own, under the suite's scratch connector.**
+`scratch.py` rule 5: the correction journal cannot be deleted from, so a
+decision written under a seeded connector blocks the next seed of the stand.
+A journey that reassigned a real employee's account would leave exactly that
+— which is why the account here is created by this test, through the API,
+under `SCRATCH_SOURCE_TYPE` / `SCRATCH_SOURCE_ID`, and ends in `exclude`, the
+one end state the seed preflight exempts.
+
+The console reaches it by its `?acct=` deep link rather than through the
+account search, which is what makes this possible at all: the search lists
+accounts a connector observed, while the account window reads one by its
+triple whether or not any connector ever reported it.
 
 No metric value is asserted. Every expectation is an identity fact read at
 runtime — the manifest's people, and the account the service itself reports.
@@ -31,7 +34,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from insight_stand import Manifest, PersonaSession, identity_path
+from insight_stand import (
+    SCRATCH_SOURCE_ID,
+    SCRATCH_SOURCE_TYPE,
+    Manifest,
+    PersonaSession,
+    identity_path,
+    scratch_name,
+)
 from playwright.sync_api import BrowserContext, Page, expect
 
 from .flows import sign_in
@@ -56,16 +66,10 @@ def context(context: BrowserContext) -> BrowserContext:
     return context
 
 
-def _bind(session: PersonaSession, account: dict[str, str], person_id: str, why: str) -> None:
-    """Put a binding back, over HTTP — teardown, never the thing under test."""
-    response = session.client.post(
-        identity_path("/v1/resolution/bind"),
-        json_body={
-            "bindings": [{"account": account, "person_id": person_id}],
-            "comment": f"stand ui journey: {why}",
-        },
-    )
-    assert response.status_code == 200, f"restore: {response.status_code} {response.text[:300]}"
+def _correct(session: PersonaSession, verb: str, body: dict[str, object]) -> None:
+    """A correction over HTTP — setup and teardown, never the thing under test."""
+    response = session.client.post(identity_path(f"/v1/resolution/{verb}"), json_body=body)
+    assert response.status_code == 200, f"{verb}: {response.status_code} {response.text[:300]}"
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead", "development_ic")
@@ -85,42 +89,34 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
     holder = stand_manifest.fixture("dev_lead")
     new_holder = stand_manifest.fixture("development_ic")
 
-    # The account to move, and who has it, read from the service rather than
-    # named here: which connector reports the roster is the seed's business,
-    # and a journey that hardcoded one would fail as a broken test the day
-    # that changed.
-    found = operator.client.get(
-        identity_path("/v1/resolution/accounts"), params={"q": holder.email, "limit": 1}
+    account_id = scratch_name("console")
+    account = {"source": SCRATCH_SOURCE_TYPE, "source_id": SCRATCH_SOURCE_ID, "id": account_id}
+
+    # Pre-registration: `bind` is the one verb that accepts an account no
+    # connector reported, which is what gives this journey a subject of its
+    # own instead of a seeded person's.
+    _correct(
+        operator,
+        "bind",
+        {
+            "bindings": [{"account": account, "person_id": holder.uuid}],
+            "comment": "stand ui journey: the account this test decides about",
+        },
     )
-    assert found.status_code == 200, f"{found.status_code} {found.text[:300]}"
-    matches = found.json()["items"]
-    assert matches, f"no observed account carries {holder.email} — is the stand seeded?"
-
-    match = matches[0]
-    account = {
-        "source": match["source"],
-        "source_id": match["source_id"],
-        "id": match["account_id"],
-    }
-    assert match["person"] and match["person"]["person_id"] == holder.uuid, (
-        f"the account for {holder.email} is held by {match['person']}, not by the "
-        "person the manifest names — the stand is not in its seeded state"
-    )
-
-    sign_in(page, base_url, operator)
-
-    label = match["email"] or match["username"] or match["account_id"]
-
-    console = IdentitiesView(page)
-    console.go(
-        "accounts",
-        acct=account_key(match["source"], match["source_id"], match["account_id"]),
-    )
-    window = console.account_window(label)
-    expect(window).to_be_visible()
-    expect(console.current_binding(window)).to_contain_text(holder.display_name)
 
     try:
+        sign_in(page, base_url, operator)
+
+        console = IdentitiesView(page)
+        console.go("accounts", acct=account_key(SCRATCH_SOURCE_TYPE, SCRATCH_SOURCE_ID, account_id))
+        window = console.account_window(account_id)
+        expect(window).to_be_visible()
+        # By person id, not by name. The window renders a person CARD only
+        # where it can hydrate one, and an account no connector observed has
+        # nothing to hydrate from — so it falls back to the raw id. That is
+        # the stricter oracle anyway: two people can share a display name.
+        expect(console.current_binding(window)).to_contain_text(holder.uuid)
+
         console.person_search().fill(new_holder.display_name)
         console.person_option(new_holder.display_name).click()
         expect(console.confirmation("Bind this account?")).to_be_visible()
@@ -129,25 +125,29 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
         # The service's answer, not the console's optimism: reload and read
         # the screen again from whatever the store now holds.
         page.reload()
-        window = console.account_window(label)
+        window = console.account_window(account_id)
         binding = console.current_binding(window)
-        expect(binding).to_contain_text(new_holder.display_name)
-        expect(binding).not_to_contain_text(holder.display_name)
+        expect(binding).to_contain_text(new_holder.uuid)
+        expect(binding).not_to_contain_text(holder.uuid)
 
         owned = operator.client.get(
             identity_path(f"/v1/resolution/persons/{new_holder.uuid}/accounts")
         )
         assert owned.status_code == 200, f"{owned.status_code} {owned.text[:300]}"
-        assert account["id"] in [a["account_id"] for a in owned.json()["accounts"]], (
+        assert account_id in [a["account_id"] for a in owned.json()["accounts"]], (
             "the screen shows the new holder but the service does not list the "
             "account under them"
         )
     finally:
-        _bind(operator, account, holder.uuid, "return the account to its seeded holder")
+        _correct(
+            operator,
+            "exclude",
+            {"account": account, "comment": "stand ui journey: scratch cleanup"},
+        )
 
-    restored = operator.client.get(
-        identity_path(f"/v1/resolution/persons/{holder.uuid}/accounts")
+    owned = operator.client.get(
+        identity_path(f"/v1/resolution/persons/{new_holder.uuid}/accounts")
     )
-    assert account["id"] in [a["account_id"] for a in restored.json()["accounts"]], (
-        "the account did not return to its seeded holder — the stand is dirty"
+    assert account_id not in [a["account_id"] for a in owned.json()["accounts"]], (
+        "the excluded scratch account still lists under the person — the stand is dirty"
     )
