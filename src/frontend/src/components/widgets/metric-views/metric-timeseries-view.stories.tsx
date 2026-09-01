@@ -36,6 +36,7 @@ import {
 } from "@/components/widgets/metric-views/metric-timeseries.story-fixtures";
 import {
   CARD_PX_AT_390,
+  expectHorizontallyContained,
   expectNothingOverlaps,
 } from "@/test/storybook/layout";
 
@@ -659,3 +660,69 @@ export const TestNarrowHeaderStacksInsteadOfOverlapping: Story = {
     ).toBeLessThanOrEqual(label!.clientWidth);
   },
 };
+
+/**
+ * The scroll controls sit beside the table, never over a cell.
+ *
+ * The failure this pins is invisible to a text query too: the controls were
+ * drawn over the scrollport, so on a narrow card the one that pages backwards
+ * covered the date column — the reader could see a value and not what it was
+ * measured on.
+ */
+export const TestNarrowTableKeepsItsScrollControlsOffTheCells: Story = {
+  tags: ["test"],
+  args: { groupBy: TOP_REPOSITORIES, defaultPresentation: "table" },
+  decorators: [
+    (Story) => (
+      <div style={{ width: CARD_PX_AT_390 }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const table = await canvas.findByRole("table");
+    const scrollport = table.parentElement!;
+    const controlsNow = () =>
+      canvas.getAllByRole("button", { name: /^Show (earlier|later) / });
+
+    await expect(
+      controlsNow().length,
+      "the table has scroll controls to clear"
+    ).toBeGreaterThan(0);
+    expectNothingOverlaps(scrollport, controlsNow(), (element) =>
+      element.getAttribute("aria-label") ?? "a scroll control"
+    );
+
+    // Clearing the cells by taking the room they needed would satisfy the check
+    // above and leave the table just as unreadable: the gutters and the sticky
+    // bucket column come out of the same width, and a whole value column has to
+    // survive both.
+    const firstValue = table.querySelectorAll("tbody tr td")[0];
+    expectHorizontallyContained(
+      scrollport,
+      [table.querySelector("tbody th, tbody tr > *:first-child")!, firstValue],
+      (element) => `the ${element.tagName.toLowerCase()} in the first row`
+    );
+
+    // Paging brings the backwards control in. Its gutter is reserved up front,
+    // so the columns under the reader's eye must not move when it appears.
+    const before = scrollport.getBoundingClientRect().width;
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Show later columns" })
+    );
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("button", { name: "Show earlier columns" })
+      ).toBeVisible()
+    );
+
+    expectNothingOverlaps(scrollport, controlsNow(), (element) =>
+      element.getAttribute("aria-label") ?? "a scroll control"
+    );
+    await expect(
+      scrollport.getBoundingClientRect().width,
+      "the scrollport resized when a control appeared"
+    ).toBe(before);
+  },
+};
+

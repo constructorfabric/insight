@@ -190,7 +190,7 @@ describe("metric timeseries presentations", () => {
     const row = screen.getByText("Grand total").closest("tr")!;
     const totals = row.querySelectorAll("td")[1]!.querySelector("span")!;
     expect(totals.className).toContain("sticky");
-    expect(totals.className).toContain("start-28");
+    expect(totals.className).toContain("start-24");
   });
 
   it("hides the grand-total row when every total is missing", () => {
