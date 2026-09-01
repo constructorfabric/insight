@@ -274,15 +274,7 @@ function matchesQuery(
   normalizedQuery: string
 ): boolean {
   if (!normalizedQuery) return true;
-  return [
-    metric.metric_key,
-    metric.label,
-    metric.short_label,
-    metric.description,
-    metric.explanation,
-    metric.unit,
-    metric.format,
-  ].some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
+  return metric.label.toLocaleLowerCase().includes(normalizedQuery);
 }
 
 function familyTabLabel(name: string): string {
