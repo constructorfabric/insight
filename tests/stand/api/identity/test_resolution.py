@@ -1,13 +1,14 @@
 """The operator correction surface — the manual-resolution routes on the deployed path.
 
     GET  /v1/resolution/attention                         200 rates arithmetic · 403 realm admin
-    GET  /v1/resolution/accounts                          200 search + holder + by source · 400 stale cursor · 403 realm admin
+    GET  /v1/resolution/accounts                          200 search + holder + by source · 400 stale cursor · 400 needle over cap · 403 realm admin
     GET  /v1/resolution/accounts/{source}/{sid}/{aid}     200 binding + history (round trip)
     GET  /v1/resolution/persons/{id}/accounts             200 for a seeded person
-    POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel
+    POST /v1/resolution/bind                              200 applied → already_decided (round trip) · 400 excluded sentinel · 400 empty / over cap / named twice
     POST /v1/resolution/merge                             400 source == target · excluded sentinel · 404 unknown person, either side (validation, no write)
     POST /v1/resolution/detach                            404 unseen account (no write)
     POST /v1/resolution/exclude                           200 applied (the round trip's cleanup) · 404 unseen account
+    POST /v1/resolution/{bind,merge,detach,exclude}       400 unparseable body · 400 comment over cap · 415 wrong media type
 
 The verbs append to an append-only journal, so the scratch policy cannot be
 "create and delete". The round trip instead ends in `exclude`, whose end state
@@ -31,6 +32,8 @@ The 401 half is in `test_gateway.py`, swept over every operation.
 """
 
 from __future__ import annotations
+
+import json
 
 import pytest
 from insight_stand import ApiClient, ApiResponse, Manifest, PersonaSession, identity_path
@@ -582,7 +585,7 @@ def _verb_body(verb: str, person_id: str) -> dict[str, object]:
     return {"account": _account("never-observed-account")}
 
 
-@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.requires_seed("admin_operator")
 @pytest.mark.reliability
 @pytest.mark.parametrize("verb", [v for v, _ in CORRECTION_VERBS])
 def test_a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape(
@@ -611,13 +614,12 @@ def test_a_correction_body_that_will_not_parse_is_refused_in_the_canonical_shape
 def test_a_comment_past_the_cap_is_refused_before_the_correction_applies(
     admin_operator_session: PersonaSession, stand_manifest: Manifest, verb: str
 ) -> None:
-    """#2486 scenario 3. The audit field is bounded, like `reason` on the
-    grant routes.
+    """#2486 scenario 3. The other free-text field an operator writes is
+    bounded, at the ceiling `reason` already carries on the grant routes.
 
-    A correction's comment is the only explanation of the decision that
-    reaches whoever reads the journal later, and the journal records on
-    failure alone — so an unchecked comment loses the audit row while the
-    binding still applies. Refused before any lookup, so no write happens.
+    Not a column limit — the journal stores JSON and would take any length.
+    The point is that one free-text field on this service is not unbounded
+    while its twin is. Refused before any lookup, so no write happens.
     """
     body = _verb_body(verb, stand_manifest.fixture("dev_lead").uuid)
     body["comment"] = "c" * 501
@@ -638,3 +640,72 @@ def test_an_account_search_needle_past_the_cap_is_refused(
     evidence reader."""
     response = admin_operator_session.client.get(ACCOUNT_SEARCH, params={"q": "n" * 201})
     _refused(response, 400, field="q")
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+@pytest.mark.parametrize("verb", [v for v, _ in CORRECTION_VERBS])
+def test_a_correction_without_a_json_content_type_is_refused_on_the_media_type(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest, verb: str
+) -> None:
+    """#2486 scenario 7. Refused on the media type, never parsed.
+
+    Held before the extractor swap too, since axum's own `Json` refuses on
+    content type as well — so this is not a rule the swap introduced. It is
+    here because the swap is exactly the change that could trade the 415 away
+    for a parse attempt, and because a gateway is the other place a media type
+    can be rewritten in flight: the in-process case cannot see that.
+    """
+    body = _verb_body(verb, stand_manifest.fixture("dev_lead").uuid)
+    response = admin_operator_session.client.post(
+        identity_path(f"/v1/resolution/{verb}"),
+        content=json.dumps(body).encode(),
+        headers={"Content-Type": "text/plain"},
+    )
+    assert response.status_code == 415, f"{response.status_code} {response.text[:300]}"
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+def test_a_bulk_bind_outside_its_bounds_is_refused(
+    admin_operator_session: PersonaSession, stand_manifest: Manifest
+) -> None:
+    """#2486 scenario 7. The shapes a prepared matching table can arrive in
+    wrongly: nothing to do, more than a human pasted, and one account claimed
+    twice.
+
+    All three are pinned in the in-process lanes already. They are here
+    because scenario 7 says EVERY correction operation, and because these are
+    the refusals a deployed path can change without the service moving: a
+    gateway body-size limit turns the over-cap case into someone else's error
+    long before `MAX_BULK_ITEMS` is consulted.
+    """
+    person = stand_manifest.fixture("dev_lead").uuid
+    account = _account("never-observed-account")
+
+    empty = admin_operator_session.client.post(
+        identity_path("/v1/resolution/bind"), json_body={"bindings": [], "comment": "nothing"}
+    )
+    _refused(empty, 400, field="bindings")
+
+    over_cap = admin_operator_session.client.post(
+        identity_path("/v1/resolution/bind"),
+        json_body={
+            "bindings": [
+                {"account": _account(f"never-observed-{index}"), "person_id": person}
+                for index in range(1001)
+            ]
+        },
+    )
+    _refused(over_cap, 400, field="bindings")
+
+    twice = admin_operator_session.client.post(
+        identity_path("/v1/resolution/bind"),
+        json_body={
+            "bindings": [
+                {"account": account, "person_id": person},
+                {"account": account, "person_id": person},
+            ]
+        },
+    )
+    _refused(twice, 400, field="bindings")

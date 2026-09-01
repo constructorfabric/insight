@@ -313,7 +313,8 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              or observed name (whole, or composed from parts). The source is the \
              exception — it matches a whole `_`/`-` separated segment from its \
              start, so `github` and `entra` list those connectors' accounts \
-             while `hub` lists none. Absent or blank lists every open account.",
+             while `hub` lists none. At most 200 characters. Absent or blank \
+             lists every open account.",
             "string",
         )
         .query_param_typed(

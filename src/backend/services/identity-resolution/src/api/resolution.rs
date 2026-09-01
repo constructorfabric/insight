@@ -21,6 +21,7 @@ use super::AppState;
 use super::canonical_json::CanonicalJson;
 use super::error::CorrectionError;
 use super::gate::require_admin;
+use super::listing;
 use crate::domain::person_card::{self, PersonCard};
 use crate::domain::resolution::{self, EXCLUDED_PERSON, Target, Verb};
 use crate::domain::review_queue::{self, EvidenceAccount, ItemKind, Review};
@@ -41,10 +42,9 @@ const MAX_ACCOUNT_OPERATIONS: u64 = 50;
 /// pasted by a human, not streamed.
 pub(super) const MAX_BULK_ITEMS: usize = 1_000;
 
-/// The same ceiling `reason` carries on the grant routes. A correction's
-/// comment is the only explanation of the decision that reaches whoever reads
-/// the journal later, and `journal()` records on failure alone — so an
-/// unchecked comment loses the audit row while the binding still applies.
+/// The ceiling `reason` carries on the grant routes, applied to the other
+/// free-text field an operator writes. Not a column limit: `request_json` is
+/// JSON, and the journal takes whatever it is given.
 const MAX_COMMENT_LEN: usize = 500;
 
 /// A source-native account, as named by the caller.
@@ -638,6 +638,21 @@ fn reject_excluded_person(person_id: Uuid, field: &str) -> Result<(), CanonicalE
     Ok(())
 }
 
+/// The needle is bound in length only, not in term count: unlike the person
+/// listings this one never splits `q`, so there is no fan-out to cap.
+fn reject_long_query(needle: &str) -> Result<(), CanonicalError> {
+    if needle.chars().count() > listing::MAX_QUERY_CHARS {
+        return Err(invalid(
+            "q",
+            &format!(
+                "at most {} characters are accepted",
+                listing::MAX_QUERY_CHARS
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn reject_long_comment(comment: &str) -> Result<(), CanonicalError> {
     if comment.chars().count() > MAX_COMMENT_LEN {
         return Err(invalid(
@@ -1009,15 +1024,7 @@ pub async fn search_accounts(
     let tenant = ctx.subject_tenant_id();
 
     let needle = params.q.unwrap_or_default().trim().to_owned();
-    if needle.chars().count() > super::listing::MAX_QUERY_CHARS {
-        return Err(invalid(
-            "q",
-            &format!(
-                "at most {} characters are accepted",
-                super::listing::MAX_QUERY_CHARS
-            ),
-        ));
-    }
+    reject_long_query(&needle)?;
     let limit = super::listing::clamp_limit(
         params.limit,
         DEFAULT_ACCOUNT_SEARCH_LIMIT,

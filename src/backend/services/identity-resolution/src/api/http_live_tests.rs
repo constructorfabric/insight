@@ -2197,8 +2197,6 @@ async fn a_comment_past_the_cap_is_refused_before_the_correction_applies() -> Te
     f.bound_at("acct-extractor", person, FIXTURE_REASON, 60)
         .await?;
 
-    // `journal()` records on failure alone, so an oversize comment that reached
-    // the store would apply the binding and lose the only explanation of why.
     let oversize = "c".repeat(501);
     for (uri, mut body) in correction_verbs(&f, person) {
         body["comment"] = Value::String(oversize.clone());

@@ -69,9 +69,16 @@ def context(context: BrowserContext) -> BrowserContext:
 
 
 def _correct(session: PersonaSession, verb: str, body: dict[str, object]) -> None:
-    """A correction over HTTP — setup and teardown, never the thing under test."""
+    """A correction over HTTP — setup and teardown, never the thing under test.
+
+    The outcome is checked, not just the status: a correction that was refused
+    still answers 200 with `applied: 0`, and a setup that silently placed no
+    binding would send the journey looking for a screen that was never
+    supposed to change.
+    """
     response = session.client.post(identity_path(f"/v1/resolution/{verb}"), json_body=body)
     assert response.status_code == 200, f"{verb}: {response.status_code} {response.text[:300]}"
+    assert response.json()["applied"] == 1, f"{verb} was not applied: {response.text[:300]}"
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead", "development_ic")
@@ -234,11 +241,13 @@ def test_a_persons_window_lists_the_accounts_the_service_gives_them(
 ) -> None:
     """#2486 AC-3. The console's other read path, through the browser.
 
-    The accounts journey enters from an account and asks who holds it; this
-    enters from a person and asks what they hold — a different endpoint
-    (`/v1/resolution/persons/{id}/accounts`) behind a different mode, and the
-    one an operator actually starts from when the question is "this person's
-    work looks split".
+    That the endpoint answers with these accounts is already proven over HTTP
+    by `test_a_seeded_person_lists_their_accounts`, so the data is not what is
+    under test here. What no API call can show is that the deployed SPA,
+    handed a bare `?person=` id with no picker card to hydrate a name from,
+    still resolves that id, fetches the person's accounts and renders every
+    one of them — the deep-link path an operator arrives on from a shared
+    link, and the one where the window has the least to work with.
 
     Every account expected here is read from the service at run time. Opened
     by deep link, so the window carries the person id rather than their name —
