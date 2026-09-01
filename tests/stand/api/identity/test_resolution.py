@@ -40,6 +40,7 @@ from insight_stand import ApiClient, ApiResponse, Manifest, PersonaSession, iden
 
 from .. import scratch
 from ..schemas import (
+    PROBLEM_CONTENT_TYPE,
     AccountBindingResponse,
     AccountSearchResponse,
     AttentionResponse,
@@ -104,13 +105,23 @@ def _refused(
     degradation, with the operator left on generic failure text.
     """
     assert response.status_code == code, f"{response.status_code} {response.text[:300]}"
+    # The media type is half the contract: a body that parses as a problem
+    # document but arrives as `application/json` is not one, and a consumer
+    # switching on content type would fall through to its generic handler.
+    assert response.content_type.startswith(PROBLEM_CONTENT_TYPE), (
+        f"refusal arrived as {response.content_type!r}, not {PROBLEM_CONTENT_TYPE!r}"
+    )
 
     problem = response.parse(ProblemDocument)
     assert problem.status == code, problem
     if field is not None:
         violations = problem.context.get("field_violations")
-        assert violations, f"no field_violations to act on: {problem.context}"
-        named = [entry.get("field") for entry in violations]
+        assert isinstance(violations, list) and violations, (
+            f"no field_violations to act on: {problem.context}"
+        )
+        named = [
+            entry.get("field") for entry in violations if isinstance(entry, dict)
+        ]
         assert field in named, (
             f"refusal names {named}, not the field the caller got wrong ({field})"
         )

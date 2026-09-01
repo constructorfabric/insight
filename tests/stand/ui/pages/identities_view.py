@@ -68,14 +68,16 @@ class IdentitiesView:
             has_text="Identities is an admin surface"
         )
 
-    def rate_tile(self, label: str) -> Locator:
-        """One headline figure with its label, as one card.
+    def rate_figure(self, label: str) -> Locator:
+        """The number on one headline tile, as its own node.
 
-        The figure is the card's other text node, so the TILE is what a
-        journey reads: asserting on the label alone would pass on a card whose
-        number never arrived.
+        The figure, not the tile: a tile-wide substring match would accept any
+        number CONTAINING the expected one — 1 passes on 10 and on 21 — so the
+        assertion has to land on the element whose whole text is the figure.
+        The label is the tile's other child, which is what finds the tile.
         """
-        return self.page.get_by_text(label, exact=True).locator("xpath=..")
+        tile = self.page.get_by_text(label, exact=True).locator("xpath=..")
+        return tile.locator("div").first
 
     def person_window(self, person_id: str) -> Locator:
         """The window one person is worked in, opened by `?person=`.

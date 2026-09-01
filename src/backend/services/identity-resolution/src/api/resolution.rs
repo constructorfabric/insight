@@ -86,6 +86,7 @@ pub struct BindRequest {
     /// One or more bindings; a prepared matching table is submitted as one call.
     pub bindings: Vec<BindItem>,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for BindRequest {}
@@ -97,6 +98,7 @@ pub struct MergeRequest {
     /// The surviving person, named explicitly by the operator.
     pub target_person_id: Uuid,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for MergeRequest {}
@@ -105,6 +107,7 @@ impl toolkit::api::api_dto::RequestApiDto for MergeRequest {}
 pub struct AccountRequest {
     pub account: AccountRef,
     #[serde(default)]
+    #[schema(max_length = 500)]
     pub comment: String,
 }
 impl toolkit::api::api_dto::RequestApiDto for AccountRequest {}

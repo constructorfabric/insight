@@ -192,6 +192,7 @@
             "$ref": "#/components/schemas/AccountRef"
           },
           "comment": {
+            "maxLength": 500,
             "type": "string"
           }
         },
@@ -369,6 +370,7 @@
             "type": "array"
           },
           "comment": {
+            "maxLength": 500,
             "type": "string"
           }
         },
@@ -617,6 +619,7 @@
       "MergeRequest": {
         "properties": {
           "comment": {
+            "maxLength": 500,
             "type": "string"
           },
           "source_person_id": {

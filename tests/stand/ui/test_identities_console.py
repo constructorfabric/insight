@@ -37,6 +37,7 @@ import pytest
 from insight_stand import (
     SCRATCH_SOURCE_ID,
     SCRATCH_SOURCE_TYPE,
+    JsonValue,
     Manifest,
     PersonaSession,
     identity_path,
@@ -68,7 +69,48 @@ def context(context: BrowserContext) -> BrowserContext:
     return context
 
 
-def _correct(session: PersonaSession, verb: str, body: dict[str, object]) -> None:
+def _count(payload: JsonValue, *names: str) -> int:
+    """A whole-number field, narrowed at the read rather than at its use."""
+    value: JsonValue = payload
+    for name in names:
+        value = _field(value, name)
+    assert isinstance(value, int), f"expected a number at {'.'.join(names)}, got {value!r}"
+    return value
+
+
+def _field(payload: JsonValue, name: str) -> JsonValue:
+    """One field of a JSON object answer.
+
+    The typed response models live in the API suite's `schemas/`, which a UI
+    module cannot import — `ui` and `api` are sibling top-level packages. This
+    keeps the reads narrow and typed instead of indexing an unnarrowed
+    `JsonValue`, which is neither.
+    """
+    assert isinstance(payload, dict), f"expected a JSON object, got {payload!r}"
+    return payload[name]
+
+
+def _account_ids(payload: JsonValue) -> list[str]:
+    """The `account_id`s of a `{"accounts": [...]}` answer."""
+    accounts = _field(payload, "accounts")
+    assert isinstance(accounts, list), f"expected a list of accounts, got {accounts!r}"
+    return [str(_field(entry, "account_id")) for entry in accounts]
+
+
+def _release(session: PersonaSession, account: dict[str, JsonValue]) -> None:
+    """Best-effort teardown, the way `scratch.py` rule 4 asks for it.
+
+    Unchecked on purpose: the journey may have failed before the account was
+    ever bound, and an `exclude` on an account nothing observed is a 404. A
+    teardown that asserted would replace the real failure with its own.
+    """
+    session.client.post(
+        identity_path("/v1/resolution/exclude"),
+        json_body={"account": account, "comment": "stand ui journey: scratch cleanup"},
+    )
+
+
+def _correct(session: PersonaSession, verb: str, body: dict[str, JsonValue]) -> None:
     """A correction over HTTP — setup and teardown, never the thing under test.
 
     The outcome is checked, not just the status: a correction that was refused
@@ -78,7 +120,9 @@ def _correct(session: PersonaSession, verb: str, body: dict[str, object]) -> Non
     """
     response = session.client.post(identity_path(f"/v1/resolution/{verb}"), json_body=body)
     assert response.status_code == 200, f"{verb}: {response.status_code} {response.text[:300]}"
-    assert response.json()["applied"] == 1, f"{verb} was not applied: {response.text[:300]}"
+    assert _count(response.json(), "applied") == 1, (
+        f"{verb} was not applied: {response.text[:300]}"
+    )
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead", "development_ic")
@@ -100,25 +144,32 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
     new_holder = stand_manifest.fixture("development_ic")
 
     account_id = scratch_name("console")
-    account = {"source": SCRATCH_SOURCE_TYPE, "source_id": SCRATCH_SOURCE_ID, "id": account_id}
+    account: dict[str, JsonValue] = {
+        "source": SCRATCH_SOURCE_TYPE,
+        "source_id": SCRATCH_SOURCE_ID,
+        "id": account_id,
+    }
+    deep_link = account_key(SCRATCH_SOURCE_TYPE, SCRATCH_SOURCE_ID, account_id)
 
-    # Pre-registration: `bind` is the one verb that accepts an account no
-    # connector reported, which is what gives this journey a subject of its
-    # own instead of a seeded person's.
-    _correct(
-        operator,
-        "bind",
-        {
-            "bindings": [{"account": account, "person_id": holder.uuid}],
-            "comment": "stand ui journey: the account this test decides about",
-        },
-    )
-
+    # The bind is inside the try: it is a write, and a failure anywhere after
+    # the request leaves the stand carrying a binding this run must take back.
     try:
+        # Pre-registration: `bind` is the one verb that accepts an account no
+        # connector reported, which is what gives this journey a subject of
+        # its own instead of a seeded person's.
+        _correct(
+            operator,
+            "bind",
+            {
+                "bindings": [{"account": account, "person_id": holder.uuid}],
+                "comment": "stand ui journey: the account this test decides about",
+            },
+        )
+
         sign_in(page, base_url, operator)
 
         console = IdentitiesView(page)
-        console.go("accounts", acct=account_key(SCRATCH_SOURCE_TYPE, SCRATCH_SOURCE_ID, account_id))
+        console.go("accounts", acct=deep_link)
         window = console.account_window(account_id)
         expect(window).to_be_visible()
         # By person id, not by name. The window renders a person CARD only
@@ -132,9 +183,17 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
         expect(console.confirmation("Bind this account?")).to_be_visible()
         console.confirm("Bind").click()
 
-        # The service's answer, not the console's optimism: reload and read
-        # the screen again from whatever the store now holds.
-        page.reload()
+        # The correction closing its own window is the SPA saying the request
+        # came back. Without waiting for it, what follows races the POST: the
+        # console clears `?acct=` on success, so a navigation issued too early
+        # either reloads a url that still names the account and reads a store
+        # that has not been written yet, or reloads one that no longer does.
+        expect(window).not_to_be_visible()
+
+        # A fresh document at the same link — a stronger form of "survives a
+        # reload" than `reload()`, since nothing of the previous page's state
+        # can carry over.
+        console.go("accounts", acct=deep_link)
         window = console.account_window(account_id)
         binding = console.current_binding(window)
         expect(binding).to_contain_text(new_holder.uuid)
@@ -144,21 +203,17 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
             identity_path(f"/v1/resolution/persons/{new_holder.uuid}/accounts")
         )
         assert owned.status_code == 200, f"{owned.status_code} {owned.text[:300]}"
-        assert account_id in [a["account_id"] for a in owned.json()["accounts"]], (
+        assert account_id in _account_ids(owned.json()), (
             "the screen shows the new holder but the service does not list the "
             "account under them"
         )
     finally:
-        _correct(
-            operator,
-            "exclude",
-            {"account": account, "comment": "stand ui journey: scratch cleanup"},
-        )
+        _release(operator, account)
 
     owned = operator.client.get(
         identity_path(f"/v1/resolution/persons/{new_holder.uuid}/accounts")
     )
-    assert account_id not in [a["account_id"] for a in owned.json()["accounts"]], (
+    assert account_id not in _account_ids(owned.json()), (
         "the excluded scratch account still lists under the person — the stand is dirty"
     )
 
@@ -190,7 +245,7 @@ def test_the_console_renders_the_figures_the_service_reports(
     operator = session_for("admin_operator")
     queue = operator.client.get(identity_path("/v1/resolution/attention"))
     assert queue.status_code == 200, f"{queue.status_code} {queue.text[:300]}"
-    observed = queue.json()["rates"]["observed"]
+    observed = _count(queue.json(), "rates", "observed")
     assert observed > 0, "a seeded stand reports no observed accounts — nothing to render"
 
     sign_in(page, base_url, operator)
@@ -198,7 +253,7 @@ def test_the_console_renders_the_figures_the_service_reports(
     console = IdentitiesView(page)
     console.go("queue")
     expect(console.heading()).to_be_visible()
-    expect(console.rate_tile("Accounts")).to_contain_text(str(observed))
+    expect(console.rate_figure("Accounts")).to_have_text(str(observed))
 
 
 @pytest.mark.requires_seed("dev_lead")
@@ -259,7 +314,7 @@ def test_a_persons_window_lists_the_accounts_the_service_gives_them(
 
     owned = operator.client.get(identity_path(f"/v1/resolution/persons/{person.uuid}/accounts"))
     assert owned.status_code == 200, f"{owned.status_code} {owned.text[:300]}"
-    accounts = [a["account_id"] for a in owned.json()["accounts"]]
+    accounts = _account_ids(owned.json())
     assert accounts, f"the service gives {person.display_name} no accounts — nothing to render"
 
     sign_in(page, base_url, operator)
