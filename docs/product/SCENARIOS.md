@@ -16,9 +16,9 @@ no commitment.
 
 | Tier | What it is | Scenarios |
 |---|---|---|
-| **Main** | Review metrics, analyse them, reach conclusions — and, looking forward, estimate work not yet started. This is what the product is for. | S-1, S-2, S-3 |
-| **Secondary** | Build new views, explore, take the output elsewhere, compare with the outside world. | S-4, S-5, S-6 |
-| **Service** | Set the product up, keep it configured, keep it running. | S-7, S-8, S-9, S-10 |
+| **Main** | Review metrics, analyse them, reach conclusions — and, looking forward, estimate work not yet started. This is what the product is for. | [S-1](#s-1--metrics-review--main), [S-2](#s-2--analysis-and-diagnosis--main), [S-3](#s-3--conclusions-recommendation-and-validation--main) |
+| **Secondary** | Build new views, explore, take the output elsewhere, compare with the outside world. | [S-4](#s-4--dashboards-views-and-exploration--secondary), [S-5](#s-5--sharing-and-reuse--secondary), [S-6](#s-6--external-comparison--secondary) |
+| **Service** | Set the product up, keep it configured, keep it running. | [S-7](#s-7--sources-and-evidence-coverage--service), [S-8](#s-8--identity-roles-and-organization-model--service), [S-9](#s-9--configuration-and-access--service), [S-10](#s-10--deployment-upgrade-and-migration--service) |
 
 The order is by importance to the reader, not by build order. Technically the service tier comes
 first — sources and identity have to be right before a metric can be — but a customer does not buy
@@ -63,7 +63,7 @@ chosen per installation by the identity service's `visibility_policy`.
 The mode belongs to the installation, not to a person, and the identity service reports it to every
 client (`GET /v1/me`) — a leaf IC and a PEER are served the same empty `subordinates`, and the policy
 is what tells them apart. Grants keep their meaning under either mode: underlying records, aggregates,
-person-level data, cost and recommendations are still granted one by one (S-9).
+person-level data, cost and recommendations are still granted one by one ([S-9](#s-9--configuration-and-access--service)).
 
 **ADMIN is orthogonal to both.** Administration is a role, not a reach. An administrator is also an
 IC, LEAD, EXEC or PEER underneath, and the role adds no visibility of its own — the identity
@@ -183,7 +183,7 @@ what to commit to, from the organization's own delivery history.
 | **IC** | not an audience for diagnosis | a named example inside one |
 
 What limits a conclusion — which sources are missing, which windows do not overlap, which metric is
-under a known defect — is an administrator's view, and it lives in S-7.
+under a known defect — is an administrator's view, and it lives in [S-7](#s-7--sources-and-evidence-coverage--service).
 
 **Not this:** "AI sped up development by X%" is not a claim Insight makes; what it can say is that a
 cohort with high usage differs from one with low usage in stated ways, correlationally — with the word
@@ -207,7 +207,7 @@ used to check it. Its origin is declared — evidence-derived from the customer'
 |---|---|---|
 | **LEAD** | one lever they can own, from a fixed set rather than composed freely — three in the first version: reduce change size, spread review load, raise AI adoption where it is low at comparable load — with how the lever is measured, what should move, which guardrail must not slip, and when it is checked: four weeks, computed automatically | a recommendation that passes judgement on a named individual rather than a process, team or cohort — a named *owner* is expected, a named *subject* is not · a recommendation whose origin is unstated |
 | **EXEC** | whether the lever moved, whether the outcome moved, and the honest fourth answer: not enough data; read over a fixed window, four weeks before against four weeks after, and against a control — a comparable group that received no recommendation | a result assembled from metrics chosen after the fact — they are fixed when the recommendation is issued · a detector hunting for a shift, which on a team of ten finds noise |
-| **PEER** | undecided — a recommendation names an owner, and a flat organization has no lead to own a lever (§6) | — |
+| **PEER** | undecided — a recommendation names an owner, and a flat organization has no lead to own a lever (see [Open points](#6-open-points)) | — |
 | **ADMIN** | which recommendation families are enabled, who owns them, and how validation windows are defined | — |
 | **IC** | — | being the subject of a recommendation |
 
@@ -229,7 +229,7 @@ calculated. Exploration moves the question, never the boundary.
 
 **User scenarios in this class**
 - How does group A differ from group B in the same scope? — LEAD, EXEC
-- The slicing side of every S-1 question — who asks it there asks it here
+- The slicing side of every [S-1](#s-1--metrics-review--main) question — who asks it there asks it here
 
 | Who | Does here | Must never meet |
 |---|---|---|
@@ -240,7 +240,7 @@ calculated. Exploration moves the question, never the boundary.
 | **ADMIN** | which metrics and thresholds exist, which cohorts are valid, who may publish a shared view | — |
 
 **Not this:** a view carries the definitions and coverage of the metrics in it, never bare numbers.
-Saving a composed view and sharing it are proposals rather than restatements (§6): if a view
+Saving a composed view and sharing it are proposals rather than restatements (see [Open points](#6-open-points)): if a view
 can be shared, what a viewer sees has to be re-evaluated for that viewer, so a shared dashboard cannot
 become a way around access rules — which is why it needs deciding before view sharing is built.
 
@@ -281,8 +281,8 @@ cohort, team or organization level are shared — never individual data, never s
 None of this is why anyone buys the product, and all of it has to work before the rest does.
 
 **These four are also a sequence.** A new customer walks them roughly in order — connect the sources
-(S-7), resolve who is who (S-8), configure roles, metrics and access (S-9), with the installation
-itself underneath (S-10) — and only then does the main tier hold anything. The vision states the
+([S-7](#s-7--sources-and-evidence-coverage--service)), resolve who is who ([S-8](#s-8--identity-roles-and-organization-model--service)), configure roles, metrics and access ([S-9](#s-9--configuration-and-access--service)), with the installation
+itself underneath ([S-10](#s-10--deployment-upgrade-and-migration--service)) — and only then does the main tier hold anything. The vision states the
 same adoption path: connect, configure, run readiness, start with directional insight, improve
 evidence, validate. Listed last by importance; met first in time.
 
@@ -413,7 +413,7 @@ Several claims in this document go beyond what VISION.md and the scenario draft 
 as requirements because the alternative is to leave them undecided, but each needs a decision rather
 than a nod.
 
-- **Administrative rights and data visibility** — settled. §1 asserts that ADMIN gains no data
+- **Administrative rights and data visibility** — settled. [Personas](#1-personas) asserts that ADMIN gains no data
   visibility implicitly, and the access model agrees: the identity service computes an
   administrator's visible set without the role, under either visibility mode.
 - **An executive is a manager with a larger subtree.** The product tells EXEC from LEAD only by how
@@ -424,19 +424,19 @@ than a nod.
   default view that ranks named individuals; a flat organization has opted into seeing everyone.
   Which of the two this is has to be decided before the mode is sold as a feature — and if the bands
   are a ranking, whether flat mode suppresses them or the customer accepts them.
-- **Saved and shared views** (S-4). Composing a view is in the vision; *saving* it and *sharing* it are
+- **Saved and shared views** ([S-4](#s-4--dashboards-views-and-exploration--secondary)). Composing a view is in the vision; *saving* it and *sharing* it are
   not. If sharing exists, the access rule has to come with it — what each viewer sees, re-evaluated for
   them — and that is far cheaper to decide before the feature than after.
-- **An identity correction surviving the next sync** (S-8). The draft says merges and splits are
+- **An identity correction surviving the next sync** ([S-8](#s-8--identity-roles-and-organization-model--service)). The draft says merges and splits are
   reversible; neither document says a correction is not undone by re-resolution. Stated here as a
   requirement, because a correction that does not survive is not a correction.
-- **The group-size thresholds** (rule 10). The four for a group figure and the eight per side for a
+- **The group-size thresholds** ([rule 10](#5-rules-that-hold-in-every-scenario)). The four for a group figure and the eight per side for a
   comparative conclusion come from the scenario draft rather than from the vision, and are worth
   confirming as product rules — including whether a customer may configure them. The five for a peer
   comparison is the product's own, and is the only one of the three confirmed to be enforced.
-- **Recommendation ownership in a flat organization.** S-3 expects a named owner for every lever. A
+- **Recommendation ownership in a flat organization.** [S-3](#s-3--conclusions-recommendation-and-validation--main) expects a named owner for every lever. A
   flat organization has no lead, so either the owner is chosen some other way, or recommendations are
   not offered under `flat` — and the mode should say which.
 - **IC has the narrowest surface and the tightest boundary.** Everything an IC sees is their own or a
   median — the combination that is easiest to get wrong quietly.
-- **S-6 has no surface yet.** Listed so the capability stays planned for, not to imply it exists.
+- **[S-6](#s-6--external-comparison--secondary) has no surface yet.** Listed so the capability stays planned for, not to imply it exists.
