@@ -19,5 +19,5 @@
         {'field': 'email',        'value_type': 'email',        'value_field_name': 'bronze_jira.jira_user.email'},
         {'field': 'display_name', 'value_type': 'display_name', 'value_field_name': 'bronze_jira.jira_user.display_name'},
     ],
-    deactivation_condition="field_name = 'active' AND lower(new_value) = 'false'"
+    account_deactivation_condition="field_name = 'active' AND lower(new_value) = 'false'"
 ) }}

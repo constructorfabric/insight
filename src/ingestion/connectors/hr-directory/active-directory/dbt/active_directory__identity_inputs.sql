@@ -33,5 +33,5 @@
         {'field': 'sAMAccountName',    'value_type': 'sam_account',  'value_field_name': 'bronze_active_directory.users.sAMAccountName'},
         {'field': 'status',            'value_type': 'status',       'value_field_name': 'bronze_active_directory.users.status'},
     ],
-    deactivation_condition="field_name = 'status' AND new_value = 'Terminated'"
+    account_deactivation_condition="field_name = 'status' AND new_value = 'Terminated'"
 ) }}

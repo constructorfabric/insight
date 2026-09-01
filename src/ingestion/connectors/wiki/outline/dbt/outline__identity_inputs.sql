@@ -12,5 +12,5 @@
         {'field': 'email', 'value_type': 'email',        'value_field_name': 'bronze_outline.wiki_users.email'},
         {'field': 'name',  'value_type': 'display_name', 'value_field_name': 'bronze_outline.wiki_users.name'},
     ],
-    deactivation_condition="field_name = 'is_suspended' AND lower(new_value) = 'true'"
+    account_deactivation_condition="field_name = 'is_suspended' AND lower(new_value) = 'true'"
 ) }}

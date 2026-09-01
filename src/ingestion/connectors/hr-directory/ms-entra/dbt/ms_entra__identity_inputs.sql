@@ -29,5 +29,5 @@
         {'field': 'displayName',              'value_type': 'display_name', 'value_field_name': 'bronze_ms_entra.users.displayName'},
         {'field': 'onPremisesSamAccountName', 'value_type': 'sam_account',  'value_field_name': 'bronze_ms_entra.users.onPremisesSamAccountName'},
     ],
-    deactivation_condition="field_name = 'accountEnabled' AND new_value = 'false'"
+    account_deactivation_condition="field_name = 'accountEnabled' AND new_value = 'false'"
 ) }}

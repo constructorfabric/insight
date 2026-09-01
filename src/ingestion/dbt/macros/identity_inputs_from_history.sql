@@ -2,9 +2,36 @@
     fields_history_ref,
     source_type,
     identity_fields,
-    deactivation_condition,
-    roster_activation_condition=none
+    account_deactivation_condition=none,
+    roster_membership=none
 ) %}
+{% if roster_membership is none %}
+    {% set roster_membership_kind = 'none' %}
+    {% set roster_active_condition = none %}
+    {% set roster_inactive_condition = none %}
+{% elif roster_membership is not mapping %}
+    {{ exceptions.raise_compiler_error("roster_membership must be a mapping with kind 'implicit_active' or 'explicit_state'") }}
+{% else %}
+    {% set roster_membership_kind = roster_membership.get('kind') %}
+    {% if roster_membership_kind == 'implicit_active' %}
+        {% if roster_membership.get('active_when') is not none or roster_membership.get('inactive_when') is not none %}
+            {{ exceptions.raise_compiler_error("implicit_active roster_membership must not define active_when or inactive_when") }}
+        {% endif %}
+        {% set roster_active_condition = 'true' %}
+        {% set roster_inactive_condition = none %}
+    {% elif roster_membership_kind == 'explicit_state' %}
+        {% set roster_active_condition = roster_membership.get('active_when') %}
+        {% set roster_inactive_condition = roster_membership.get('inactive_when') %}
+        {% if roster_active_condition is not string or not roster_active_condition %}
+            {{ exceptions.raise_compiler_error("explicit_state roster_membership requires a non-empty active_when SQL expression") }}
+        {% endif %}
+        {% if roster_inactive_condition is not string or not roster_inactive_condition %}
+            {{ exceptions.raise_compiler_error("explicit_state roster_membership requires a non-empty inactive_when SQL expression") }}
+        {% endif %}
+    {% else %}
+        {{ exceptions.raise_compiler_error("roster_membership.kind must be 'implicit_active' or 'explicit_state'") }}
+    {% endif %}
+{% endif %}
 {#
   Generates identity_inputs rows from a fields_history model.
   Produces UPSERT rows for identity-relevant field changes, and DELETE rows
@@ -33,17 +60,15 @@
                                 whatever is listed here — do not repeat it.
                               - value_field_name: fully-qualified field path
                                 (e.g., 'bronze_bamboohr.employees.workEmail')
-    deactivation_condition: SQL expression evaluated against fields_history row
-                            that returns true when the entity is deactivated.
-                            Available columns: entity_id, tenant_id, source_id,
-                            field_name, old_value, new_value, updated_at.
-                            Example: "field_name = 'status' AND new_value = 'Inactive'"
-    roster_activation_condition: optional SQL expression that identifies an
-                                 active roster member. When present, the macro
-                                 emits roster membership and canonical profile
-                                 claims. Example: "field_name = 'status' AND
-                                 new_value = 'Active'". Sources whose every row
-                                 proves membership may use "true".
+    account_deactivation_condition: optional SQL expression evaluated against a
+                                    fields_history row. A matching row deletes
+                                    that source account's identity inputs.
+    roster_membership: optional mapping that enables roster and canonical
+                       profile claims. Supported kinds:
+                         - implicit_active: every observed account is active;
+                           absence is not interpreted as departure.
+                         - explicit_state: active_when and inactive_when SQL
+                           expressions define membership lifecycle events.
 
   Output columns (match identity_inputs schema):
     unique_key, insight_tenant_id, insight_source_id, insight_source_type,
@@ -116,19 +141,38 @@ upserts AS (
     {% endfor %}
 ),
 
--- DELETE: deactivation detected — emit DELETE for all identity fields
-deactivation_events AS (
+-- DELETE: account deactivation detected — emit DELETE for all identity fields
+account_deactivation_events AS (
     SELECT DISTINCT
         tenant_id,
         source_id,
         entity_id,
         updated_at
     FROM history
-    WHERE ({{ deactivation_condition }})
+    {% if account_deactivation_condition is none %}
+    WHERE false
+    {% else %}
+    WHERE ({{ account_deactivation_condition }})
+    {% endif %}
       AND entity_id IS NOT NULL AND entity_id != ''
 ),
 
-{% if roster_activation_condition is not none %}
+{% if roster_membership_kind != 'none' %}
+roster_inactivation_events AS (
+    SELECT DISTINCT
+        tenant_id,
+        source_id,
+        entity_id,
+        updated_at
+    FROM history
+    {% if roster_inactive_condition is none %}
+    WHERE false
+    {% else %}
+    WHERE ({{ roster_inactive_condition }})
+    {% endif %}
+      AND entity_id IS NOT NULL AND entity_id != ''
+),
+
 roster_membership_upserts AS (
     SELECT DISTINCT
         CAST(concat(
@@ -151,12 +195,12 @@ roster_membership_upserts AS (
         toDateTime64(h.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(h.updated_at, 3)) AS _version
     FROM history h
-    LEFT ANTI JOIN deactivation_events d
+    LEFT ANTI JOIN roster_inactivation_events d
         ON  d.tenant_id  = h.tenant_id
         AND d.source_id  = h.source_id
         AND d.entity_id  = h.entity_id
         AND d.updated_at = h.updated_at
-    WHERE ({{ roster_activation_condition }})
+    WHERE ({{ roster_active_condition }})
       AND h.entity_id IS NOT NULL AND h.entity_id != ''
 ),
 
@@ -181,7 +225,7 @@ roster_membership_deletes AS (
         'DELETE' AS operation_type,
         toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
-    FROM deactivation_events d
+    FROM roster_inactivation_events d
 ),
 
 person_profile_upserts AS (
@@ -224,7 +268,7 @@ deletes AS (
         'DELETE' AS operation_type,
         toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
-    FROM deactivation_events d
+    FROM account_deactivation_events d
     {{ 'UNION ALL' if not loop.last }}
     {% endfor %}
 ),
@@ -283,7 +327,7 @@ id_deletes AS (
         'DELETE' AS operation_type,
         toDateTime64(d.updated_at, 3) AS _synced_at,
         toUnixTimestamp64Milli(toDateTime64(d.updated_at, 3)) AS _version
-    FROM deactivation_events d
+    FROM account_deactivation_events d
 )
 
 SELECT
@@ -341,7 +385,7 @@ SELECT
     _synced_at,
     _version
 FROM id_deletes
-{% if roster_activation_condition is not none %}
+{% if roster_membership_kind != 'none' %}
 UNION ALL
 SELECT
     unique_key,
