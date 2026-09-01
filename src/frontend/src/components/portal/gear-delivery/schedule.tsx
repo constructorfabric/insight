@@ -15,6 +15,7 @@ import {
   type GanttBar,
   type GanttLane,
 } from "@/lib/gears/gantt";
+import { useSubsystemGears } from "@/components/portal/gear-delivery/use-subsystem";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
 
 const DAY_WIDTH_PX = 4;
@@ -24,11 +25,26 @@ const MIN_BAR_LABEL_DAYS = 14;
 export function GearSchedule({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
 
-  const chart = useMemo(() => buildGantt(roadmap.lanes), [roadmap]);
+  const shown = useSubsystemGears(roadmap.gears);
   const gears = useMemo(
-    () => new Map((roadmap.gears).map((gear) => [gear.number, gear])),
-    [roadmap],
+    () => new Map(shown.map((gear) => [gear.number, gear])),
+    [shown],
   );
+  // The chart keeps the whole board's span so narrowing does not slide the
+  // timeline; only the bars a subsystem owns are drawn.
+  const chart = useMemo(() => {
+    const full = buildGantt(roadmap.lanes);
+
+    return {
+      ...full,
+      lanes: full.lanes
+        .map((lane) => ({
+          ...lane,
+          bars: lane.bars.filter((bar) => gears.has(bar.gearNumber)),
+        }))
+        .filter((lane) => lane.bars.length > 0),
+    };
+  }, [roadmap.lanes, gears]);
   const ticks = useMemo(() => monthTicks(chart.start, chart.totalDays), [chart]);
 
   if (chart.totalDays === 0)

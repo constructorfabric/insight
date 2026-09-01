@@ -43,10 +43,12 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
   const { setSubsystem, setGearOrder } = usePortalNavActions();
   const chosen = usePortalSubsystem() || ALL;
   const order = usePortalGearOrder();
-  const sort: SortState<GearColumn> = {
-    key: (order.sort || "gear") as GearColumn,
-    direction: order.direction === "desc" ? "desc" : "asc",
-  };
+  const sort: SortState<GearColumn> | null = order.sort
+    ? {
+        key: order.sort as GearColumn,
+        direction: order.direction === "desc" ? "desc" : "asc",
+      }
+    : null;
 
   const all = useMemo(() => roadmap.gears, [roadmap]);
   const subsystems = useMemo(() => countBySubsystem(all), [all]);
@@ -120,7 +122,9 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
                   column={column.key}
                   label={t(`gear_roadmap.items.${column.key}`)}
                   sort={sort}
-                  onSort={(next) => setGearOrder(next.key, next.direction)}
+                  onSort={(next) =>
+                    setGearOrder(next?.key ?? null, next?.direction ?? null)
+                  }
                   numeric={column.numeric}
                   className={column.width}
                 />
@@ -175,6 +179,9 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
                 <TableCell>
                   <Milestone gear={gear} />
                 </TableCell>
+                <TableCell>
+                  <Forecast gear={gear} />
+                </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   <AssigneeLinks logins={gear.assignees} links={gear.assignee_urls} />
                 </TableCell>
@@ -195,7 +202,7 @@ function Milestone({ gear }: { gear: Gear }) {
   if (gear.placement.kind === "overdue") {
     return (
       <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive tabular-nums">
-        {gear.milestone} · {gear.placement.days}d
+        {gear.milestone} · {gear.placement.days}d late
       </span>
     );
   }
@@ -230,6 +237,7 @@ type GearColumn =
   | "effort"
   | "remaining"
   | "milestone"
+  | "forecast"
   | "assignees";
 
 const GEAR_COLUMNS: {
@@ -245,6 +253,7 @@ const GEAR_COLUMNS: {
   { key: "effort", numeric: true },
   { key: "remaining", numeric: true },
   { key: "milestone" },
+  { key: "forecast" },
   { key: "assignees" },
 ];
 
@@ -264,4 +273,32 @@ function filterGears(gears: Gear[], query: string, chosen: string): Gear[] {
       gear.assignees.some((login) => login.toLowerCase().includes(needle))
     );
   });
+}
+
+/**
+ * When the schedule lands the gear, against what the board promised. Late is
+ * the point of the column, so a forecast past its milestone is marked and the
+ * rest stay quiet.
+ */
+function Forecast({ gear }: { gear: Gear }) {
+  if (gear.forecast == null) {
+    return <span className="text-muted-foreground">{NO_METRIC_VALUE}</span>;
+  }
+
+  const late =
+    gear.milestone != null &&
+    /^\d{4}-\d{2}$/.test(gear.milestone) &&
+    gear.forecast > gear.milestone;
+
+  return (
+    <span
+      className={`text-xs tabular-nums ${
+        late
+          ? "rounded bg-destructive/10 px-1.5 py-0.5 font-medium text-destructive"
+          : "text-muted-foreground"
+      }`}
+    >
+      {gear.forecast}
+    </span>
+  );
 }

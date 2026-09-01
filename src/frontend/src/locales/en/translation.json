@@ -678,7 +678,8 @@
       "milestone": "Milestone",
       "assignees": "Assignees",
       "count": "{{count}} gears",
-      "all_subsystems": "All subsystems"
+      "all_subsystems": "All subsystems",
+      "forecast": "Forecast"
     },
     "grid": {
       "overdue": "Overdue",

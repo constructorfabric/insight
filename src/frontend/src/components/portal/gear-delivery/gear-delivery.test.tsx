@@ -476,3 +476,73 @@ describe("subsystem drill-down", () => {
     expect(screen.queryByText("CORE - One")).toBeNull();
   });
 });
+
+describe("clearing the sort", () => {
+  it("drops the order from the URL on the third click", async () => {
+    const user = userEvent.setup();
+    render(<GearsTable roadmap={queryState.data!} />);
+
+    const header = screen.getByRole("button", { name: /Estimate/ });
+    await user.click(header);
+    await user.click(header);
+    await user.click(header);
+
+    expect(portalRouter.search.sort).toBeUndefined();
+    expect(portalRouter.search.dir_sort).toBeUndefined();
+    expect(
+      screen.getByRole("columnheader", { name: /Estimate/ }),
+    ).toHaveAttribute("aria-sort", "none");
+  });
+});
+
+describe("the subsystem in the URL reaches every board", () => {
+  beforeEach(() => {
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({
+            number: 1,
+            subsystem: "GENAI",
+            title: "GENAI - One",
+            placement: { kind: "overdue", days: 47 },
+            milestone: "2030-05",
+          }),
+          gear({ number: 2, subsystem: "CORE", title: "CORE - Two" }),
+        ],
+        lanes: [
+          {
+            assignee: "dev-one",
+            spans: [{ gear_number: 1, start: "2030-08-01", end: "2030-08-06" }],
+          },
+          {
+            assignee: "dev-two",
+            spans: [{ gear_number: 2, start: "2030-08-01", end: "2030-08-06" }],
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+    portalRouter.set({ subsystem: "GENAI" });
+  });
+
+  it("narrows the roadmap grid", () => {
+    render(<RoadmapGrid roadmap={queryState.data!} />);
+
+    expect(screen.getByText(/GENAI - One/)).toBeInTheDocument();
+    expect(screen.queryByText(/CORE - Two/)).toBeNull();
+  });
+
+  it("says how many days late an overdue gear is in the grid", () => {
+    render(<RoadmapGrid roadmap={queryState.data!} />);
+
+    expect(screen.getByText(/47d/)).toBeInTheDocument();
+  });
+
+  it("narrows the schedule to the lanes that still carry work", () => {
+    render(<GearSchedule roadmap={queryState.data!} />);
+
+    expect(screen.getByText("dev-one")).toBeInTheDocument();
+    expect(screen.queryByText("dev-two")).toBeNull();
+  });
+});

@@ -42,6 +42,8 @@ export interface Gear {
   effort_man_days?: number | null;
   remaining_man_days?: number | null;
   milestone?: string | null;
+  /** Month the schedule lands the gear in; absent when nothing is left. */
+  forecast?: string | null;
   placement: GearPlacement;
   assignees: string[];
   closed: boolean;
@@ -86,12 +88,17 @@ export interface GearOrder {
   direction: "asc" | "desc";
 }
 
-export async function getGearRoadmap(order: GearOrder): Promise<GearRoadmap> {
-  const query = new URLSearchParams({
-    sort: order.sort,
-    direction: order.direction,
-  });
-  const res = await fetchWithAuth(`${BASE}/gear-roadmap?${query.toString()}`);
+/** No order asked for means the server's own, so the request carries none. */
+export async function getGearRoadmap(
+  order: GearOrder | null,
+): Promise<GearRoadmap> {
+  const query = order
+    ? `?${new URLSearchParams({
+        sort: order.sort,
+        direction: order.direction,
+      }).toString()}`
+    : "";
+  const res = await fetchWithAuth(`${BASE}/gear-roadmap${query}`);
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
   }

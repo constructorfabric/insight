@@ -19,10 +19,14 @@ import { useGearRoadmap } from "@/queries/gear-roadmap";
 export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
   const { t } = useTranslation();
   const order = usePortalGearOrder();
-  const { data, isPending, isError } = useGearRoadmap({
-    sort: order.sort || "gear",
-    direction: order.direction === "desc" ? "desc" : "asc",
-  });
+  const { data, isPending, isError } = useGearRoadmap(
+    order.sort
+      ? {
+          sort: order.sort,
+          direction: order.direction === "desc" ? "desc" : "asc",
+        }
+      : null,
+  );
 
   return (
     <div className="flex flex-col gap-6 p-6">

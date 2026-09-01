@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use serde::Deserialize;
 
@@ -20,6 +21,7 @@ pub(crate) enum GearSort {
     Effort,
     Remaining,
     Milestone,
+    Forecast,
     Assignees,
 }
 
@@ -50,32 +52,43 @@ enum Key<'a> {
     Number(Option<f64>),
 }
 
-/// Gears ordered for presentation. Placement is decided per gear elsewhere;
-/// this only decides sequence.
-pub(crate) fn order(gears: &mut [&Gear], sort: Sort, placement: impl Fn(&Gear) -> Placement) {
+/// What a column needs beyond the gear itself: where it falls against the
+/// window, and when the schedule lands it.
+pub(crate) struct Context<'a, P: Fn(&Gear) -> Placement> {
+    pub(crate) placement: P,
+    pub(crate) forecasts: &'a HashMap<i64, String>,
+}
+
+/// Gears ordered for presentation. Placement and forecast are decided
+/// elsewhere; this only decides sequence.
+pub(crate) fn order<P: Fn(&Gear) -> Placement>(
+    gears: &mut [&Gear],
+    sort: Sort,
+    context: &Context<'_, P>,
+) {
     gears.sort_by(|left, right| {
         let ordering = compare(
-            key(left, sort.sort, &placement),
-            key(right, sort.sort, &placement),
+            key(left, sort.sort, context),
+            key(right, sort.sort, context),
         );
 
         match sort.direction {
             Direction::Asc => ordering,
-            Direction::Desc => reverse_present(ordering, left, right, sort.sort, &placement),
+            Direction::Desc => reverse_present(ordering, left, right, sort.sort, context),
         }
     });
 }
 
 /// Reversing must not lift absent values to the top, so a pair where one side
 /// is absent keeps its ascending order.
-fn reverse_present(
+fn reverse_present<P: Fn(&Gear) -> Placement>(
     ordering: Ordering,
     left: &Gear,
     right: &Gear,
     sort: GearSort,
-    placement: &impl Fn(&Gear) -> Placement,
+    context: &Context<'_, P>,
 ) -> Ordering {
-    if is_absent(key(left, sort, placement)) || is_absent(key(right, sort, placement)) {
+    if is_absent(key(left, sort, context)) || is_absent(key(right, sort, context)) {
         return ordering;
     }
 
@@ -107,7 +120,11 @@ fn compare(left: Key<'_>, right: Key<'_>) -> Ordering {
     }
 }
 
-fn key<'a>(gear: &'a Gear, sort: GearSort, placement: &impl Fn(&Gear) -> Placement) -> Key<'a> {
+fn key<'a, P: Fn(&Gear) -> Placement>(
+    gear: &'a Gear,
+    sort: GearSort,
+    context: &'a Context<'a, P>,
+) -> Key<'a> {
     match sort {
         GearSort::Gear => Key::Text(Some(&gear.title)),
         GearSort::Subsystem => Key::Text(gear.subsystem.as_deref()),
@@ -118,10 +135,11 @@ fn key<'a>(gear: &'a Gear, sort: GearSort, placement: &impl Fn(&Gear) -> Placeme
         GearSort::Remaining => Key::Number(gear.remaining_man_days()),
         // Lateness leads: an overdue gear is not merely an earlier month, and
         // sorting it as one buries the overruns among ordinary past milestones.
-        GearSort::Milestone => Key::Number(match placement(gear) {
+        GearSort::Milestone => Key::Number(match (context.placement)(gear) {
             Placement::Overdue { days } => Some(-days_as_f64(days)),
             _ => gear.milestone_sort_key(),
         }),
+        GearSort::Forecast => Key::Text(context.forecasts.get(&gear.number).map(String::as_str)),
         GearSort::Assignees => Key::Text(gear.assignees.first().map(String::as_str)),
     }
 }

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { Gear, GearRoadmap } from "@/api/gear-roadmap-client";
+import { useSubsystemGears } from "@/components/portal/gear-delivery/use-subsystem";
 import { monthLabels } from "@/lib/gears/gantt";
 import { buildRoadmap } from "@/lib/gears/roadmap-grid";
 import { subsystemTone } from "@/lib/gears/subsystem-tone";
@@ -12,9 +13,10 @@ const PLANNED_GLYPH = "◇";
 export function RoadmapGrid({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
 
+  const gears = useSubsystemGears(roadmap.gears);
   const rows = useMemo(
-    () => buildRoadmap(roadmap.gears, roadmap.window_months),
-    [roadmap],
+    () => buildRoadmap(gears, roadmap.window_months),
+    [gears, roadmap.window_months],
   );
 
 
@@ -117,6 +119,9 @@ function Chip({ gear, overdue }: { gear: Gear; overdue?: boolean }) {
       >
         {gear.title}
       </span>
+      {gear.placement.kind === "overdue" ? (
+        <span className="shrink-0 tabular-nums">·{gear.placement.days}d</span>
+      ) : null}
     </>
   );
 

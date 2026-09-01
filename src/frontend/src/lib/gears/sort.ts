@@ -6,17 +6,19 @@ export interface SortState<Key extends string> {
 }
 
 /**
- * The next sort state for a header click: a new column starts descending —
- * the interesting end of every column here is the large one — and clicking the
- * active column turns it around.
+ * The next sort state for a header click. A column cycles through three
+ * states — largest first, smallest first, then off — so a reader can put a
+ * table back the way they found it with the control they already used, rather
+ * than hunting for a reset.
  */
 export function nextSort<Key extends string>(
-  sort: SortState<Key>,
+  sort: SortState<Key> | null,
   key: Key,
-): SortState<Key> {
-  if (sort.key !== key) return { key, direction: "desc" };
+): SortState<Key> | null {
+  if (sort === null || sort.key !== key) return { key, direction: "desc" };
+  if (sort.direction === "desc") return { key, direction: "asc" };
 
-  return { key, direction: sort.direction === "desc" ? "asc" : "desc" };
+  return null;
 }
 
 /**
@@ -48,10 +50,10 @@ export function sortRows<Row, Key extends string>(
 }
 
 export function ariaSort(
-  sort: SortState<string>,
+  sort: SortState<string> | null,
   key: string,
 ): "ascending" | "descending" | "none" {
-  if (sort.key !== key) return "none";
+  if (sort === null || sort.key !== key) return "none";
 
   return sort.direction === "asc" ? "ascending" : "descending";
 }

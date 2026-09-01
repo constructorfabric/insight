@@ -87,7 +87,7 @@ export interface PortalNavActions {
   /** Open a lens of the current direction narrowed to one subsystem. */
   openSubsystem: (lens: string, subsystem: string | null) => void;
   setSubsystem: (subsystem: string | null) => void;
-  setGearOrder: (sort: string, direction: string) => void;
+  setGearOrder: (sort: string | null, direction: string | null) => void;
   setSlice: (slice: string) => void;
   setScope: (patch: Partial<OrgScope>) => void;
 }
@@ -136,7 +136,10 @@ export function usePortalNavActions(): PortalNavActions {
       setSubsystem: (subsystem) =>
         setSearch({ subsystem: subsystem ?? undefined }),
       setGearOrder: (sort, direction) =>
-        setSearch({ sort: sort || undefined, dir_sort: direction || undefined }),
+        setSearch({
+          sort: sort ?? undefined,
+          dir_sort: direction ?? undefined,
+        }),
       setSlice: (slice) => {
         recordUsageEvent("cohort", slice || "none");
         setSearch({ slice: slice || undefined });

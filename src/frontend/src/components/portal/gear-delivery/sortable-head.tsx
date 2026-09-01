@@ -14,13 +14,17 @@ export function SortableHead<Key extends string>({
 }: {
   column: Key;
   label: string;
-  sort: SortState<Key>;
-  onSort: (next: SortState<Key>) => void;
+  sort: SortState<Key> | null;
+  onSort: (next: SortState<Key> | null) => void;
   numeric?: boolean;
   className?: string;
 }) {
-  const active = sort.key === column;
-  const Icon = !active ? ChevronsUpDown : sort.direction === "asc" ? ArrowUp : ArrowDown;
+  const active = sort?.key === column;
+  const Icon = !active
+    ? ChevronsUpDown
+    : sort?.direction === "asc"
+      ? ArrowUp
+      : ArrowDown;
 
   return (
     <TableHead aria-sort={ariaSort(sort, column)} className={className}>

@@ -53,10 +53,21 @@ describe("nextSort", () => {
     });
   });
 
-  it("turns the active column around", () => {
+  it("turns the active column around on the second click", () => {
     expect(nextSort({ key: "effort", direction: "desc" }, "effort")).toEqual({
       key: "effort",
       direction: "asc",
+    });
+  });
+
+  it("clears the sort on the third click", () => {
+    expect(nextSort({ key: "effort", direction: "asc" }, "effort")).toBeNull();
+  });
+
+  it("opens a column again after the sort was cleared", () => {
+    expect(nextSort(null, "effort")).toEqual({
+      key: "effort",
+      direction: "desc",
     });
   });
 });
@@ -67,5 +78,9 @@ describe("ariaSort", () => {
 
     expect(ariaSort(sort, "effort")).toBe("descending");
     expect(ariaSort(sort, "name")).toBe("none");
+  });
+
+  it("names no direction once the sort is cleared", () => {
+    expect(ariaSort(null, "effort")).toBe("none");
   });
 });

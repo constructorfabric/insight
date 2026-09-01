@@ -24,13 +24,15 @@ export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
   const { t } = useTranslation();
 
   const { openSubsystem } = usePortalNavActions();
-  const [sort, setSort] = useState<SortState<SummaryColumn>>({
-    key: "subsystem",
-    direction: "asc",
-  });
+  const [sort, setSort] = useState<SortState<SummaryColumn> | null>(null);
 
   const rows = useMemo(
-    () => sortRows(summariseBySubsystem(roadmap.gears), sort, summaryValue),
+    () =>
+      sortRows(
+        summariseBySubsystem(roadmap.gears),
+        sort ?? DEFAULT_SUMMARY_SORT,
+        summaryValue,
+      ),
     [roadmap, sort],
   );
 
@@ -142,6 +144,12 @@ export function GearSummary({ roadmap }: { roadmap: GearRoadmap }) {
     </section>
   );
 }
+
+/** Where the rollup rests when no column is chosen. */
+const DEFAULT_SUMMARY_SORT: SortState<SummaryColumn> = {
+  key: "subsystem",
+  direction: "asc",
+};
 
 /** The lens a subsystem row opens, by the name the registry gives it. */
 const GEAR_LIST_LENS = "Gear list";

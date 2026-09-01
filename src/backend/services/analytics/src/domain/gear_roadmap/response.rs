@@ -7,7 +7,7 @@ use super::forecast::{Lane, ScheduleItem, schedule};
 use super::milestone::{Milestone, Placement as MonthPlacement, YearMonth};
 use super::model::{Commitment, Gear};
 use super::progress::LadderStep;
-use super::sort::{Sort, order};
+use super::sort::{Context, Sort, order};
 use crate::domain::external_links::ExternalSourceRegistry;
 
 const GIT_PROVIDER: &str = "github";
@@ -37,6 +37,9 @@ pub(crate) struct GearDto {
     pub(crate) effort_man_days: Option<f64>,
     pub(crate) remaining_man_days: Option<f64>,
     pub(crate) milestone: Option<String>,
+    /// The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear
+    /// with nothing left to schedule.
+    pub(crate) forecast: Option<String>,
     pub(crate) placement: Placement,
     pub(crate) assignees: Vec<String>,
     pub(crate) closed: bool,
@@ -100,15 +103,27 @@ pub(crate) fn build(
 
     let sources = source_by_login(gears);
 
-    let lanes = schedule(&items, today)
+    let scheduled = schedule(&items, today);
+    let forecasts: HashMap<i64, String> = scheduled
+        .iter()
+        .flat_map(|lane| lane.spans.iter())
+        .map(|span| (span.gear_number, span.end.format("%Y-%m").to_string()))
+        .collect();
+
+    let lanes = scheduled
         .into_iter()
         .map(|lane| lane_dto(lane, &sources, links))
         .collect::<Vec<_>>();
 
     let mut ordered: Vec<&Gear> = gears.iter().collect();
-    order(&mut ordered, sort, |gear| {
-        placement_of(gear, window_start, today)
-    });
+    order(
+        &mut ordered,
+        sort,
+        &Context {
+            placement: |gear: &Gear| placement_of(gear, window_start, today),
+            forecasts: &forecasts,
+        },
+    );
 
     GearRoadmapResponse {
         capacity_man_days_per_person: CAPACITY_MAN_DAYS_PER_PERSON,
@@ -116,7 +131,7 @@ pub(crate) fn build(
         window_months: WINDOW_MONTHS,
         gears: ordered
             .into_iter()
-            .map(|gear| gear_dto(gear, window_start, today, links, &sources))
+            .map(|gear| gear_dto(gear, window_start, today, links, &sources, &forecasts))
             .collect(),
         lanes,
     }
@@ -161,6 +176,7 @@ fn gear_dto(
     today: NaiveDate,
     links: &ExternalSourceRegistry,
     sources: &HashMap<&str, &str>,
+    forecasts: &HashMap<i64, String>,
 ) -> GearDto {
     GearDto {
         number: gear.number,
@@ -174,6 +190,7 @@ fn gear_dto(
         effort_man_days: gear.effort_man_days,
         remaining_man_days: gear.remaining_man_days(),
         milestone: milestone_label(gear.milestone.as_ref()),
+        forecast: forecasts.get(&gear.number).cloned(),
         placement: placement_of(gear, window_start, today),
         assignees: gear.assignees.clone(),
         closed: gear.closed,
@@ -312,6 +329,13 @@ mod tests {
         ExternalSourceRegistry::default()
     }
 
+    fn assigned_gear(number: i64, effort: f64, login: &str) -> Gear {
+        let mut source = row(number);
+        source.effort_man_days = effort;
+        source.assignees = vec![login.to_owned()];
+        Gear::from_row(source)
+    }
+
     fn effort_gear(number: i64, effort: Option<f64>) -> Gear {
         let mut source = row(number);
         source.effort_man_days = effort.unwrap_or(0.0);
@@ -416,6 +440,21 @@ mod tests {
     }
 
     #[test]
+    fn forecast_order_runs_by_the_month_the_schedule_lands() {
+        // Two lanes, so the order is the schedule's rather than the input's:
+        // the long gear lands in September, the short one in August.
+        let gears = [
+            assigned_gear(1, 60.0, "dev-two"),
+            assigned_gear(2, 5.0, "dev-one"),
+        ];
+
+        assert_eq!(
+            sorted(&gears, GearSort::Forecast, Direction::Asc),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
     fn milestone_order_leads_with_the_worst_overrun() {
         let gears = [
             gear(1, "30.09", "Todo"),
@@ -487,6 +526,21 @@ mod tests {
             response.lanes[0].assignee_url.as_deref(),
             Some("https://git.example.test/dev-one")
         );
+    }
+
+    #[test]
+    fn a_scheduled_gear_carries_the_month_the_schedule_lands_it() {
+        let response = build_for_test(&[gear(1, "30.09", "Todo")], today());
+
+        // 10 m*d at one man-day a day from 1 August lands on the 10th.
+        assert_eq!(response.gears[0].forecast.as_deref(), Some("2030-08"));
+    }
+
+    #[test]
+    fn a_gear_with_nothing_left_has_no_forecast() {
+        let response = build_for_test(&[gear(1, "30.09", "Done")], today());
+
+        assert_eq!(response.gears[0].forecast, None);
     }
 
     #[test]
