@@ -675,7 +675,7 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
         return Ok(());
     };
     let caller = f.person("people-caller@http-live.test").await?;
-    let marker = Uuid::now_v7().simple().to_string();
+    let marker = format!("find-{}", Uuid::now_v7().simple());
     let report = f.person("people-report@http-live.test").await?;
     f.project_person(
         report,
@@ -743,7 +743,7 @@ async fn people_preserve_source_names_and_only_synthesize_a_missing_display_name
         return Ok(());
     };
     let caller = f.person("people-names-caller@http-live.test").await?;
-    let marker = Uuid::now_v7().simple().to_string();
+    let marker = format!("find-{}", Uuid::now_v7().simple());
     let explicit = f
         .person(&format!("people-names-explicit-{marker}@http-live.test"))
         .await?;
@@ -817,7 +817,7 @@ async fn people_org_chart_visibility_does_not_widen_without_an_edge() -> TestRes
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());
     };
-    let marker = Uuid::now_v7().simple().to_string();
+    let marker = format!("find-{}", Uuid::now_v7().simple());
     let caller = f.person(&format!("caller-{marker}@http-live.test")).await?;
     let other = f.person(&format!("other-{marker}@http-live.test")).await?;
     let uri = format!("/v1/people?q={marker}");
@@ -842,7 +842,7 @@ async fn people_hide_a_manager_outside_the_callers_visible_set() -> TestResult {
         return Ok(());
     };
     let caller = f.person("manager-hidden-caller@http-live.test").await?;
-    let marker = Uuid::now_v7().simple().to_string();
+    let marker = format!("find-{}", Uuid::now_v7().simple());
     let report = f
         .person(&format!("manager-hidden-report-{marker}@http-live.test"))
         .await?;
@@ -888,7 +888,7 @@ async fn people_cursor_resumes_only_the_listing_that_issued_it() -> TestResult {
         return Ok(());
     };
     let caller = f.person("people-page-caller@http-live.test").await?;
-    let marker = Uuid::now_v7().simple().to_string();
+    let marker = format!("find-{}", Uuid::now_v7().simple());
     for index in 0..2 {
         let person = f
             .person(&format!("people-page-{marker}-{index}@http-live.test"))
