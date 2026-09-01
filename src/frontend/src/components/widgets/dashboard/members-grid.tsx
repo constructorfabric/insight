@@ -64,6 +64,22 @@ import {
   withOwnTarget,
 } from "@/components/metric-evidence-context";
 
+/**
+ * INVARIANT: every step leaves room for the names plus one whole metric column
+ * (`METRIC_COL_PX`) inside the container it applies to — a step wider than
+ * that is the bug this replaced, where the roster showed names and nothing
+ * else. A container query, not a viewport one: a drilldown pane on a desktop
+ * is as narrow as a phone.
+ */
+const MEMBER_COL_WIDTH =
+  "[--member-col:9rem] @min-[26rem]:[--member-col:12rem] @min-[32rem]:[--member-col:16rem]";
+
+/** Falls back rather than collapsing to `auto` if the wrapper ever loses it. */
+const MEMBER_COL_CELL =
+  "sticky start-0 z-10 w-[var(--member-col,16rem)] bg-card text-left";
+
+const METRIC_COL_PX = 108;
+
 export interface MembersGridMember {
   /** Canonical person id — keys every metric lookup AND the IC link. */
   entityId: string;
@@ -359,8 +375,8 @@ export function MembersGrid({
   const memberSortActive = sort.key === "issues" || sort.key === "name";
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <div className="overflow-x-auto">
+    <div className={cn("@container flex flex-col gap-3", className)}>
+      <div className={cn("overflow-x-auto", MEMBER_COL_WIDTH)}>
         {/* Fixed layout so metric columns are uniform — auto layout sizes
             each column to its own content, making them ragged. The member
             column takes a fixed width; the metric columns split the rest
@@ -370,7 +386,9 @@ export function MembersGrid({
             wrapper scrolls instead of crushing columns. */}
         <table
           className="w-full max-w-[1600px] table-fixed border-separate border-spacing-1"
-          style={{ minWidth: `${256 + columns.length * 108}px` }}
+          style={{
+            minWidth: `calc(var(--member-col, 16rem) + ${columns.length * METRIC_COL_PX}px)`,
+          }}
         >
           <caption className="sr-only">{caption}</caption>
           <thead>
@@ -378,7 +396,7 @@ export function MembersGrid({
               <th
                 scope="col"
                 aria-sort={memberDirection}
-                className="sticky left-0 z-10 w-64 bg-card px-2 text-left"
+                className={cn(MEMBER_COL_CELL, "px-2")}
               >
                 {hasIssuesFacet ? (
                   // Two member orderings (issues / name) → a small header menu,
@@ -496,7 +514,7 @@ function MemberRow({
     <tr>
       <th
         scope="row"
-        className="sticky left-0 z-10 w-64 bg-card px-2 py-1 text-left font-normal"
+        className={cn(MEMBER_COL_CELL, "px-2 py-1 font-normal")}
       >
         <div className="flex min-h-12 flex-col justify-center gap-0.5">
           <div className="flex items-center gap-1.5">

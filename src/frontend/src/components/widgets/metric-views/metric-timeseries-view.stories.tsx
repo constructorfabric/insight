@@ -15,17 +15,30 @@
  * See docs/testing/storybook-component-tests.md.
  */
 
+import type { ReactNode } from "react";
+
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, screen, userEvent, waitFor } from "storybook/test";
 
+import type { MetricEvidenceSelection } from "@/api/metric-drilldown-client";
+import {
+  EvidenceDialogContext,
+  type EvidenceDialogTarget,
+} from "@/components/metric-evidence-context";
 import { MetricTimeseriesView } from "@/components/widgets/metric-views/metric-timeseries-view";
 import {
+  BUCKETS,
   COMMITS,
   ENTITY_ID,
   LINES_ADDED,
   metricResultsHandler,
   RANGE,
 } from "@/components/widgets/metric-views/metric-timeseries.story-fixtures";
+import {
+  CARD_PX_AT_390,
+  expectHorizontallyContained,
+  expectNothingOverlaps,
+} from "@/test/storybook/layout";
 
 const TOP_REPOSITORIES = {
   default: "repository",
@@ -84,6 +97,80 @@ function captureDownloads(): () => void {
 async function openExportMenu(): Promise<void> {
   await userEvent.click(screen.getByRole("button", { name: "Export" }));
 }
+
+/** One entry per drilldown the chart asked for, holding all of its targets. */
+const drilled: MetricEvidenceSelection[][] = [];
+
+/**
+ * Stands in for the dialog provider: the assertion is which selection a click
+ * produced, and mounting the real dialog would answer that through a second
+ * request instead.
+ */
+function captureDrilldowns(Story: () => ReactNode) {
+  drilled.length = 0;
+  return (
+    <EvidenceDialogContext.Provider
+      value={{
+        openEvidence: (selection) => drilled.push([selection]),
+        openEvidenceTargets: (targets: readonly EvidenceDialogTarget[]) =>
+          drilled.push(targets.map((target) => target.selection)),
+        openEvidencePeople: () => {},
+      }}
+    >
+      <Story />
+    </EvidenceDialogContext.Provider>
+  );
+}
+
+const barSegments = (canvasElement: HTMLElement): HTMLElement[] => [
+  ...canvasElement.querySelectorAll<HTMLElement>(".recharts-bar-rectangle"),
+];
+
+interface ChartPoint {
+  clientX: number;
+  clientY: number;
+}
+
+const centreOf = (element: Element): ChartPoint => {
+  const box = element.getBoundingClientRect();
+  return {
+    clientX: box.left + box.width / 2,
+    clientY: box.top + box.height / 2,
+  };
+};
+
+/**
+ * A point inside one bucket's band that nothing is drawn over: the band's own
+ * centre line at the top edge of the plot, which every bucket but the tallest
+ * leaves empty.
+ */
+function emptySpotInBucket(
+  canvasElement: HTMLElement,
+  bucketIndex: number
+): ChartPoint {
+  const plot = canvasElement
+    .querySelector(".recharts-cartesian-grid")!
+    .getBoundingClientRect();
+  return {
+    clientX: plot.left + (plot.width / BUCKETS.length) * (bucketIndex + 0.5),
+    clientY: plot.top + 4,
+  };
+}
+
+/**
+ * Recharts reads the pointer's position off the chart wrapper, so every gesture
+ * carries coordinates. The target is what a real pointer would be over — the
+ * segment where there is one, the wrapper where the column is empty — because a
+ * dispatched event reaches the wrapper by bubbling but never travels back down.
+ */
+const pointAt = (target: Element, coords: ChartPoint) =>
+  userEvent.pointer({ target, coords });
+
+const clickAt = (target: Element, coords: ChartPoint) =>
+  userEvent.pointer([
+    { target, coords },
+    { keys: "[MouseLeft]", target, coords },
+  ]);
 
 const meta: Meta<typeof MetricTimeseriesView> = {
   title: "Widgets/MetricViews/MetricTimeseriesView",
@@ -152,6 +239,120 @@ export const TestChartPresentation: Story = {
     await waitFor(() =>
       expect(canvasElement.querySelector("svg.recharts-surface")).toBeTruthy()
     );
+  },
+};
+
+/**
+ * The click target is the whole column, not the drawn stack: a segment drills
+ * its own series, a point above them drills the bucket unnarrowed, and each
+ * click opens exactly one thing — the two handlers never both answer it.
+ */
+export const TestColumnClickDrilldown: Story = {
+  tags: ["test"],
+  args: { id: "column-click", groupBy: TOP_REPOSITORIES },
+  decorators: [captureDrilldowns],
+  play: async ({ canvas, canvasElement }) => {
+    await canvas.findByText("org/repo-a");
+    await waitFor(() =>
+      expect(barSegments(canvasElement).length).toBeGreaterThan(2)
+    );
+
+    const wrapper = canvasElement.querySelector<HTMLElement>(
+      ".recharts-wrapper"
+    )!;
+    // Recharts rebuilds its rectangles as the pointer moves, so a segment held
+    // across one gesture is a detached node by the next.
+    // The series render in rank order, making the first segment org/repo-a's.
+    const segment = () => barSegments(canvasElement)[0]!;
+
+    // A click with nothing under the pointer yet: recharts reports the active
+    // bucket as null there, and null must not read as the first bucket. Raw,
+    // because any pointer gesture would activate a bucket on its way in. What
+    // it must not do is land in `drilled` — the assertions below would then be
+    // reading it instead of the clicks they name.
+    wrapper.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: wrapper.getBoundingClientRect().left + 4,
+        clientY: wrapper.getBoundingClientRect().top + 4,
+      })
+    );
+
+    await clickAt(segment(), centreOf(segment()));
+    await waitFor(() => expect(drilled).toHaveLength(1));
+    await expect(drilled[0]?.[0]).toMatchObject({
+      metric_key: COMMITS,
+      period: { from: "2026-04-20", to: "2026-04-26" },
+      filters: [{ dimension: "repository", values: ["org/repo-a"] }],
+    });
+
+    // 2026-04-27 carries one commit against a six-commit peak, so the top of
+    // its band is the empty space this issue is about.
+    const spot = emptySpotInBucket(canvasElement, 1);
+    await pointAt(wrapper, spot);
+    // The panel reads that week there, so the empty space is inside the band
+    // rather than outside the chart's reach.
+    await waitFor(() =>
+      expect(canvas.getByText("April 27, 2026")).toBeInTheDocument()
+    );
+
+    await clickAt(wrapper, spot);
+    await waitFor(() => expect(drilled).toHaveLength(2));
+    await expect(drilled[1]?.[0]).toMatchObject({
+      metric_key: COMMITS,
+      period: { from: "2026-04-27", to: "2026-05-03" },
+      filters: [],
+    });
+
+    // Two clicks, two drilldowns: neither one was answered by both the
+    // segment's handler and the chart's.
+    await expect(drilled).toHaveLength(2);
+  },
+};
+
+/**
+ * The ungrouped line view drills the bucket its band covers. The click never
+ * has to land on the curve, which is two pixels wide.
+ */
+export const TestLineClickDrilldown: Story = {
+  tags: ["test"],
+  args: { id: "line-click", chart: { multiMetric: "combined" } },
+  decorators: [captureDrilldowns],
+  play: async ({ canvas, canvasElement }) => {
+    await canvas.findByText("Commits & Lines added");
+    await waitFor(() =>
+      expect(canvasElement.querySelector(".recharts-line-curve")).toBeTruthy()
+    );
+
+    const wrapper = canvasElement.querySelector<HTMLElement>(
+      ".recharts-wrapper"
+    )!;
+    // The panel has to read the bucket before the click can open it, which is
+    // the order a pointer arrives in anyway.
+    const spot = emptySpotInBucket(canvasElement, 1);
+    await pointAt(wrapper, spot);
+    await waitFor(() =>
+      expect(canvas.getByText("April 27, 2026")).toBeInTheDocument()
+    );
+
+    await clickAt(wrapper, spot);
+
+    await waitFor(() => expect(drilled).toHaveLength(1));
+    const bucket = { from: "2026-04-27", to: "2026-05-03" };
+    await expect(drilled[0]?.[0]).toMatchObject({
+      metric_key: COMMITS,
+      period: bucket,
+      filters: [],
+    });
+    // Both metrics reach the dialog, and picking the other one there must not
+    // widen the period back out to the widget's own range.
+    await expect(drilled[0]?.map((selection) => selection.metric_key)).toEqual([
+      COMMITS,
+      LINES_ADDED,
+    ]);
+    await expect(
+      drilled[0]?.map((selection) => selection.period)
+    ).toEqual([bucket, bucket]);
   },
 };
 
@@ -415,3 +616,113 @@ export const TestXlsxExport: Story = {
     await expect(sheet?.views[0]).toMatchObject({ xSplit: 1, ySplit: 2 });
   },
 };
+
+/**
+ * On a card too narrow for both, the header stacks instead of overlapping.
+ *
+ * The failure this pins is invisible to a text query: with the toolbar holding
+ * its width and the title column free to collapse, the title was laid out
+ * under the buttons — every `getByText` still passed while the card could not
+ * be identified on screen. So this reads the boxes the browser produced.
+ */
+export const TestNarrowHeaderStacksInsteadOfOverlapping: Story = {
+  tags: ["test"],
+  args: { groupBy: TOP_REPOSITORIES, defaultPresentation: "table" },
+  decorators: [
+    (Story) => (
+      <div style={{ width: CARD_PX_AT_390 }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const title = await canvas.findByRole("heading", {
+      name: /By repository/,
+    });
+    // The header row only — the table below it scrolls sideways by design, and
+    // its cells are buttons that leave the card's box on purpose.
+    const header = title.closest('[data-slot="card"] > *');
+    await expect(header, "the card renders a header row").not.toBeNull();
+    const controls = Array.from(header!.querySelectorAll("button"));
+
+    await expect(controls.length, "the header has controls to clear").toBeGreaterThan(0);
+    expectNothingOverlaps(title, controls, (element) =>
+      element.getAttribute("aria-label") ?? element.textContent ?? "a control"
+    );
+
+    // Clearing the controls by shrinking the title to nothing would satisfy
+    // the check above; the title has to still be readable.
+    const label = title.querySelector("span");
+    await expect(label, "the title renders its truncating span").not.toBeNull();
+    await expect(
+      label!.scrollWidth,
+      `the title is clipped (${label!.scrollWidth}px of text in ${label!.clientWidth}px)`
+    ).toBeLessThanOrEqual(label!.clientWidth);
+  },
+};
+
+/**
+ * The scroll controls sit beside the table, never over a cell.
+ *
+ * The failure this pins is invisible to a text query too: the controls were
+ * drawn over the scrollport, so on a narrow card the one that pages backwards
+ * covered the date column — the reader could see a value and not what it was
+ * measured on.
+ */
+export const TestNarrowTableKeepsItsScrollControlsOffTheCells: Story = {
+  tags: ["test"],
+  args: { groupBy: TOP_REPOSITORIES, defaultPresentation: "table" },
+  decorators: [
+    (Story) => (
+      <div style={{ width: CARD_PX_AT_390 }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvas }) => {
+    const table = await canvas.findByRole("table");
+    const scrollport = table.parentElement!;
+    const controlsNow = () =>
+      canvas.getAllByRole("button", { name: /^Show (earlier|later) / });
+
+    await expect(
+      controlsNow().length,
+      "the table has scroll controls to clear"
+    ).toBeGreaterThan(0);
+    expectNothingOverlaps(scrollport, controlsNow(), (element) =>
+      element.getAttribute("aria-label") ?? "a scroll control"
+    );
+
+    // Clearing the cells by taking the room they needed would satisfy the check
+    // above and leave the table just as unreadable: the gutters and the sticky
+    // bucket column come out of the same width, and a whole value column has to
+    // survive both.
+    const firstValue = table.querySelectorAll("tbody tr td")[0];
+    expectHorizontallyContained(
+      scrollport,
+      [table.querySelector("tbody th, tbody tr > *:first-child")!, firstValue],
+      (element) => `the ${element.tagName.toLowerCase()} in the first row`
+    );
+
+    // Paging brings the backwards control in. Its gutter is reserved up front,
+    // so the columns under the reader's eye must not move when it appears.
+    const before = scrollport.getBoundingClientRect().width;
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Show later columns" })
+    );
+    await waitFor(() =>
+      expect(
+        canvas.getByRole("button", { name: "Show earlier columns" })
+      ).toBeVisible()
+    );
+
+    expectNothingOverlaps(scrollport, controlsNow(), (element) =>
+      element.getAttribute("aria-label") ?? "a scroll control"
+    );
+    await expect(
+      scrollport.getBoundingClientRect().width,
+      "the scrollport resized when a control appeared"
+    ).toBe(before);
+  },
+};
+

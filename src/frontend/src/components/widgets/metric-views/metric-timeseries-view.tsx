@@ -358,21 +358,29 @@ export function MetricTimeseriesView({
       : selectedMetric
         ? [selectedMetric]
         : [];
-  const evidenceTargets = evidenceMetrics.flatMap<EvidenceDialogTarget>(
-    (metric) => {
+  /**
+   * Every metric the dialog can offer, over one period. Switching metric in the
+   * dialog must not switch period with it, so the caller's period reaches all
+   * of them rather than only the one that was opened.
+   */
+  const evidenceTargetsOver = (
+    period: DateRange,
+    exactFilters: typeof filters
+  ): EvidenceDialogTarget[] =>
+    evidenceMetrics.flatMap<EvidenceDialogTarget>((metric) => {
       if (!metric.drilldown) return [];
       const selection = evidenceSelection(
         metric.selection,
         entityId,
-        range,
-        filters,
+        period,
+        exactFilters,
         metric.computation !== "ratio" && selectedGroupBy
           ? [selectedGroupBy]
           : []
       );
       return selection ? [{ selection, label: metric.label }] : [];
-    }
-  );
+    });
+  const evidenceTargets = evidenceTargetsOver(range, filters);
   const filterModels = dimensionOptions
     .filter((dimension) => dimension !== selectedGroupBy)
     .map((dimension) => {
@@ -432,20 +440,21 @@ export function MetricTimeseriesView({
 
   function openTimeseriesEvidence(
     metricKey: string,
-    columnKey: string,
+    columnKey: string | null,
     bucketStart: string | null
   ): void {
     const metric = model.metrics.find(
       (candidate) => candidate.metric_key === metricKey
     );
+    if (!metric?.drilldown) return;
     const column = model.columns.find(
       (candidate) => candidate.key === columnKey
     );
-    if (!metric?.drilldown || !column || column.remainder) return;
+    if (columnKey !== null && (!column || column.remainder)) return;
     const exactFilters = new Map(
       filters.map((filter) => [filter.dimension, filter])
     );
-    for (const dimension of column.dimensions ?? []) {
+    for (const dimension of column?.dimensions ?? []) {
       exactFilters.set(dimension.key, {
         dimension: dimension.key,
         values: [dimension.value],
@@ -466,18 +475,22 @@ export function MetricTimeseriesView({
           : range.to,
       };
     }
+    const narrowed = [...exactFilters.values()].sort((left, right) =>
+      left.dimension.localeCompare(right.dimension)
+    );
     const selection = evidenceSelection(
       metric.selection,
       entityId,
       period,
-      [...exactFilters.values()].sort((left, right) =>
-        left.dimension.localeCompare(right.dimension)
-      ),
+      narrowed,
       metric.computation !== "ratio" && selectedGroupBy ? [selectedGroupBy] : []
     );
     if (selection) {
       evidenceContext?.openEvidenceTargets(
-        withOwnTarget(evidenceTargets, { selection, label: metric.label }),
+        withOwnTarget(evidenceTargetsOver(period, narrowed), {
+          selection,
+          label: metric.label,
+        }),
         { activeMetricKey: selection.metric_key }
       );
     }
@@ -490,11 +503,14 @@ export function MetricTimeseriesView({
         data.isFetching && "opacity-60"
       )}
     >
-      <div className="flex items-center justify-between gap-2 border-b p-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 border-b p-2">
+        {/* INVARIANT: a fixed basis, because a flex line breaks on content
+            size — with none, the untruncated title decides the width at which
+            the controls drop to their own line. */}
+        <div className="flex min-w-0 flex-[1_1_8rem] flex-wrap items-center gap-2">
           {selectedMetric ? (
             shouldCombineMetrics ? (
-              <h3 className="px-2 text-sm font-semibold">
+              <h3 className="min-w-0 truncate px-2 text-sm font-semibold">
                 {model.metrics.map((metric) => metric.label).join(" & ")}
               </h3>
             ) : model.metrics.length > 1 && presentation === "chart" ? (
@@ -507,7 +523,7 @@ export function MetricTimeseriesView({
                 <SelectTrigger
                   size="sm"
                   aria-label="Metric"
-                  className="border-transparent bg-transparent ps-2 pe-2 font-semibold shadow-none hover:bg-muted/50 focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-muted/50 dark:bg-transparent dark:hover:bg-muted/50"
+                  className="min-w-0 max-w-full border-transparent bg-transparent ps-2 pe-2 font-semibold shadow-none hover:bg-muted/50 focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-ring/40 data-popup-open:bg-muted/50 dark:bg-transparent dark:hover:bg-muted/50 [&>span]:truncate"
                 >
                   <SelectValue>{selectedMetric.label}</SelectValue>
                 </SelectTrigger>
@@ -527,20 +543,22 @@ export function MetricTimeseriesView({
               // columns. The count is load-bearing: such a table is usually
               // wider than the screen, and the grand total below covers groups
               // the reader cannot see.
-              <h3 className="px-2 text-sm font-semibold">
-                {breakdownHeading([selectedGroupBy])}
-                <span className="ps-1.5 font-normal text-muted-foreground">
+              <h3 className="flex min-w-0 items-baseline px-2 text-sm font-semibold">
+                <span className="truncate">
+                  {breakdownHeading([selectedGroupBy])}
+                </span>
+                <span className="shrink-0 ps-1.5 font-normal text-muted-foreground">
                   · {model.columns.length}
                 </span>
               </h3>
             ) : model.metrics.length === 1 ? (
-              <h3 className="px-2 text-sm font-semibold">
+              <h3 className="min-w-0 truncate px-2 text-sm font-semibold">
                 {selectedMetric.label}
               </h3>
             ) : null
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2">
+        <div className="ms-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
           {dimensionOptions.length > 1 || filterModels.length > 0 ? (
             <DimensionControls
               dimensions={dimensionOptions}
