@@ -66,9 +66,18 @@ impl SeedStore for MariaDbSeedStore<'_> {
         author_person_id: Uuid,
         rows: &[SeedObservationRow],
         people: &[PersonChange],
+        retained_people: Option<&std::collections::HashSet<Uuid>>,
     ) -> anyhow::Result<ApplyCounts> {
         let started = std::time::Instant::now();
-        let result = apply(self.db, tenant_id, author_person_id, rows, people).await;
+        let result = apply(
+            self.db,
+            tenant_id,
+            author_person_id,
+            rows,
+            people,
+            retained_people,
+        )
+        .await;
         metrics::record_db_query(DbQuery::Apply, started.elapsed());
         result
     }
@@ -500,6 +509,7 @@ pub async fn apply(
     author_person_id: Uuid,
     rows: &[SeedObservationRow],
     people: &[PersonChange],
+    retained_people: Option<&std::collections::HashSet<Uuid>>,
 ) -> anyhow::Result<ApplyCounts> {
     // Idempotent insert — uq_person_observation dedups a re-emitted identical
     // observation; INSERT IGNORE swallows the duplicate-key error. Batched
@@ -544,7 +554,7 @@ pub async fn apply(
     }
     tracing::info!(inserted, "persons-seed apply: observations inserted");
 
-    let people_counts = people_repo::reconcile(&txn, tenant_id, people).await?;
+    let people_counts = people_repo::reconcile(&txn, tenant_id, people, retained_people).await?;
     let org_chart_rows_rebuilt = rebuild_org_chart(&txn, tenant_id, author_person_id).await?;
 
     txn.commit().await?;

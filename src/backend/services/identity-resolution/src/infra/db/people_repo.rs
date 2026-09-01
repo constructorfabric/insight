@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{NaiveDateTime, Utc};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, QueryResult, Statement};
@@ -44,6 +44,7 @@ pub async fn reconcile(
     txn: &DatabaseTransaction,
     tenant_id: Uuid,
     changes: &[PersonChange],
+    retained_people: Option<&HashSet<Uuid>>,
 ) -> Result<ReconcileCounts, PeopleRepoError> {
     let current = current_people(txn, tenant_id).await?;
     let now = Utc::now().naive_utc();
@@ -84,7 +85,37 @@ pub async fn reconcile(
         }
     }
 
+    if let Some(retained_people) = retained_people {
+        for existing in unretained_current(&current, changes, retained_people) {
+            close(txn, existing.id, now).await?;
+            counts.closed += 1;
+        }
+    }
+
     Ok(counts)
+}
+
+fn unretained_current<'a>(
+    current: &'a HashMap<Uuid, CurrentPerson>,
+    changes: &[PersonChange],
+    retained_people: &HashSet<Uuid>,
+) -> Vec<&'a CurrentPerson> {
+    let mentioned = changes
+        .iter()
+        .map(|change| match change {
+            PersonChange::Upsert(projected) => projected.person_id,
+            PersonChange::Close { person_id, .. } => *person_id,
+        })
+        .collect::<HashSet<_>>();
+    let mut unretained = current
+        .iter()
+        .filter(|(person_id, _)| {
+            !mentioned.contains(person_id) && !retained_people.contains(person_id)
+        })
+        .map(|(_, person)| person)
+        .collect::<Vec<_>>();
+    unretained.sort_by_key(|person| person.id);
+    unretained
 }
 
 fn transition_time(
@@ -235,5 +266,54 @@ mod tests {
             .insert("department".to_owned(), "Engineering".to_owned());
 
         assert!(!same_state(&current, &changed));
+    }
+
+    #[test]
+    fn a_current_person_with_no_retained_roster_binding_needs_closure() {
+        let current_person = CurrentPerson {
+            id: 1,
+            projection: projection(1),
+        };
+        let current = HashMap::from([(current_person.projection.person_id, current_person)]);
+        let desired = [PersonChange::Upsert(PersonProjection {
+            person_id: Uuid::from_u128(2),
+            ..projection(2)
+        })];
+        let retained = HashSet::from([Uuid::from_u128(2)]);
+
+        assert_eq!(
+            unretained_current(&current, &desired, &retained)
+                .iter()
+                .map(|person| person.id)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn a_current_person_with_a_retained_roster_binding_stays_open() {
+        let current_person = CurrentPerson {
+            id: 1,
+            projection: projection(1),
+        };
+        let current = HashMap::from([(current_person.projection.person_id, current_person)]);
+        let retained = HashSet::from([Uuid::from_u128(1)]);
+
+        assert!(unretained_current(&current, &[], &retained).is_empty());
+    }
+
+    #[test]
+    fn an_explicit_closure_is_not_closed_twice() {
+        let current_person = CurrentPerson {
+            id: 1,
+            projection: projection(1),
+        };
+        let current = HashMap::from([(current_person.projection.person_id, current_person)]);
+        let desired = [PersonChange::Close {
+            person_id: Uuid::from_u128(1),
+            valid_to: chrono::DateTime::UNIX_EPOCH.naive_utc(),
+        }];
+
+        assert!(unretained_current(&current, &desired, &HashSet::new()).is_empty());
     }
 }
