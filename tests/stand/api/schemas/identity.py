@@ -50,7 +50,7 @@ class AccountRequest(BaseModel):
         extra='forbid',
     )
     account: AccountRef
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
 
 
 class BatchProfilesRequest(BaseModel):
@@ -87,7 +87,7 @@ class BindRequest(BaseModel):
         extra='forbid',
     )
     bindings: list[BindItem] = Field(..., description='One or more bindings; a prepared matching table is submitted as one call.')
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
 
 
 class CreatePersonRoleRequest(BaseModel):
@@ -155,7 +155,7 @@ class MergeRequest(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=500)
     source_person_id: UUID = Field(..., description='The person being absorbed — its accounts move to the target.')
     target_person_id: UUID = Field(..., description='The surviving person, named explicitly by the operator.')
 
