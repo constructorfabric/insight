@@ -96,10 +96,10 @@ CREATE TABLE IF NOT EXISTS bronze_bamboohr.whos_out
     `window_end` Nullable(String),
     `tenant_id` Nullable(String),
     `source_id` Nullable(String),
-    `unique_key` Nullable(String)
+    `unique_key` String
 )
-ENGINE = MergeTree
-ORDER BY _airbyte_raw_id
+ENGINE = ReplacingMergeTree(_airbyte_extracted_at)
+ORDER BY unique_key
 SETTINGS index_granularity = 8192
 ;
 

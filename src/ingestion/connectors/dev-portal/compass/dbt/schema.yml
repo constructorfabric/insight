@@ -17,5 +17,3 @@ sources:
       - name: teams
       - name: team_members
       - name: deployment_events
-
-models:
