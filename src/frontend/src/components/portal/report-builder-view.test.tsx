@@ -181,14 +181,14 @@ describe("ReportBuilderView", () => {
     expect(checkbox("Issues closed")).toBeInTheDocument();
   });
 
-  it("filters metrics locally by search", async () => {
+  it("filters metrics locally by their displayed labels", async () => {
     const user = userEvent.setup();
     render(<ReportBuilderView />);
 
-    await user.type(screen.getByRole("searchbox", { name: "Search metrics" }), "issues");
+    await user.type(screen.getByRole("searchbox", { name: "Search metrics" }), "commit");
 
-    expect(checkbox("Issues closed")).toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Commits" })).toBeNull();
+    expect(checkbox("Commits")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Issues closed" })).toBeNull();
     expect(mocks.preview).not.toHaveBeenCalled();
   });
 
