@@ -61,6 +61,7 @@ BODY_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/v1/query/comparisons"),
     ("POST", "/v1/query/distributions"),
     ("POST", "/v1/query/rows"),
+    ("POST", "/v1/definitions/validate"),
     ("POST", "/v1/metrics"),
     ("PUT", f"/v1/metrics/{scratch.UNKNOWN_METRIC_KEY}"),
     ("POST", "/v1/metrics/import"),

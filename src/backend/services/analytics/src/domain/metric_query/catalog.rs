@@ -77,9 +77,8 @@ impl MetricCatalog {
     }
 
     /// Every metric the definitions carry, in key order.
-    #[cfg(test)]
-    pub(super) fn metric_keys(&self) -> Vec<&str> {
-        self.metrics.keys().map(String::as_str).collect()
+    pub(super) fn metrics(&self) -> impl Iterator<Item = &MetricDefinition> {
+        self.metrics.values()
     }
 
     /// The dimension keys a question may name for a metric. INVARIANT: a

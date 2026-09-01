@@ -103,7 +103,7 @@ fn validate_query(
 /// INVARIANT: the cohort a comparison reads is the metric's own, never one a
 /// request names, so a caller cannot ask a metric to be compared within a
 /// grouping it was not defined against.
-fn population(
+pub(in crate::domain::metric_query) fn population(
     metric: &MetricDefinition,
     population: Population,
 ) -> Result<ValidatedPopulation, QueryError> {

@@ -1,6 +1,17 @@
 {
   "components": {
     "schemas": {
+      "Aggregation": {
+        "enum": [
+          "count",
+          "sum",
+          "avg",
+          "min",
+          "max",
+          "count_distinct"
+        ],
+        "type": "string"
+      },
       "AiConfigResponse": {
         "properties": {
           "admin_only": {
@@ -60,6 +71,36 @@
         ],
         "type": "object"
       },
+      "AllNode": {
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "items": {
+              "$ref": "#/components/schemas/FilterTree"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "all"
+        ],
+        "type": "object"
+      },
+      "AnyNode": {
+        "additionalProperties": false,
+        "properties": {
+          "any": {
+            "items": {
+              "$ref": "#/components/schemas/FilterTree"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "any"
+        ],
+        "type": "object"
+      },
       "BreakdownValueDto": {
         "properties": {
           "dimensions": {
@@ -92,6 +133,156 @@
           "month"
         ],
         "type": "string"
+      },
+      "CatalogComputation": {
+        "description": "How the value is computed, named without the measures it is computed from.",
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "direct"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "ratio"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "percentile"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "stddev"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "derived"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CatalogDimension": {
+        "properties": {
+          "key": {
+            "description": "What a filter, a split or a display dimension names.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ],
+        "type": "object"
+      },
+      "CatalogMetric": {
+        "properties": {
+          "cohort_key": {
+            "description": "The grouping a cohort comparison reads; absent when the metric declares\nnone, and then no cohort comparison is offered.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computation": {
+            "$ref": "#/components/schemas/CatalogComputation"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogDimension"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "entity_type": {
+            "description": "What the metric's values are keyed by, such as `person`.",
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/Format"
+          },
+          "key": {
+            "description": "The key a question names, such as `git.commits`.",
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "questions": {
+            "$ref": "#/components/schemas/MetricQuestions"
+          }
+        },
+        "required": [
+          "key",
+          "format",
+          "direction",
+          "entity_type",
+          "computation",
+          "dimensions",
+          "questions"
+        ],
+        "type": "object"
       },
       "ColumnKind": {
         "description": "How a column's values read, so a caller renders a page without matching key\nspellings.",
@@ -192,6 +383,21 @@
         ],
         "type": "object"
       },
+      "ComparisonQuestions": {
+        "properties": {
+          "populations": {
+            "description": "Written as a comparison question's `population` field takes them.",
+            "items": {
+              "$ref": "#/components/schemas/Population"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "populations"
+        ],
+        "type": "object"
+      },
       "ComparisonResult": {
         "properties": {
           "metric": {
@@ -244,6 +450,123 @@
           "results"
         ],
         "type": "object"
+      },
+      "Computation": {
+        "description": "A percentile is metric-level because a percentile of pre-aggregated values\nis not a percentile; a standard deviation is metric-level for the same\nreason.",
+        "oneOf": [
+          {
+            "properties": {
+              "measure": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "direct"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "measure",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "denominator": {
+                "type": "string"
+              },
+              "numerator": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "ratio"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "numerator",
+              "denominator",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "measure": {
+                "type": "string"
+              },
+              "quantile": {
+                "description": "The quantile to serve, in `(0, 1)`.",
+                "format": "double",
+                "type": "number"
+              },
+              "type": {
+                "enum": [
+                  "percentile"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "measure",
+              "quantile",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "measure": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "stddev"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "measure",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Arithmetic over measures the expression names by alias.",
+            "properties": {
+              "expr": {
+                "type": "string"
+              },
+              "inputs": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Alias to measure key. The alias is what `expr` may reference.",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": {
+                "enum": [
+                  "derived"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "inputs",
+              "expr",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ComputationDto": {
         "oneOf": [
@@ -685,6 +1008,28 @@
         ],
         "type": "object"
       },
+      "DimensionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label_field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value_field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "value_field"
+        ],
+        "type": "object"
+      },
       "DimensionFilter": {
         "additionalProperties": false,
         "description": "Keeps only the rows whose dimension holds one of the named values.",
@@ -705,6 +1050,14 @@
           "values"
         ],
         "type": "object"
+      },
+      "Direction": {
+        "enum": [
+          "higher_is_better",
+          "lower_is_better",
+          "neutral"
+        ],
+        "type": "string"
       },
       "DistributionQuery": {
         "additionalProperties": false,
@@ -751,6 +1104,18 @@
           "metric",
           "subjects",
           "time"
+        ],
+        "type": "object"
+      },
+      "DistributionQuestions": {
+        "properties": {
+          "admitted": {
+            "description": "Whether the metric's computation is taken over per-row values, which is\nwhat having a distribution means.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "admitted"
         ],
         "type": "object"
       },
@@ -953,11 +1318,90 @@
         ],
         "type": "object"
       },
+      "FilterLeaf": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/FilterOp"
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FilterValue"
+              }
+            ]
+          }
+        },
+        "required": [
+          "field",
+          "op"
+        ],
+        "type": "object"
+      },
+      "FilterOp": {
+        "enum": [
+          "eq",
+          "neq",
+          "gt",
+          "gte",
+          "lt",
+          "lte",
+          "in",
+          "not_in",
+          "is_null",
+          "not_null"
+        ],
+        "type": "string"
+      },
+      "FilterTree": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AllNode"
+          },
+          {
+            "$ref": "#/components/schemas/AnyNode"
+          },
+          {
+            "$ref": "#/components/schemas/NotNode"
+          },
+          {
+            "$ref": "#/components/schemas/FilterLeaf"
+          }
+        ]
+      },
+      "FilterValue": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Scalar"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/Scalar"
+            },
+            "type": "array"
+          }
+        ]
+      },
       "Fold": {
         "description": "Whether each subject keeps its own value or the subjects fold into one.",
         "enum": [
           "per_subject",
           "combined"
+        ],
+        "type": "string"
+      },
+      "Format": {
+        "enum": [
+          "integer",
+          "decimal",
+          "currency",
+          "percent"
         ],
         "type": "string"
       },
@@ -1264,6 +1708,85 @@
         ],
         "type": "object"
       },
+      "MeasureDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "aggregation": {
+            "$ref": "#/components/schemas/Aggregation"
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/DimensionBinding"
+            },
+            "type": "array"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "event_time": {
+            "type": "string"
+          },
+          "filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FilterTree"
+              }
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "subject_expr": {
+            "description": "What `count_distinct` counts one of.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value_expr": {
+            "description": "The operand for the numeric folds; absent for `count`/`count_distinct`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "dataset",
+          "aggregation",
+          "event_time",
+          "entity"
+        ],
+        "type": "object"
+      },
+      "MetricCatalogResponse": {
+        "properties": {
+          "metrics": {
+            "description": "Every metric the definitions carry, in key order.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogMetric"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "metrics"
+        ],
+        "type": "object"
+      },
       "MetricComputation": {
         "enum": [
           "sum",
@@ -1274,6 +1797,62 @@
           "distinct_count"
         ],
         "type": "string"
+      },
+      "MetricDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "cohort_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "computation": {
+            "$ref": "#/components/schemas/Computation"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "format": {
+            "$ref": "#/components/schemas/Format"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transform": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Transform"
+              }
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "computation",
+          "format",
+          "direction",
+          "entity_type"
+        ],
+        "type": "object"
       },
       "MetricDefinitionListResponse": {
         "description": "Response body for `GET /v1/metric-definitions`. Metrics are sorted by\n`metric_key` ascending so the payload is byte-stable for caching and\ndiff tooling.",
@@ -1839,6 +2418,29 @@
           "custom"
         ],
         "type": "string"
+      },
+      "MetricQuestions": {
+        "properties": {
+          "comparisons": {
+            "$ref": "#/components/schemas/ComparisonQuestions"
+          },
+          "distributions": {
+            "$ref": "#/components/schemas/DistributionQuestions"
+          },
+          "rows": {
+            "$ref": "#/components/schemas/RowsQuestions"
+          },
+          "values": {
+            "$ref": "#/components/schemas/ValuesQuestions"
+          }
+        },
+        "required": [
+          "values",
+          "comparisons",
+          "distributions",
+          "rows"
+        ],
+        "type": "object"
       },
       "MetricRequest": {
         "properties": {
@@ -2536,6 +3138,18 @@
           }
         ]
       },
+      "NotNode": {
+        "additionalProperties": false,
+        "properties": {
+          "not": {
+            "$ref": "#/components/schemas/FilterTree"
+          }
+        },
+        "required": [
+          "not"
+        ],
+        "type": "object"
+      },
       "PeerValueDto": {
         "properties": {
           "entity_id": {
@@ -2967,6 +3581,21 @@
         ],
         "type": "object"
       },
+      "RowsQuestions": {
+        "properties": {
+          "inputs": {
+            "description": "The parts of the computation a page of rows may be asked for.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputs"
+        ],
+        "type": "object"
+      },
       "RowsRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3183,6 +3812,20 @@
           "name"
         ],
         "type": "object"
+      },
+      "Scalar": {
+        "oneOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "format": "double",
+            "type": "number"
+          },
+          {
+            "type": "string"
+          }
+        ]
       },
       "SchemaStatus": {
         "enum": [
@@ -3598,6 +4241,41 @@
         ],
         "type": "object"
       },
+      "Transform": {
+        "additionalProperties": false,
+        "description": "Post-aggregation shaping: `clamp(min, max, multiplier * value + offset)`.\nAbsent fields are the identity.",
+        "properties": {
+          "clamp_max": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "clamp_min": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "multiplier": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "offset": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UpdateContextRequest": {
         "properties": {
           "body": {
@@ -3848,6 +4526,83 @@
         ],
         "type": "object"
       },
+      "ValidateDefinitionsRequest": {
+        "additionalProperties": false,
+        "description": "Definitions to judge, in the shape the authored YAML parses into.",
+        "properties": {
+          "measures": {
+            "items": {
+              "$ref": "#/components/schemas/MeasureDefinition"
+            },
+            "type": "array"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricDefinition"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "ValidateDefinitionsResponse": {
+        "properties": {
+          "errors": {
+            "description": "Every offender, not the first one.",
+            "items": {
+              "$ref": "#/components/schemas/ValidationFailure"
+            },
+            "type": "array"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "errors"
+        ],
+        "type": "object"
+      },
+      "ValidationErrorKind": {
+        "description": "Which rule was broken, as a discriminant a machine can branch on.",
+        "enum": [
+          "key_shape",
+          "metric_key_shape",
+          "duplicate_key",
+          "dataset_not_found",
+          "field_not_found",
+          "role_mismatch",
+          "filter",
+          "expression",
+          "operand",
+          "measure_not_found",
+          "quantile_out_of_range",
+          "mixed_datasets",
+          "distribution_without_value",
+          "no_derived_inputs",
+          "metric_expression",
+          "unknown_derived_input",
+          "unused_derived_input",
+          "dimension_bindings_disagree"
+        ],
+        "type": "string"
+      },
+      "ValidationFailure": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ValidationErrorKind"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "type": "object"
+      },
       "ValueTransform": {
         "additionalProperties": false,
         "description": "Affine + clamp shaping for a computed metric value:\n`y = clamp(clamp_min, clamp_max, multiplier * x + offset)`.\nAbsent fields are identity (multiplier 1, offset 0, no bound).",
@@ -3936,6 +4691,40 @@
           "subjects",
           "time",
           "fold"
+        ],
+        "type": "object"
+      },
+      "ValuesQuestions": {
+        "properties": {
+          "compare": {
+            "description": "The earlier windows the same question may be set beside.",
+            "items": {
+              "$ref": "#/components/schemas/CompareOffset"
+            },
+            "type": "array"
+          },
+          "folds": {
+            "items": {
+              "$ref": "#/components/schemas/Fold"
+            },
+            "type": "array"
+          },
+          "grains": {
+            "items": {
+              "$ref": "#/components/schemas/Grain"
+            },
+            "type": "array"
+          },
+          "split": {
+            "description": "Whether the metric declares a dimension to break its value out by.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "grains",
+          "folds",
+          "compare",
+          "split"
         ],
         "type": "object"
       },
@@ -5123,6 +5912,49 @@
         "summary": "Replace this tenant's system prompt"
       }
     },
+    "/v1/catalog/metrics": {
+      "get": {
+        "operationId": "analytics_api.catalog.metrics",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricCatalogResponse"
+                }
+              }
+            },
+            "description": "The metrics a question may name"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Every metric and the questions it admits"
+      }
+    },
     "/v1/connector-health": {
       "get": {
         "operationId": "analytics_api.connector_health.summary",
@@ -5318,6 +6150,80 @@
           }
         ],
         "summary": "Recent syncs of one connector, newest first"
+      }
+    },
+    "/v1/definitions/validate": {
+      "post": {
+        "operationId": "analytics_api.definitions.validate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateDefinitionsRequest"
+              }
+            }
+          },
+          "description": "Measures and metrics to judge",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateDefinitionsResponse"
+                }
+              }
+            },
+            "description": "Whether the definitions are valid, and every rule they break"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Judge definitions without keeping them"
       }
     },
     "/v1/feedback": {

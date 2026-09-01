@@ -3,6 +3,7 @@
 //! compose from, and the store that versions and audits every write.
 
 pub mod definition;
+pub mod dry_run;
 pub mod expr;
 pub mod filter;
 #[cfg(test)]

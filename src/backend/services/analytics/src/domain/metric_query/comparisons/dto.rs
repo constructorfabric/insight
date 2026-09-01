@@ -32,7 +32,7 @@ pub struct ComparisonQuery {
 /// Who a target is compared against, internally tagged on `type`. `cohort`
 /// takes the metric's own declared cohort; a metric that declares none has no
 /// cohort to compare within.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Population {
     Cohort {},

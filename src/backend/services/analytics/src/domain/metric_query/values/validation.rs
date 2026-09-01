@@ -14,28 +14,18 @@ use super::super::catalog::MetricCatalog;
 use super::super::dto::Subjects;
 use super::super::error::QueryError;
 use super::super::question::{batch_size, defined_metric, filters, person_ids, window};
+use super::answerable::{Ask, SplitAsk, SubjectsAsk, shape_of};
 use super::dto::{
     Compare, CompareOffset, Fold, Grain, Split, SplitLimit, ValuesQuery, ValuesRequest,
 };
+
+pub use super::answerable::QueryShape;
 
 const MAX_SPLIT_DIMENSIONS: usize = 10;
 const MAX_SPLIT_TOP: u32 = 50;
 
 /// The field a values question names its people in.
 const SUBJECTS_FIELD: &str = "queries.subjects.ids";
-
-/// Which read answers one question, decided here and nowhere else.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueryShape {
-    /// One value per subject over the whole window.
-    SubjectTotal,
-    /// One value per subject per split group, over the whole window.
-    SubjectSplit,
-    /// One value per split group, folded over every subject.
-    CombinedSplit,
-    /// One series per subject and split group, plus the window total.
-    SubjectSeries,
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ValidatedSubjects {
@@ -270,60 +260,30 @@ fn validate_limit(
     })
 }
 
-/// Which read answers a question, or why none does.
+/// The question stripped to its shape, so answerability is decided by the one
+/// predicate the catalogue also reads.
 fn shape(
     grain: Grain,
     fold: Fold,
     split: Option<&ValidatedSplit>,
     subjects: &ValidatedSubjects,
 ) -> Result<QueryShape, QueryError> {
-    let shape = match (grain, fold, split) {
-        (Grain::Total, Fold::PerSubject, None) => QueryShape::SubjectTotal,
-        (Grain::Total, Fold::PerSubject, Some(split)) => {
-            if split.limit.is_some() {
-                return Err(QueryError::Unanswerable {
-                    reason: "a per-subject split over the whole window reports every group; \
-                             keeping only the top ones needs a time grain or a combined fold",
-                });
-            }
-            QueryShape::SubjectSplit
-        }
-        (Grain::Total, Fold::Combined, Some(_)) => QueryShape::CombinedSplit,
-        (Grain::Total, Fold::Combined, None) => {
-            return Err(QueryError::Unanswerable {
-                reason: "a combined value is reported per split group, so folding every subject \
-                         together names at least one dimension",
-            });
-        }
-        (Grain::Day | Grain::Week | Grain::Month, Fold::PerSubject, _) => QueryShape::SubjectSeries,
-        (Grain::Day | Grain::Week | Grain::Month, Fold::Combined, _) => {
-            return Err(QueryError::Unanswerable {
-                reason: "a combined value folds the window whole, so it is asked at the total \
-                         grain",
-            });
-        }
+    let split = match split {
+        None => SplitAsk::None,
+        Some(split) if split.limit.is_some() => SplitAsk::TopGroups,
+        Some(_) => SplitAsk::EveryGroup,
+    };
+    let subjects = match subjects {
+        ValidatedSubjects::Persons(_) => SubjectsAsk::Persons,
+        ValidatedSubjects::Tenant => SubjectsAsk::Tenant,
     };
 
-    answerable_for(subjects, shape)
-}
-
-/// INVARIANT: a dataset records rows per observed person and never for the
-/// tenant, so a tenant-wide question must report no subject of its own.
-fn answerable_for(
-    subjects: &ValidatedSubjects,
-    shape: QueryShape,
-) -> Result<QueryShape, QueryError> {
-    match (subjects, shape) {
-        (ValidatedSubjects::Persons(_), _)
-        | (ValidatedSubjects::Tenant, QueryShape::CombinedSplit) => Ok(shape),
-        (
-            ValidatedSubjects::Tenant,
-            QueryShape::SubjectTotal | QueryShape::SubjectSplit | QueryShape::SubjectSeries,
-        ) => Err(QueryError::Unanswerable {
-            reason: "no dataset records a row keyed by the tenant, so a tenant-wide question is \
-                     answered with its subjects folded together",
-        }),
-    }
+    shape_of(Ask {
+        grain,
+        fold,
+        split,
+        subjects,
+    })
 }
 
 #[cfg(test)]

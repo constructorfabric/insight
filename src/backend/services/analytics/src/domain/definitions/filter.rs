@@ -28,7 +28,7 @@ pub enum FilterError {
     ValueNotAllowed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterOp {
     Eq,
@@ -43,22 +43,23 @@ pub enum FilterOp {
     NotNull,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum Scalar {
     Bool(bool),
+    #[schema(value_type = f64)]
     Number(serde_json::Number),
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum FilterValue {
     Scalar(Scalar),
     List(Vec<Scalar>),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FilterLeaf {
     pub field: String,
@@ -67,25 +68,28 @@ pub struct FilterLeaf {
     pub value: Option<FilterValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AllNode {
+    #[schema(no_recursion)]
     pub all: Vec<FilterTree>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnyNode {
+    #[schema(no_recursion)]
     pub any: Vec<FilterTree>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NotNode {
+    #[schema(no_recursion)]
     pub not: Box<FilterTree>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum FilterTree {
     All(AllNode),

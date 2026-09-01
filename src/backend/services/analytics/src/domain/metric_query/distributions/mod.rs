@@ -11,4 +11,5 @@ mod validation;
 
 pub use dto::{DistributionsRequest, DistributionsResponse};
 pub use service::answer;
+pub(super) use validation::distributable;
 pub use validation::validate_request;

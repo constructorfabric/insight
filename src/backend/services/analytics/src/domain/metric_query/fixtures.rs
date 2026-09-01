@@ -15,12 +15,9 @@ pub fn shipped_input_roles() -> Vec<(&'static str, Vec<String>)> {
     let catalog = product_metric_catalog().expect("the shipped definitions load");
 
     catalog
-        .metric_keys()
-        .into_iter()
-        .map(|key| {
-            let metric = catalog
-                .metric(key)
-                .expect("the catalog carries what it lists");
+        .metrics()
+        .map(|metric| {
+            let key = metric.key.as_str();
             let roles = catalog
                 .input_roles(metric)
                 .unwrap_or_else(|error| panic!("`{key}` resolves its inputs: {error}"));
