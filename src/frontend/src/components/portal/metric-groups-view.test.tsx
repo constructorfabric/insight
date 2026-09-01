@@ -68,6 +68,11 @@ vi.mock("@/queries/metric-results", () => ({
 vi.mock("@/lib/portal/use-person-cohort", () => ({
   usePersonCohort: () => mocks.cohort,
 }));
+// This view only mounts on "At a glance", so no section is ever open under it;
+// `use-person-sections.test.tsx` covers the window scope on both routes.
+vi.mock("@/lib/portal/portal-nav", () => ({
+  usePortalItem: () => null,
+}));
 vi.mock("@/hooks/use-portal-period", () => ({
   usePortalPeriod: () => ({ period: mocks.period, dateRange: mocks.range }),
 }));

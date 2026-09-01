@@ -14,6 +14,7 @@ import { derivePeerStanding } from "@/lib/metrics/peer-standing";
 import { usePersonCohort } from "@/lib/portal/use-person-cohort";
 import type { Status } from "@/lib/status";
 import { usePortalPeriod } from "@/hooks/use-portal-period";
+import { usePortalItem } from "@/lib/portal/portal-nav";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
 import { previousPeriodRange } from "@/api/period-to-date-range";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
@@ -50,6 +51,23 @@ export interface SectionStanding {
 const CLOSED_ENTITY = { type: "person" as const, ids: [] as string[] };
 
 /**
+ * The section the person zone has open, or null on "At a glance".
+ *
+ * INVARIANT: every surface branching on this reads it here. The collection
+ * below carries a comparison window only on the overview, so a screen deciding
+ * the same thing its own way would either ask for a window nothing reads or
+ * disagree about the key and split the request in two.
+ */
+export function useSelectedPersonSection(): GroupId | null {
+  const item = usePortalItem();
+  const showPlanned = usePortalShowPlanned();
+
+  return visibleGroups(showPlanned).some((def) => def.id === item)
+    ? (item as GroupId)
+    : null;
+}
+
+/**
  * The section collection every person surface reads — the nav mark, the
  * overview and the attention block alike.
  *
@@ -60,8 +78,10 @@ const CLOSED_ENTITY = { type: "person" as const, ids: [] as string[] };
  *
  * The comparison window rides inside the request rather than as its own
  * shifted-period call: the `period` view answers over both windows in one pass.
- * It is asked for unconditionally, because a caller that skipped it would be
- * exactly the divergence above.
+ * Only the overview reads it, through the attention block. With a section open
+ * the nav mark is the lone consumer and ranks the current window alone, so the
+ * window is scoped here rather than by a caller — a caller deciding it would be
+ * the divergence above.
  */
 export function usePersonSectionCollection(
   personId: string
@@ -69,6 +89,7 @@ export function usePersonSectionCollection(
   const { period, dateRange } = usePortalPeriod();
   const entityId = normalizePersonId(personId);
   const showPlanned = usePortalShowPlanned();
+  const selectedSection = useSelectedPersonSection();
 
   return useMetricCollectionSet(
     visibleGroups(showPlanned).map((def) => ({
@@ -77,7 +98,7 @@ export function usePersonSectionCollection(
     })),
     { type: "person" as const, ids: [entityId] },
     dateRange,
-    previousPeriodRange(dateRange, period)
+    selectedSection == null ? previousPeriodRange(dateRange, period) : undefined
   );
 }
 
