@@ -78,53 +78,53 @@ therefore not personas; their questions are carried by a reach persona in that f
 
 #### EXEC · an executive or portfolio leader
 
-**Who:** a manager whose subtree is the whole organization — the product tells an executive from a
-manager only by how much of the organization reports to them, never by a title
-**Mode:** org_chart
-**Lands on:** the organization roll-up
-**Asks:** "Did it get better, or did we just get busier?"
-**Sees:** the whole organization; anyone by name where person-level access is granted
-**May compare:** functions, teams and people with one another
+- **Who:** a manager whose subtree is the whole organization — the product tells an executive from a
+  manager only by how much of the organization reports to them, never by a title
+- **Mode:** org_chart
+- **Lands on:** the organization roll-up
+- **Asks:** "Did it get better, or did we just get busier?"
+- **Sees:** the whole organization; anyone by name where person-level access is granted
+- **May compare:** functions, teams and people with one another
 
 #### LEAD · a functional leader or team manager
 
-**Who:** a manager whose subtree is smaller than the organization
-**Mode:** org_chart
-**Lands on:** their team's roll-up
-**Asks:** "Where exactly is work blocked, and what can I do?"
-**Sees:** their own team at any depth, the people in it by name, and no further
-**May compare:** groups inside their own team, and their own reports with one another
+- **Who:** a manager whose subtree is smaller than the organization
+- **Mode:** org_chart
+- **Lands on:** their team's roll-up
+- **Asks:** "Where exactly is work blocked, and what can I do?"
+- **Sees:** their own team at any depth, the people in it by name, and no further
+- **May compare:** groups inside their own team, and their own reports with one another
 
 #### IC · an individual contributor in a hierarchy
 
-**Who:** nobody reports to them
-**Mode:** org_chart
-**Lands on:** their own page
-**Asks:** "How does my own work look, and what is in my way?"
-**Sees:** themselves, with the department or cohort as a median; no cost figures, and no conclusions
-or advice
-**May compare:** nothing — they are placed against a department or cohort median, never against a
-named colleague
+- **Who:** nobody reports to them
+- **Mode:** org_chart
+- **Lands on:** their own page
+- **Asks:** "How does my own work look, and what is in my way?"
+- **Sees:** themselves, with the department or cohort as a median; no cost figures, and no conclusions
+  or advice
+- **May compare:** nothing — they are placed against a department or cohort median, never against a
+  named colleague
 
 #### PEER · a member of a flat organization
 
-**Who:** any signed-in person when the visibility policy is `flat`
-**Mode:** flat
-**Lands on:** the organization roll-up, the same landing as a manager
-**Asks:** "How are we doing, and where do I stand among my peers?"
-**Sees:** the whole organization, everyone by name, themselves included
-**May compare:** anyone with anyone; the organization is the only cohort
+- **Who:** any signed-in person when the visibility policy is `flat`
+- **Mode:** flat
+- **Lands on:** the organization roll-up, the same landing as a manager
+- **Asks:** "How are we doing, and where do I stand among my peers?"
+- **Sees:** the whole organization, everyone by name, themselves included
+- **May compare:** anyone with anyone; the organization is the only cohort
 
 #### ADMIN · a data steward or administrator
 
-**Who:** holds the admin role, whatever their reach. Two jobs in one persona — the *steward* decides
-who is who and who may see what; the *operator* installs, upgrades, migrates and wires sources. At
-most customers these are different people; in the product they are one role
-**Mode:** both
-**Lands on:** Manage
-**Asks:** "Which of these numbers can be trusted, and who may see them?"
-**Sees:** settings, not people's data — the role adds no visibility of its own
-**May compare:** nothing — the role sees settings, not people
+- **Who:** holds the admin role, whatever their reach. Two jobs in one persona — the *steward* decides
+  who is who and who may see what; the *operator* installs, upgrades, migrates and wires sources. At
+  most customers these are different people; in the product they are one role
+- **Mode:** both
+- **Lands on:** Manage
+- **Asks:** "Which of these numbers can be trusted, and who may see them?"
+- **Sees:** settings, not people's data — the role adds no visibility of its own
+- **May compare:** nothing — the role sees settings, not people
 
 ---
 
