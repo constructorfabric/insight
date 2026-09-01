@@ -33,6 +33,7 @@ pub mod seed_repo;
 pub mod sql_named;
 pub mod subchart_repo;
 pub mod visibility_repo;
+mod visible_set_sql;
 
 #[cfg(test)]
 mod binding_reads_live_tests;

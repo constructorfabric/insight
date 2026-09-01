@@ -111,7 +111,7 @@ pub async fn list_people(
     }
 
     let terms = search_terms(params.q.as_deref())?;
-    let (named, values) = partition_terms(&terms);
+    let (named, values) = listing::partition_person_terms(&terms);
     let limit = listing::clamp_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT);
     let query = cursor_query(visibility, caller, &terms.join(" "));
     let resume = resume_from(params.cursor.as_deref(), tenant, &query)?;
@@ -157,18 +157,6 @@ pub async fn list_people(
 
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {
     listing::search_terms(q.unwrap_or_default()).map_err(|message| invalid("q", &message))
-}
-
-fn partition_terms(terms: &[String]) -> (Vec<Uuid>, Vec<String>) {
-    let mut named = Vec::new();
-    let mut values = Vec::new();
-    for term in terms {
-        match Uuid::parse_str(term) {
-            Ok(person_id) => named.push(person_id),
-            Err(_) => values.push(term.clone()),
-        }
-    }
-    (named, values)
 }
 
 fn cursor_query(visibility: PeopleVisibility, caller: Uuid, query: &str) -> String {

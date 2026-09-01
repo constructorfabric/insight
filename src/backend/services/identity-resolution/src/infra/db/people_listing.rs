@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::config::VisibilityPolicy;
 
+use super::visible_set_sql::CURRENT_VISIBLE_SET_CTE;
+
 const ORDER_KEY_CHARS: usize = 255;
 
 const _: () = assert!(ORDER_KEY_CHARS * 4 < 1024);
@@ -87,40 +89,6 @@ pub async fn list_persons(
     rows_from(db.query_all_raw(statement).await?)
 }
 
-const VISIBLE_SET_CTE: &str = r"
-        visible_set (person_id) AS (
-            SELECT ?
-            UNION
-            SELECT viewed_person_id
-            FROM visibility
-            WHERE insight_tenant_id = ?
-              AND viewer_person_id  = ?
-              AND viewed_person_id  IS NOT NULL
-              AND valid_from <= UTC_TIMESTAMP(6)
-              AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
-            UNION
-            SELECT DISTINCT person_id
-            FROM persons
-            WHERE insight_tenant_id = ?
-              AND (? OR EXISTS (
-                  SELECT 1 FROM visibility
-                  WHERE insight_tenant_id = ?
-                    AND viewer_person_id  = ?
-                    AND viewed_person_id  IS NULL
-                    AND valid_from <= UTC_TIMESTAMP(6)
-                    AND (valid_to IS NULL OR valid_to > UTC_TIMESTAMP(6))
-              ))
-            UNION
-            SELECT oc.child_person_id
-            FROM visible_set vs
-            JOIN org_chart oc
-              ON  oc.parent_person_id    = vs.person_id
-              AND oc.insight_tenant_id   = ?
-              AND oc.insight_source_type = ?
-              AND oc.valid_from <= UTC_TIMESTAMP(6)
-              AND (oc.valid_to IS NULL OR oc.valid_to > UTC_TIMESTAMP(6))
-        )";
-
 struct VisibleScopeSql {
     recursive: &'static str,
     cte: String,
@@ -143,7 +111,7 @@ fn visible_scope(visible_to: Option<VisibleTo<'_>>, tenant_id: Uuid) -> VisibleS
 
     VisibleScopeSql {
         recursive: "RECURSIVE ",
-        cte: format!(",\n{VISIBLE_SET_CTE}"),
+        cte: format!(",\n{CURRENT_VISIBLE_SET_CTE}"),
         filter: " AND EXISTS (SELECT 1 FROM visible_set vs WHERE vs.person_id = p.person_id)",
         values: vec![
             viewer(),
