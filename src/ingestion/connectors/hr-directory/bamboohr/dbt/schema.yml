@@ -12,11 +12,32 @@ models:
   - name: bamboohr__identity_inputs
     description: "Identity-resolution evidence, canonical person profile, and active roster membership emitted from BambooHR employee history."
     columns:
+      - name: unique_key
+        description: "Stable identity-observation event key."
+      - name: insight_tenant_id
+        description: "Insight tenant receiving the observation."
+      - name: insight_source_id
+        description: "Connector instance that produced the observation."
+      - name: insight_source_type
+        description: "Account provider used for identity binding."
+      - name: source_account_id
+        description: "Provider-native account identifier."
       - name: value_type
+        description: "Identity, roster-membership, or canonical-profile claim type."
         tests:
           - accepted_values:
               arguments:
-                values: ['id', 'email', 'employee_id', 'display_name', 'first_name', 'last_name', 'department', 'division', 'job_title', 'status', 'parent_email', 'parent_id', 'roster_membership', 'person_email', 'person_display_name', 'person_first_name', 'person_last_name']
+                values: ['id', 'email', 'employee_id', 'display_name', 'first_name', 'last_name', 'department', 'division', 'job_title', 'status', 'parent_email', 'parent_id', 'roster_membership', 'person_email', 'person_employee_id', 'person_display_name', 'person_first_name', 'person_last_name', 'person_department', 'person_division', 'person_job_title', 'person_status']
+      - name: value
+        description: "Claim value, or an empty string for a deletion."
+      - name: value_field_name
+        description: "Source field that produced the claim."
+      - name: operation_type
+        description: "Whether the claim is added or removed."
+      - name: _synced_at
+        description: "Timestamp assigned to the identity observation."
+      - name: _version
+        description: "ReplacingMergeTree version derived from the observation timestamp."
 
   - name: bamboohr__to_class_people
     description: >

@@ -15,7 +15,7 @@ use super::error::PersonSearchError;
 use super::gate::{require_admin, require_caller};
 use super::listing::{self, CursorRejected};
 use crate::infra::db::people_listing::{
-    self, After, ListQuery, PersonListRow, Restrict, VisibleTo,
+    self, After, ListQuery, PeopleListingError, PersonListRow, Restrict, VisibleTo,
 };
 
 const DEFAULT_LIMIT: u64 = 50;
@@ -188,7 +188,7 @@ fn invalid(field: &str, message: &str) -> CanonicalError {
         .create()
 }
 
-fn read_error(error: &anyhow::Error) -> CanonicalError {
+fn read_error(error: &PeopleListingError) -> CanonicalError {
     tracing::error!(%error, "people listing failed");
     CanonicalError::internal("failed to list people").create()
 }

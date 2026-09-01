@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use sea_orm::prelude::DateTime;
 use uuid::Uuid;
 
-use super::seed::{IdentityInputRow, PersonAssignment, SeedProfile};
+use super::seed::{IdentityInputRow, PersonAssignment, SeedProfile, route_value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonProjection {
@@ -111,6 +111,11 @@ fn profile_value(profile: &SeedProfile, value_type: &str) -> Option<String> {
         .observations
         .iter()
         .filter(|observation| observation.value_type == person_value_type)
+        .filter(|observation| {
+            let (value_id, value_full_text, value) =
+                route_value(&observation.value_type, &observation.value);
+            value_id.is_some() || value_full_text.is_some() || value.is_some()
+        })
         .max_by_key(|observation| observation.synced_at)
         .map(|observation| observation.value.clone())
         .filter(|value| !value.trim().is_empty())
@@ -225,6 +230,48 @@ mod tests {
             panic!("active membership should upsert a person");
         };
         assert_eq!(projected.display_name.as_deref(), Some("Roster Name"));
+    }
+
+    #[test]
+    fn typed_profile_values_accept_their_column_limits() {
+        for (value_type, limit) in [
+            ("email", 320),
+            ("username", 320),
+            ("display_name", 512),
+            ("first_name", 512),
+            ("last_name", 512),
+        ] {
+            let mut roster = profile("member", true, "value");
+            roster.observations[0].value_type = format!("person_{value_type}");
+            roster.observations[0].value = "x".repeat(limit);
+
+            assert_eq!(
+                profile_value(&roster, value_type),
+                Some("x".repeat(limit)),
+                "should accept {value_type} at its column limit"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_profile_values_reject_values_over_their_column_limits() {
+        for (value_type, limit) in [
+            ("email", 320),
+            ("username", 320),
+            ("display_name", 512),
+            ("first_name", 512),
+            ("last_name", 512),
+        ] {
+            let mut roster = profile("member", true, "value");
+            roster.observations[0].value_type = format!("person_{value_type}");
+            roster.observations[0].value = "x".repeat(limit + 1);
+
+            assert_eq!(
+                profile_value(&roster, value_type),
+                None,
+                "should reject {value_type} above its column limit"
+            );
+        }
     }
 
     #[test]

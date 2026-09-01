@@ -286,20 +286,104 @@ id_deletes AS (
     FROM deactivation_events d
 )
 
-SELECT * FROM upserts
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM upserts
 UNION ALL
-SELECT * FROM deletes
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM deletes
 UNION ALL
-SELECT * FROM id_upserts
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM id_upserts
 UNION ALL
-SELECT * FROM id_deletes
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM id_deletes
 {% if roster_activation_condition is not none %}
 UNION ALL
-SELECT * FROM roster_membership_upserts
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM roster_membership_upserts
 UNION ALL
-SELECT * FROM roster_membership_deletes
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM roster_membership_deletes
 UNION ALL
-SELECT * FROM person_profile_upserts
+SELECT
+    unique_key,
+    insight_tenant_id,
+    insight_source_id,
+    insight_source_type,
+    source_account_id,
+    value_type,
+    value,
+    value_field_name,
+    operation_type,
+    _synced_at,
+    _version
+FROM person_profile_upserts
 {% endif %}
 
 {% endmacro %}

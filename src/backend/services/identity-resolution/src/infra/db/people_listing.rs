@@ -9,6 +9,27 @@ const ORDER_KEY_CHARS: usize = 255;
 
 const _: () = assert!(ORDER_KEY_CHARS * 4 < 1024);
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PeopleListingError {
+    #[error("people listing query failed")]
+    Database(#[from] sea_orm::DbErr),
+    #[error("people listing row decoding failed: {0}")]
+    RowDecode(String),
+    #[error("people listing row contains an invalid person id")]
+    InvalidPersonId(#[from] uuid::Error),
+    #[error("people listing row contains invalid attributes")]
+    InvalidAttributes(#[from] serde_json::Error),
+}
+
+impl From<sea_orm::TryGetError> for PeopleListingError {
+    fn from(error: sea_orm::TryGetError) -> Self {
+        match error {
+            sea_orm::TryGetError::DbErr(error) => Self::Database(error),
+            sea_orm::TryGetError::Null(column) => Self::RowDecode(column),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Restrict<'a> {
     pub visible_to: Option<VisibleTo<'a>>,
@@ -59,7 +80,7 @@ pub async fn list_persons(
     db: &DatabaseConnection,
     tenant_id: Uuid,
     query: ListQuery<'_>,
-) -> anyhow::Result<Vec<PersonListRow>> {
+) -> Result<Vec<PersonListRow>, PeopleListingError> {
     let (sql, values) = build_query(tenant_id, query);
     let statement = Statement::from_sql_and_values(DbBackend::MySql, &sql, values);
 
@@ -178,7 +199,8 @@ fn build_query(tenant_id: Uuid, query: ListQuery<'_>) -> (String, Vec<sea_orm::V
               AND parent_person_id IS NOT NULL
         ),
         presented_people AS (
-            SELECT p.person_id,
+            SELECT p.insight_tenant_id,
+                   p.person_id,
                    p.email,
                    p.username,
                    p.attributes,
@@ -305,7 +327,7 @@ fn like_pattern(term: &str) -> String {
     format!("%{escaped}%")
 }
 
-fn rows_from(rows: Vec<QueryResult>) -> anyhow::Result<Vec<PersonListRow>> {
+fn rows_from(rows: Vec<QueryResult>) -> Result<Vec<PersonListRow>, PeopleListingError> {
     rows.into_iter()
         .map(|row| {
             Ok(PersonListRow {
@@ -354,6 +376,7 @@ mod tests {
         let (sql, values) = query(&[], &[], Restrict::UNRESTRICTED, None);
 
         assert!(sql.contains("valid_to IS NULL"));
+        assert!(sql.contains("SELECT p.insight_tenant_id,\n                   p.person_id"));
         assert!(sql.contains("manager_person_id"));
         assert!(sql.contains("ROW_NUMBER() OVER"));
         assert!(sql.contains("AND oc.rn = 1"));
