@@ -71,10 +71,10 @@ service's own design records that an administrator's visible set is computed wit
 
 **Function is the second axis.** Reach says how far a person may see; function says what they are
 looking at. The vision lists nine functions — Engineering / R&D, Product Management, Design / UX,
-DevOps / SRE,
-QA, Support, Sales, Marketing, Finance / FinOps — and a function is applied per user scenario, never
-per persona: a line reads `LEAD · Sales` or `EXEC · Finance`. Finance and product management are
-therefore not personas; their questions are carried by a reach persona in that function.
+DevOps / SRE, QA, Support, Sales, Marketing, Finance / FinOps — and a function is applied per user
+scenario, never per persona: a question is asked by *a sales lead*, or by *EXEC, from finance*.
+Finance and product management are therefore not personas; their questions are carried by a reach
+persona in that function.
 
 #### EXEC · an executive or portfolio leader
 
@@ -143,7 +143,7 @@ is worked out the same way for every persona and every scope.
 - Where is work stalling? — LEAD
 - What falls apart if a specific person drops out? — LEAD, EXEC
 - Where are we improving, and where just getting busier? — EXEC
-- How much does AI cost, who spends it, in what form? — EXEC · Finance
+- How much does AI cost, who spends it, in what form? — EXEC, from finance
 - How much goes into coordination instead of work? — LEAD
 - How are we doing, and where do I stand among my peers? — PEER
 
@@ -168,12 +168,12 @@ what to commit to, from the organization's own delivery history.
 **User scenarios in this class**
 - Did throughput rise where AI was adopted, and what did it cost? — LEAD, EXEC
 - Is speed limited by writing code or by reviewing it? — LEAD
-- Speed went up — did quality hold? — LEAD · Product
-- Is this ticket spike caused by what we shipped? — LEAD · Support
-- Activity rose — did the deals move? — LEAD, EXEC · Sales
-- Development got cheaper — did the cost move somewhere else? — EXEC · Finance
-- Is it feasible, what will it cost, how long, what risks? — EXEC, LEAD · Product
-- Where is the effect larger for less effort? — EXEC · Product
+- Speed went up — did quality hold? — an engineering or product lead
+- Is this ticket spike caused by what we shipped? — a support or product lead
+- Activity rose — did the deals move? — a sales lead, or EXEC
+- Development got cheaper — did the cost move somewhere else? — EXEC, from finance
+- Is it feasible, what will it cost, how long, what risks? — a product lead, or EXEC
+- Where is the effect larger for less effort? — EXEC, or a product lead
 
 | Who | Does here | Must never meet |
 |---|---|---|
