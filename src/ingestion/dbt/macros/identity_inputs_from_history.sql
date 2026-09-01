@@ -3,7 +3,8 @@
     source_type,
     identity_fields,
     deactivation_condition=none,
-    roster_membership=none
+    roster_membership=none,
+    person_profile_fields=none
 ) %}
 {% if roster_membership is none %}
     {% set roster_membership_kind = 'none' %}
@@ -32,14 +33,30 @@
         {{ exceptions.raise_compiler_error("roster_membership.kind must be 'implicit_active' or 'explicit_state'") }}
     {% endif %}
 {% endif %}
+{% if roster_membership_kind == 'none' %}
+    {% if person_profile_fields is not none %}
+        {{ exceptions.raise_compiler_error("person_profile_fields requires roster_membership") }}
+    {% endif %}
+    {% set person_profile_fields = [] %}
+{% elif person_profile_fields is none or person_profile_fields is string or person_profile_fields is mapping or not person_profile_fields %}
+    {{ exceptions.raise_compiler_error("roster emitters must declare person_profile_fields as a list of identity value types") }}
+{% else %}
+    {% set identity_value_types = identity_fields | map(attribute='value_type') | list %}
+    {% for profile_field in person_profile_fields %}
+        {% if profile_field is not string or profile_field not in identity_value_types or profile_field in ['parent_email', 'parent_id', 'parent_person_id'] %}
+            {{ exceptions.raise_compiler_error("person_profile_fields entries must name declared identity value types") }}
+        {% endif %}
+    {% endfor %}
+{% endif %}
 {#
   Generates identity_inputs rows from a fields_history model.
   Produces UPSERT rows for identity-relevant field changes, and DELETE rows
   for all identity fields when a deactivation condition is met.
 
-  Roster emitters also produce `roster_membership` and source-qualified
-  `person_*` presentation claims. Those claims keep activity observations on
-  the same source account from becoming the canonical person profile.
+  Roster emitters also produce `roster_membership` and explicitly allowlisted,
+  source-qualified `person_*` profile claims. Those claims keep activity
+  observations on the same source account from becoming the canonical person
+  profile without exposing every identity field through the people API.
 
   In addition, every activity in history yields a `value_type='id'`
   observation carrying `value = entity_id` (= source_account_id); this
@@ -70,6 +87,9 @@
                            absence is not interpreted as departure.
                          - explicit_state: active_when and inactive_when SQL
                            expressions define membership lifecycle events.
+    person_profile_fields: identity value types the roster adapter allows into
+                           the canonical people profile. Required when
+                           roster_membership is configured; forbidden otherwise.
 
   Output columns (match identity_inputs schema):
     unique_key, insight_tenant_id, insight_source_id, insight_source_type,
@@ -243,7 +263,11 @@ person_profile_upserts AS (
         _synced_at,
         _version
     FROM upserts
-    WHERE value_type NOT IN ('parent_email', 'parent_id', 'parent_person_id')
+    WHERE value_type IN (
+        {% for profile_field in person_profile_fields %}
+        '{{ profile_field }}'{{ ',' if not loop.last }}
+        {% endfor %}
+    )
 ),
 {% endif %}
 

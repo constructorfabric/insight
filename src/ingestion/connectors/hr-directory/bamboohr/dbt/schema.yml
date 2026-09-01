@@ -27,7 +27,7 @@ models:
         tests:
           - accepted_values:
               arguments:
-                values: ['id', 'email', 'employee_id', 'display_name', 'first_name', 'last_name', 'department', 'division', 'job_title', 'status', 'parent_email', 'parent_id', 'roster_membership', 'person_email', 'person_employee_id', 'person_display_name', 'person_first_name', 'person_last_name', 'person_department', 'person_division', 'person_job_title', 'person_status']
+                values: ['id', 'email', 'employee_id', 'display_name', 'first_name', 'last_name', 'department', 'division', 'job_title', 'status', 'parent_email', 'parent_id', 'roster_membership', 'person_email', 'person_display_name', 'person_first_name', 'person_last_name', 'person_department', 'person_division', 'person_job_title', 'person_status']
       - name: value
         description: "Claim value, or an empty string for a deletion."
       - name: value_field_name

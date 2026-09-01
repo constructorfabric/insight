@@ -26,5 +26,9 @@
         'kind': 'explicit_state',
         'active_when': "field_name = 'status' AND new_value = 'Active'",
         'inactive_when': "field_name = 'status' AND new_value IN ('Inactive', 'Terminated')",
-    }
+    },
+    person_profile_fields=[
+        'email', 'display_name', 'first_name', 'last_name',
+        'department', 'division', 'job_title', 'status'
+    ]
 ) }}

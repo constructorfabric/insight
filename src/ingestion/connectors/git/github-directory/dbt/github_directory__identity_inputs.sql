@@ -31,5 +31,6 @@
         {'field': 'login', 'value_type': 'username',     'value_field_name': 'bronze_github_directory.org_members.login'},
         {'field': 'name',  'value_type': 'display_name', 'value_field_name': 'bronze_github_directory.org_members.name'},
     ],
-    roster_membership={'kind': 'implicit_active'}
+    roster_membership={'kind': 'implicit_active'},
+    person_profile_fields=['email', 'username', 'display_name']
 ) }}
