@@ -21,7 +21,7 @@
         {'field': 'supervisorEmail', 'value_type': 'parent_email',  'value_field_name': 'bronze_bamboohr.employees.supervisorEmail'},
         {'field': 'supervisorEId',   'value_type': 'parent_id',     'value_field_name': 'bronze_bamboohr.employees.supervisorEId'},
     ],
-    account_deactivation_condition="field_name = 'status' AND new_value IN ('Inactive', 'Terminated')",
+    deactivation_condition="field_name = 'status' AND new_value IN ('Inactive', 'Terminated')",
     roster_membership={
         'kind': 'explicit_state',
         'active_when': "field_name = 'status' AND new_value = 'Active'",

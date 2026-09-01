@@ -12,5 +12,5 @@
         {'field': 'email',     'value_type': 'email',        'value_field_name': 'bronze_zulip_proxy.users.email'},
         {'field': 'full_name', 'value_type': 'display_name', 'value_field_name': 'bronze_zulip_proxy.users.full_name'},
     ],
-    account_deactivation_condition="field_name = 'is_active' AND lower(new_value) = 'false'"
+    deactivation_condition="field_name = 'is_active' AND lower(new_value) = 'false'"
 ) }}

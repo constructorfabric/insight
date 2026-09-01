@@ -13,5 +13,5 @@
         {'field': 'employee_unique_id', 'value_type': 'employee_id',  'value_field_name': 'bronze_zoom.users.employee_unique_id'},
         {'field': 'display_name',       'value_type': 'display_name', 'value_field_name': 'bronze_zoom.users.display_name'},
     ],
-    account_deactivation_condition="field_name = 'status' AND new_value = 'inactive'"
+    deactivation_condition="field_name = 'status' AND new_value = 'inactive'"
 ) }}

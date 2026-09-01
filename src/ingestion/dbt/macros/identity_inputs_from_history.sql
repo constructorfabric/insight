@@ -2,7 +2,7 @@
     fields_history_ref,
     source_type,
     identity_fields,
-    account_deactivation_condition=none,
+    deactivation_condition=none,
     roster_membership=none
 ) %}
 {% if roster_membership is none %}
@@ -60,9 +60,10 @@
                                 whatever is listed here — do not repeat it.
                               - value_field_name: fully-qualified field path
                                 (e.g., 'bronze_bamboohr.employees.workEmail')
-    account_deactivation_condition: optional SQL expression evaluated against a
-                                    fields_history row. A matching row deletes
-                                    that source account's identity inputs.
+    deactivation_condition: optional SQL expression evaluated against a
+                            fields_history row. A matching row deletes that
+                            source account's identity inputs; it does not change
+                            roster membership.
     roster_membership: optional mapping that enables roster and canonical
                        profile claims. Supported kinds:
                          - implicit_active: every observed account is active;
@@ -149,10 +150,10 @@ account_deactivation_events AS (
         entity_id,
         updated_at
     FROM history
-    {% if account_deactivation_condition is none %}
+    {% if deactivation_condition is none %}
     WHERE false
     {% else %}
-    WHERE ({{ account_deactivation_condition }})
+    WHERE ({{ deactivation_condition }})
     {% endif %}
       AND entity_id IS NOT NULL AND entity_id != ''
 ),
