@@ -6,7 +6,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 
 - A completed Insight install per the deployment runbook: [HELM_DEPLOY.md](./HELM_DEPLOY.md).
 - The `insight-reconcile-loop` CronWorkflow present in the `insight` namespace (installed as part of that runbook).
-- The `airbyte-auth-secrets` Secret mirrored into the `insight` namespace — done in Step 3 of the deployment runbook.
+- Airbyte reachable and `airbyte.namespace` set per Step 1 of the runbook. The reconcile loop reads Airbyte's `airbyte-auth-secrets` from Airbyte's own namespace at run time (the chart renders the Role/RoleBinding for it) — do **not** copy that Secret into `insight`.
 
 ## Contents
 
@@ -15,7 +15,7 @@ Connectors pull data from your tools — Jira issues, Slack messages, GitHub pul
 - [Prerequisites](#prerequisites)
 - [Contents](#contents)
 - [Anatomy of a connector Secret](#anatomy-of-a-connector-secret)
-- [The 19 available connectors](#the-19-available-connectors)
+- [The available connectors](#the-available-connectors)
 - [Example Secret for every connector](#example-secret-for-every-connector)
   - [AI & coding assistants](#ai--coding-assistants)
   - [Source control & CI](#source-control--ci)
@@ -52,16 +52,16 @@ stringData:
   jira_api_token:    "ATATT-CHANGE_ME"
 ```
 
-## The 19 available connectors
+## The available connectors
 
-Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
+The canonical list is the descriptors in `src/ingestion/connectors/*/*/descriptor.yaml`; this document carries example Secrets for the common ones. Replace `CHANGE_ME` (and any other placeholder) values in whichever connector files you need, under `connectors/`:
 
 `jira`, `slack`, `github`, `gitlab`, `m365`, `zoom`, `confluence`, `zendesk`, `bamboohr`, `ms-entra`, `outline`, `hubspot`, `cursor`, `chatgpt-team`, `claude-team`, `claude-enterprise`, `bitbucket-cloud`, `zulip-proxy`, `github-directory`.
 
 Apply all of them at once, or one at a time:
 
 ```sh
-kubectl -n insight apply -f connectors/      # all 19 connectors at once
+kubectl -n insight apply -f connectors/      # all connectors at once
 # or one at a time:
 kubectl -n insight apply -f connectors/jira.yaml
 ```
@@ -389,4 +389,4 @@ stringData:
 
 | Problem | What to check |
 |---------|-----------------|
-| Connectors are not syncing | Confirm `airbyte-auth-secrets` was mirrored into the `insight` namespace (Step 3 of the deployment runbook, [HELM_DEPLOY.md](./HELM_DEPLOY.md)). The reconcile loop runs as an Argo `CronWorkflow` named `insight-reconcile-loop` — **not** the analytics pod — so inspect the Workflow pods it spawns: `kubectl -n insight get pods -l workflows.argoproj.io/cron-workflow=insight-reconcile-loop`, then `kubectl -n insight logs <pod>` (or `argo logs @latest -n insight` if the Argo CLI is available) |
+| Connectors are not syncing | Confirm `airbyte.namespace` points at the namespace holding Airbyte's `airbyte-auth-secrets` and that the chart's Role/RoleBinding exists there (Step 1/3 of the deployment runbook, [HELM_DEPLOY.md](./HELM_DEPLOY.md)). The reconcile loop runs as an Argo `CronWorkflow` named `insight-reconcile-loop` — **not** the analytics pod — so inspect the Workflow pods it spawns: `kubectl -n insight get pods -l workflows.argoproj.io/cron-workflow=insight-reconcile-loop`, then `kubectl -n insight logs <pod>` (or `argo logs @latest -n insight` if the Argo CLI is available) |
