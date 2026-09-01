@@ -56,8 +56,15 @@ pub(crate) struct GearDto {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Placement {
-    Slot { slot: usize },
-    Overdue { days: i64 },
+    Slot {
+        slot: usize,
+    },
+    /// Delivered: the work is done, so its milestone is history rather than a
+    /// deadline it missed.
+    Delivered,
+    Overdue {
+        days: i64,
+    },
     Future,
     Backlog,
     Unrecognized,
@@ -243,6 +250,11 @@ fn issue_url(gear: &Gear, links: &ExternalSourceRegistry) -> Option<String> {
 }
 
 fn placement_of(gear: &Gear, window_start: YearMonth, today: NaiveDate) -> Placement {
+    // A finished gear has no deadline left to miss, whatever month it names.
+    if gear.is_delivered() {
+        return Placement::Delivered;
+    }
+
     let Some(milestone) = gear.milestone.as_ref() else {
         return Placement::None;
     };
@@ -391,6 +403,24 @@ mod tests {
             response.gears[0].placement,
             Placement::Overdue { days: 62 }
         ));
+    }
+
+    #[test]
+    fn a_finished_gear_is_never_overdue() {
+        // Its milestone has long passed, but the work is done: nothing is late.
+        let response = build_for_test(&[gear(1, "30.05", "Done")], today());
+
+        assert!(matches!(response.gears[0].placement, Placement::Delivered));
+    }
+
+    #[test]
+    fn a_closed_gear_counts_as_delivered_whatever_its_ladder_says() {
+        let mut source = gear_row(1, "30.05", "40%");
+        source.closed = true;
+
+        let response = build_for_test(&[Gear::from_row(source)], today());
+
+        assert!(matches!(response.gears[0].placement, Placement::Delivered));
     }
 
     #[test]

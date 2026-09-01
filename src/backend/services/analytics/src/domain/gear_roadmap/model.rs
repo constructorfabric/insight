@@ -86,6 +86,12 @@ impl Gear {
         }
     }
 
+    /// Done on the board, or closed on the tracker — either one settles it, and
+    /// the two disagree in practice.
+    pub(crate) fn is_delivered(&self) -> bool {
+        self.closed || self.status == Some(LadderStep::Complete)
+    }
+
     pub(crate) fn remaining_man_days(&self) -> Option<f64> {
         let effort = self.effort_man_days?;
         let done = self

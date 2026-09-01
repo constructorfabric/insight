@@ -4,6 +4,7 @@ export const UNGROUPED = "Ungrouped";
 
 export interface RoadmapRow {
   subsystem: string;
+  delivered: Gear[];
   overdue: Gear[];
   slots: Gear[][];
   later: Gear[];
@@ -20,7 +21,9 @@ export function buildRoadmap(
     const row = rows.get(key) ?? emptyRow(key, windowMonths);
     rows.set(key, row);
 
-    if (gear.placement.kind === "overdue") {
+    if (gear.placement.kind === "delivered") {
+      row.delivered.push(gear);
+    } else if (gear.placement.kind === "overdue") {
       row.overdue.push(gear);
     } else if (gear.placement.kind === "slot") {
       row.slots[gear.placement.slot]?.push(gear);
@@ -35,6 +38,7 @@ export function buildRoadmap(
 function emptyRow(subsystem: string, windowMonths: number): RoadmapRow {
   return {
     subsystem,
+    delivered: [],
     overdue: [],
     slots: Array.from({ length: windowMonths }, () => []),
     later: [],

@@ -68,3 +68,16 @@ describe("buildRoadmap", () => {
     ]);
   });
 });
+
+describe("delivered gears", () => {
+  it("keeps finished work out of the overdue column", () => {
+    const rows = buildRoadmap(
+      [gear({ placement: { kind: "delivered" } })],
+      WINDOW_MONTHS,
+    );
+
+    expect(rows[0].overdue).toHaveLength(0);
+    expect(rows[0].delivered).toHaveLength(1);
+    expect(rows[0].later).toHaveLength(0);
+  });
+});

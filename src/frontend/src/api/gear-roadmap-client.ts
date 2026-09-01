@@ -14,6 +14,8 @@ const BASE =
  */
 export type GearPlacement =
   | { kind: "slot"; slot: number }
+  /** Done: its milestone is history, not a deadline it missed. */
+  | { kind: "delivered" }
   | { kind: "overdue"; days: number }
   | { kind: "future" }
   | { kind: "backlog" }

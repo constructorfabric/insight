@@ -42,6 +42,9 @@ export function RoadmapGrid({ roadmap }: { roadmap: GearRoadmap }) {
               <th className="sticky left-0 z-10 bg-muted/40 px-3 py-2 text-start text-xs font-medium text-muted-foreground">
                 {t("gear_roadmap.items.subsystem")}
               </th>
+              <th className="min-w-52 border-s px-3 py-2 text-start text-xs font-medium text-muted-foreground">
+                {t("gear_roadmap.grid.delivered")}
+              </th>
               <th className="min-w-56 border-s px-3 py-2 text-start text-xs font-medium text-destructive">
                 {t("gear_roadmap.grid.overdue")}
               </th>
@@ -67,6 +70,7 @@ export function RoadmapGrid({ roadmap }: { roadmap: GearRoadmap }) {
                 >
                   {row.subsystem}
                 </th>
+                <Cell gears={row.delivered} delivered />
                 <Cell gears={row.overdue} overdue />
                 {row.slots.map((slot, index) => (
                   <Cell key={months[index] ?? index} gears={slot} />
@@ -81,7 +85,15 @@ export function RoadmapGrid({ roadmap }: { roadmap: GearRoadmap }) {
   );
 }
 
-function Cell({ gears, overdue }: { gears: Gear[]; overdue?: boolean }) {
+function Cell({
+  gears,
+  overdue,
+  delivered,
+}: {
+  gears: Gear[];
+  overdue?: boolean;
+  delivered?: boolean;
+}) {
   return (
     <td className={`border-s px-2 py-2 ${overdue ? "bg-destructive/5" : ""}`}>
       {gears.length === 0 ? (
@@ -90,7 +102,7 @@ function Cell({ gears, overdue }: { gears: Gear[]; overdue?: boolean }) {
         <ul className="flex flex-col gap-1">
           {gears.map((gear) => (
             <li key={gear.number} className="flex">
-              <Chip gear={gear} overdue={overdue} />
+              <Chip gear={gear} overdue={overdue} delivered={delivered} />
             </li>
           ))}
         </ul>
@@ -99,12 +111,22 @@ function Cell({ gears, overdue }: { gears: Gear[]; overdue?: boolean }) {
   );
 }
 
-function Chip({ gear, overdue }: { gear: Gear; overdue?: boolean }) {
+function Chip({
+  gear,
+  overdue,
+  delivered,
+}: {
+  gear: Gear;
+  overdue?: boolean;
+  delivered?: boolean;
+}) {
   const shared = {
     className: `inline-flex min-w-0 items-baseline gap-1 rounded px-1.5 py-0.5 text-xs ${
       overdue
         ? "bg-destructive/10 text-destructive"
-        : subsystemTone(gear.subsystem ?? null).chip
+        : delivered
+          ? "bg-muted text-muted-foreground"
+          : subsystemTone(gear.subsystem ?? null).chip
     }`,
     title: gear.title,
   };

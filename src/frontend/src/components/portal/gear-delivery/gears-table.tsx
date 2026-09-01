@@ -199,6 +199,14 @@ function Milestone({ gear }: { gear: Gear }) {
     return <span className="text-muted-foreground">{NO_METRIC_VALUE}</span>;
   }
 
+  if (gear.placement.kind === "delivered") {
+    return (
+      <span className="text-xs tabular-nums text-muted-foreground line-through">
+        {gear.milestone}
+      </span>
+    );
+  }
+
   if (gear.placement.kind === "overdue") {
     return (
       <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive tabular-nums">

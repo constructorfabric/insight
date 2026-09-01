@@ -685,7 +685,8 @@
       "overdue": "Overdue",
       "later": "Later",
       "committed_legend": "committed",
-      "planned_legend": "planned, not committed"
+      "planned_legend": "planned, not committed",
+      "delivered": "Delivered"
     },
     "gantt": {
       "explainer": "Every person is assumed to deliver {{capacity}} man-day per calendar day. {{days}} days from {{start}}.",
