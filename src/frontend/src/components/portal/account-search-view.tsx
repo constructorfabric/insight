@@ -42,6 +42,7 @@ import { usePortalSearch } from "@/lib/portal/portal-search";
 import {
   belowAccountFloor,
   listsAnyAccount,
+  MAX_SEARCH_CHARS,
   MIN_SEARCH_CHARS,
   SEARCH_DEBOUNCE_MS,
   useAccountList,
@@ -120,6 +121,10 @@ export function AccountSearchView() {
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t("identities.accounts.placeholder")}
           aria-label={t("identities.accounts.placeholder")}
+          // The service refuses a longer needle. Without the stop the field
+          // accepts a paste it cannot search — an id, a url, a log line — and
+          // the operator gets a refusal instead of a result.
+          maxLength={MAX_SEARCH_CHARS}
           className="ps-9"
         />
         {loading ? (
