@@ -41,11 +41,52 @@ class IdentitiesView:
     def __init__(self, page: Page) -> None:
         self.page = page
 
-    def go(self, mode: str = "accounts", acct: str | None = None) -> None:
+    def go(
+        self,
+        mode: str = "accounts",
+        acct: str | None = None,
+        person: str | None = None,
+    ) -> None:
         query = f"?zone=manage&item=identities&mode={mode}"
         if acct is not None:
             query += f"&acct={quote(acct, safe='')}"
+        if person is not None:
+            query += f"&person={quote(person, safe='')}"
         self.page.goto(f"/portal{query}")
+
+    def heading(self) -> Locator:
+        return self.page.get_by_role("heading", name="Identities", exact=True)
+
+    def refusal(self) -> Locator:
+        """What a caller without the admin role gets instead of the console.
+
+        `role="alert"` on the product's side. The gate fails CLOSED while the
+        check is in flight, so a journey asserting the refusal must also
+        assert the console is absent — otherwise it would pass on a spinner.
+        """
+        return self.page.get_by_role("alert").filter(
+            has_text="Identities is an admin surface"
+        )
+
+    def rate_tile(self, label: str) -> Locator:
+        """One headline figure with its label, as one card.
+
+        The figure is the card's other text node, so the TILE is what a
+        journey reads: asserting on the label alone would pass on a card whose
+        number never arrived.
+        """
+        return self.page.get_by_text(label, exact=True).locator("xpath=..")
+
+    def person_window(self, person_id: str) -> Locator:
+        """The window one person is worked in, opened by `?person=`.
+
+        Found by the id it carries rather than by its heading: arriving by a
+        link there is no card to name them — search resolves values, not ids —
+        so the product titles the window "Unnamed person" and prints the id
+        beside it. Filtering on the id keeps this working whichever way the
+        window was reached.
+        """
+        return self.page.get_by_role("dialog").filter(has_text=person_id)
 
     # --- the account window ---------------------------------------------
     #

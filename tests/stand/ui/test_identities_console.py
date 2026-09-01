@@ -47,7 +47,9 @@ from playwright.sync_api import BrowserContext, Page, expect
 from .flows import sign_in
 from .pages.identities_view import IdentitiesView, account_key
 
-pytestmark = pytest.mark.reliability
+# No module-level vector: this module is mixed. The gate journey is `security`
+# and the rest are `reliability`, and a module default plus a per-test marker
+# would leave both on the item and break `-m` selection.
 
 
 @pytest.fixture
@@ -73,6 +75,7 @@ def _correct(session: PersonaSession, verb: str, body: dict[str, object]) -> Non
 
 
 @pytest.mark.requires_seed("admin_operator", "dev_lead", "development_ic")
+@pytest.mark.reliability
 def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
     page: Page,
     base_url: str,
@@ -151,3 +154,111 @@ def test_an_operator_reassigns_an_account_and_the_change_outlives_a_reload(
     assert account_id not in [a["account_id"] for a in owned.json()["accounts"]], (
         "the excluded scratch account still lists under the person — the stand is dirty"
     )
+
+
+@pytest.mark.requires_seed("admin_operator")
+@pytest.mark.stand_smoke
+@pytest.mark.reliability
+def test_the_console_renders_the_figures_the_service_reports(
+    page: Page,
+    base_url: str,
+    session_for: Callable[[str], PersonaSession],
+) -> None:
+    """The identity console is on screen after a deploy, with real figures.
+
+    Marked `stand_smoke`: the post-deploy gate proves a seeded persona can
+    read their org chart over HTTP, and that the shipped SPA renders the
+    product's own screens — but nothing proved the ADMIN surface renders at
+    all. A console that answers every API call and paints an empty shell
+    passes the rest of the gate.
+
+    Read-only by design. The gate runs against real deployed stands, and a
+    correction is an append-only journal row: a smoke that wrote one would
+    leave a decision behind on every deploy.
+
+    The expectation comes from the service at run time, not from the manifest
+    and not from a number written here — the point is that the figure on
+    screen is the one the service reports, which no API test can show.
+    """
+    operator = session_for("admin_operator")
+    queue = operator.client.get(identity_path("/v1/resolution/attention"))
+    assert queue.status_code == 200, f"{queue.status_code} {queue.text[:300]}"
+    observed = queue.json()["rates"]["observed"]
+    assert observed > 0, "a seeded stand reports no observed accounts — nothing to render"
+
+    sign_in(page, base_url, operator)
+
+    console = IdentitiesView(page)
+    console.go("queue")
+    expect(console.heading()).to_be_visible()
+    expect(console.rate_tile("Accounts")).to_contain_text(str(observed))
+
+
+@pytest.mark.requires_seed("dev_lead")
+@pytest.mark.security
+def test_a_pasted_console_url_refuses_a_caller_without_the_admin_role(
+    page: Page,
+    base_url: str,
+    session_for: Callable[[str], PersonaSession],
+) -> None:
+    """The nav hides the surface; the URL does not, so the screen refuses.
+
+    #2486 AC-5 in the browser. The API half is swept over all 22 admin-gated
+    operations in `tests/stand/api/identity/test_request_contracts.py`, and
+    the frontend suite has its own gate cases — but those mock the client, so
+    what they prove is that the component reacts to a mocked answer. Nothing
+    proved that a real non-admin session, on a real deployed stand, is refused
+    the screen.
+
+    Both halves are asserted. The gate fails CLOSED while the role check is in
+    flight, so the refusal alone would also be satisfied by a spinner that
+    never resolved — the console's own figures must be absent as well.
+    """
+    lead = session_for("dev_lead")
+    sign_in(page, base_url, lead)
+
+    console = IdentitiesView(page)
+    console.go("queue")
+
+    expect(console.refusal()).to_be_visible()
+    expect(page.get_by_text("Needs attention", exact=True)).not_to_be_visible()
+
+
+@pytest.mark.requires_seed("admin_operator", "dev_lead")
+@pytest.mark.reliability
+def test_a_persons_window_lists_the_accounts_the_service_gives_them(
+    page: Page,
+    base_url: str,
+    session_for: Callable[[str], PersonaSession],
+    stand_manifest: Manifest,
+) -> None:
+    """#2486 AC-3. The console's other read path, through the browser.
+
+    The accounts journey enters from an account and asks who holds it; this
+    enters from a person and asks what they hold — a different endpoint
+    (`/v1/resolution/persons/{id}/accounts`) behind a different mode, and the
+    one an operator actually starts from when the question is "this person's
+    work looks split".
+
+    Every account expected here is read from the service at run time. Opened
+    by deep link, so the window carries the person id rather than their name —
+    search resolves values, not ids, and there is no card to name them on
+    arrival.
+    """
+    operator = session_for("admin_operator")
+    person = stand_manifest.fixture("dev_lead")
+
+    owned = operator.client.get(identity_path(f"/v1/resolution/persons/{person.uuid}/accounts"))
+    assert owned.status_code == 200, f"{owned.status_code} {owned.text[:300]}"
+    accounts = [a["account_id"] for a in owned.json()["accounts"]]
+    assert accounts, f"the service gives {person.display_name} no accounts — nothing to render"
+
+    sign_in(page, base_url, operator)
+
+    console = IdentitiesView(page)
+    console.go("person", person=person.uuid)
+
+    window = console.person_window(person.uuid)
+    expect(window).to_be_visible()
+    for account_id in accounts:
+        expect(window).to_contain_text(account_id)
