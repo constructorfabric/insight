@@ -357,6 +357,9 @@ gateway:
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 500m, memory: 128Mi}
+  # nginx-prometheus-exporter sidecar; enable per-stand where it is scraped.
+  metrics:
+    enabled: false
   # The gateway's route attaches to the shared Gateway; it routes "/" internally.
   route:
     enabled: true

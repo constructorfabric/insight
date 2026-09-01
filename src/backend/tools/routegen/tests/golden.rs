@@ -93,6 +93,21 @@ fn real_ip_emitted_only_when_trusted_cidrs_configured() {
 }
 
 #[test]
+fn stub_status_is_loopback_only() {
+    let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
+    let status_server = conf
+        .split("server {")
+        .find(|s| s.contains("stub_status;"))
+        .expect("a server block serving stub_status");
+    let listens: Vec<&str> = status_server
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("listen "))
+        .collect();
+    assert_eq!(listens, ["listen 127.0.0.1:8090;"]);
+}
+
+#[test]
 fn jwks_is_not_fronted_by_the_gateway() {
     // JWKS is public and served directly by the authenticator (the key issuer),
     // never proxied through the edge.
