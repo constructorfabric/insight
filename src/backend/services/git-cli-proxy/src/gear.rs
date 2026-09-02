@@ -104,7 +104,12 @@ impl Gear for GitCliProxyGear {
         // every admission check, so the collector's callback does no I/O.
         crate::engine::metrics::register_disk_gauges(store.gauges());
 
-        let state = AppState { store, config };
+        let serves = Arc::new(tokio::sync::Semaphore::new(config.serve_concurrency));
+        let state = AppState {
+            store,
+            config,
+            serves,
+        };
         self.state
             .set(Arc::new(state))
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;

@@ -15,6 +15,7 @@
 #   APP__gears__git_cli_proxy__config__max_repo_bytes
 #   APP__gears__git_cli_proxy__config__default_max_staleness_seconds
 #   APP__gears__git_cli_proxy__config__heavy_ops_concurrency
+#   APP__gears__git_cli_proxy__config__serve_concurrency
 #   APP__gears__git_cli_proxy__config__proxy_token
 
 server:
@@ -51,6 +52,7 @@ gears:
       default_max_staleness_seconds: 0
       # Concurrency cap for heavy git operations (clone / fetch / repack).
       heavy_ops_concurrency: 0
+      serve_concurrency: 0
       # Service-to-service bearer token for /v1. Never committed.
       proxy_token: ""
       # PEM bundle for a self-hosted vendor behind a private CA. Empty = the

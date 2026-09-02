@@ -21,6 +21,9 @@ use crate::engine::url::CloneUrlPolicy;
 pub struct AppState {
     pub store: Arc<RepoStore>,
     pub config: GearConfig,
+    /// Page-serve slots. Each serve runs git children whose memory scales
+    /// with the window's blob bytes; this cap is what bounds the pod's peak.
+    pub serves: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -415,10 +418,12 @@ mod tests {
                 max_repo_bytes: 500_000,
                 default_max_staleness_seconds: 300,
                 heavy_ops_concurrency: 2,
+                serve_concurrency: 2,
                 proxy_token: "t0ken".to_owned(),
                 ca_cert_path: String::new(),
                 allow_file_repos: true,
             },
+            serves: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 

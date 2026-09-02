@@ -68,6 +68,8 @@ pub enum RejectReason {
     PreparationWait,
     /// Origin is throttling this client.
     OriginThrottled,
+    /// Every page-serve slot stayed taken for the whole bounded wait.
+    ServeSaturated,
 }
 
 impl RejectReason {
@@ -78,6 +80,7 @@ impl RejectReason {
             Self::AdmissionExhausted => "admission_exhausted",
             Self::PreparationWait => "preparation_wait",
             Self::OriginThrottled => "origin_throttled",
+            Self::ServeSaturated => "serve_saturated",
         }
     }
 }
