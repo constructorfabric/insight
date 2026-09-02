@@ -281,8 +281,9 @@ pub fn assemble_profile(
     observations: Vec<persons::Model>,
     source_ids: Vec<SourceIdRow>,
     parent: Option<ParentProjection>,
-    subordinates: Vec<PersonResponse>,
+    mut subordinates: Vec<PersonResponse>,
 ) -> ProfileResponse {
+    sort_by_label(&mut subordinates);
     let latest = latest_values(observations);
     let get = |value_type: &str| latest.get(value_type).cloned();
 
@@ -346,6 +347,36 @@ pub fn assemble_profile(
     }
 }
 
+fn sort_by_label(nodes: &mut [PersonResponse]) {
+    nodes.sort_by(|a, b| {
+        label_key(a)
+            .cmp(&label_key(b))
+            .then(a.person_id.cmp(&b.person_id))
+    });
+}
+
+// INVARIANT: this precedence is `LABEL_CTES` in `infra::db::person_listing`.
+// A person listed under one name and ordered under another pages unpredictably.
+fn label_key(person: &PersonResponse) -> (bool, String) {
+    let composed = [person.first_name.trim(), person.last_name.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let label = [
+        person.display_name.trim(),
+        composed.as_str(),
+        person.username.trim(),
+        person.email.trim(),
+    ]
+    .into_iter()
+    .find(|candidate| !candidate.is_empty())
+    .unwrap_or_default();
+
+    (label.is_empty(), label.to_lowercase())
+}
+
 /// Assemble a subordinate `PersonResponse` from its observations, parent edge,
 /// and already-hydrated child subtree. Attribute fields default to the empty
 /// string (not omitted), and the
@@ -355,8 +386,9 @@ pub fn assemble_person(
     person_id: Uuid,
     observations: Vec<persons::Model>,
     parent: Option<ParentProjection>,
-    subordinates: Vec<PersonResponse>,
+    mut subordinates: Vec<PersonResponse>,
 ) -> PersonResponse {
+    sort_by_label(&mut subordinates);
     let latest = latest_values(observations);
     let get = |value_type: &str| latest.get(value_type).cloned().unwrap_or_default();
 
@@ -876,6 +908,131 @@ mod tests {
         );
         assert_eq!(profile.subordinates.len(), 1);
         assert_eq!(profile.subordinates[0].person_id, Uuid::from_u128(30));
+        Ok(())
+    }
+
+    fn named(id: u128, value_type: &str, value: &str, t: DateTime) -> PersonResponse {
+        assemble_person(
+            Uuid::from_u128(id),
+            vec![obs(value_type, value, t)],
+            None,
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn subordinates_are_served_in_label_order() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let zed = named(31, "display_name", "Zed Alder", t);
+        let ann = named(32, "display_name", "ann brooks", t);
+
+        let profile = assemble_profile(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            vec![obs("display_name", "Root", t)],
+            vec![],
+            None,
+            vec![zed, ann],
+        );
+
+        assert_eq!(
+            profile
+                .subordinates
+                .iter()
+                .map(|s| s.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ann brooks", "Zed Alder"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn person_nodes_order_their_own_children_too() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let yan = named(41, "display_name", "Yan Cole", t);
+        let bob = named(42, "display_name", "Bob Dahl", t);
+
+        let mid = assemble_person(
+            Uuid::from_u128(40),
+            vec![obs("display_name", "Mid Manager", t)],
+            None,
+            vec![yan, bob],
+        );
+
+        assert_eq!(
+            mid.subordinates
+                .iter()
+                .map(|s| s.display_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Bob Dahl", "Yan Cole"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn label_order_follows_the_roster_listing_precedence() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let handle = named(51, "username", "octo-bot", t);
+        let address = named(52, "email", "ada@example.com", t);
+        let parts = assemble_person(
+            Uuid::from_u128(53),
+            vec![obs("first_name", "Mia", t), obs("last_name", "Fox", t)],
+            None,
+            Vec::new(),
+        );
+
+        let profile = assemble_profile(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            vec![obs("display_name", "Root", t)],
+            vec![],
+            None,
+            vec![handle, address, parts],
+        );
+
+        assert_eq!(
+            profile
+                .subordinates
+                .iter()
+                .map(|s| s.person_id)
+                .collect::<Vec<_>>(),
+            vec![
+                Uuid::from_u128(52),
+                Uuid::from_u128(53),
+                Uuid::from_u128(51)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_person_with_no_label_sorts_last_but_keeps_a_stable_place() -> anyhow::Result<()> {
+        let t: DateTime = "2026-01-01T00:00:00".parse()?;
+        let nameless_high = assemble_person(Uuid::from_u128(62), vec![], None, Vec::new());
+        let nameless_low = assemble_person(Uuid::from_u128(61), vec![], None, Vec::new());
+        let zed = named(63, "display_name", "Zed Alder", t);
+
+        let profile = assemble_profile(
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            vec![obs("display_name", "Root", t)],
+            vec![],
+            None,
+            vec![nameless_high, nameless_low, zed],
+        );
+
+        assert_eq!(
+            profile
+                .subordinates
+                .iter()
+                .map(|s| s.person_id)
+                .collect::<Vec<_>>(),
+            vec![
+                Uuid::from_u128(63),
+                Uuid::from_u128(61),
+                Uuid::from_u128(62)
+            ]
+        );
         Ok(())
     }
 
