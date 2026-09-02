@@ -79,6 +79,23 @@ describe("rosterTree", () => {
       rosterTree([rosterPerson("member", "Member", null)], "viewer"),
     ).toBeNull();
   });
+
+  it("uses the manager username when their display name is blank", () => {
+    const manager = rosterPerson("lead", "  ", "viewer");
+    manager.username = "lead-handle";
+    const tree = rosterTree(
+      [
+        rosterPerson("viewer", "Viewer", null),
+        manager,
+        rosterPerson("report", "Report", "lead"),
+      ],
+      "viewer",
+    );
+
+    expect(tree?.subordinates[0]?.subordinates[0]?.supervisor_name).toBe(
+      "lead-handle",
+    );
+  });
 });
 
 // One UUID per persona, derived from the local part so a failure names the

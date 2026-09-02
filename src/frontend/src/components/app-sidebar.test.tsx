@@ -57,7 +57,6 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
     roster: rosterData,
-    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},

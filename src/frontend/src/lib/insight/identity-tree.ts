@@ -45,7 +45,8 @@ export function rosterTree(
       job_title: person.attributes.job_title,
       status: person.attributes.status,
       parent_person_id: person.manager_person_id,
-      supervisor_name: manager?.display_name ?? manager?.username ?? null,
+      supervisor_name:
+        manager?.display_name?.trim() || manager?.username?.trim() || null,
       subordinates: reports.map((report) => build(report, nextAncestors)),
     };
   };

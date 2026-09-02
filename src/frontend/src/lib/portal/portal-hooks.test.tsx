@@ -37,7 +37,6 @@ const mocks = vi.hoisted(() => ({
   },
   roster: {
     roster: [] as import("@/api/identity-client").PeopleListItem[],
-    truncated: false,
     isPending: false,
     isError: false,
     retry: vi.fn(),

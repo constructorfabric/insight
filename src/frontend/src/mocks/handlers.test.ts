@@ -58,3 +58,16 @@ it("refuses a feedback message past the budget", async () => {
 
   expect(response.status).toBe(400);
 });
+
+it("filters the canonical people mock before paging", async () => {
+  const response = await fetch(
+    new URL("/api/identity/v1/people?q=carol", window.location.href),
+  );
+  const body = (await response.json()) as {
+    items: Array<{ display_name: string }>;
+  };
+
+  expect(body.items.map((person) => person.display_name)).toEqual([
+    "Carol Chen",
+  ]);
+});

@@ -720,25 +720,37 @@ export const handlers = [
   }),
   http.get("/api/identity/v1/people", ({ request }) => {
     const params = new URL(request.url).searchParams;
-    const items = PEOPLE.map((person) => {
-      const [firstName, ...lastName] = person.name.split(" ");
-      return {
-        person_id: person.person_id,
-        display_name: person.name,
-        first_name: firstName ?? null,
-        last_name: lastName.join(" ") || null,
-        username: null,
-        email: person.email,
-        attributes: {
-          department: person.department,
-          division: person.department,
-          job_title: person.role,
-          status: "Active",
-        },
-        manager_person_id: person.supervisor_person_id,
-      };
-    }).sort((left, right) => left.display_name.localeCompare(right.display_name));
-    return HttpResponse.json(pageOf(items, params, ""));
+    const q = params.get("q")?.trim().toLowerCase() ?? "";
+    const terms = q ? q.split(/\s+/) : [];
+    const items = PEOPLE.filter((person) =>
+      terms.every((term) =>
+        [person.name, person.email, person.role, person.department].some(
+          (value) => value.toLowerCase().includes(term),
+        ),
+      ),
+    )
+      .map((person) => {
+        const [firstName, ...lastName] = person.name.split(" ");
+        return {
+          person_id: person.person_id,
+          display_name: person.name,
+          first_name: firstName ?? null,
+          last_name: lastName.join(" ") || null,
+          username: null,
+          email: person.email,
+          attributes: {
+            department: person.department,
+            division: person.department,
+            job_title: person.role,
+            status: "Active",
+          },
+          manager_person_id: person.supervisor_person_id,
+        };
+      })
+      .sort((left, right) =>
+        left.display_name.localeCompare(right.display_name),
+      );
+    return HttpResponse.json(pageOf(items, params, q));
   }),
   // The account listing: the same roster seen as accounts; blank lists them all.
   http.get("/api/identity/v1/resolution/accounts", ({ request }) => {

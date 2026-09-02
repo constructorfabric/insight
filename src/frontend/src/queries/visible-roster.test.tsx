@@ -1,7 +1,7 @@
 /**
  * The roster every flat-org zone counts. What matters: the walk collects every
- * page rather than the first, it stops at a ceiling instead of following a
- * cursor forever, and a refusal surfaces as an error — an empty roster would
+ * page rather than the first, rejects a cursor cycle instead of looping, and a
+ * refusal surfaces as an error — an empty roster would
  * read to every zone as "this person can see nobody", which is a different
  * fact.
  */
@@ -23,7 +23,7 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { MAX_ROSTER_PAGES, useVisibleRoster } from "./visible-roster";
+import { useVisibleRoster } from "./visible-roster";
 
 const listPeople = vi.mocked(identityClient.listPeople);
 
@@ -54,21 +54,27 @@ beforeEach(() => {
 });
 
 describe("useVisibleRoster", () => {
-  it("collects every page, not the first", async () => {
+  it("collects every page until the service ends the cursor walk", async () => {
     listPeople
       .mockResolvedValueOnce({ items: [person("a")], next_cursor: "c1" })
       .mockResolvedValueOnce({ items: [person("b")], next_cursor: "c2" })
-      .mockResolvedValueOnce({ items: [person("c")], next_cursor: null });
+      .mockResolvedValueOnce({ items: [person("c")], next_cursor: "c3" })
+      .mockResolvedValueOnce({ items: [person("d")], next_cursor: "c4" })
+      .mockResolvedValueOnce({ items: [person("e")], next_cursor: null });
 
     const { result } = renderHook(() => useVisibleRoster(true), harness());
 
-    await waitFor(() => expect(result.current.roster).toHaveLength(3));
-    expect(result.current.roster.map((p) => p.person_id)).toEqual(["a", "b", "c"]);
-    expect(result.current.truncated).toBe(false);
+    await waitFor(() => expect(result.current.roster).toHaveLength(5));
+    expect(result.current.roster.map((p) => p.person_id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+    ]);
   });
 
-  it("stops at the ceiling rather than following a cursor forever", async () => {
-    // A service that always returns a cursor must not spin the browser.
+  it("rejects a repeated cursor rather than following it forever", async () => {
     listPeople.mockResolvedValue({
       items: [person("x")],
       next_cursor: "always-more",
@@ -76,8 +82,17 @@ describe("useVisibleRoster", () => {
 
     const { result } = renderHook(() => useVisibleRoster(true), harness());
 
-    await waitFor(() => expect(result.current.truncated).toBe(true));
-    expect(listPeople).toHaveBeenCalledTimes(MAX_ROSTER_PAGES);
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(listPeople).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards query cancellation to every people request", async () => {
+    listPeople.mockResolvedValue({ items: [], next_cursor: null });
+
+    const { result } = renderHook(() => useVisibleRoster(true), harness());
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(listPeople.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
   });
 
   it("surfaces a refusal instead of an empty roster", async () => {

@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => ({
   isFlat: false,
   roster: {
     roster: [] as PeopleListItem[],
-    truncated: false,
     isPending: false,
     isError: false,
     retry: vi.fn(),

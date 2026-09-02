@@ -33,7 +33,6 @@ vi.mock("@/queries/ic-dashboard", () => ({
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
     roster: mocks.roster,
-    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},
