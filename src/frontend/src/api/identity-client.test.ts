@@ -82,12 +82,12 @@ describe("getPerson", () => {
     const person = await getPerson("019e27bc-dec0-7626-81a9-c5524662a6aa");
 
     expect(person.subordinates.map((s) => s.person_id)).toEqual([
-      "019e27bc-dec0-7626-81a9-c5524662a6ab",
       "019e27bc-dec0-7626-81a9-c5524662a6a9",
+      "019e27bc-dec0-7626-81a9-c5524662a6ab",
     ]);
     expect(person.subordinates.map((s) => s.email)).toEqual([
-      "ic1@example.com",
       "",
+      "ic1@example.com",
     ]);
   });
 
@@ -107,6 +107,58 @@ describe("getPerson", () => {
     const person = await getPerson("019e27bc-dec0-7626-81a9-c5524662a6aa");
 
     expect(person.subordinates.map((s) => s.person_id)).toEqual(["019e27bc-dec0-7626-81a9-c5524662a6ab"]);
+  });
+
+  it("orders subordinates by display name at every level, whatever order the wire had", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        person_id: "p-root",
+        insight_tenant_id: "t-1",
+        display_name: "Root",
+        subordinates: [
+          { person_id: "p-zed", insight_tenant_id: "t-1", display_name: "Zed" },
+          {
+            person_id: "p-ann",
+            insight_tenant_id: "t-1",
+            display_name: "Ann",
+            subordinates: [
+              { person_id: "p-yan", insight_tenant_id: "t-1", display_name: "Yan" },
+              { person_id: "p-bob", insight_tenant_id: "t-1", display_name: "Bob" },
+            ],
+          },
+        ],
+      }),
+    );
+
+    const person = await getPerson("p-root");
+
+    expect(person.subordinates.map((s) => s.display_name)).toEqual(["Ann", "Zed"]);
+    expect(person.subordinates[0]!.subordinates.map((s) => s.display_name)).toEqual([
+      "Bob",
+      "Yan",
+    ]);
+  });
+
+  it("sorts under the name a person is shown by — handle, then address, when there is no display name", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        person_id: "p-root",
+        insight_tenant_id: "t-1",
+        subordinates: [
+          { person_id: "p-handle", insight_tenant_id: "t-1", username: "octo-bot" },
+          { person_id: "p-named", insight_tenant_id: "t-1", display_name: "Mia" },
+          { person_id: "p-address", insight_tenant_id: "t-1", email: "ada@example.com" },
+        ],
+      }),
+    );
+
+    const person = await getPerson("p-root");
+
+    expect(person.subordinates.map((s) => s.person_id)).toEqual([
+      "p-address",
+      "p-named",
+      "p-handle",
+    ]);
   });
 
   it("throws IdentityApiError with the status + body on a non-ok response", async () => {

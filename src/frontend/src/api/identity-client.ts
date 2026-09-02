@@ -11,6 +11,7 @@
  */
 
 import { fetchWithAuth } from "@/api/fetch-with-auth";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -602,8 +603,13 @@ function toIdentityPerson(p: ProfileResponse): IdentityPerson {
     supervisor_name: p.supervisor_name ?? null,
     subordinates: (p.subordinates ?? [])
       .filter((s) => Boolean(s.person_id?.trim()))
-      .map(toIdentityPerson),
+      .map(toIdentityPerson)
+      .sort(byDisplayName),
   };
+}
+
+function byDisplayName(a: IdentityPerson, b: IdentityPerson): number {
+  return personDisplayName(a).localeCompare(personDisplayName(b));
 }
 
 /**
