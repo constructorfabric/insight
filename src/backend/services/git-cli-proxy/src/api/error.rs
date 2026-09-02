@@ -83,7 +83,7 @@ impl IntoResponse for ApiError {
 
         let mut problem = Problem::from(error);
         if let Some(status) = status_override {
-            problem.status = status.as_u16();
+            problem.status = Some(status.as_u16());
         }
 
         let mut response = problem.into_response();

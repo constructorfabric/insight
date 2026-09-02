@@ -35,7 +35,6 @@ sea-orm-migration = { workspace = true }
 toolkit = { workspace = true, features = ["bootstrap"] }
 toolkit-security = { workspace = true }
 toolkit-canonical-errors = { workspace = true }
-toolkit-odata = { workspace = true }
 
 # System gears linked for the REST host + auth pipeline. Discovered at link time
 # via inventory; mirrors the api-gateway service's authenticated gear set.

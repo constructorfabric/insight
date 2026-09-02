@@ -5025,5 +5025,6 @@
         "summary": "Filter person ids to the ones the caller may see"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }
