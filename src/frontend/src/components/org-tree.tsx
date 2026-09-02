@@ -172,11 +172,7 @@ function RosterList({ query }: { query: string }) {
   );
 }
 
-/**
- * Recursive org-chart navigation, rooted at the viewer. Extracted from
- * AppSidebar so the portal shell's context pane can reuse the same tree
- * without duplicating the traversal / active-node logic.
- */
+/** Recursive org-chart navigation, rooted at the viewer. */
 export function OrgTree({
   leadsToTeam = false,
   query = "",

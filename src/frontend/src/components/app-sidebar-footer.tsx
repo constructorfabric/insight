@@ -22,8 +22,8 @@ import { useIcPerson } from "@/queries/ic-dashboard";
 /**
  * Shared footer for the sidebar chrome: metric catalog, What's new, view
  * settings (portal / focus / explanations), theme switch, and the viewer
- * identity block. Extracted from AppSidebar so the portal shell can surface
- * the same controls (from the rail's settings popover) without duplicating them.
+ * identity block. The portal's rail and its context pane both mount it, so the
+ * settings popover and the pane offer the same controls.
  *
  * `onNavigate` fires for the entries that put something else on screen: what
  * they open renders behind the popover the portal mounts this in, so the opener
