@@ -273,14 +273,14 @@ person_profile_events AS (
         insight_source_id,
         insight_source_type,
         source_account_id,
-        concat('person_', value_type) AS value_type,
+        concat('person_', profile.value_type) AS value_type,
         value,
         value_field_name,
         operation_type,
         _synced_at,
         _version
-    FROM identity_field_events
-    WHERE value_type IN (
+    FROM identity_field_events AS profile
+    WHERE profile.value_type IN (
         {% for profile_field in person_profile_fields %}
         '{{ profile_field }}'{{ ',' if not loop.last }}
         {% endfor %}
