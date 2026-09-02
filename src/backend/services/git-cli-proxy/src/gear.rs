@@ -130,7 +130,7 @@ impl ApiGatewayCapability for GitCliProxyGear {
         router: Router,
         _hc_registry: Arc<toolkit::RestHealthcheckRegistry>,
     ) -> anyhow::Result<Router> {
-        Ok(router.route("/healthz", get(|| async { "ok" })))
+        Ok(prepared_router(router))
     }
 
     fn rest_finalize(
@@ -139,21 +139,84 @@ impl ApiGatewayCapability for GitCliProxyGear {
         router: Router,
         _hc_registry: Arc<toolkit::RestHealthcheckRegistry>,
     ) -> anyhow::Result<Router> {
-        // Panics are caught below the canonical layer, so the 500 it produces
-        // is rendered like every other failure.
-        let router = router
-            .layer(CatchPanicLayer::new())
-            .layer(axum::middleware::from_fn(
-                toolkit::api::canonical_error_middleware,
-            ));
-
-        self.router
-            .set(router.clone())
-            .map_err(|_| anyhow::anyhow!("the router was finalized twice"))?;
-        Ok(router)
+        finalize_router(router, &self.router)
     }
 
     fn as_registry(&self) -> &dyn OpenApiRegistry {
         &self.openapi
+    }
+}
+
+fn prepared_router(router: Router) -> Router {
+    router.route("/healthz", get(|| async { "ok" }))
+}
+
+/// Layer the router and persist it for [`GitCliProxyGear::serve`]; a second
+/// finalize is a wiring bug and errors.
+fn finalize_router(router: Router, slot: &OnceLock<Router>) -> anyhow::Result<Router> {
+    // Panics are caught below the canonical layer, so the 500 it produces
+    // is rendered like every other failure.
+    let router = router
+        .layer(CatchPanicLayer::new())
+        .layer(axum::middleware::from_fn(
+            toolkit::api::canonical_error_middleware,
+        ));
+
+    slot.set(router.clone())
+        .map_err(|_| anyhow::anyhow!("the router was finalized twice"))?;
+    Ok(router)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    type R = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn the_prepared_router_serves_healthz() -> R {
+        let router = prepared_router(Router::new());
+
+        let response = router
+            .oneshot(Request::get("/healthz").body(Body::empty())?)
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_finalized_router_turns_a_panic_into_a_500() -> R {
+        let slot = OnceLock::new();
+        let panicking = Router::new().route(
+            "/boom",
+            get(|| async {
+                panic!("handler panic");
+                #[expect(unreachable_code)]
+                ""
+            }),
+        );
+
+        let router = finalize_router(panicking, &slot)?;
+        let response = router
+            .oneshot(Request::get("/boom").body(Body::empty())?)
+            .await?;
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_finalize_is_rejected() {
+        let slot = OnceLock::new();
+
+        let first = finalize_router(Router::new(), &slot);
+
+        assert!(first.is_ok());
+        assert!(finalize_router(Router::new(), &slot).is_err());
     }
 }
