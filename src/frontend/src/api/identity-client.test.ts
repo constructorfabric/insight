@@ -13,6 +13,7 @@ import {
   getPerson,
   getPersonAccounts,
   IdentityApiError,
+  listPeople,
   mergePersons,
   searchPersons,
 } from "./identity-client";
@@ -29,6 +30,48 @@ function response(body: unknown, init?: { ok?: boolean; status?: number }): Resp
 
 beforeEach(() => {
   mockFetch.mockReset();
+});
+
+describe("listPeople", () => {
+  it("GETs one caller-visible roster page from /people", async () => {
+    mockFetch.mockResolvedValueOnce(
+      response({
+        items: [
+          {
+            person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+            display_name: null,
+            first_name: null,
+            last_name: null,
+            username: "example-user",
+            email: null,
+            attributes: { department: "Engineering" },
+            manager_person_id: null,
+          },
+        ],
+        next_cursor: "next-page",
+      }),
+    );
+
+    const page = await listPeople({ cursor: "current-page", limit: 250 });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/identity/v1/people?cursor=current-page&limit=250",
+    );
+    expect(page.items[0]).toMatchObject({
+      person_id: "019e27bc-dec0-7626-81a9-c5524662a6a9",
+      username: "example-user",
+      attributes: { department: "Engineering" },
+    });
+    expect(page.next_cursor).toBe("next-page");
+  });
+
+  it("rejects a malformed roster response", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: null }));
+
+    await expect(listPeople()).rejects.toMatchObject({
+      body: { error: "malformed_roster" },
+    });
+  });
 });
 
 describe("getPerson", () => {

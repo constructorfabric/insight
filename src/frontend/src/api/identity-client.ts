@@ -453,6 +453,23 @@ export interface PersonSearchResponse {
   next_cursor?: string | null;
 }
 
+/** One canonical roster person returned by `GET /people`. */
+export interface PeopleListItem {
+  person_id: string;
+  display_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  username: string | null;
+  email: string | null;
+  attributes: Record<string, string>;
+  manager_person_id: string | null;
+}
+
+export interface PeopleListResponse {
+  items: PeopleListItem[];
+  next_cursor?: string | null;
+}
+
 /** One page of a listing: where to resume and how many rows to ask for. */
 export interface PageRequest {
   cursor?: string;
@@ -465,6 +482,31 @@ function pageParams(page: PageRequest): string {
   if (page.limit != null) params.set("limit", String(page.limit));
   const query = params.toString();
   return query ? `&${query}` : "";
+}
+
+/** One caller-authorized page of the canonical roster. */
+export async function listPeople(
+  page: PageRequest = {},
+): Promise<PeopleListResponse> {
+  const params = new URLSearchParams();
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const res = await fetchWithAuth(`${BASE}/people${query ? `?${query}` : ""}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PeopleListResponse;
+  try {
+    listed = (await res.json()) as PeopleListResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
 }
 
 /**

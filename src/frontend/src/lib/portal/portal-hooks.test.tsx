@@ -35,6 +35,13 @@ const mocks = vi.hoisted(() => ({
     isError: false,
     refetch: vi.fn(),
   },
+  roster: {
+    roster: [] as import("@/api/identity-client").PeopleListItem[],
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: vi.fn(),
+  },
 }));
 
 vi.mock("@/auth", () => ({
@@ -51,13 +58,7 @@ vi.mock("@/queries/identity-me", () => ({
   }),
 }));
 vi.mock("@/queries/visible-roster", () => ({
-  useVisibleRoster: () => ({
-    roster: [],
-    truncated: false,
-    isPending: false,
-    isError: false,
-    retry: () => {},
-  }),
+  useVisibleRoster: () => mocks.roster,
 }));
 // Only the request is stubbed; `useMetricDefinitionsResponse` itself runs, so
 // a cohort built from an attribute the catalog does not offer fails here.
@@ -96,6 +97,32 @@ const TREE = person(BOSS, "boss", { division: "R&D" }, [
   person(C, "c", { division: "R&D" }),
 ]);
 
+function rosterRows(
+  root: IdentityPerson,
+  managerPersonId: string | null = null,
+): import("@/api/identity-client").PeopleListItem[] {
+  return [
+    {
+      person_id: root.person_id,
+      display_name: root.display_name,
+      first_name: root.first_name ?? null,
+      last_name: root.last_name ?? null,
+      username: root.username ?? null,
+      email: root.email,
+      attributes: {
+        ...(root.department ? { department: root.department } : {}),
+        ...(root.division ? { division: root.division } : {}),
+        ...(root.job_title ? { job_title: root.job_title } : {}),
+        ...(root.status ? { status: root.status } : {}),
+      },
+      manager_person_id: managerPersonId,
+    },
+    ...root.subordinates.flatMap((report) =>
+      rosterRows(report, root.person_id),
+    ),
+  ];
+}
+
 beforeEach(() => {
   mocks.personId = BOSS;
   mocks.definitions = { metrics: [] };
@@ -104,6 +131,9 @@ beforeEach(() => {
   mocks.ic.isPending = false;
   mocks.ic.isLoading = false;
   mocks.ic.isError = false;
+  mocks.roster.roster = rosterRows(TREE);
+  mocks.roster.isPending = false;
+  mocks.roster.isError = false;
   act(() => {
     portalRouter.reset();
     setPortalShowPlanned(true);
@@ -172,7 +202,7 @@ describe("useActiveZone", () => {
 });
 
 describe("useViewerIsManager", () => {
-  it("is a manager when the viewer's node has subordinates", () => {
+  it("is a manager when a roster person reports to the viewer", () => {
     expect(renderHook(() => useViewerIsManager()).result.current).toEqual({
       isManager: true,
       isPending: false,
@@ -187,8 +217,8 @@ describe("useViewerIsManager", () => {
   });
 
   it("reports pending while identity resolves (callers assume manager)", () => {
-    mocks.ic.data = undefined;
-    mocks.ic.isPending = true;
+    mocks.roster.roster = [];
+    mocks.roster.isPending = true;
     const { result } = renderHook(() => useViewerIsManager());
     expect(result.current).toEqual({ isManager: false, isPending: true });
   });
@@ -268,12 +298,12 @@ describe("useOrgScope", () => {
   });
 
   it("surfaces identity errors and delegates refetch", () => {
-    mocks.ic.data = undefined;
-    mocks.ic.isError = true;
+    mocks.roster.roster = [];
+    mocks.roster.isError = true;
     const { result } = renderHook(() => useOrgScope());
     expect(result.current.isError).toBe(true);
     expect(result.current.pivot).toBeNull();
     result.current.refetch();
-    expect(mocks.ic.refetch).toHaveBeenCalledOnce();
+    expect(mocks.roster.retry).toHaveBeenCalledOnce();
   });
 });

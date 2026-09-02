@@ -16,12 +16,14 @@ import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
-import { identityPerson, pid } from "@/test/identity";
+import type { PeopleListItem } from "@/api/identity-client";
+import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   tree: undefined as IdentityPerson | undefined,
+  roster: [] as PeopleListItem[],
   grid: {
     byKey: new Map<string, NormalizedMetricResult>(),
     previousByKey: new Map<string, NormalizedMetricResult>(),
@@ -52,7 +54,7 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
-    roster: [],
+    roster: mocks.roster,
     truncated: false,
     isPending: false,
     isError: false,
@@ -96,6 +98,7 @@ const IDS = LABELS.map(pid);
 beforeEach(() => {
   mocks.personId = pid("boss");
   mocks.tree = person("boss", LABELS.map((l) => person(l)));
+  mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
   // git.commits is a real headline key (GROUPS card.preview) — the view
@@ -151,6 +154,7 @@ describe("TeamStateView", () => {
 
   it("gates on the empty roster with the People-specific label", () => {
     mocks.tree = person("boss"); // a manager with nobody under them
+    mocks.roster = peopleFromIdentityTree(mocks.tree);
     render(<TeamStateView />);
     expect(
       screen.getByText(

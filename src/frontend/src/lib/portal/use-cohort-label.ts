@@ -1,11 +1,10 @@
 import { useMemo } from "react";
 
-import { useViewer } from "@/auth";
-import { availableSlices, collectRosterAttrs } from "@/lib/insight/slices";
+import { availableSlices, collectPeopleAttrs } from "@/lib/insight/slices";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { usePortalSlice } from "@/lib/portal/portal-nav";
-import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
+import { useVisibleRoster } from "@/queries/visible-roster";
 
 /**
  * The label reads mid-sentence ("above the division median"), so a plain
@@ -28,11 +27,10 @@ export function peerPopulationLabel(
 export function useCohortLabel(): string {
   const slice = usePortalSlice();
   const { isFlat } = useVisibilityPolicy();
-  const { personId } = useViewer();
-  const tree = useIcPerson(personId ?? "").data ?? null;
+  const roster = useVisibleRoster(true).roster;
   const dims = useMemo(
-    () => availableSlices(collectRosterAttrs(tree, normalizePersonId).values()),
-    [tree]
+    () => availableSlices(collectPeopleAttrs(roster, normalizePersonId).values()),
+    [roster],
   );
   const sliceLabel = slice
     ? (dims.find((dimension) => dimension.key === slice)?.label ?? "cohort")

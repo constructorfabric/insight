@@ -12,6 +12,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PeopleListItem } from "@/api/identity-client";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -19,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   isFlat: false,
   roster: {
-    roster: [] as { person_id: string; display_name?: string | null; username?: string | null; job_title?: string | null; status?: string | null; provisional?: boolean }[],
+    roster: [] as PeopleListItem[],
     truncated: false,
     isPending: false,
     isError: false,
@@ -56,11 +57,35 @@ const person = (
   subs: IdentityPerson[] = [],
 ): IdentityPerson => identityPerson(label, over, subs);
 
+function rosterPerson(
+  label: string,
+  managerPersonId: string | null = null,
+  attributes: Record<string, string> = {},
+): PeopleListItem {
+  return {
+    person_id: pid(label),
+    display_name: `${label[0]!.toUpperCase()}${label.slice(1)}`,
+    first_name: null,
+    last_name: null,
+    username: null,
+    email: `${label}@example.com`,
+    attributes,
+    manager_person_id: managerPersonId,
+  };
+}
+
 beforeEach(() => {
   mocks.ic.refetch.mockClear();
   mocks.personId = pid("boss");
   mocks.isFlat = false;
-  mocks.roster.roster = [];
+  mocks.roster.roster = [
+    rosterPerson("boss", null, { job_title: "Director" }),
+    rosterPerson("zoe", pid("boss"), {
+      job_title: "QA Engineer",
+      department: "Quality",
+    }),
+    rosterPerson("adam", pid("boss"), { job_title: "Backend Dev" }),
+  ];
   mocks.roster.isPending = false;
   mocks.roster.isError = false;
   mocks.ic.isPending = false;
@@ -98,11 +123,11 @@ describe("EmployeesView", () => {
   });
 
   it("surfaces an identity failure as a retryable error", async () => {
-    mocks.ic.data = undefined;
-    mocks.ic.isError = true;
+    mocks.roster.roster = [];
+    mocks.roster.isError = true;
     render(<EmployeesView />);
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
-    expect(mocks.ic.refetch).toHaveBeenCalledOnce();
+    expect(mocks.roster.retry).toHaveBeenCalledOnce();
   });
 });
 
@@ -113,9 +138,13 @@ describe("EmployeesView on an organisation with no reporting lines", () => {
     // directory with a single row.
     mocks.ic.data = person("boss");
     mocks.roster.roster = [
-      { person_id: pid("boss"), display_name: "Boss Person", job_title: "Lead" },
-      { person_id: pid("ann"), display_name: "Ann Dev", job_title: "Engineer" },
-      { person_id: pid("bob"), username: "bobby", provisional: true },
+      { ...rosterPerson("boss"), display_name: "Boss Person" },
+      { ...rosterPerson("ann"), display_name: "Ann Dev" },
+      {
+        ...rosterPerson("bob"),
+        display_name: null,
+        username: "bobby",
+      },
     ];
   });
 

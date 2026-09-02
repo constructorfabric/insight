@@ -13,14 +13,73 @@
 import { describe, expect, it } from "vitest";
 
 import type { IdentityPerson } from "@/types/insight";
+import type { PeopleListItem } from "@/api/identity-client";
 import { isPersonId } from "@/lib/metrics/entity";
 import {
   findIdentityNode,
   flattenSubordinates,
   hasIndirectReports,
+  rosterTree,
   scopeRosterToDirectReports,
   type RosterEntry,
 } from "./identity-tree";
+
+function rosterPerson(
+  personId: string,
+  displayName: string | null,
+  managerPersonId: string | null,
+  attributes: Record<string, string> = {},
+): PeopleListItem {
+  return {
+    person_id: personId,
+    display_name: displayName,
+    first_name: null,
+    last_name: null,
+    username: null,
+    email: null,
+    attributes,
+    manager_person_id: managerPersonId,
+  };
+}
+
+describe("rosterTree", () => {
+  it("builds the viewer hierarchy from canonical roster rows", () => {
+    const tree = rosterTree(
+      [
+        rosterPerson("viewer", "Viewer", null),
+        rosterPerson("lead", "Lead", "viewer"),
+        rosterPerson("report", "Report", "lead", {
+          department: "Engineering",
+          job_title: "Developer",
+        }),
+      ],
+      "viewer",
+    );
+
+    expect(tree?.subordinates[0]?.person_id).toBe("lead");
+    expect(tree?.subordinates[0]?.subordinates[0]).toMatchObject({
+      person_id: "report",
+      department: "Engineering",
+      job_title: "Developer",
+      supervisor_name: "Lead",
+    });
+  });
+
+  it("contains only rows returned by the roster endpoint", () => {
+    const tree = rosterTree(
+      [rosterPerson("viewer", "Viewer", null)],
+      "viewer",
+    );
+
+    expect(tree?.subordinates).toEqual([]);
+  });
+
+  it("returns no hierarchy when the viewer is not in the roster", () => {
+    expect(
+      rosterTree([rosterPerson("member", "Member", null)], "viewer"),
+    ).toBeNull();
+  });
+});
 
 // One UUID per persona, derived from the local part so a failure names the
 // person. person_id is deliberately NOT the email: keying them the same would

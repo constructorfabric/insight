@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 
+import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 let currentPath = "/";
 let viewerEmail: string | null = "alice@x.io";
 let viewerPersonId: string | null = null;
 let viewerData: IdentityPerson | undefined;
+let rosterData: PeopleListItem[] = [];
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -44,6 +46,27 @@ vi.mock("@/lib/portal/portal-store", () => ({
 
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: viewerData }),
+}));
+vi.mock("@/queries/identity-me", () => ({
+  useVisibilityPolicy: () => ({
+    policy: "org_chart",
+    isFlat: false,
+    isPending: false,
+  }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: rosterData,
+    truncated: false,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
+}));
+vi.mock("@/lib/portal/portal-nav", () => ({
+  usePortalNavActions: () => ({ setScope: vi.fn() }),
+  usePortalItem: () => null,
+  usePortalZone: () => null,
 }));
 
 
@@ -119,6 +142,28 @@ function person(
   } as IdentityPerson;
 }
 
+function rosterRows(
+  root: IdentityPerson,
+  managerPersonId: string | null = null,
+): PeopleListItem[] {
+  const row: PeopleListItem = {
+    person_id: root.person_id,
+    display_name: root.display_name || null,
+    first_name: root.first_name ?? null,
+    last_name: root.last_name ?? null,
+    username: root.username ?? null,
+    email: root.email || null,
+    attributes: {},
+    manager_person_id: managerPersonId,
+  };
+  return [
+    row,
+    ...root.subordinates.flatMap((report) =>
+      rosterRows(report, root.person_id),
+    ),
+  ];
+}
+
 // Alice manages Bob (who manages Carol) and Erin.
 const tree = person(PERSON_IDS.alice, "alice@x.io", "Alice", [
   person(PERSON_IDS.bob, "bob@x.io", "Bob", [
@@ -139,6 +184,7 @@ beforeEach(() => {
   viewerEmail = "alice@x.io";
   viewerPersonId = PERSON_IDS.alice;
   viewerData = tree;
+  rosterData = rosterRows(tree);
 });
 
 describe("AppSidebar", () => {
@@ -173,6 +219,7 @@ describe("AppSidebar", () => {
 
   it("renders no tree while the viewer query has no data and no footer user without an email", () => {
     viewerData = undefined;
+    rosterData = [];
     viewerEmail = null;
     viewerPersonId = null;
     render(<AppSidebar />);
@@ -192,6 +239,7 @@ describe("AppSidebar", () => {
 
   it("falls back to the bare email (no secondary line) when identity is not loaded", () => {
     viewerData = undefined;
+    rosterData = [];
     render(<AppSidebar />);
 
     const footer = screen.getByTestId("footer");
@@ -230,6 +278,7 @@ describe("AppSidebar", () => {
 
   it("falls back to the email as the node label when display_name is empty", () => {
     viewerData = person(PERSON_IDS.alice, "alice@x.io", "");
+    rosterData = rosterRows(viewerData);
     render(<AppSidebar />);
 
     expect(buttonFor("alice@x.io")).toBeInTheDocument();
@@ -239,6 +288,7 @@ describe("AppSidebar", () => {
     // The identity contract admits both being absent; an empty node would be an
     // unclickable sliver.
     viewerData = person(PERSON_IDS.alice, "", "");
+    rosterData = rosterRows(viewerData);
     render(<AppSidebar />);
 
     expect(buttonFor("Unnamed person")).toBeInTheDocument();

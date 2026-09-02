@@ -1,16 +1,11 @@
 /**
- * The roster a flat organisation counts as its single cohort.
- *
- * Every org zone reads its people from `useOrgScope`, which walks the viewer's
- * `subordinates` — a walk that yields nobody when the organisation has no
- * reporting lines. This hook is the other source: the persons the caller may
- * see, straight from identity.
+ * The canonical people roster the caller is authorized to see.
  */
 import { useQuery } from "@tanstack/react-query";
 
 import {
-  listVisiblePersons,
-  type PersonSummary,
+  listPeople,
+  type PeopleListItem,
 } from "@/api/identity-client";
 import { useAuth } from "@/auth/use-auth";
 import { sessionAuthorizationScope } from "@/auth/session-scope";
@@ -35,7 +30,7 @@ const ROSTER_STALE_TIME = 60 * 1000;
 
 export interface VisibleRoster {
   /** Every person the caller may see, the viewer included. */
-  roster: PersonSummary[];
+  roster: PeopleListItem[];
   /** The walk hit {@link MAX_ROSTER_PAGES} — the roster is a prefix. */
   truncated: boolean;
   isPending: boolean;
@@ -44,14 +39,14 @@ export interface VisibleRoster {
 }
 
 async function collectRoster(): Promise<{
-  roster: PersonSummary[];
+  roster: PeopleListItem[];
   truncated: boolean;
 }> {
-  const roster: PersonSummary[] = [];
+  const roster: PeopleListItem[] = [];
   let cursor: string | undefined;
 
   for (let page = 0; page < MAX_ROSTER_PAGES; page += 1) {
-    const answered = await listVisiblePersons({
+    const answered = await listPeople({
       cursor,
       limit: ROSTER_PAGE_SIZE,
     });
@@ -63,9 +58,7 @@ async function collectRoster(): Promise<{
 }
 
 /**
- * The caller's whole visible roster. `enabled` is the policy question — a
- * hierarchical deployment reads its people from the tree and must not spend a
- * request here.
+ * The caller's whole visible roster.
  */
 export function useVisibleRoster(enabled: boolean): VisibleRoster {
   const { session } = useAuth();
