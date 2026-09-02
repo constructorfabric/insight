@@ -60,6 +60,23 @@
         ],
         "type": "object"
       },
+      "AssigneeLink": {
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "login"
+        ],
+        "type": "object"
+      },
       "BreakdownValueDto": {
         "properties": {
           "compare_to": {
@@ -710,6 +727,153 @@
         ],
         "type": "object"
       },
+      "GearDto": {
+        "properties": {
+          "assignee_urls": {
+            "items": {
+              "$ref": "#/components/schemas/AssigneeLink"
+            },
+            "type": "array"
+          },
+          "assignees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "commitment": {
+            "type": "string"
+          },
+          "design_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "effort_man_days": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "forecast": {
+            "description": "The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issue_url": {
+            "description": "Absent when no configured external source claims the gear's repository.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "milestone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "placement": {
+            "$ref": "#/components/schemas/Placement"
+          },
+          "priority": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remaining_man_days": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sdk_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "subsystem": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "commitment",
+          "placement",
+          "assignees",
+          "closed",
+          "assignee_urls"
+        ],
+        "type": "object"
+      },
+      "GearRoadmapResponse": {
+        "properties": {
+          "capacity_man_days_per_person": {
+            "format": "double",
+            "type": "number"
+          },
+          "gears": {
+            "items": {
+              "$ref": "#/components/schemas/GearDto"
+            },
+            "type": "array"
+          },
+          "lanes": {
+            "items": {
+              "$ref": "#/components/schemas/LaneDto"
+            },
+            "type": "array"
+          },
+          "window_months": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window_start": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "capacity_man_days_per_person",
+          "window_start",
+          "window_months",
+          "gears",
+          "lanes"
+        ],
+        "type": "object"
+      },
       "Grain": {
         "description": "Bucket width. The set is closed and validated server-side: the view is a\n`merge()` over every bronze database, so an operator-supplied interval\nexpression would be a direct route into that scan.",
         "enum": [
@@ -867,6 +1031,33 @@
           "bucket",
           "key",
           "rows"
+        ],
+        "type": "object"
+      },
+      "LaneDto": {
+        "properties": {
+          "assignee": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_url": {
+            "description": "Absent for an unassigned lane, and where no configured source knows the\naccount.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/SpanDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "spans"
         ],
         "type": "object"
       },
@@ -2308,6 +2499,120 @@
         ],
         "type": "object"
       },
+      "Placement": {
+        "description": "Where a gear sits against the month window. Only `slot` carries an index\nand only `overdue` a day count, so no other state can claim either.\n\nA milestone names a month, not a day, so `days` counts from the day after\nthat month ended.",
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "slot"
+                ],
+                "type": "string"
+              },
+              "slot": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "slot",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Delivered: the work is done, so its milestone is history rather than a\ndeadline it missed.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "delivered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "days": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "overdue"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "days",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "future"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "backlog"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unrecognized"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "none"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Problem": {
         "description": "RFC 9457 problem+json. `context` varies by error category.",
         "properties": {
@@ -2799,6 +3104,26 @@
         "required": [
           "label",
           "points"
+        ],
+        "type": "object"
+      },
+      "SpanDto": {
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "gear_number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gear_number",
+          "start",
+          "end"
         ],
         "type": "object"
       },
@@ -4773,6 +5098,99 @@
           }
         ],
         "summary": "Send product feedback"
+      }
+    },
+    "/v1/gear-roadmap": {
+      "get": {
+        "operationId": "analytics_api.gear_roadmap.board",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GearRoadmapResponse"
+                }
+              }
+            },
+            "description": "Every gear on the configured board, plus one lane per assignee"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Gear delivery board with its assumed-capacity schedule"
       }
     },
     "/v1/ingestion/intensity": {
