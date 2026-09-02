@@ -8774,6 +8774,103 @@ dashboards:
               ],
               "title": "ClickHouse · on-disk total",
               "type": "stat"
+            },
+            {
+              "id": 601,
+              "type": "timeseries",
+              "title": "ClickHouse · slow queries (>1s) by user",
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 63
+              },
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "custom": {
+                    "drawStyle": "bars",
+                    "fillOpacity": 60,
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "right",
+                  "calcs": [
+                    "sum"
+                  ]
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "editorType": "sql",
+                  "format": 0,
+                  "rawSql": "SELECT toStartOfInterval(event_time, toIntervalSecond($__interval_s)) AS t, user, count() AS slow FROM system.query_log WHERE type = 'QueryFinish' AND query_duration_ms > 1000 AND user != 'grafana' AND $__timeFilter(event_time) GROUP BY t, user ORDER BY t"
+                }
+              ]
+            },
+            {
+              "id": 602,
+              "type": "table",
+              "title": "ClickHouse · slowest queries",
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 63
+              },
+              "datasource": {
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "filterable": true
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "query_duration_ms"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "ms"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "sortBy": [
+                  {
+                    "displayName": "query_duration_ms",
+                    "desc": true
+                  }
+                ]
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "editorType": "sql",
+                  "format": 1,
+                  "rawSql": "SELECT event_time, query_duration_ms, user, read_rows, formatReadableSize(memory_usage) AS memory, normalizeQuery(query) AS query FROM system.query_log WHERE type = 'QueryFinish' AND user != 'grafana' AND $__timeFilter(event_time) ORDER BY query_duration_ms DESC LIMIT 20"
+                }
+              ]
             }
           ],
           "refresh": "1m",
