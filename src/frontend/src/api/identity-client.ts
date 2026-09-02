@@ -476,6 +476,11 @@ export interface PageRequest {
   limit?: number;
 }
 
+export interface PeopleListRequest extends PageRequest {
+  q?: string;
+  visibility?: "caller" | "tenant";
+}
+
 function pageParams(page: PageRequest): string {
   const params = new URLSearchParams();
   if (page.cursor) params.set("cursor", page.cursor);
@@ -486,13 +491,19 @@ function pageParams(page: PageRequest): string {
 
 /** One caller-authorized page of the canonical roster. */
 export async function listPeople(
-  page: PageRequest = {},
+  page: PeopleListRequest = {},
+  signal?: AbortSignal,
 ): Promise<PeopleListResponse> {
   const params = new URLSearchParams();
+  if (page.visibility) params.set("visibility", page.visibility);
+  if (page.q) params.set("q", page.q);
   if (page.cursor) params.set("cursor", page.cursor);
   if (page.limit != null) params.set("limit", String(page.limit));
   const query = params.toString();
-  const res = await fetchWithAuth(`${BASE}/people${query ? `?${query}` : ""}`);
+  const url = `${BASE}/people${query ? `?${query}` : ""}`;
+  const res = signal
+    ? await fetchWithAuth(url, { signal })
+    : await fetchWithAuth(url);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);

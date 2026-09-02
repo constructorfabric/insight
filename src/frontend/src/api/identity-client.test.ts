@@ -65,6 +65,21 @@ describe("listPeople", () => {
     expect(page.next_cursor).toBe("next-page");
   });
 
+  it("requests a searchable tenant roster for an admin console", async () => {
+    mockFetch.mockResolvedValueOnce(response({ items: [] }));
+    const controller = new AbortController();
+
+    await listPeople(
+      { q: "ada example", visibility: "tenant", limit: 50 },
+      controller.signal,
+    );
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/identity/v1/people?visibility=tenant&q=ada+example&limit=50",
+      { signal: controller.signal },
+    );
+  });
+
   it("rejects a malformed roster response", async () => {
     mockFetch.mockResolvedValueOnce(response({ items: null }));
 
