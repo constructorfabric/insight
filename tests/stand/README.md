@@ -21,7 +21,6 @@ persona resolution) lives in `../lib`; both are one uv project
 | `api/analytics/` | The `/api/analytics` prefix, one module per path group. |
 | `api/identity/` | The `/api/identity` prefix, one module per concern. |
 | `api/test_gateway.py` | Neither service — the edge, sweeping 401 over every catalogued operation at once. |
-| `ui/` | The browser journeys, plus `ui/pages/` (page objects). |
 
 Split by service because that is the axis along which a test's setup
 differs: identity's answers depend on **who is asking** (the org chart, the
@@ -46,16 +45,20 @@ pytest directly the same way if you prefer:
 
 ```bash
 uv sync --project tests
-uv run --project tests playwright install chromium   # first time only, for ui/
 uv run --project tests pytest tests/stand
 ```
 
-This host-side run is also exactly what CI's `ui-journeys` lane does. The
-verb still accepts `--image <ref>` to run a suite baked into a container
+There are no browser journeys here right now: the ones that existed drove the
+shell the portal replaced and were removed with it, and which portal journeys
+replace them is still open. The playwright dependency, the `chromium` install
+(`uv run --project tests playwright install chromium`) and CI's `ui-journeys`
+lane all remain, so writing one is a matter of adding the test file.
+
+The verb still accepts `--image <ref>` to run a suite baked into a container
 joined to the gateway's network namespace, but no such image is published
 anymore — the lane ran from a published `ui-tests` image once, and the mode
-remains only as a mechanism. See `dev-compose.sh`'s
-`cmd_test_stand_help` for the full verb reference.
+remains only as a mechanism. See `dev-compose.sh`'s `cmd_test_stand_help` for
+the full verb reference.
 
 ## Running it against a deployed stand
 

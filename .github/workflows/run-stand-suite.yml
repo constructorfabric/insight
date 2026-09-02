@@ -26,7 +26,6 @@ on:
         options:
           - all
           - api
-          - ui
       k_expression:
         description: "Optional pytest -k expression, e.g. drilldown and not export. Empty runs the whole lane."
         required: false
@@ -240,14 +239,9 @@ jobs:
 
           args=()
           case "$LANE" in
-            api) args+=(--ignore=tests/stand/ui) ;;
-            ui)  args+=(--ignore=tests/stand/api --ignore=tests/stand/meta) ;;
-            all) ;;
+            api|all) ;;
             *)   echo "::error::unknown lane '$LANE'"; exit 1 ;;
           esac
-          if [ "$LANE" != "api" ]; then
-            args+=(--browser chromium --tracing=retain-on-failure --screenshot=only-on-failure)
-          fi
           if [ -n "${K_EXPRESSION:-}" ]; then
             args+=(-k "$K_EXPRESSION")
           fi

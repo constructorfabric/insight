@@ -6,7 +6,7 @@ import "@/i18n";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { WhatsNewScreen } from "@/screens/whats-new";
+import { WhatsNewBody } from "@/screens/whats-new";
 
 // SidebarProvider's useIsMobile reads window.matchMedia, which jsdom does
 // not implement — provide a desktop-shaped stub.
@@ -38,13 +38,13 @@ function renderScreen() {
   return render(
     <TooltipProvider>
       <SidebarProvider>
-        <WhatsNewScreen />
+        <WhatsNewBody />
       </SidebarProvider>
     </TooltipProvider>
   );
 }
 
-describe("WhatsNewScreen", () => {
+describe("WhatsNewBody", () => {
   it("renders the release header and stamp", () => {
     renderScreen();
     expect(
