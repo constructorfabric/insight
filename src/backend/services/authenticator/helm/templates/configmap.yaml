@@ -46,6 +46,11 @@ data:
     gears:
       api-gateway:
         config:
+          # INVARIANT: the service router's insight-http-metrics is the single
+          # writer of http.server.request.duration — the host's copy stays renamed
+          # or two bucket layouts collide in one series.
+          metrics:
+            prefix: "host"
           bind_addr: "0.0.0.0:{{ .Values.service.port }}"
           auth_disabled: false
           cors_enabled: false
