@@ -563,5 +563,6 @@
         "summary": "List the preview- image tags available in the registry"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

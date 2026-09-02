@@ -6969,5 +6969,6 @@
         "summary": "Usage summary for a date range"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

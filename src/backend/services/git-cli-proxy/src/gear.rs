@@ -124,11 +124,21 @@ impl RestApiCapability for GitCliProxyGear {
 }
 
 impl ApiGatewayCapability for GitCliProxyGear {
-    fn rest_prepare(&self, _ctx: &GearCtx, router: Router) -> anyhow::Result<Router> {
+    fn rest_prepare(
+        &self,
+        _ctx: &GearCtx,
+        router: Router,
+        _hc_registry: Arc<toolkit::RestHealthcheckRegistry>,
+    ) -> anyhow::Result<Router> {
         Ok(router.route("/healthz", get(|| async { "ok" })))
     }
 
-    fn rest_finalize(&self, _ctx: &GearCtx, router: Router) -> anyhow::Result<Router> {
+    fn rest_finalize(
+        &self,
+        _ctx: &GearCtx,
+        router: Router,
+        _hc_registry: Arc<toolkit::RestHealthcheckRegistry>,
+    ) -> anyhow::Result<Router> {
         // Panics are caught below the canonical layer, so the 500 it produces
         // is rendered like every other failure.
         let router = router

@@ -62,10 +62,12 @@ fn invalid_body_response(description: &'static str) -> Response {
     Problem {
         problem_type: INVALID_ARGUMENT_TYPE.to_owned(),
         title: "Invalid Argument".to_owned(),
-        status: StatusCode::BAD_REQUEST.as_u16(),
+        status: Some(StatusCode::BAD_REQUEST.as_u16()),
         detail: description.to_owned(),
         instance: None,
         trace_id: None,
+        error_code: None,
+        error_domain: None,
         context: json!({
             "field_violations": [
                 { "field": "body", "description": description, "reason": "INVALID" }
@@ -80,10 +82,12 @@ fn unsupported_media_type_response() -> Response {
     Problem {
         problem_type: UNSUPPORTED_MEDIA_TYPE_TYPE.to_owned(),
         title: "Unsupported Media Type".to_owned(),
-        status: StatusCode::UNSUPPORTED_MEDIA_TYPE.as_u16(),
+        status: Some(StatusCode::UNSUPPORTED_MEDIA_TYPE.as_u16()),
         detail: "Content-Type: application/json required".to_owned(),
         instance: None,
         trace_id: None,
+        error_code: None,
+        error_domain: None,
         context: json!({
             "precondition_violations": [
                 {
