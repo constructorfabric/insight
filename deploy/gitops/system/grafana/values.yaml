@@ -8871,6 +8871,73 @@ dashboards:
                   "rawSql": "SELECT event_time, query_duration_ms, user, read_rows, formatReadableSize(memory_usage) AS memory, normalizeQuery(query) AS query FROM system.query_log WHERE type = 'QueryFinish' AND user != 'grafana' AND $__timeFilter(event_time) ORDER BY query_duration_ms DESC LIMIT 20"
                 }
               ]
+            },
+            {
+              "id": 603,
+              "type": "timeseries",
+              "title": "MariaDB · slow queries (>1s)",
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 71
+              },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "custom": {
+                    "drawStyle": "bars",
+                    "fillOpacity": 60,
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom"
+                }
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "legendFormat": "slow queries",
+                  "expr": "sum(count_over_time({namespace=\"insight-infra\", container=\"mariadb\"} |= \"# Query_time\" [$__auto]))"
+                }
+              ]
+            },
+            {
+              "id": 604,
+              "type": "logs",
+              "title": "MariaDB · log (slow query entries)",
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 71
+              },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "options": {
+                "showTime": true,
+                "wrapLogMessage": true,
+                "sortOrder": "Descending"
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "{namespace=\"insight-infra\", container=\"mariadb\"}"
+                }
+              ]
             }
           ],
           "refresh": "1m",
