@@ -187,10 +187,13 @@ export function useMetricCollection(
     previousByKey,
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
-    // a moment later.
+    // a moment later. Both catalog reads gate `enabled`, so both belong here —
+    // one missing leaves a window where nothing is asked and nothing is
+    // pending, which renders as "no data".
     isPending:
       (current.isPending && enabled) ||
-      (entitySelected(entity, ids) && catalog.isPending),
+      (entitySelected(entity, ids) &&
+        (catalog.isPending || dimensions.isPending)),
     isFetching: current.isFetching,
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
@@ -310,12 +313,13 @@ export function useMetricCollectionSet(
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
-      // Pending covers the catalog wait too — otherwise a screen reads "no
+      // Pending covers both catalog waits too — otherwise a screen reads "no
       // data" for the moment before its requests are even allowed to fire.
       isPending:
         (existing?.isPending ?? false) ||
         (query.isPending && active) ||
-        (entitySelected(entity, ids) && catalog.isPending),
+        (entitySelected(entity, ids) &&
+          (catalog.isPending || dimensions.isPending)),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
       isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.

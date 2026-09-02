@@ -750,6 +750,25 @@ describe("filterCollectionToDeclaredDimensions", () => {
     ).toEqual([]);
   });
 
+  it("judges each entry by its OWN filters, not by the first with that key", () => {
+    // Two entries can name one metric under different filters. Deciding the
+    // second by the first's filters would leave an unsupported filter in the
+    // request, which is the 400 this gate exists to prevent.
+    const twice: MetricCollectionConfig = {
+      metrics: [
+        { key: "git.commits", filters: REPO, views: [{ view: "period" }] },
+        {
+          key: "git.commits",
+          filters: [{ dimension: "team", values: ["platform"] }],
+          views: [{ view: "peer" }],
+        },
+      ],
+    };
+    const out = filterCollectionToDeclaredDimensions(twice, declared);
+    // git.commits declares `repository` and not `team`.
+    expect(out.metrics).toEqual([twice.metrics[0]]);
+  });
+
   it("drops nothing while the catalog is unknown", () => {
     // Null is "not answered yet" — the caller holds the request instead.
     expect(filterCollectionToDeclaredDimensions(scoped, null)).toBe(scoped);

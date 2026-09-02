@@ -115,12 +115,16 @@ export function filterCollectionToDeclaredDimensions(
   declared: ReadonlyMap<string, ReadonlySet<string>> | null,
 ): MetricCollectionConfig {
   if (!declared) return collection;
-  return filterCollectionByKey(collection, (key) => {
-    const asked = collection.metrics.find((m) => m.key === key)?.filters ?? [];
+  // Judged per ENTRY, not per key: two entries may name the same metric under
+  // different filters, and looking the key up would decide the second one by
+  // the first one's filters.
+  const kept = collection.metrics.filter((metric) => {
+    const asked = metric.filters ?? [];
     if (!asked.length) return true;
-    const supported = declared.get(key);
+    const supported = declared.get(metric.key);
     return asked.every((filter) => supported?.has(filter.dimension) ?? false);
   });
+  return kept.length === collection.metrics.length ? collection : { metrics: kept };
 }
 
 export type MetricCollectionEntity =
