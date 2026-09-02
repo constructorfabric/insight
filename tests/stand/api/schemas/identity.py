@@ -165,7 +165,7 @@ class PeopleListItemResponse(BaseModel):
         extra='forbid',
     )
     attributes: dict[str, str]
-    display_name: str | None = None
+    display_name: str | None = Field(None, description='Source-provided display name, or the available source-provided name\nparts joined together.')
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
