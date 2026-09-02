@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GROUPS } from "@/lib/insight/groups";
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -222,6 +223,7 @@ beforeEach(() => {
   act(() => {
     portalRouter.set({ slice: undefined, repo: undefined });
     portalRouter.set({ scope: undefined, direct: false });
+    setPortalShowPlanned(true);
   });
 });
 

@@ -14,6 +14,7 @@ import { renderHook } from "@testing-library/react";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson } from "@/types/insight";
 
@@ -48,6 +49,7 @@ const person = (
 
 beforeEach(() => {
   portalRouter.reset();
+  act(() => setPortalShowPlanned(true));
   mocks.isFlat = false;
   // A roster that offers two real dimensions, so a slice has something to name.
   mocks.tree = person("boss", {}, [
