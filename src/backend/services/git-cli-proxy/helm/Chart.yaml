@@ -4,5 +4,5 @@ description: Insight Git CLI Proxy — clone-based git data extraction for the n
 version: 0.1.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.09.01.11.31-f96dddc.release-2026.08"
+appVersion: "2026.09.02.03.45-f5a32d1.release-2026.08"
 type: application
