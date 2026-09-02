@@ -132,9 +132,10 @@ datasources:
 
 # ─── Dashboards as code ─────────────────────────────────────────────────
 # Provisioned into the "Insight" folder. Sources: LogQL over the gateway
-# access_log and pod logs, and PromQL over VictoriaMetrics (cAdvisor +
+# access_log and pod logs, PromQL over VictoriaMetrics (cAdvisor +
 # kube-state-metrics, the services' http.server.request.duration histogram,
-# and the gateway's nginx exporter — #2893).
+# and the gateway's nginx exporter — #2893), and read-only SQL over the
+# ClickHouse sync ledger (ingestion_history.sync_events — #2894).
 # Deploy markers: every umbrella deploy runs the insight-post-upgrade hook
 # pod; its log lines drive the dashboard annotations. The "deploy output"
 # panel shows what scripts/push-deploy-log.sh ships ({job="deploy-insight"}).
@@ -456,6 +457,99 @@ dashboards:
              "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}},
              "targets": [
                {"refId": "A", "legendFormat": "{{pod}}", "expr": "nginx_up{job=\"gateway-nginx\"}"}
+             ]}
+          ]
+        }
+    # INVARIANT: the newest-sync resolution matches connector_health/read.rs —
+    # one argMax over the whole tuple; per-column argMax would mix rows.
+    insight-connectors:
+      json: |
+        {
+          "uid": "insight-connectors",
+          "title": "Insight · Connectors",
+          "schemaVersion": 39,
+          "time": {"from": "now-7d", "to": "now"},
+          "refresh": "5m",
+          "annotations": {"list": [
+            {"name": "Deploys", "enable": true, "iconColor": "purple",
+             "datasource": {"type": "loki", "uid": "loki"},
+             "expr": "{namespace=\"insight\", pod=~\"insight-post-upgrade.*\"}"}
+          ]},
+          "panels": [
+            {"id": 1, "type": "table", "title": "Last sync per connector",
+             "gridPos": {"h": 10, "w": 14, "x": 0, "y": 0},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"custom": {"filterable": true}}, "overrides": [
+               {"matcher": {"id": "byName", "options": "duration_ms"}, "properties": [{"id": "unit", "value": "ms"}]},
+               {"matcher": {"id": "byName", "options": "records"}, "properties": [{"id": "unit", "value": "short"}]}
+             ]},
+             "options": {"sortBy": [{"displayName": "connector"}]},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 1,
+                "rawSql": "SELECT connector, winner.1 AS status, winner.2 AS last_update, winner.3 AS started_at, winner.4 AS duration_ms, winner.5 AS records FROM (SELECT connector, argMax(tuple(status, coalesce(job_updated_at, ts), started_at, duration_ms, records_reported), (coalesce(job_updated_at, ts), toUInt64OrZero(job_id), status IN ('succeeded', 'failed', 'cancelled', 'incomplete'), ts)) AS winner FROM ingestion_history.sync_events WHERE event = 'sync.completed' GROUP BY connector) ORDER BY connector"}
+             ]},
+            {"id": 2, "type": "stat", "title": "Time since last sealed sweep",
+             "gridPos": {"h": 5, "w": 10, "x": 14, "y": 0},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [
+               {"color": "green", "value": null}, {"color": "yellow", "value": 3600}, {"color": "red", "value": 14400}
+             ]}}, "overrides": []},
+             "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 1,
+                "rawSql": "SELECT toUInt64(dateDiff('second', max(ts), now())) AS seal_age FROM ingestion_history.sync_events WHERE event = 'sweep.completed' HAVING count() > 0"}
+             ]},
+            {"id": 3, "type": "stat", "title": "Configured connectors (newest sealed tick)",
+             "gridPos": {"h": 5, "w": 10, "x": 14, "y": 5},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+             "options": {"colorMode": "value", "reduceOptions": {"calcs": ["lastNotNull"]}},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 1,
+                "rawSql": "SELECT count(DISTINCT connector) AS configured FROM ingestion_history.sync_events WHERE event = 'connector.configured' AND tick_id = (SELECT argMax(tick_id, ts) FROM ingestion_history.sync_events WHERE event = 'sweep.completed')"}
+             ]},
+            {"id": 4, "type": "timeseries", "title": "Records reported per connector",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 0,
+                "rawSql": "SELECT toStartOfInterval(winner.1, toIntervalSecond($__interval_s)) AS t, connector, sum(coalesce(winner.2, 0)) AS records FROM (SELECT connector, job_id, argMax(tuple(coalesce(job_updated_at, ts), records_reported), (coalesce(job_updated_at, ts), status IN ('succeeded', 'failed', 'cancelled', 'incomplete'), ts)) AS winner FROM ingestion_history.sync_events WHERE event = 'sync.completed' AND $__timeFilter(ts) GROUP BY connector, job_id) GROUP BY t, connector ORDER BY t"}
+             ]},
+            {"id": 5, "type": "timeseries", "title": "Sync outcomes by status",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": [
+               {"matcher": {"id": "byName", "options": "succeeded"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+               {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+               {"matcher": {"id": "byName", "options": "cancelled"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+               {"matcher": {"id": "byName", "options": "incomplete"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]}
+             ]},
+             "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 0,
+                "rawSql": "SELECT toStartOfInterval(ts, toIntervalSecond($__interval_s)) AS t, status, count() AS syncs FROM ingestion_history.sync_events WHERE event = 'sync.completed' AND status IN ('succeeded', 'failed', 'cancelled', 'incomplete') AND $__timeFilter(ts) GROUP BY t, status ORDER BY t"}
+             ]},
+            {"id": 6, "type": "bargauge", "title": "Staleness since last successful sync",
+             "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"unit": "s", "min": 0, "thresholds": {"mode": "absolute", "steps": [
+               {"color": "green", "value": null}, {"color": "yellow", "value": 86400}, {"color": "red", "value": 172800}
+             ]}}, "overrides": []},
+             "options": {"displayMode": "basic", "orientation": "horizontal", "reduceOptions": {"values": true, "calcs": []}},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 1,
+                "rawSql": "SELECT connector, toUInt64(dateDiff('second', max(coalesce(job_updated_at, ts)), now())) AS since_success FROM ingestion_history.sync_events WHERE event = 'sync.completed' AND status = 'succeeded' GROUP BY connector ORDER BY since_success DESC"}
+             ]},
+            {"id": 7, "type": "table", "title": "Configured set vs last outcome",
+             "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+             "datasource": {"type": "grafana-clickhouse-datasource", "uid": "clickhouse"},
+             "fieldConfig": {"defaults": {"custom": {"filterable": true}}, "overrides": []},
+             "options": {"sortBy": [{"displayName": "connector"}]},
+             "targets": [
+               {"refId": "A", "editorType": "sql", "format": 1,
+                "rawSql": "SELECT configured.connector AS connector, if(last.status = '', 'never synced', last.status) AS last_outcome FROM (SELECT DISTINCT connector FROM ingestion_history.sync_events WHERE event = 'connector.configured' AND tick_id = (SELECT argMax(tick_id, ts) FROM ingestion_history.sync_events WHERE event = 'sweep.completed')) AS configured LEFT JOIN (SELECT connector, argMax(status, (coalesce(job_updated_at, ts), toUInt64OrZero(job_id), status IN ('succeeded', 'failed', 'cancelled', 'incomplete'), ts)) AS status FROM ingestion_history.sync_events WHERE event = 'sync.completed' GROUP BY connector) AS last ON last.connector = configured.connector ORDER BY connector"}
              ]}
           ]
         }
