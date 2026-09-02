@@ -1,6 +1,6 @@
 # Constructor Insight — Main Scenarios by Persona
 
-**Status:** draft for review · Companion to [VISION.md](VISION.md)
+**Status:** draft for review · Companion to [INSIGHT_VISION.md](https://github.com/constructorfabric/vision/blob/main/INSIGHT_VISION.md)
 
 The vision says what Insight is and what it can do. This document says **who is standing in front of
 it, what they are there to do, and how far each of them may reach**. It adds no capability and changes
