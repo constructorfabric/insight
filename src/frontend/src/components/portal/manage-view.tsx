@@ -23,6 +23,8 @@ import { PlatformUsage } from "@/components/portal/platform-usage";
 import { useIsAdmin } from "@/queries/identity-me";
 import { useMetricDefinitions } from "@/queries/metric-definitions";
 import { AiAssistantBody } from "@/screens/ai-assistant";
+import { MetricsConsoleBody } from "@/screens/metrics-console";
+import { QueryConsoleBody } from "@/screens/query-console";
 import { PreviewsBody } from "@/screens/previews";
 import { WhatsNewBody } from "@/screens/whats-new";
 import { cn } from "@/lib/utils";
@@ -46,6 +48,8 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  */
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
+  if (item === "custom-metrics") return <MetricsConsoleBody />;
+  if (item === "query-console") return <QueryConsoleBody />;
   if (item === "connector-health")
     return (
       <AdminGate>
