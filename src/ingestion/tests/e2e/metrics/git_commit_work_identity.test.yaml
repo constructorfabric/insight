@@ -35,6 +35,10 @@ description: >
       only under the repository that loses the commit collapse. The lines
       count once, under the surviving repository.
 
+  Commit size reads the same commit set: the squash pool is {10, 10, 6}
+  (median 10), the surviving patch copy is 7, the partial-branch pair is
+  {3, 2} (median 3), and the cross-repository survivor keeps its 4.
+
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/erin
@@ -130,6 +134,9 @@ cases:
           - metric_key: git.lines_removed
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
       # The three branch originals; the squash result is the fourth sha and
@@ -148,6 +155,12 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/squash-merge"}}
         equal: {value: 3}
+      # The size pool is the same commit set: the branch sizes {10, 10, 6}
+      # read a median of 10, with nothing contributed by the squash result.
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/squash-merge"}}
+        equal: {value: 10}
 
   - name: A fast-forward merge promotes an original, which stays authored
     request:
@@ -188,6 +201,9 @@ cases:
           - metric_key: git.lines_added
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
       - metric: git.commits
@@ -198,6 +214,11 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/patch-copy"}}
         equal: {value: 6}
+      # The one surviving commit's size: 6 added plus 1 removed.
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/patch-copy"}}
+        equal: {value: 7}
 
   - name: The later carrier of an already-authored patch reports nothing
     request:
@@ -213,14 +234,20 @@ cases:
           - metric_key: git.lines_added
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
-      # The November copy carries the October patch: no commit row and no
-      # lines at all for the repository in November.
+      # The November copy carries the October patch: no commit row, no lines,
+      # and no size at all for the repository in November.
       - metric: git.commits
         view: breakdown
         assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/patch-copy'))"
       - metric: git.lines_added
+        view: breakdown
+        assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/patch-copy'))"
+      - metric: git.commit_size
         view: breakdown
         assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'repository' && d.value == 'git-test:constructor/patch-copy'))"
 
@@ -263,6 +290,9 @@ cases:
           - metric_key: git.lines_added
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
       # One hash, one commit, counted under the surviving repository.
@@ -276,6 +306,13 @@ cases:
       # The lines were recorded only under xr-upstream, whose commit row lost
       # the collapse — they attach to the surviving row instead of vanishing.
       - metric: git.lines_added
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/xr-fork"}}
+        equal: {value: 4}
+      # The size correction joins file rows by hash, not repository: the
+      # surviving commit's stats stay uncorrected at 4 even though its only
+      # file row was recorded under the losing repository.
+      - metric: git.commit_size
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/xr-fork"}}
         equal: {value: 4}
@@ -294,6 +331,9 @@ cases:
           - metric_key: git.lines_added
             views:
               - {view: breakdown, dimensions: [repository]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [repository]}
     expect:
       - assert: "status == 200"
       # One of the two linked commits was collected, so coverage is incomplete
@@ -309,6 +349,13 @@ cases:
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/partial-branch"}}
         equal: {value: 5}
+      # The original reads 3; the result keeps only what the oid fold did not
+      # remove — 5 reported less the 3 folded lines is 2. Sizes {2, 3} read 3
+      # (upper middle on an even count).
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:constructor/partial-branch"}}
+        equal: {value: 3}
 
   - name: The same patch id in unrelated repositories is two authored changes
     request:

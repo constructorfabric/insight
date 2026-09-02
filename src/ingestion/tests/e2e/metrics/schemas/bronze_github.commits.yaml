@@ -19,9 +19,9 @@ schemas:
       committer_email: {type: string}
       message: {type: string}
       committed_date: {type: string}
-      changed_files: {type: integer}
-      additions: {type: integer}
-      deletions: {type: integer}
+      changed_files: {type: [integer, "null"]}
+      additions: {type: [integer, "null"]}
+      deletions: {type: [integer, "null"]}
       is_merge: {type: boolean}
       is_in_default_branch: {type: [boolean, "null"]}
       patch_id: {type: [string, "null"]}
