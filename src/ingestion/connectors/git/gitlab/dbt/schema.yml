@@ -38,3 +38,23 @@ models:
 
   - name: gitlab__pull_requests_reviewers
     description: "GitLab merge-request approvals -> staging, feeds class_git_pull_requests_reviewers"
+
+  - name: gitlab__identity_inputs
+    description: "What GitLab reports about a user account — its published e-mail addresses and its name -> staging, feeds silver.identity_inputs"
+    columns:
+      - name: unique_key
+        description: "One claim per (tenant, source, account, value_type, operation, value)"
+        data_tests:
+          - not_null
+          - unique
+      - name: insight_source_type
+        description: "`gitlab` — the numeric user id is the binding key"
+        data_tests:
+          - accepted_values:
+              values: ["gitlab"]
+      - name: source_account_id
+        description: "The numeric GitLab user id, stringified"
+      - name: value
+        description: "An address the account itself publishes, or the user's name for a display_name row"
+        data_tests:
+          - not_null

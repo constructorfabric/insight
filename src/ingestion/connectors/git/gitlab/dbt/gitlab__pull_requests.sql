@@ -50,9 +50,11 @@ SELECT
     ) AS state,
     COALESCE(mr.author_username, '') AS author_name,
     COALESCE(u.email, '') AS author_email,
-    -- Always '': the GitLab connector emits no identity inputs, so no account
-    -- binding exists to resolve against; attribution stays on author_email.
-    '' AS author_account_id,
+    -- The numeric GitLab user id, stringified — the same key
+    -- gitlab__identity_inputs binds accounts on, so attribution survives an
+    -- author GitLab exposes no address for. '' when the source reports no
+    -- author, which leaves resolution on author_email.
+    if(COALESCE(mr.author_id, 0) > 0, toString(COALESCE(mr.author_id, 0)), '') AS author_account_id,
     COALESCE(mr.source_branch, '') AS source_branch,
     COALESCE(mr.target_branch, '') AS destination_branch,
     parseDateTimeBestEffortOrNull(mr.created_at) AS created_on,
