@@ -69,6 +69,8 @@ vi.mock("@tanstack/react-router", async () => {
   return portalRouterMock();
 });
 
+import { usePortalSlice } from "./portal-nav";
+import { setPortalShowPlanned } from "./portal-store";
 import { useActiveZone } from "./use-active-zone";
 import { useOrgScope } from "./use-org-scope";
 import { usePersonCohort } from "./use-person-cohort";
@@ -104,6 +106,7 @@ beforeEach(() => {
   mocks.ic.isError = false;
   act(() => {
     portalRouter.reset();
+    setPortalShowPlanned(true);
   });
 });
 
@@ -188,6 +191,18 @@ describe("useViewerIsManager", () => {
     mocks.ic.isPending = true;
     const { result } = renderHook(() => useViewerIsManager());
     expect(result.current).toEqual({ isManager: false, isPending: true });
+  });
+});
+
+describe("usePortalSlice", () => {
+  it("ignores the URL slice while planned sections are off", () => {
+    act(() => setPortalShowPlanned(false));
+    act(() => portalRouter.set({ slice: "division" }));
+    const { result } = renderHook(() => usePortalSlice());
+    expect(result.current).toBe("");
+
+    act(() => setPortalShowPlanned(true));
+    expect(result.current).toBe("division");
   });
 });
 

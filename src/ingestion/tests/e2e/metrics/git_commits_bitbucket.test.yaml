@@ -10,7 +10,9 @@ description: >
       changes contributes zero rather than dropping out;
     * a merge commit is excluded from the commit count;
     * pull-request line totals are summed from the per-file diffstat rows, and
-      closed_on comes from the terminal MERGED activity event.
+      closed_on comes from the terminal MERGED activity event;
+    * commit size reads the commits' own stats — {12, 0} with the merge commit
+      contributing nothing — and the even-count median takes the upper middle.
 
 bronze:
   bronze_bamboohr.employees:
@@ -55,6 +57,9 @@ cases:
           - metric_key: git.lines_removed
             views:
               - { view: breakdown, dimensions: [source] }
+          - metric_key: git.commit_size
+            views:
+              - { view: breakdown, dimensions: [source] }
     expect:
       - assert: "status == 200"
       # commit-a and commit-b count; the merge commit does not.
@@ -71,6 +76,13 @@ cases:
         view: breakdown
         find: { entity_id: erin@example.com, dimensions: { key: source, value: bitbucket_cloud } }
         equal: { value: 2 }
+      # Sizes {12, 0}: commit-a's own stats, commit-b's empty diff. The merge
+      # commit contributes no size, and quantileExact(0.5) on the even pair
+      # takes the upper middle.
+      - metric: git.commit_size
+        view: breakdown
+        find: { entity_id: erin@example.com, dimensions: { key: source, value: bitbucket_cloud } }
+        equal: { value: 12 }
 
   - name: Bitbucket git metrics empty window
     request:
