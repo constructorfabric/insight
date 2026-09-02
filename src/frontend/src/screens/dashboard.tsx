@@ -27,6 +27,7 @@ import {
 import { IdentityApiError } from "@/api/identity-client";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { useIcPerson } from "@/queries/ic-dashboard";
+import { useVisibleRoster } from "@/queries/visible-roster";
 import {
   collectionSetPending,
   useMetricCollection,
@@ -53,6 +54,7 @@ export interface DashboardScreenProps {
 export function DashboardScreen({ personId }: DashboardScreenProps) {
   const personQ = useIcPerson(personId);
   const person = personQ.data ?? null;
+  const visibleRoster = useVisibleRoster(true);
   const { period, dateRange } = usePeriod();
   const { focusMode } = useSettings();
   const entityId = normalizePersonId(personId);
@@ -103,6 +105,10 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
   // cached tree resolves in a beat; the title stays blank until then.
   const displayName = person ? (personName(person) ?? "") : "";
   const role = person?.job_title;
+  const hasReports = visibleRoster.roster.some(
+    (candidate) =>
+      candidate.manager_person_id?.toLowerCase() === personId.toLowerCase()
+  );
 
   // The one loading gate: a single page spinner while any of the screen's
   // queries has no data. A period change mints new query keys, so the same
@@ -112,8 +118,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
   // standing, so a pending one is still loading. Left out, the block would
   // paint before it could say anything — and an empty attention block reads as
   // "nothing to see" rather than "not compared yet".
-  const isLoading =
-    kpiData.isPending || collectionSetPending(groupData);
+  const isLoading = kpiData.isPending || collectionSetPending(groupData);
   // Identity failing is not a metric failure: with no person there is no name,
   // no reports, and the metrics below are unauthorized anyway. A 404 means the
   // id is gone or outside the viewer's visible set — say so, rather than paint
@@ -159,7 +164,7 @@ export function DashboardScreen({ personId }: DashboardScreenProps) {
         title={displayName}
         subtitle={role}
         person={personId}
-        hasReports={(person?.subordinates?.length ?? 0) > 0}
+        hasReports={hasReports}
       />
       <main className="flex flex-1 flex-col gap-8 p-4 md:p-6">
         {personQ.isError ? (

@@ -58,7 +58,7 @@ describe("prefetchViewerIdentity", () => {
   it("resolves the viewer by person_id and caches it under the normalized key", async () => {
     await prefetchViewerIdentity();
 
-    expect(resolve).toHaveBeenCalledWith(PERSON_ID);
+    expect(resolve).toHaveBeenCalledWith(PERSON_ID, expect.any(AbortSignal));
     // Lowercased: this is the key `useIcPerson` computes, so the shell mounts
     // with the tree already cached instead of re-fetching it.
     expect(

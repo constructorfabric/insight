@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GROUPS, KPI_ROW } from "@/lib/insight/groups";
+import type { PeopleListItem } from "@/api/identity-client";
 
 const METRIC_KEYS = [...KPI_ROW];
 const GROUP_IDS = GROUPS.map((def) => def.id);
@@ -15,6 +16,7 @@ const kpiState = {
 };
 let personData: { display_name?: string } | undefined;
 let personError: unknown;
+let roster: PeopleListItem[] = [];
 let tilesReturn: Array<{ key: string }> = [];
 let attentionPerGroup: Array<{ key: string }> = [];
 let omitGroupId: string | null = null;
@@ -27,6 +29,15 @@ vi.mock("@/queries/ic-dashboard", () => ({
     error: personError,
     isError: personError !== undefined,
     refetch: personRefetch,
+  }),
+}));
+
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster,
+    isPending: false,
+    isError: false,
+    retry: vi.fn(),
   }),
 }));
 
@@ -79,8 +90,16 @@ vi.mock("@/queries/metric-results", () => ({
 }));
 
 vi.mock("@/components/widgets/dashboard/dashboard-header", () => ({
-  DashboardHeader: ({ title }: { title: string }) => (
-    <div data-testid="header">{title}</div>
+  DashboardHeader: ({
+    title,
+    hasReports,
+  }: {
+    title: string;
+    hasReports: boolean;
+  }) => (
+    <div data-testid="header" data-has-reports={String(hasReports)}>
+      {title}
+    </div>
   ),
 }));
 
@@ -153,6 +172,7 @@ beforeEach(() => {
   omitGroupId = null;
   personData = undefined;
   personError = undefined;
+  roster = [];
   personRefetch.mockReset();
 });
 
@@ -209,6 +229,39 @@ describe("DashboardScreen", () => {
         .getAllByTestId("drilldown")
         .every((el) => el.dataset.open === "false")
     ).toBe(true);
+  });
+
+  it("derives the team affordance from canonical roster relationships", () => {
+    personData = { display_name: "Lead" };
+    roster = [
+      {
+        person_id: "lead",
+        display_name: "Lead",
+        first_name: null,
+        last_name: null,
+        username: null,
+        email: null,
+        attributes: {},
+        manager_person_id: null,
+      },
+      {
+        person_id: "report",
+        display_name: "Report",
+        first_name: null,
+        last_name: null,
+        username: null,
+        email: null,
+        attributes: {},
+        manager_person_id: "lead",
+      },
+    ];
+
+    render(<DashboardScreen personId="lead" />);
+
+    expect(screen.getByTestId("header")).toHaveAttribute(
+      "data-has-reports",
+      "true"
+    );
   });
 
   it("shows ONE retryable error for the row when the collection errored", async () => {

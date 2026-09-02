@@ -3,10 +3,7 @@ import { http, HttpResponse } from "msw";
 import { FEEDBACK_MESSAGE_MAX } from "@/api/feedback-client";
 import type { MetricDrilldownRequest } from "@/api/metric-drilldown-client";
 import type { MetricResultsRequest } from "@/api/metric-results-client";
-import type {
-  CustomMetric,
-  CustomMetricGraph,
-} from "@/api/metrics-client";
+import type { CustomMetric, CustomMetricGraph } from "@/api/metrics-client";
 import { isPersonId } from "@/lib/metrics/entity";
 
 import { buildMetricDefinitions } from "./metric-definitions-factory";
@@ -19,6 +16,25 @@ import { buildIngestionIntensity } from "./ingestion-factory";
 import { buildIdentityTree, PEOPLE, PEOPLE_BY_EMAIL } from "./registry";
 
 const defaultPerson = PEOPLE[0];
+
+function peopleItem(person: (typeof PEOPLE)[number]) {
+  const [firstName, ...lastName] = person.name.split(" ");
+  return {
+    person_id: person.person_id,
+    display_name: person.name,
+    first_name: firstName ?? null,
+    last_name: lastName.join(" ") || null,
+    username: null,
+    email: person.email,
+    attributes: {
+      department: person.department,
+      division: person.department,
+      job_title: person.role,
+      status: "Active",
+    },
+    manager_person_id: person.supervisor_person_id,
+  };
+}
 
 /**
  * A mock page holds far fewer rows than a real one. The synthetic roster is
@@ -71,7 +87,6 @@ function mockSessionTiming(): { expires_at: number; refresh_at: number } {
   return { expires_at: now + 600, refresh_at: now + 510 };
 }
 
-
 // ── Saved queries (`/v1/queries`) ────────────────────────────
 // A tiny in-memory store so the console's CRUD + run round-trip in mock,
 // Storybook, and `VITE_ENABLE_MOCKS=true` dev runs. Synthetic data only.
@@ -113,7 +128,7 @@ function savedQueryHandlers() {
           name: q.name,
           description: q.description,
         })),
-      }),
+      })
     ),
     http.post(QUERIES_BASE, async ({ request }) => {
       const body = (await request.json().catch(() => null)) as {
@@ -122,7 +137,10 @@ function savedQueryHandlers() {
         sql?: string;
       } | null;
       if (!body?.name || !body?.sql) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       const now = new Date().toISOString();
       const created: MockSavedQuery = {
@@ -242,7 +260,9 @@ function stripOrigin(metric: CustomMetric): CustomMetricGraph {
 /** A graph is well-formed enough to persist: identity, source, SQL, at least
  *  one measure, and the input wiring its computation requires. Mirrors the
  *  backend's create/update validation so FE tests exercise real behavior. */
-function isValidGraph(graph: CustomMetricGraph | null): graph is CustomMetricGraph {
+function isValidGraph(
+  graph: CustomMetricGraph | null
+): graph is CustomMetricGraph {
   if (
     !graph?.metric_key ||
     !graph.label ||
@@ -282,14 +302,17 @@ function customMetricHandlers() {
     http.get(METRICS_BASE, () =>
       HttpResponse.json({
         items: [...customMetricStore.values()].map(toSummary),
-      }),
+      })
     ),
     http.post(METRICS_BASE, async ({ request }) => {
       const body = (await request
         .json()
         .catch(() => null)) as CustomMetricGraph | null;
       if (!isValidGraph(body)) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       // A duplicate key is a conflict, not an overwrite — leave the store
       // untouched and mirror the backend's 409.
@@ -297,7 +320,10 @@ function customMetricHandlers() {
         return HttpResponse.json({ error: "already_exists" }, { status: 409 });
       }
       if (sourceKeyTakenByOther(body.source_key, body.metric_key)) {
-        return HttpResponse.json({ error: "source_key_conflict" }, { status: 409 });
+        return HttpResponse.json(
+          { error: "source_key_conflict" },
+          { status: 409 }
+        );
       }
       const created: CustomMetric = { ...body, origin: "custom" };
       customMetricStore.set(created.metric_key, created);
@@ -308,7 +334,7 @@ function customMetricHandlers() {
     http.get(`${METRICS_BASE}/export`, () =>
       HttpResponse.json({
         metrics: [...customMetricStore.values()].map(stripOrigin),
-      }),
+      })
     ),
     http.post(`${METRICS_BASE}/import`, async ({ request }) => {
       const body = (await request.json().catch(() => null)) as {
@@ -318,7 +344,10 @@ function customMetricHandlers() {
       // nothing if any member is malformed. Only after the batch is known good
       // do we apply it, skipping keys that already exist.
       if (!Array.isArray(body?.metrics) || !body.metrics.every(isValidGraph)) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       const skipped: string[] = [];
       let imported = 0;
@@ -349,12 +378,18 @@ function customMetricHandlers() {
       const candidate = body ? { ...body, metric_key: key } : null;
       // Reject an incomplete/invalid graph instead of persisting it.
       if (!isValidGraph(candidate)) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       // A source_key already claimed by a different metric is a 409, matching
       // the backend's new collision check.
       if (sourceKeyTakenByOther(candidate.source_key, key)) {
-        return HttpResponse.json({ error: "source_key_conflict" }, { status: 409 });
+        return HttpResponse.json(
+          { error: "source_key_conflict" },
+          { status: 409 }
+        );
       }
       const updated: CustomMetric = { ...candidate, origin: "custom" };
       customMetricStore.set(key, updated);
@@ -366,7 +401,6 @@ function customMetricHandlers() {
     }),
   ];
 }
-
 
 // Assembled last: the sections above declare module-level stores/consts the
 // handler factories close over, and the factories are CALLED right here —
@@ -396,7 +430,13 @@ const DEFAULT_SYSTEM_PROMPT = [
 
 const mockContext = new Map<
   string,
-  { id: string; scope: "tenant" | "person"; title: string; body: string; updated_at: string }
+  {
+    id: string;
+    scope: "tenant" | "person";
+    title: string;
+    body: string;
+    updated_at: string;
+  }
 >([
   [
     "ctx-org-1",
@@ -422,7 +462,7 @@ const mockContext = new Map<
 
 export const handlers = [
   http.get("/auth/me", () =>
-    HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() }),
+    HttpResponse.json({ ...MOCK_SESSION, ...mockSessionTiming() })
   ),
   http.post("/auth/refresh", () => HttpResponse.json(mockSessionTiming())),
   http.post("/auth/logout", () => HttpResponse.json({ rp_logout_url: null })),
@@ -430,11 +470,7 @@ export const handlers = [
     const body = (await request
       .json()
       .catch(() => null)) as MetricResultsRequest | null;
-    if (
-      !body ||
-      !body.entity ||
-      !Array.isArray(body.metrics)
-    ) {
+    if (!body || !body.entity || !Array.isArray(body.metrics)) {
       return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
     }
 
@@ -442,7 +478,7 @@ export const handlers = [
     if (entityType !== "person" && entityType !== "tenant") {
       return HttpResponse.json(
         { error: "invalid_argument", field: "entity.type" },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -453,22 +489,24 @@ export const handlers = [
     if (
       body.entity.type === "person" &&
       (!Array.isArray(body.entity.ids) ||
-        !body.entity.ids.every((id) => typeof id === "string" && isPersonId(id)))
+        !body.entity.ids.every(
+          (id) => typeof id === "string" && isPersonId(id)
+        ))
     ) {
       return HttpResponse.json(
         { error: "invalid_argument", field: "entity.ids" },
-        { status: 400 },
+        { status: 400 }
       );
     }
     if (
       body.entity.type === "tenant" &&
       body.metrics.some((metric) =>
-        metric.views.some((view) => view.view === "peer"),
+        metric.views.some((view) => view.view === "peer")
       )
     ) {
       return HttpResponse.json(
         { error: "invalid_argument", field: "metrics.views" },
-        { status: 400 },
+        { status: 400 }
       );
     }
     return HttpResponse.json(buildMetricResultsResponse(body));
@@ -492,7 +530,10 @@ export const handlers = [
         .json()
         .catch(() => null)) as MetricDrilldownRequest | null;
       if (!body?.metric_key || !body.entity || !body.period) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       return new HttpResponse(buildMetricDrilldownCsv(body), {
         headers: {
@@ -500,14 +541,15 @@ export const handlers = [
           "Content-Disposition": `attachment; filename="${body.metric_key}.csv"`,
         },
       });
-    },
+    }
   ),
   // The demo viewer is an identity admin, so mock mode exercises the admin
   // surfaces (Manage → Identities). The role id is the backend's seeded
   // `roles_repo::ADMIN_ROLE_ID` migration constant.
   http.get("/api/identity/v1/me", () =>
     HttpResponse.json({
-      person_id: defaultPerson?.person_id ?? "00000000-0000-0000-0000-0000000000bb",
+      person_id:
+        defaultPerson?.person_id ?? "00000000-0000-0000-0000-0000000000bb",
       insight_tenant_id: "00000000-0000-4000-8000-00000000c0de",
       roles: [
         {
@@ -518,13 +560,13 @@ export const handlers = [
       // Mock mode demos the reporting-line product; the flat roster below is
       // served anyway, so switching this to "flat" exercises that shell.
       visibility_policy: "org_chart",
-    }),
+    })
   ),
   // Minimal, honest empty catalog: without this handler the request falls
   // through to the network, and in a proxy-configured dev run the resulting
   // 401 bounces the whole mock session to the real IdP.
   http.get("/api/analytics/v1/metric-definitions", () =>
-    HttpResponse.json({ metrics: buildMetricDefinitions() }),
+    HttpResponse.json({ metrics: buildMetricDefinitions() })
   ),
   // One account's binding + decision trail. dev-42 carries a small history so
   // the panel has something to show; any other account answers 200 with no
@@ -657,14 +699,15 @@ export const handlers = [
                   job_title: carol.role,
                 }
               : null,
-            comment: "Checked with HR — same person, the chat handle is theirs.",
+            comment:
+              "Checked with HR — same person, the chat handle is theirs.",
             accounts_touched: 3,
             outcome: "applied",
             recorded_at: "2026-08-01T10:15:00.000000",
           },
         ],
       });
-    },
+    }
   ),
   // The person listing: a blank query is the whole roster, terms narrow it,
   // and both are paged the way the service pages them.
@@ -678,8 +721,10 @@ export const handlers = [
       terms.every((term) =>
         isPersonId(term)
           ? p.person_id.toLowerCase() === term
-          : [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(term)),
-      ),
+          : [p.name, p.email, p.role].some((v) =>
+              v.toLowerCase().includes(term)
+            )
+      )
     )
       .map((p) => ({
         person_id: p.person_id,
@@ -690,7 +735,7 @@ export const handlers = [
         status: "active",
       }))
       .sort((left, right) =>
-        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
+        (left.display_name ?? "").localeCompare(right.display_name ?? "")
       );
     return HttpResponse.json(pageOf(items, params, q));
   }),
@@ -702,8 +747,7 @@ export const handlers = [
     const q = params.get("q")?.trim().toLowerCase() ?? "";
     const items = PEOPLE.filter(
       (p) =>
-        !q ||
-        [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(q)),
+        !q || [p.name, p.email, p.role].some((v) => v.toLowerCase().includes(q))
     )
       .map((p) => ({
         person_id: p.person_id,
@@ -714,7 +758,7 @@ export const handlers = [
         status: "active",
       }))
       .sort((left, right) =>
-        (left.display_name ?? "").localeCompare(right.display_name ?? ""),
+        (left.display_name ?? "").localeCompare(right.display_name ?? "")
       );
     return HttpResponse.json(pageOf(items, params, q));
   }),
@@ -725,32 +769,27 @@ export const handlers = [
     const items = PEOPLE.filter((person) =>
       terms.every((term) =>
         [person.name, person.email, person.role, person.department].some(
-          (value) => value.toLowerCase().includes(term),
-        ),
-      ),
+          (value) => value.toLowerCase().includes(term)
+        )
+      )
     )
-      .map((person) => {
-        const [firstName, ...lastName] = person.name.split(" ");
-        return {
-          person_id: person.person_id,
-          display_name: person.name,
-          first_name: firstName ?? null,
-          last_name: lastName.join(" ") || null,
-          username: null,
-          email: person.email,
-          attributes: {
-            department: person.department,
-            division: person.department,
-            job_title: person.role,
-            status: "Active",
-          },
-          manager_person_id: person.supervisor_person_id,
-        };
-      })
+      .map(peopleItem)
       .sort((left, right) =>
-        left.display_name.localeCompare(right.display_name),
+        left.display_name.localeCompare(right.display_name)
       );
     return HttpResponse.json(pageOf(items, params, q));
+  }),
+  http.get("/api/identity/v1/people/:personId", ({ params }) => {
+    const personId = String(params.personId).toLowerCase();
+    const person = PEOPLE.find(
+      (candidate) => candidate.person_id.toLowerCase() === personId
+    );
+    return person
+      ? HttpResponse.json(peopleItem(person))
+      : HttpResponse.json(
+          { type: "urn:insight:error:person_not_found" },
+          { status: 404 }
+        );
   }),
   // The account listing: the same roster seen as accounts; blank lists them all.
   http.get("/api/identity/v1/resolution/accounts", ({ request }) => {
@@ -758,7 +797,9 @@ export const handlers = [
     const q = params.get("q")?.trim() ?? "";
     const needle = q.toLowerCase();
     const items = PEOPLE.filter(
-      (p) => !needle || [p.name, p.email].some((v) => v.toLowerCase().includes(needle)),
+      (p) =>
+        !needle ||
+        [p.name, p.email].some((v) => v.toLowerCase().includes(needle))
     ).map((p, index) => ({
       source: index % 2 === 0 ? "github" : "gitlab",
       source_id: "01900000-0000-7000-8000-00000000aa01",
@@ -777,7 +818,9 @@ export const handlers = [
     // The service orders by the label each row shows; the mock mirrors it so a
     // mock run does not demonstrate an order the real listing never produces.
     items.sort((left, right) =>
-      (left.email ?? left.account_id).localeCompare(right.email ?? right.account_id),
+      (left.email ?? left.account_id).localeCompare(
+        right.email ?? right.account_id
+      )
     );
     return HttpResponse.json(pageOf(items, params, q));
   }),
@@ -805,7 +848,7 @@ export const handlers = [
             bound_by_operator: true,
           },
         ],
-      }),
+      })
   ),
   // The four correction verbs: happy-path outcomes, no state kept — the queue
   // mock is static, so the demo shows the flow rather than a simulation.
@@ -825,8 +868,8 @@ export const handlers = [
         ...(verb === "detach"
           ? { new_person_id: "01900000-0000-7000-8000-00000000dead" }
           : {}),
-      }),
-    ),
+      })
+    )
   ),
   // The review queue, exercising all three kinds. Candidates reuse the seeded
   // roster so names/emails stay consistent with every other mock surface.
@@ -935,54 +978,59 @@ export const handlers = [
           candidates: [],
         },
       ],
-      rates: { observed: 60, bound: 55, pending: 3, no_source_id: 0, no_evidence: 2, excluded: 1 },
+      rates: {
+        observed: 60,
+        bound: 55,
+        pending: 3,
+        no_source_id: 0,
+        no_evidence: 2,
+        excluded: 1,
+      },
       truncated: false,
       items_truncated: false,
     });
   }),
-  http.post(
-    "/api/identity/v1/profiles",
-    async ({ request }) => {
-      const body = (await request.json().catch(() => null)) as
-        | { value_type?: string; value?: string }
-        | null;
-      const value = (body?.value ?? "").trim();
-      // The service resolves `person_id` (the SPA's key) and `email` (legacy
-      // URL migration only); anything else is a client error.
-      if (body?.value_type !== "email" && body?.value_type !== "person_id") {
-        return HttpResponse.json(
-          { type: "urn:insight:error:invalid_argument" },
-          { status: 400 },
-        );
-      }
-      // A malformed person_id is a 400, not a 404 — matching the service, where
-      // "does not parse" and "resolves to nobody" are different answers.
-      if (body.value_type === "person_id" && !isPersonId(value)) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:invalid_argument" },
-          { status: 400 },
-        );
-      }
-      const personId =
-        body.value_type === "email"
-          ? PEOPLE_BY_EMAIL[value.toLowerCase()]?.person_id
-          : value.toLowerCase();
-      if (!personId) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:person_not_found" },
-          { status: 404 },
-        );
-      }
-      const tree = buildIdentityTree(personId);
-      if (!tree) {
-        return HttpResponse.json(
-          { type: "urn:insight:error:person_not_found" },
-          { status: 404 },
-        );
-      }
-      return HttpResponse.json(tree);
-    },
-  ),
+  http.post("/api/identity/v1/profiles", async ({ request }) => {
+    const body = (await request.json().catch(() => null)) as {
+      value_type?: string;
+      value?: string;
+    } | null;
+    const value = (body?.value ?? "").trim();
+    // The service resolves `person_id` (the SPA's key) and `email` (legacy
+    // URL migration only); anything else is a client error.
+    if (body?.value_type !== "email" && body?.value_type !== "person_id") {
+      return HttpResponse.json(
+        { type: "urn:insight:error:invalid_argument" },
+        { status: 400 }
+      );
+    }
+    // A malformed person_id is a 400, not a 404 — matching the service, where
+    // "does not parse" and "resolves to nobody" are different answers.
+    if (body.value_type === "person_id" && !isPersonId(value)) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:invalid_argument" },
+        { status: 400 }
+      );
+    }
+    const personId =
+      body.value_type === "email"
+        ? PEOPLE_BY_EMAIL[value.toLowerCase()]?.person_id
+        : value.toLowerCase();
+    if (!personId) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:person_not_found" },
+        { status: 404 }
+      );
+    }
+    const tree = buildIdentityTree(personId);
+    if (!tree) {
+      return HttpResponse.json(
+        { type: "urn:insight:error:person_not_found" },
+        { status: 404 }
+      );
+    }
+    return HttpResponse.json(tree);
+  }),
   ...savedQueryHandlers(),
   ...customMetricHandlers(),
   ...connectorHealthHandlers(),
@@ -1018,8 +1066,12 @@ function ingestionHandlers() {
         (scope !== null && scope !== "" && !BRONZE_SLUG.test(scope));
       if (bad) {
         return HttpResponse.json(
-          { status: 400, title: "Bad Request", detail: "unsupported ingestion parameter" },
-          { status: 400 },
+          {
+            status: 400,
+            title: "Bad Request",
+            detail: "unsupported ingestion parameter",
+          },
+          { status: 400 }
         );
       }
 
@@ -1030,7 +1082,7 @@ function ingestionHandlers() {
           scope,
           from: params.get("from"),
           to: params.get("to"),
-        }),
+        })
       );
     }),
   ];
@@ -1087,7 +1139,10 @@ function feedbackHandlers() {
       } | null;
       const message = body?.message?.trim();
       if (!message || [...message].length > FEEDBACK_MESSAGE_MAX) {
-        return HttpResponse.json({ error: "invalid_argument" }, { status: 400 });
+        return HttpResponse.json(
+          { error: "invalid_argument" },
+          { status: 400 }
+        );
       }
       feedbackStore.unshift({
         feedback_id: `mock-${feedbackStore.length + 1}`,
@@ -1155,11 +1210,12 @@ function connectorHealthHandlers() {
     status: string,
     startedMinutesAgo: number | null,
     duration_ms: number | null,
-    records_reported: number | null,
+    records_reported: number | null
   ) => ({
     job_id,
     status,
-    started_at: startedMinutesAgo === null ? null : minutesAgo(startedMinutesAgo),
+    started_at:
+      startedMinutesAgo === null ? null : minutesAgo(startedMinutesAgo),
     duration_ms,
     records_reported,
   });
@@ -1226,10 +1282,11 @@ function connectorHealthHandlers() {
 function usageHandlers() {
   return [
     http.get("/api/analytics/v1/usage/config", () =>
-      HttpResponse.json({ enabled: true }),
+      HttpResponse.json({ enabled: true })
     ),
-    http.post("/api/analytics/v1/usage/events", () =>
-      new HttpResponse(null, { status: 204 }),
+    http.post(
+      "/api/analytics/v1/usage/events",
+      () => new HttpResponse(null, { status: 204 })
     ),
     http.get("/api/analytics/v1/usage/summary", () => {
       const by_day = syntheticDays(30);
@@ -1269,7 +1326,12 @@ function usageHandlers() {
           },
         ],
         by_event: [
-          { event_name: "drill", target: "pr_cycle_time", opens: 34, people: 3 },
+          {
+            event_name: "drill",
+            target: "pr_cycle_time",
+            opens: 34,
+            people: 3,
+          },
           { event_name: "drill", target: "review_load", opens: 21, people: 3 },
           { event_name: "drill", target: "ai_share", opens: 12, people: 2 },
           { event_name: "session_start", target: "", opens: 57, people: 4 },
@@ -1371,8 +1433,12 @@ function aiAssistHandlers() {
           "Worth checking before concluding anything: the window holds fewer working days than a full month.",
         ].join("\n\n"),
         model: "claude-sonnet-5",
-        tenant_context_entries: [...mockContext.values()].filter((e) => e.scope === "tenant").length,
-        person_context_entries: [...mockContext.values()].filter((e) => e.scope === "person").length,
+        tenant_context_entries: [...mockContext.values()].filter(
+          (e) => e.scope === "tenant"
+        ).length,
+        person_context_entries: [...mockContext.values()].filter(
+          (e) => e.scope === "person"
+        ).length,
       });
     }),
   ];
