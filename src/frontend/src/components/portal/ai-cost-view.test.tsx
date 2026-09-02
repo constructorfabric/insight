@@ -16,6 +16,7 @@ import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
+import { setPortalShowPlanned } from "@/lib/portal/portal-store";
 import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson, TeamMember } from "@/types/insight";
 
@@ -160,6 +161,7 @@ beforeEach(() => {
   act(() => {
     portalRouter.set({ slice: undefined });
     portalRouter.set({ scope: undefined, direct: false });
+    setPortalShowPlanned(true);
   });
 });
 
