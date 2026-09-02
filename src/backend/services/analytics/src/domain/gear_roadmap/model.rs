@@ -115,11 +115,6 @@ fn subsystem_of(title: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test setup panics on a broken fixture"
-)]
 mod tests {
     use super::{Commitment, Gear, GearRow, subsystem_of};
     use crate::domain::gear_roadmap::milestone::{Milestone, YearMonth};

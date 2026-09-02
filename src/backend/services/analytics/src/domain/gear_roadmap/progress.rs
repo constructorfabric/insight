@@ -38,11 +38,7 @@ impl LadderStep {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test setup panics on a broken fixture"
-)]
+#[expect(clippy::expect_used, reason = "test setup panics on a broken fixture")]
 mod tests {
     use super::LadderStep;
 

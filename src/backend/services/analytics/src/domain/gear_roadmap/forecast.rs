@@ -85,11 +85,7 @@ fn span_days(remaining_man_days: f64) -> i64 {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test setup panics on a broken fixture"
-)]
+#[expect(clippy::expect_used, reason = "test setup panics on a broken fixture")]
 mod tests {
     use chrono::NaiveDate;
 

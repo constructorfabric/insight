@@ -101,11 +101,6 @@ pub(crate) async fn read_gears(
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test setup panics on a broken fixture"
-)]
 mod tests {
     use super::READ_GEARS_SQL;
 

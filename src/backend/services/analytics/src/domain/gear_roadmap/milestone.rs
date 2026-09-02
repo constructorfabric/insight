@@ -73,11 +73,6 @@ fn parse_year_month(title: &str) -> Option<YearMonth> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "test setup panics on a broken fixture"
-)]
 mod tests {
     use super::{Milestone, Placement, YearMonth};
 
