@@ -46,10 +46,10 @@ persistence:
 initChownData:
   enabled: false
 
-# The ClickHouse SQL datasource plugin (#2888). Space-separated pin — the
-# image's run.sh passes "id version" to `grafana cli plugins install`.
+# The ClickHouse SQL datasource plugin (#2888). `id@version` — the only form
+# Grafana's background installer (GF_INSTALL_PLUGINS) accepts.
 plugins:
-  - grafana-clickhouse-datasource 4.21.1
+  - grafana-clickhouse-datasource@4.21.1
 
 # Password for the SELECT-only `grafana` ClickHouse user (#2888), provisioned
 # by the app deploy hook (apply-ch-migrations -> provision-grafana-access.sh)
