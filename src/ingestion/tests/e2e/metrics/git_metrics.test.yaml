@@ -10,11 +10,14 @@ bronze:
     - $ref: templates/people.yaml#/templates/erin
     - {$ref: templates/people.yaml#/templates/bamboohr_employee, id: e006, unique_key: bamboohr-test-e006, firstName: Frank, lastName: Zeta, displayName: Frank Zeta, workEmail: frank@example.com, department: Quality}
   bronze_github.commits:
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, sha: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, sha: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, sha: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40}
-    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, sha: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50}
+    # Commit stats agree with the file-change rows below, so the commit sizes
+    # are additions plus deletions: 12, 24, 36, 48, 60 — and erin's second
+    # commit (no file changes collected) is 50.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-alice, sha: hash-alice, author_name: alice, author_email: alice@example.com, committer_name: alice, committer_email: alice@example.com, additions: 10, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-bob, sha: hash-bob, author_name: bob, author_email: bob@example.com, committer_name: bob, committer_email: bob@example.com, additions: 20, deletions: 4}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-carol, sha: hash-carol, author_name: carol, author_email: carol@example.com, committer_name: carol, committer_email: carol@example.com, additions: 30, deletions: 6}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-dave, sha: hash-dave, author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: 40, deletions: 8}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin, sha: hash-erin, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50, deletions: 10}
     - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: commit-erin-second, repository: "https://github.com/constructor/example.git", sha: hash-erin-second, author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 50}
   bronze_github.file_changes:
     - {$ref: templates/git_activity.yaml#/templates/file_change, unique_key: file-alice, sha: hash-alice, additions: 10, deletions: 2}
@@ -384,26 +387,34 @@ cases:
       - metric: git.commits_per_active_day
         view: breakdown
         assert: "size(items) == 2 && items.all(v, v.dimensions.exists(d, d.key == 'repository') && v.value == 1.0)"
+      # erin's commit sizes are {50, 60}: quantileExact(0.5) on an even count
+      # returns the UPPER middle element, not the mean of the middles.
       - metric: git.commit_size
         view: period
         find: {entity_id: erin@example.com}
-        equal: {value: 50}
+        equal: {value: 60}
       - metric: git.commit_size
         view: peer
         find: {entity_id: erin@example.com}
-        equal: {target_value: 50, p25: 20, median: 30, p75: 40, min: 10, max: 50, n: 5}
+        equal: {target_value: 60, p25: 24, median: 36, p75: 48, min: 12, max: 60, n: 5}
       - metric: git.commit_size
         view: timeseries
         find: {entity_id: erin@example.com}
-        contains: {points: {bucket_start: "2026-10-01", value: 50}}
+        contains: {points: {bucket_start: "2026-10-01", value: 60}}
       - metric: git.commit_size
         view: breakdown
         find: {entity_id: erin@example.com, dimensions: {key: source, value: github}}
-        equal: {value: 50}
+        equal: {value: 60}
+      # Ten fixed-width bins over erin's own [50, 60]: her two events land in
+      # the first and last bin, one each.
       - metric: git.commit_size
         view: histogram
         find: {entity_id: erin@example.com}
-        nonempty: [bins]
+        contains: {bins: {lo: 50, count: 1}}
+      - metric: git.commit_size
+        view: histogram
+        find: {entity_id: erin@example.com}
+        contains: {bins: {hi: 60, count: 1}}
       - metric: git.pr_size
         view: period
         find: {entity_id: erin@example.com}
