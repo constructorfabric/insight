@@ -36,12 +36,34 @@ auth:
   username: insight
 
 primary:
-  # Slow query log to stderr -> pod log -> Loki (#3141); read by the
-  # Databases dashboard. /dev/stderr because the container log IS the shipped
-  # stream — a file on the PVC would be invisible to Alloy.
+  # Slow query log (#3141) into its own file on a shared emptyDir; the slow-log
+  # sidecar tails it to stdout, giving Loki a dedicated stream the Databases
+  # dashboard selects by container name — no filtering heuristics against the
+  # interleaved error log.
   # INVARIANT: helm replaces this scalar — an overlay that sets extraFlags
   # must restate these slow-log flags or it silently turns the log off.
-  extraFlags: "--slow-query-log=1 --long-query-time=1 --slow-query-log-file=/dev/stderr"
+  extraFlags: "--slow-query-log=1 --long-query-time=1 --slow-query-log-file=/logs/mariadb-slow.log"
+  extraVolumes:
+    - name: slow-log
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: slow-log
+      mountPath: /logs
+  # `tail -n0` so a sidecar restart re-ships nothing (a short gap beats
+  # duplicate entries in Loki).
+  sidecars:
+    - name: slow-log
+      image: docker.io/busybox:1.36
+      command: ["sh", "-c", "touch /logs/mariadb-slow.log && exec tail -n0 -F /logs/mariadb-slow.log"]
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      resources:
+        requests: { cpu: 5m,  memory: 8Mi }
+        limits:   { cpu: 50m, memory: 32Mi }
+      volumeMounts:
+        - name: slow-log
+          mountPath: /logs
   persistence:
     enabled: true
     size: 8Gi

@@ -8909,14 +8909,14 @@ dashboards:
                 {
                   "refId": "A",
                   "legendFormat": "slow queries",
-                  "expr": "sum(count_over_time({namespace=\"insight-infra\", container=\"mariadb\"} |= \"# Query_time\" [$__auto]))"
+                  "expr": "sum(count_over_time({namespace=\"insight-infra\", pod=~\"mariadb-.*\", container=\"slow-log\"} |= \"# Query_time\" [$__auto]))"
                 }
               ]
             },
             {
               "id": 604,
               "type": "logs",
-              "title": "MariaDB · log (slow query entries)",
+              "title": "MariaDB · slow query log",
               "gridPos": {
                 "h": 8,
                 "w": 12,
@@ -8935,7 +8935,7 @@ dashboards:
               "targets": [
                 {
                   "refId": "A",
-                  "expr": "{namespace=\"insight-infra\", container=\"mariadb\"}"
+                  "expr": "{namespace=\"insight-infra\", pod=~\"mariadb-.*\", container=\"slow-log\"}"
                 }
               ]
             }
