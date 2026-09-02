@@ -372,6 +372,45 @@ class AJobStillRunningIsPlaceable(unittest.TestCase):
         self.assertEqual(len(placed), 2)
         self.assertGreater(placed["9001"], placed["8900"])
 
+    def test_it_records_no_duration(self) -> None:
+        """The mover reports an unfinished job's duration as a running total —
+        a zero where it has none — and this column holds finished measurements.
+        Recorded as-is it says the sync took no time, which is the one reading
+        an operator watching a stuck sync must not be given."""
+        planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
+
+        self.assertIsNone(planned["duration_ms"])
+
+    def test_it_still_states_when_it_started(self) -> None:
+        """The elapsed time the page reports is derived from this stamp, so
+        withholding the duration must not withhold the start with it."""
+        planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
+
+        self.assertEqual(planned["started_at"], "2026-08-27 08:00:30.000")
+
+
+class OnlyAnUnfinishedJobLosesItsDuration(unittest.TestCase):
+    def test_every_in_flight_word_records_none(self) -> None:
+        for word in sorted(vocab.IN_FLIGHT_STATUSES):
+            with self.subTest(word=word):
+                self.assertIsNone(row(status=word, duration="PT1M37S")["duration_ms"])
+
+    def test_every_finished_word_keeps_what_it_reported(self) -> None:
+        for word in sorted(vocab.TERMINAL_STATUSES):
+            with self.subTest(word=word):
+                planned = row(status=word, duration="PT1M37S")
+                self.assertEqual(planned["duration_ms"], 97_000)
+
+    def test_a_word_that_could_not_be_read_keeps_its_duration(self) -> None:
+        """An unreadable word may well name a finished job, and treating it as
+        in flight would discard a measurement that was actually taken."""
+        self.assertEqual(row(status="borked", duration="PT1M37S")["duration_ms"], 97_000)
+
+    def test_a_finished_job_that_really_took_no_time_still_says_so(self) -> None:
+        """Suppression is decided by the status, never by the value: a zero
+        from a finished job is a measurement, not an absence."""
+        self.assertEqual(row(status="succeeded", duration="PT0S")["duration_ms"], 0)
+
 
 class AnIgnoredFilterIsVisible(unittest.TestCase):
     """The mover answers 200 and drops a parameter it does not recognise.

@@ -1139,6 +1139,13 @@ function connectorHealthHandlers() {
       sync("8402", "succeeded", 24, 41_000, 903),
       sync("8388", "succeeded", 84, 39_100, 874),
     ],
+    // A sync still in flight carries no duration — the mover reports one only
+    // for a job it has finished — so the row states how long it has been going
+    // instead.
+    "example-inbox": [
+      sync("8420", "running", 37, null, null),
+      sync("8391", "succeeded", 97, 61_000, 2_140),
+    ],
     "example-warehouse": [],
     "example-retired": [sync("7801", "succeeded", 60 * 26, 90_000, 55)],
   };
@@ -1160,6 +1167,7 @@ function connectorHealthHandlers() {
           summaryRow("example-tracker", true),
           summaryRow("example-directory", true),
           summaryRow("example-messaging", true),
+          summaryRow("example-inbox", true),
           summaryRow("example-warehouse", true),
           summaryRow("example-retired", false),
         ],
