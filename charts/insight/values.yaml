@@ -628,6 +628,10 @@ gitCliProxy:
     maxRepoBytes: 10737418240
     defaultMaxStalenessSeconds: 300
     heavyOpsConcurrency: 4
+    # Concurrent page serves; the pod's peak memory is roughly this times the
+    # heaviest window's blob bytes. Size with the CPU limit — serves are
+    # CPU-bound and extra slots past ~2x it only add memory risk.
+    serveConcurrency: 4
     caCertPath: ""
   caCertSecret: ""
   # Bearer token the proxy requires on every /v1 request. Empty = generated on

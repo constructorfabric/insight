@@ -61,6 +61,12 @@ cache:
   defaultMaxStalenessSeconds: 300
   # Concurrency cap for clone/fetch/repack.
   heavyOpsConcurrency: 4
+  # Concurrent page serves. Each serve runs git children whose memory scales
+  # with the window's blob bytes, so the pod's peak is roughly this cap times
+  # the heaviest window; excess requests wait in-connection for a slot. Size
+  # it with resources.limits: serves are CPU-bound, so past ~2x the CPU limit
+  # extra slots only add memory risk.
+  serveConcurrency: 4
   # PEM bundle for self-hosted origins behind a private CA. Empty = system
   # trust store (correct for the public clouds).
   caCertPath: ""
