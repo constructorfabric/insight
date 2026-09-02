@@ -42,7 +42,7 @@ services:
   # the generated roster realm (conftest.py runs insight-seed-realm into
   # ./keycloak-import before `up`).
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.7
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin

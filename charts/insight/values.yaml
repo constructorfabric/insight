@@ -473,7 +473,7 @@ keycloak:
   deploy: false
   image:
     repository: quay.io/keycloak/keycloak
-    tag: "26.4"
+    tag: "26.7"
     pullPolicy: IfNotPresent
   # Advertised issuer BASE (must end in /kc) — the URL browser AND
   # authenticator reach, e.g. https://<host>/kc.
@@ -508,7 +508,7 @@ keycloakConfig:
   image:
     repository: adorsys/keycloak-config-cli
     # Release line must match the Keycloak server major.
-    tag: "6.5.1-26.1.0"
+    tag: "6.5.1-26.5.5"
     pullPolicy: IfNotPresent
   # Keycloak base URL (tpl-rendered). Must be https; plain http only with
   # allowInsecureUrl=true (in-cluster dev/CI Keycloak only).
