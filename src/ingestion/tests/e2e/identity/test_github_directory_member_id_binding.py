@@ -271,6 +271,52 @@ def test_github_member_id_resolves_a_person_through_the_real_connector_pipeline(
     )
 
 
+def test_github_directory_emits_roster_profile_claims(
+    ch_seeder: CHSeeder,
+    dbt_runner: DbtRunner,
+    tracked_models: TrackedModels,
+    worker_ctx: WorkerContext,
+    compose_stack: SessionConfig,
+) -> None:
+    run_tag = uuid.uuid4().hex[:10]
+    member_id = _run_specific_member_id(run_tag)
+    login = f"profile-dev-{run_tag}"
+    email = f"profile.dev.{run_tag}@e2e.test"
+    display_name = "Profile Dev"
+
+    _run_connector_dbt_path(
+        ch_seeder,
+        dbt_runner,
+        tracked_models,
+        worker_ctx,
+        {
+            "bronze_github_directory.org_members": [
+                _org_member(
+                    run_tag=run_tag,
+                    login=login,
+                    member_id=member_id,
+                    email=email,
+                    display_name=display_name,
+                )
+            ]
+        },
+    )
+
+    rows = clickhouse.query(
+        compose_stack,
+        "SELECT value_type, value FROM identity.identity_inputs"
+        f" WHERE insight_source_type = 'github' AND source_account_id = '{member_id}'"
+        "   AND value_type IN ('person_email', 'person_username', 'person_display_name')"
+        "   AND operation_type = 'UPSERT' ORDER BY value_type",
+    )
+
+    assert rows == [
+        ["person_display_name", display_name],
+        ["person_email", email],
+        ["person_username", login],
+    ]
+
+
 def test_the_binding_is_the_member_id_never_the_login(
     identity_svc,
     ch_seeder: CHSeeder,

@@ -284,6 +284,19 @@ def test_seed_org_chart_from_real_bamboohr_connector_pipeline(
         "not just untested"
     )
 
+    profile_rows = clickhouse.query(
+        compose_stack,
+        "SELECT value_type, value FROM identity.identity_inputs"
+        f" WHERE insight_source_type = 'bamboohr' AND source_account_id = 'rep-{run_tag}'"
+        "   AND value_type IN ('person_display_name', 'person_first_name', 'person_last_name')"
+        "   AND operation_type = 'UPSERT' ORDER BY value_type",
+    )
+    assert profile_rows == [
+        ["person_display_name", "Pipeline Report"],
+        ["person_first_name", "Pipeline"],
+        ["person_last_name", "Report"],
+    ]
+
     res = identity_svc.run_seed_cli(tenant=str(seed.SEED_TENANT), force=True)
     assert res.returncode == 0, f"rc={res.returncode}\n{res.stdout}\n{res.stderr}"
 
