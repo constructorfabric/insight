@@ -36,6 +36,12 @@ auth:
   username: insight
 
 primary:
+  # Slow query log to stderr -> pod log -> Loki (#3141); read by the
+  # Databases dashboard. /dev/stderr because the container log IS the shipped
+  # stream — a file on the PVC would be invisible to Alloy.
+  # INVARIANT: helm replaces this scalar — an overlay that sets extraFlags
+  # must restate these slow-log flags or it silently turns the log off.
+  extraFlags: "--slow-query-log=1 --long-query-time=1 --slow-query-log-file=/dev/stderr"
   persistence:
     enabled: true
     size: 8Gi
