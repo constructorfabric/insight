@@ -4,11 +4,11 @@ COPY . /airbyte/integration_code
 RUN pip install --no-cache-dir /airbyte/integration_code
 
 # airbyte-cdk pins nltk==3.9.1 (fixable CVE-2025-14009, CVE-2026-0846,
-# CVE-2026-33231, CVE-2026-54293) but only uses it in the file-based
-# unstructured parser, which this connector never loads; defusedxml is
+# CVE-2026-33231, CVE-2026-54293, CVE-2026-79675) but only uses it in the
+# file-based unstructured parser, which this connector never loads; defusedxml is
 # nltk 3.10's added runtime dependency. poetry/dulwich are base-image build
 # tooling unused at runtime (CVE-2026-34591, CVE-2026-42305).
-RUN pip install --no-cache-dir --no-deps nltk==3.10.0 defusedxml==0.7.1 \
+RUN pip install --no-cache-dir --no-deps nltk==3.10.3 defusedxml==0.7.1 \
     && pip uninstall -y poetry dulwich
 
 RUN useradd --create-home --no-log-init --shell /bin/bash airbyte_user
