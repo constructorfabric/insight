@@ -561,6 +561,13 @@ where
     F: Fn(RepoGuard) -> BoxFuture<'a, Result<Page<T>, ApiError>>,
 {
     let guard = open(state, context, paging).await?;
+    // INVARIANT: the permit spans the whole serve, including the promotion
+    // retry below — the semaphore IS the cap on concurrent page serves, and
+    // the pod's peak memory is that cap times the heaviest window. Taken
+    // AFTER open, so a slot is never spent waiting on a preparation.
+    // Holding the entry's read guard while queueing here delays only that
+    // entry's own writers, and the long-poll ceiling bounds the queueing.
+    let _slot = serve_slot(state).await?;
     let outcome = read(guard).await;
     check_for_drift(state, context);
     match outcome {
@@ -584,6 +591,29 @@ where
     let outcome = read(guard).await;
     check_for_drift(state, context);
     outcome
+}
+
+/// Take a page-serve slot, or answer 429 when none frees up in time.
+///
+/// Serves queue in-connection like every other wait, so a taken slot costs
+/// the caller nothing but time; the bounded wait is the backstop that keeps
+/// a saturated pod answering instead of accumulating held requests forever.
+async fn serve_slot(state: &Arc<AppState>) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    acquire_within(state.serves.clone(), crate::engine::store::PREPARATION_WAIT).await
+}
+
+async fn acquire_within(
+    serves: Arc<tokio::sync::Semaphore>,
+    budget: Duration,
+) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    match tokio::time::timeout(budget, serves.acquire_owned()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        // The semaphore is never closed; a closed error is a bug surfacing.
+        Ok(Err(e)) => Err(ApiError::Serialization(format!(
+            "serve semaphore closed: {e}"
+        ))),
+        Err(_) => Err(ApiError::ServeSaturated),
+    }
 }
 
 /// Hand the entry to the store's post-serve purge, detached.
@@ -933,5 +963,37 @@ mod tests {
         );
         assert!(rows.is_empty());
         assert_eq!(cursor, None);
+    }
+
+    #[tokio::test]
+    async fn a_serve_waits_for_a_slot_and_gets_one_when_it_frees() {
+        let serves = Arc::new(tokio::sync::Semaphore::new(1));
+        let held = match serves.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(e) => panic!("stage: {e}"),
+        };
+
+        let waiter = tokio::spawn(acquire_within(serves, Duration::from_secs(5)));
+        drop(held);
+        match waiter.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("a freed slot must be handed to the waiter: {e}"),
+            Err(e) => panic!("waiter died: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_saturated_pod_answers_429_rather_than_holding_forever() {
+        let serves = Arc::new(tokio::sync::Semaphore::new(1));
+        let _held = match serves.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(e) => panic!("stage: {e}"),
+        };
+
+        match acquire_within(serves, Duration::from_millis(20)).await {
+            Err(ApiError::ServeSaturated) => {}
+            Err(e) => panic!("expected ServeSaturated, got {e}"),
+            Ok(_) => panic!("no slot exists; the wait must expire"),
+        }
     }
 }

@@ -23,7 +23,7 @@ use super::runner::{GitCredentials, GitError, GitRunner};
 /// INVARIANT: must stay under `api::HANDLER_BUDGET`, or the typed `Busy`
 /// answer below loses to the blanket 503.
 pub(crate) const PREPARATION_WAIT: Duration = Duration::from_mins(55);
-const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
+pub(crate) const COLD_RETRY_AFTER: Duration = Duration::from_secs(30);
 /// Probe wait for opportunistic work that a concurrent writer makes moot.
 const MEASURE_WAIT: Duration = Duration::from_secs(15);
 const REPROOF_ATTEMPTS: usize = 2;
