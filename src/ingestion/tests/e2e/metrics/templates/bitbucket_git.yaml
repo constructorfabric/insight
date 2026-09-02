@@ -54,6 +54,9 @@ templates:
     updated_on: "2026-10-01T13:00:00Z"
     author_display_name: null
     author_uuid: "{author-1}"
+    # The ADR-0002 account key the identity binding resolves the author on —
+    # Bitbucket exposes no address on the participant object.
+    author_account_id: null
     source_branch: feature
     destination_branch: main
     source_commit_sha: null
