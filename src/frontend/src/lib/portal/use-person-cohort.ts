@@ -1,10 +1,9 @@
 import { useMemo } from "react";
 
-import { useViewer } from "@/auth";
-import { cohortKey, collectRosterAttrs } from "@/lib/insight/slices";
+import { cohortKey, collectPeopleAttrs } from "@/lib/insight/slices";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { useCohortOptions } from "@/lib/portal/use-cohort-options";
-import { useIcPerson } from "@/queries/ic-dashboard";
+import { useVisibleRoster } from "@/queries/visible-roster";
 
 /**
  * The entity ids of a person's slice cohort — everyone in the viewer's org who
@@ -18,11 +17,10 @@ export function usePersonCohort(entityId: string): string[] {
   // catalog has since dropped would otherwise keep building cohorts while the
   // control shows "Team (all)".
   const { slice } = useCohortOptions();
-  const { personId } = useViewer();
-  const tree = useIcPerson(personId ?? "").data ?? null;
+  const roster = useVisibleRoster(true).roster;
   const attrByEntity = useMemo(
-    () => collectRosterAttrs(tree, normalizePersonId),
-    [tree]
+    () => collectPeopleAttrs(roster, normalizePersonId),
+    [roster],
   );
   return useMemo(() => {
     if (!slice) return [];

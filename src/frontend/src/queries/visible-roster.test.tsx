@@ -1,7 +1,7 @@
 /**
  * The roster every flat-org zone counts. What matters: the walk collects every
- * page rather than the first, it stops at a ceiling instead of following a
- * cursor forever, and a refusal surfaces as an error — an empty roster would
+ * page rather than the first, rejects a cursor cycle instead of looping, and a
+ * refusal surfaces as an error — an empty roster would
  * read to every zone as "this person can see nobody", which is a different
  * fact.
  */
@@ -23,9 +23,9 @@ vi.mock("@/auth/session-scope", () => ({
     s == null ? null : (s as { scope: string }).scope,
 }));
 
-import { MAX_ROSTER_PAGES, useVisibleRoster } from "./visible-roster";
+import { useVisibleRoster } from "./visible-roster";
 
-const listVisiblePersons = vi.mocked(identityClient.listVisiblePersons);
+const listPeople = vi.mocked(identityClient.listPeople);
 
 function harness() {
   const queryClient = new QueryClient({
@@ -36,8 +36,17 @@ function harness() {
   return { wrapper };
 }
 
-function person(id: string): identityClient.PersonSummary {
-  return { person_id: id, display_name: `Person ${id}` };
+function person(id: string): identityClient.PeopleListItem {
+  return {
+    person_id: id,
+    display_name: `Person ${id}`,
+    first_name: null,
+    last_name: null,
+    username: null,
+    email: null,
+    attributes: {},
+    manager_person_id: null,
+  };
 }
 
 beforeEach(() => {
@@ -45,34 +54,49 @@ beforeEach(() => {
 });
 
 describe("useVisibleRoster", () => {
-  it("collects every page, not the first", async () => {
-    listVisiblePersons
+  it("collects every page until the service ends the cursor walk", async () => {
+    listPeople
       .mockResolvedValueOnce({ items: [person("a")], next_cursor: "c1" })
       .mockResolvedValueOnce({ items: [person("b")], next_cursor: "c2" })
-      .mockResolvedValueOnce({ items: [person("c")], next_cursor: null });
+      .mockResolvedValueOnce({ items: [person("c")], next_cursor: "c3" })
+      .mockResolvedValueOnce({ items: [person("d")], next_cursor: "c4" })
+      .mockResolvedValueOnce({ items: [person("e")], next_cursor: null });
 
     const { result } = renderHook(() => useVisibleRoster(true), harness());
 
-    await waitFor(() => expect(result.current.roster).toHaveLength(3));
-    expect(result.current.roster.map((p) => p.person_id)).toEqual(["a", "b", "c"]);
-    expect(result.current.truncated).toBe(false);
+    await waitFor(() => expect(result.current.roster).toHaveLength(5));
+    expect(result.current.roster.map((p) => p.person_id)).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+    ]);
   });
 
-  it("stops at the ceiling rather than following a cursor forever", async () => {
-    // A service that always returns a cursor must not spin the browser.
-    listVisiblePersons.mockResolvedValue({
+  it("rejects a repeated cursor rather than following it forever", async () => {
+    listPeople.mockResolvedValue({
       items: [person("x")],
       next_cursor: "always-more",
     });
 
     const { result } = renderHook(() => useVisibleRoster(true), harness());
 
-    await waitFor(() => expect(result.current.truncated).toBe(true));
-    expect(listVisiblePersons).toHaveBeenCalledTimes(MAX_ROSTER_PAGES);
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(listPeople).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards query cancellation to every people request", async () => {
+    listPeople.mockResolvedValue({ items: [], next_cursor: null });
+
+    const { result } = renderHook(() => useVisibleRoster(true), harness());
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(listPeople.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
   });
 
   it("surfaces a refusal instead of an empty roster", async () => {
-    listVisiblePersons.mockRejectedValue(new Error("refused"));
+    listPeople.mockRejectedValue(new Error("refused"));
 
     const { result } = renderHook(() => useVisibleRoster(true), harness());
 
@@ -83,6 +107,6 @@ describe("useVisibleRoster", () => {
   it("asks for nothing until the caller says the policy needs it", () => {
     renderHook(() => useVisibleRoster(false), harness());
 
-    expect(listVisiblePersons).not.toHaveBeenCalled();
+    expect(listPeople).not.toHaveBeenCalled();
   });
 });

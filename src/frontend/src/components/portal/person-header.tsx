@@ -12,11 +12,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useIcPerson } from "@/queries/ic-dashboard";
-import {
-  usePortalNavActions,
-} from "@/lib/portal/portal-nav";
+import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { useOrgScope } from "@/lib/portal/use-org-scope";
-import { personDisplayName } from "@/lib/identities/person-display";
+import { personDisplayName, personName } from "@/lib/identities/person-display";
+import { useVisibleRoster } from "@/queries/visible-roster";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,13 +26,14 @@ import { cn } from "@/lib/utils";
  * to People — scoped to the person's own reports if they're a manager, else to
  * their manager's team — and that jump also sets the global org scope, so it only
  * renders when the target is a node the scope can actually reach. Everything is
- * route-driven (clears the pinned zone) and sourced from the identity profile;
+ * route-driven (clears the pinned zone) and sourced from canonical people;
  * absent fields render nothing.
  */
 export function PersonHeader({ person }: { person: string }) {
   const { setScope, setZone } = usePortalNavActions();
   const navigate = useNavigate();
   const { data } = useIcPerson(person);
+  const { roster } = useVisibleRoster(true);
   // Ids, not emails, since the identity cutover: the same key the route
   // segment, `?scope=` and the metric entity ids carry.
   const supervisorPersonId = data?.parent_person_id ?? null;
@@ -42,7 +42,7 @@ export function PersonHeader({ person }: { person: string }) {
   const { managerNodes } = useOrgScope();
   const scopeRoots = useMemo(
     () => new Set(managerNodes.map((n) => n.person_id.toLowerCase())),
-    [managerNodes],
+    [managerNodes]
   );
   // A person ABOVE the viewer is not theirs to open. Identity's visibility rule
   // serves a viewer their own subtree, and offering a link out of it invites a
@@ -52,10 +52,15 @@ export function PersonHeader({ person }: { person: string }) {
   const canSeeSupervisor = supervisorPersonId
     ? scopeRoots.has(supervisorPersonId.toLowerCase())
     : false;
-  // Siblings come from the manager's own record, so the same rule gates the
-  // fetch: no manager, no query. It self-disables on "".
-  const { data: manager } = useIcPerson(
-    canSeeSupervisor && supervisorPersonId ? supervisorPersonId : "",
+  const manager = supervisorPersonId
+    ? roster.find(
+        (candidate) =>
+          candidate.person_id.toLowerCase() === supervisorPersonId.toLowerCase()
+      )
+    : undefined;
+  const reports = roster.filter(
+    (candidate) =>
+      candidate.manager_person_id?.toLowerCase() === person.toLowerCase()
   );
 
   if (!data) return null;
@@ -63,8 +68,8 @@ export function PersonHeader({ person }: { person: string }) {
   const subtitle = [data.job_title, data.department]
     .filter((s) => s && s.trim())
     .join(" · ");
-  const supervisorName = data.supervisor_name ?? null;
-  const isManager = data.subordinates.length > 0;
+  const supervisorName = manager ? personName(manager) : null;
+  const isManager = reports.length > 0;
   // Manager → their own team; IC → their manager's team (peers).
   const teamTarget = isManager ? data.person_id : supervisorPersonId;
   // An IC viewer's own supervisor sits ABOVE them, outside the subtree identity
@@ -75,11 +80,14 @@ export function PersonHeader({ person }: { person: string }) {
     ? scopeRoots.has(teamTarget.toLowerCase())
     : false;
 
-  const peers = [...(manager?.subordinates ?? [])]
-    .filter((p) => p.person_id)
-    .sort((a, b) =>
-      personDisplayName(a).localeCompare(personDisplayName(b)),
-    );
+  const peers = roster
+    .filter(
+      (candidate) =>
+        supervisorPersonId !== null &&
+        candidate.manager_person_id?.toLowerCase() ===
+          supervisorPersonId.toLowerCase()
+    )
+    .sort((a, b) => personDisplayName(a).localeCompare(personDisplayName(b)));
   const hasPeers = peers.length > 1;
 
   function goPerson(personId: string) {
@@ -137,12 +145,10 @@ export function PersonHeader({ person }: { person: string }) {
                       <Check
                         className={cn(
                           "size-4",
-                          active ? "opacity-100" : "opacity-0",
+                          active ? "opacity-100" : "opacity-0"
                         )}
                       />
-                      <span className="truncate">
-                        {personDisplayName(p)}
-                      </span>
+                      <span className="truncate">{personDisplayName(p)}</span>
                     </DropdownMenuItem>
                   );
                 })}

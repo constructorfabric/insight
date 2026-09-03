@@ -21,6 +21,7 @@ import type { IdentityPerson } from "@/types/insight";
 const mocks = vi.hoisted(() => ({
   tree: undefined as IdentityPerson | undefined,
   isFlat: false,
+  roster: [] as import("@/api/identity-client").PeopleListItem[],
 }));
 
 vi.mock("@/auth", () => ({
@@ -28,6 +29,14 @@ vi.mock("@/auth", () => ({
 }));
 vi.mock("@/queries/ic-dashboard", () => ({
   useIcPerson: () => ({ data: mocks.tree }),
+}));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster: mocks.roster,
+    isPending: false,
+    isError: false,
+    retry: () => {},
+  }),
 }));
 vi.mock("@/queries/identity-me", () => ({
   useVisibilityPolicy: () => ({
@@ -57,6 +66,32 @@ beforeEach(() => {
     person("b", { division: "Sales", job_title: "Rep" }),
     person("c", { division: "R&D", job_title: "Engineer" }),
   ]);
+  mocks.roster = [
+    {
+      person_id: pid("boss"),
+      display_name: "Boss",
+      first_name: null,
+      last_name: null,
+      username: null,
+      email: "boss@example.com",
+      attributes: {},
+      manager_person_id: null,
+    },
+    ...[
+      ["a", "R&D", "Engineer"],
+      ["b", "Sales", "Rep"],
+      ["c", "R&D", "Engineer"],
+    ].map(([label, division, jobTitle]) => ({
+      person_id: pid(label!),
+      display_name: label!,
+      first_name: null,
+      last_name: null,
+      username: null,
+      email: `${label}@example.com`,
+      attributes: { division: division!, job_title: jobTitle! },
+      manager_person_id: pid("boss"),
+    })),
+  ];
 });
 
 describe("useCohortLabel", () => {
