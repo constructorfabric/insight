@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,16 @@ class Row:
             if not isinstance(values, list) or not any(matches(value, selector) for value in values):
                 raise ExpectError(f"{self.where}: {name} contains no match for {selector!r}")
             self.asserted.add(name)
+        return self
+
+    def check(self, name: str, predicate: Callable[[Any], bool], describe: str = "") -> Row:
+        """Assert `predicate` over one field; counts as examining it, like `equals`."""
+        if name not in self.fields:
+            raise ExpectError(f"{self.where}: {name}: field is missing")
+        got = self.fields[name]
+        if not predicate(got):
+            raise ExpectError(f"{self.where}: {name}: {describe or 'predicate'} failed, got {got!r}")
+        self.asserted.add(name)
         return self
 
     def nonempty(self, *names: str) -> Row:
