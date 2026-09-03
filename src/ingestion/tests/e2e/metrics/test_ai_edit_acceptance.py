@@ -9,6 +9,7 @@ view is the department distribution. A re-synced duplicate row changes nothing.
 from __future__ import annotations
 
 import pytest
+from lib.metric_expect import one
 from lib.spec_runner import SpecRun
 
 pytestmark = pytest.mark.fixture
@@ -16,21 +17,6 @@ pytestmark = pytest.mark.fixture
 SPEC = "ai_edit_acceptance"
 
 ERIN = "erin@example.com"
-
-
-def _point_values(series: list[dict], entity_id: str) -> dict[str, float]:
-    """Bucket -> value for the buckets that hold one; an empty bucket is served as null."""
-    entry = next(s for s in series if s["entity_id"] == entity_id)
-    return {p["bucket_start"]: float(p["value"]) for p in entry["points"] if p["value"] is not None}
-
-
-def _tool_value(breakdown: list[dict], entity_id: str, tool: str) -> float:
-    for row in breakdown:
-        if row["entity_id"] != entity_id:
-            continue
-        if any(d["key"] == "tool" and d["value"] == tool for d in row["dimensions"]):
-            return float(row["value"])
-    raise AssertionError(f"no breakdown row for {entity_id} tool={tool}")
 
 
 def test_accepted_edits_and_acceptance_rate_over_a_custom_window(spec: SpecRun) -> None:
@@ -72,19 +58,25 @@ def test_accepted_edits_and_acceptance_rate_over_a_custom_window(spec: SpecRun) 
     r.row("ai.accepted_edit_actions", "peer", entity_id=ERIN).equals(
         target_value=80, p25=50, median=60, p75=70, min=40, max=80, n=5
     )
-    accepted_points = _point_values(r.series("ai.accepted_edit_actions"), ERIN)
-    assert accepted_points["2026-11-15"] == 45.0
-    assert accepted_points["2026-12-10"] == 35.0
-    assert _tool_value(r.breakdown("ai.accepted_edit_actions"), ERIN, "claude_code") == 80.0
+    accepted = one(r.series("ai.accepted_edit_actions"), entity_id=ERIN)["points"]
+    assert float(one(accepted, bucket_start="2026-11-15")["value"]) == 45.0
+    assert float(one(accepted, bucket_start="2026-12-10")["value"]) == 35.0
+    by_tool = one(
+        r.breakdown("ai.accepted_edit_actions"), entity_id=ERIN, dimensions={"key": "tool", "value": "claude_code"}
+    )
+    assert float(by_tool["value"]) == 80.0
 
     r.row("ai.tool_acceptance_rate", "period", entity_id=ERIN).equals(value=40)
     r.row("ai.tool_acceptance_rate", "peer", entity_id=ERIN).equals(
         target_value=40, p25=25, median=30, p75=35, min=20, max=40, n=5
     )
-    rate_points = _point_values(r.series("ai.tool_acceptance_rate"), ERIN)
-    assert rate_points["2026-11-15"] == 45.0
-    assert rate_points["2026-12-10"] == 35.0
-    assert _tool_value(r.breakdown("ai.tool_acceptance_rate"), ERIN, "claude_code") == 40.0
+    rate = one(r.series("ai.tool_acceptance_rate"), entity_id=ERIN)["points"]
+    assert float(one(rate, bucket_start="2026-11-15")["value"]) == 45.0
+    assert float(one(rate, bucket_start="2026-12-10")["value"]) == 35.0
+    by_tool = one(
+        r.breakdown("ai.tool_acceptance_rate"), entity_id=ERIN, dimensions={"key": "tool", "value": "claude_code"}
+    )
+    assert float(by_tool["value"]) == 40.0
 
 
 def test_acceptance_rate_over_an_empty_window_is_null(spec: SpecRun) -> None:

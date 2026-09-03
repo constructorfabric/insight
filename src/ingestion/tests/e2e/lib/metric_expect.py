@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,20 @@ def matches(value: Any, selector: Any) -> bool:
             return any(matches(item, selector) for item in value)
         return False
     return values_equal(value, selector)
+
+
+def some(items: Iterable[Any], **selector: Any) -> list[dict[str, Any]]:
+    """The entries of a view or a point list that match `selector`; a Row counts by its fields."""
+    entries = [item.fields if isinstance(item, Row) else item for item in items]
+    return [entry for entry in entries if matches(entry, selector)]
+
+
+def one(items: Iterable[Any], **selector: Any) -> dict[str, Any]:
+    """The single entry matching `selector`; a nested list matches when any element does."""
+    found = some(items, **selector)
+    if len(found) != 1:
+        raise ExpectError(f"find {selector} matched {len(found)} entries (expected exactly 1)")
+    return found[0]
 
 
 @dataclass
