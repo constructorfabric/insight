@@ -1,4 +1,3 @@
-import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 /**
@@ -44,30 +43,4 @@ export function identityPerson(
     subordinates,
     ...over,
   } as unknown as IdentityPerson;
-}
-
-export function peopleFromIdentityTree(
-  root: IdentityPerson,
-  managerPersonId: string | null = null,
-): PeopleListItem[] {
-  return [
-    {
-      person_id: root.person_id,
-      display_name: root.display_name,
-      first_name: root.first_name ?? null,
-      last_name: root.last_name ?? null,
-      username: root.username ?? null,
-      email: root.email,
-      attributes: {
-        ...(root.department ? { department: root.department } : {}),
-        ...(root.division ? { division: root.division } : {}),
-        ...(root.job_title ? { job_title: root.job_title } : {}),
-        ...(root.status ? { status: root.status } : {}),
-      },
-      manager_person_id: managerPersonId,
-    },
-    ...root.subordinates.flatMap((report) =>
-      peopleFromIdentityTree(report, root.person_id),
-    ),
-  ];
 }

@@ -148,15 +148,13 @@ ANALYTICS_OPERATIONS: Final[tuple[Operation, ...]] = (
     _a("GET", f"/v1/connector-health/{SOME_CONNECTOR}/syncs"),
 )
 
-#: identity-resolution — 31 operations. `/health` and `/healthz` are the host
+#: identity-resolution — 29 operations. `/health` and `/healthz` are the host
 #: router's, not the product API, and are deliberately absent: the real probes
 #: address the pod directly rather than passing the gateway.
 IDENTITY_OPERATIONS: Final[tuple[Operation, ...]] = (
     _i("POST", "/v1/profiles"),
     _i("POST", "/v1/profiles/batch"),
     _i("GET", "/v1/me"),
-    _i("GET", "/v1/people"),
-    _i("GET", f"/v1/people/{SOME_ID}"),
     _i("GET", "/v1/persons"),
     # The operator correction surface. `source` stays the literal `github` in
     # the accounts read: it is a connector type, not an id, and the tests

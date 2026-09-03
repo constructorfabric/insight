@@ -2,26 +2,23 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, User, Users } from "lucide-react";
 import { useMemo } from "react";
 
-import type { PeopleListItem } from "@/api/identity-client";
 import { useViewer } from "@/auth";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { personName } from "@/lib/identities/person-display";
+import { personDisplayName } from "@/lib/identities/person-display";
 import { usePortalNavActions } from "@/lib/portal/portal-nav";
 import { personIdFromPath } from "@/lib/metrics/entity";
 import {
   filterOrgTree,
   type OrgTreeFilter,
 } from "@/lib/portal/org-tree-filter";
-import { rosterTree } from "@/lib/insight/identity-tree";
+import { useIcPerson } from "@/queries/ic-dashboard";
 import { useVisibilityPolicy } from "@/queries/identity-me";
 import { useVisibleRoster } from "@/queries/visible-roster";
 import type { IdentityPerson } from "@/types/insight";
-
-const UNNAMED_PERSON = "Unnamed person";
 
 // Person ids, not emails: the identity cutover made the id the key the route
 // segment, `?scope=` and the metric entity ids all carry.
@@ -93,7 +90,7 @@ function PersonNode({
             <span className="w-4 shrink-0" />
           )}
           {hasReports ? <Users /> : <User />}
-          <span className="truncate">{personName(node) ?? UNNAMED_PERSON}</span>
+          <span className="truncate">{personDisplayName(node)}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       {hasReports && open
@@ -117,14 +114,9 @@ function PersonNode({
  * list, in label order, scrolling in the pane exactly as the chart does. There
  * is no chart to draw and no depth to indent, so a row carries no chevron.
  */
-function RosterList({
-  query,
-  roster,
-}: {
-  query: string;
-  roster: readonly PeopleListItem[];
-}) {
+function RosterList({ query }: { query: string }) {
   const { personId: viewerPersonId } = useViewer();
+  const { roster } = useVisibleRoster(true);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const activePersonId = useMemo(() => {
     const fromPath = personIdFromPath(pathname);
@@ -136,10 +128,7 @@ function RosterList({
   const listed = useMemo(() => {
     const term = query.trim().toLowerCase();
     const rows = roster
-      .map((person) => ({
-        person,
-        label: personName(person) ?? UNNAMED_PERSON,
-      }))
+      .map((person) => ({ person, label: personDisplayName(person) }))
       .sort((left, right) => left.label.localeCompare(right.label));
     return term
       ? rows.filter((row) => row.label.toLowerCase().includes(term))
@@ -190,11 +179,8 @@ export function OrgTree({
 }: { leadsToTeam?: boolean; query?: string } = {}) {
   const { isFlat } = useVisibilityPolicy();
   const { personId: viewerPersonId } = useViewer();
-  const { roster } = useVisibleRoster(true);
-  const viewer = useMemo(
-    () => (viewerPersonId ? rosterTree(roster, viewerPersonId) : null),
-    [roster, viewerPersonId],
-  );
+  const viewerQ = useIcPerson(viewerPersonId ?? "");
+  const viewer = viewerQ.data ?? null;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const activePersonId = useMemo(() => {
     const fromPath = personIdFromPath(pathname);
@@ -204,7 +190,7 @@ export function OrgTree({
   }, [pathname, viewerPersonId]);
   const filter = useMemo(() => filterOrgTree(viewer, query), [viewer, query]);
 
-  if (isFlat) return <RosterList query={query} roster={roster} />;
+  if (isFlat) return <RosterList query={query} />;
   if (!viewer) return null;
   if (filter && filter.visible.size === 0) {
     return (

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Extension, Path, Query};
+use axum::extract::{Extension, Query};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
 use toolkit_canonical_errors::CanonicalError;
@@ -75,7 +75,6 @@ pub struct PeopleListItemResponse {
     pub attributes: BTreeMap<String, String>,
     pub manager_person_id: Option<Uuid>,
 }
-impl toolkit::api::api_dto::ResponseApiDto for PeopleListItemResponse {}
 
 impl From<PersonListRow> for PeopleListItemResponse {
     fn from(person: PersonListRow) -> Self {
@@ -116,10 +115,12 @@ pub async fn list_people(
     let limit = listing::clamp_limit(params.limit, DEFAULT_LIMIT, MAX_LIMIT);
     let query = cursor_query(visibility, caller, &terms.join(" "));
     let resume = resume_from(params.cursor.as_deref(), tenant, &query)?;
-    let restrict = if visibility == PeopleVisibility::Caller {
-        caller_restriction(&state, caller)
-    } else {
-        Restrict { visible_to: None }
+    let restrict = Restrict {
+        visible_to: (visibility == PeopleVisibility::Caller).then_some(VisibleTo {
+            viewer_person_id: caller,
+            org_source_type: &state.config.org_chart_source_type,
+            policy: state.config.visibility_policy,
+        }),
     };
 
     let rows = if listing::person_terms_name_nobody(&terms, &named, &values) {
@@ -156,47 +157,6 @@ pub async fn list_people(
 
     let items = rows.into_iter().map(PeopleListItemResponse::from).collect();
     Ok(Json(PeopleListResponse { items, next_cursor }))
-}
-
-pub async fn get_person(
-    Extension(state): Extension<Arc<AppState>>,
-    Extension(ctx): Extension<SecurityContext>,
-    Path(person_id): Path<Uuid>,
-) -> Result<impl IntoResponse, CanonicalError> {
-    let caller = require_caller(&ctx)?;
-    let tenant = ctx.subject_tenant_id();
-    let person_ids = [person_id];
-    let rows = people_listing::list_persons(
-        &state.db,
-        tenant,
-        ListQuery {
-            org_chart_source_type: &state.config.org_chart_source_type,
-            terms: &[],
-            person_ids: &person_ids,
-            restrict: caller_restriction(&state, caller),
-            after: None,
-            limit: 1,
-        },
-    )
-    .await
-    .map_err(|error| read_error(&error))?;
-
-    let person = rows.into_iter().next().ok_or_else(|| {
-        PersonSearchError::not_found("person not found or not visible")
-            .with_resource(person_id.to_string())
-            .create()
-    })?;
-    Ok(Json(PeopleListItemResponse::from(person)))
-}
-
-fn caller_restriction(state: &AppState, caller: Uuid) -> Restrict<'_> {
-    Restrict {
-        visible_to: Some(VisibleTo {
-            viewer_person_id: caller,
-            org_source_type: &state.config.org_chart_source_type,
-            policy: state.config.visibility_policy,
-        }),
-    }
 }
 
 fn search_terms(q: Option<&str>) -> Result<Vec<String>, CanonicalError> {

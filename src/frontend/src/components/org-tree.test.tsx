@@ -1,14 +1,18 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PeopleListItem } from "@/api/identity-client";
 import { OrgTree } from "@/components/org-tree";
 import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   viewer: null as IdentityPerson | null,
   isFlat: false,
-  roster: [] as PeopleListItem[],
+  roster: [] as {
+    person_id: string;
+    display_name?: string | null;
+    email?: string | null;
+    username?: string | null;
+  }[],
 }));
 
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "root" }) }));
@@ -25,6 +29,7 @@ vi.mock("@/queries/identity-me", () => ({
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
     roster: mocks.roster,
+    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},
@@ -65,40 +70,12 @@ function person(
   };
 }
 
-function rosterPerson(
-  personId: string,
-  displayName: string | null,
-  managerPersonId: string | null,
-  username: string | null = null,
-): PeopleListItem {
-  return {
-    person_id: personId,
-    display_name: displayName,
-    first_name: null,
-    last_name: null,
-    username,
-    email: null,
-    attributes: {},
-    manager_person_id: managerPersonId,
-  };
-}
-
 mocks.viewer = person("root", "Root Person", [
   person("lead", "Lead Person", [
     person("deep", "Deep Person"),
     person("other", "Other Person"),
   ]),
 ]);
-
-beforeEach(() => {
-  mocks.isFlat = false;
-  mocks.roster = [
-    rosterPerson("root", "Root Person", null),
-    rosterPerson("lead", "Lead Person", "root"),
-    rosterPerson("deep", "Deep Person", "lead"),
-    rosterPerson("other", "Other Person", "lead"),
-  ];
-});
 
 describe("OrgTree", () => {
   it("shows only the root's own level until something opens it", () => {
@@ -138,9 +115,9 @@ describe("OrgTree on an organisation with no reporting lines", () => {
     // this pane showing one name beside a full Employees table.
     mocks.viewer = { person_id: "root", display_name: "Me", email: "me@x", subordinates: [] } as IdentityPerson;
     mocks.roster = [
-      rosterPerson("root", "Me", null),
-      rosterPerson("p-ann", "Ann Dev", null),
-      rosterPerson("p-bot", null, null, "octo-bot"),
+      { person_id: "root", display_name: "Me", email: "me@x" },
+      { person_id: "p-ann", display_name: "Ann Dev", email: "ann@x" },
+      { person_id: "p-bot", display_name: null, email: null, username: "octo-bot" },
     ];
   });
 

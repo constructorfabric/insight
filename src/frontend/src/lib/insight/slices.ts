@@ -1,12 +1,13 @@
-import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 /**
  * Slices — grouping a roster and defining peer cohorts by a person attribute.
  * The machinery is **attribute-agnostic**: it works over a generic
- * `{ key → {label, value} }` map, so canonical people attributes become
- * sliceable with no change here or downstream. `ATTR_FIELDS` adapts legacy
- * profile responses still consumed by person-detail surfaces.
+ * `{ key → {label, value} }` map, so new identity attributes become sliceable
+ * with no change here or downstream. The ONE place attribute names live is
+ * `ATTR_FIELDS` below — the interim adapter from the fixed `IdentityPerson`
+ * shape. Once identity exposes attributes generically (see constructorfabric/
+ * insight#1881), `personAttributes` reads that list and `ATTR_FIELDS` disappears.
  *
  * There is no slice catalog in the analytics API yet, so `availableSlices()`
  * discovers dimensions from the data itself and gates them by presence and
@@ -36,7 +37,8 @@ const MAX_DISTINCT = 60;
 const MAX_UNIQUE_RATIO = 0.9;
 
 /**
- * Legacy profile-to-attributes adapter.
+ * Interim identity→attributes adapter — the only code that names attributes.
+ * Replace its body with the profile's generic `attributes[]` when #1881 lands.
  */
 const ATTR_FIELDS: readonly {
   key: string;
@@ -120,45 +122,6 @@ export function collectRosterAttrs(
   };
   if (root) walk(root);
   return m;
-}
-
-const ROSTER_ATTRIBUTE_ALIASES: Readonly<
-  Record<string, { key: string; label: string }>
-> = {
-  department: { key: "department", label: "Department" },
-  division: { key: "division", label: "Division" },
-  job_title: { key: "title", label: "Title" },
-  status: { key: "status", label: "Status" },
-};
-
-export function collectPeopleAttrs(
-  roster: readonly PeopleListItem[],
-  keyOf: (personId: string) => string,
-): Map<string, Record<string, SliceAttr>> {
-  const byPerson = new Map<string, Record<string, SliceAttr>>();
-
-  for (const person of roster) {
-    const attributes: Record<string, SliceAttr> = {};
-    for (const [sourceKey, rawValue] of Object.entries(person.attributes)) {
-      const value = rawValue.trim();
-      if (!value) continue;
-      const descriptor = ROSTER_ATTRIBUTE_ALIASES[sourceKey] ?? {
-        key: sourceKey,
-        label: sourceKey,
-      };
-      attributes[descriptor.key] = { ...descriptor, value };
-    }
-    if (person.manager_person_id) {
-      attributes.manager = {
-        key: "manager",
-        label: "Manager",
-        value: person.manager_person_id,
-      };
-    }
-    byPerson.set(keyOf(person.person_id), attributes);
-  }
-
-  return byPerson;
 }
 
 /**

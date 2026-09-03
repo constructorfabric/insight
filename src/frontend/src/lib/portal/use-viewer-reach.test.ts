@@ -7,22 +7,18 @@
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { PeopleListItem } from "@/api/identity-client";
+import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
-  roster: [] as PeopleListItem[],
+  viewer: null as IdentityPerson | null,
   isFlat: false,
   policyPending: false,
-  rosterPending: false,
+  treePending: false,
 }));
 
 vi.mock("@/auth", () => ({ useViewer: () => ({ personId: "me" }) }));
-vi.mock("@/queries/visible-roster", () => ({
-  useVisibleRoster: () => ({
-    roster: mocks.roster,
-    isPending: mocks.rosterPending,
-    isError: false,
-  }),
+vi.mock("@/queries/ic-dashboard", () => ({
+  useIcPerson: () => ({ data: mocks.viewer, isPending: mocks.treePending }),
 }));
 vi.mock("@/queries/identity-me", () => ({
   useVisibilityPolicy: () => ({
@@ -34,25 +30,21 @@ vi.mock("@/queries/identity-me", () => ({
 
 import { useViewerReach } from "./use-viewer-reach";
 
-function person(id: string, managerPersonId: string | null = null): PeopleListItem {
+function person(id: string, subordinates: IdentityPerson[] = []): IdentityPerson {
   return {
     person_id: id,
     email: `${id}@example.com`,
     display_name: id,
-    first_name: null,
-    last_name: null,
-    username: null,
-    attributes: {},
-    manager_person_id: managerPersonId,
-  };
+    subordinates,
+  } as IdentityPerson;
 }
 
 describe("useViewerReach", () => {
   it("opens the org zones for a lead on a hierarchical install", () => {
-    mocks.roster = [person("me"), person("report", "me")];
+    mocks.viewer = person("me", [person("report")]);
     mocks.isFlat = false;
     mocks.policyPending = false;
-    mocks.rosterPending = false;
+    mocks.treePending = false;
 
     const { result } = renderHook(() => useViewerReach());
 
@@ -61,7 +53,7 @@ describe("useViewerReach", () => {
   });
 
   it("keeps them shut for a leaf IC on a hierarchical install", () => {
-    mocks.roster = [person("me")];
+    mocks.viewer = person("me");
     mocks.isFlat = false;
 
     const { result } = renderHook(() => useViewerReach());
@@ -72,7 +64,7 @@ describe("useViewerReach", () => {
 
   it("opens them under a flat policy even with nobody to manage", () => {
     // The whole point: no reports, and still the organisation to look at.
-    mocks.roster = [person("me")];
+    mocks.viewer = person("me");
     mocks.isFlat = true;
 
     const { result } = renderHook(() => useViewerReach());
@@ -82,9 +74,9 @@ describe("useViewerReach", () => {
   });
 
   it("waits rather than deciding while either answer is in flight", () => {
-    mocks.roster = [];
+    mocks.viewer = null;
     mocks.isFlat = false;
-    mocks.rosterPending = true;
+    mocks.treePending = true;
     mocks.policyPending = true;
 
     const { result } = renderHook(() => useViewerReach());

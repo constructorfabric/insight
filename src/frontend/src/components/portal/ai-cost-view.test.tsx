@@ -17,17 +17,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NormalizedMetricResult } from "@/lib/metrics/collection";
 import { setPortalShowPlanned } from "@/lib/portal/portal-store";
-import {
-  identityPerson,
-  peopleFromIdentityTree,
-  pid,
-} from "@/test/identity";
+import { identityPerson, pid } from "@/test/identity";
 import type { IdentityPerson, TeamMember } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   personId: null as string | null,
   tree: undefined as IdentityPerson | undefined,
-  roster: [] as import("@/api/identity-client").PeopleListItem[],
   members: [] as TeamMember[],
   grid: {
     byKey: new Map<string, NormalizedMetricResult>(),
@@ -67,7 +62,8 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
-    roster: mocks.roster,
+    roster: [],
+    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},
@@ -136,7 +132,6 @@ const IDS = LABELS.map(pid);
 beforeEach(() => {
   mocks.personId = pid("boss");
   mocks.tree = person("boss", {}, LABELS.map((l) => person(l)));
-  mocks.roster = peopleFromIdentityTree(mocks.tree);
   mocks.members = IDS.map(member);
   mocks.grid.isPending = false;
   mocks.grid.isError = false;
@@ -302,7 +297,6 @@ describe("AiCostView", () => {
       person("c", { division: "Sales" } as never),
       person("d", { division: "Sales" } as never),
     ]);
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
     act(() => portalRouter.set({ slice: "division" }));
     render(<AiCostView item="by-unit-role" />);
     expect(screen.getByText("R&D")).toBeInTheDocument();
@@ -337,7 +331,6 @@ describe("AiCostView", () => {
       person("c", { division: "Sales" } as never),
       person("d", { division: "Sales" } as never),
     ]);
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
     act(() => portalRouter.set({ slice: "division" }));
     render(<AiCostView item="by-unit-role" />);
     const cells = screen.getByText("Sales").closest("tr")?.querySelectorAll("td");
@@ -347,7 +340,6 @@ describe("AiCostView", () => {
   it("gates on an empty scope instead of rendering zero KPIs", () => {
     mocks.members = [];
     mocks.tree = person("boss");
-    mocks.roster = peopleFromIdentityTree(mocks.tree);
     render(<AiCostView item={null} />);
     expect(screen.getByText(/No people in the current scope/)).toBeInTheDocument();
     expect(screen.queryByText("AI potential usage cost")).not.toBeInTheDocument();

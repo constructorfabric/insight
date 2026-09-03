@@ -20,18 +20,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MetricDefinitionListResponse } from "@/api/metric-definitions-client";
 import { setPortalShowPlanned } from "@/lib/portal/portal-store";
-import { identityPerson, peopleFromIdentityTree, pid } from "@/test/identity";
-
-const roster = peopleFromIdentityTree(
-  identityPerson("boss", {
-    person_id: pid("boss"),
-    division: "Alpha",
-    subordinates: [
-      identityPerson("one", { person_id: pid("one"), division: "Alpha" }),
-      identityPerson("two", { person_id: pid("two"), division: "Beta" }),
-    ],
-  }),
-);
+import { identityPerson, pid } from "@/test/identity";
 
 const mocks = vi.hoisted(() => ({
   definitions: { metrics: [] } as MetricDefinitionListResponse,
@@ -48,7 +37,8 @@ vi.mock("@/queries/identity-me", () => ({
 }));
 vi.mock("@/queries/visible-roster", () => ({
   useVisibleRoster: () => ({
-    roster,
+    roster: [],
+    truncated: false,
     isPending: false,
     isError: false,
     retry: () => {},

@@ -29,7 +29,6 @@ const hooks = vi.hoisted(() => {
     error: null as unknown,
   });
   return {
-  personSource: "identities" as "identities" | "roster",
   accounts: {
     data: undefined as
       | { person_id: string; accounts: PersonAccountEntry[] }
@@ -63,14 +62,7 @@ const hooks = vi.hoisted(() => {
 vi.mock("@/queries/identity-resolution", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/queries/identity-resolution")>()),
   usePersonAccounts: () => hooks.accounts,
-  usePersonList: (
-    _q: string,
-    _intent: "browse" | "match",
-    source: "identities" | "roster" = "identities",
-  ) => {
-    hooks.personSource = source;
-    return hooks.search;
-  },
+  usePersonList: () => hooks.search,
   useAccountList: () => hooks.accountSearch,
   // The verbs belong to person-dialog.test; stubbed so the window can render
   // them without this suite standing up a query client.
@@ -110,7 +102,6 @@ function roster() {
 }
 
 beforeEach(() => {
-  hooks.personSource = "identities";
   hooks.accounts.data = undefined;
   hooks.accounts.isLoading = false;
   hooks.accounts.isError = false;
@@ -148,7 +139,6 @@ describe("PersonAccountsView", () => {
 
     expect(screen.getByText("Ann Lee")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(hooks.personSource).toBe("roster");
   });
 
   it("puts the chosen person in the URL, so the view is a link", async () => {

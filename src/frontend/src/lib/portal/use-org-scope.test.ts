@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 import { flatOrgScope, resolveScopeRoster } from "./use-org-scope";
 
@@ -18,22 +17,6 @@ const person = (
     display_name: name,
     subordinates,
   }) as unknown as IdentityPerson;
-
-const rosterPerson = (
-  personId: string,
-  displayName: string,
-  over: Partial<PeopleListItem> = {},
-): PeopleListItem => ({
-  person_id: personId,
-  display_name: displayName,
-  first_name: null,
-  last_name: null,
-  username: null,
-  email: null,
-  attributes: {},
-  manager_person_id: null,
-  ...over,
-});
 
 //        ao
 //   ┌────┴─────┐
@@ -121,9 +104,9 @@ describe("resolveScopeRoster", () => {
 
 describe("flatOrgScope", () => {
   const roster = [
-    rosterPerson("p-me", "Me"),
-    rosterPerson("p-b", "Bea"),
-    rosterPerson("p-c", "Cyd"),
+    { person_id: "p-me", display_name: "Me" },
+    { person_id: "p-b", display_name: "Bea" },
+    { person_id: "p-c", display_name: "Cyd" },
   ];
 
   it("counts everyone the viewer may see, the viewer included", () => {
@@ -153,7 +136,7 @@ describe("flatOrgScope", () => {
     // The roster entry is what the zones label people by; dropping username
     // here would blank every person the org chart never named.
     const scope = flatOrgScope([
-      rosterPerson("p-h", "", { username: "handle", email: "" }),
+      { person_id: "p-h", display_name: "", username: "handle", email: "" },
     ]);
 
     expect(scope.roster).toEqual([
@@ -170,10 +153,13 @@ describe("flatOrgScope", () => {
 
   it("carries visible people without creating a report-specific profile", () => {
     const scope = flatOrgScope([
-      rosterPerson("p-h", "Handle", {
+      {
+        person_id: "p-h",
+        display_name: "Handle",
         email: "handle@example.com",
-        attributes: { job_title: "Engineer", status: "active" },
-      }),
+        job_title: "Engineer",
+        status: "active",
+      },
     ]);
 
     expect(scope.roster?.map((person) => person.person_id)).toEqual(["p-h"]);

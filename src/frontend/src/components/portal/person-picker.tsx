@@ -32,7 +32,6 @@ import {
   listsAnyone,
   MAX_SEARCH_CHARS,
   MIN_SEARCH_CHARS,
-  type PersonListSource,
   SEARCH_DEBOUNCE_MS,
   usePersonList,
 } from "@/queries/identity-resolution";
@@ -53,7 +52,6 @@ export function PersonPicker({
   asSurface = false,
   initialQuery = "",
   onSettled,
-  source = "identities",
 }: {
   onPick: (person: PersonSummary) => void;
   excludeIds?: string[];
@@ -68,7 +66,6 @@ export function PersonPicker({
    *  keystroke: a caller that stores them in the URL would otherwise navigate
    *  on every letter. */
   onSettled?: (query: string) => void;
-  source?: PersonListSource;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState(initialQuery);
@@ -85,7 +82,7 @@ export function PersonPicker({
 
   const intent = browseWhenEmpty ? "browse" : "match";
   const asked = listsAnyone(debounced, intent);
-  const list = usePersonList(debounced, intent, source);
+  const list = usePersonList(debounced, intent);
 
   const excluded = new Set(excludeIds);
   const results = asked

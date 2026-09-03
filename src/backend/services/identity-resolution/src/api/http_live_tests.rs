@@ -738,52 +738,6 @@ async fn people_lists_only_current_roster_people_visible_to_the_caller() -> Test
 }
 
 #[tokio::test]
-async fn people_detail_uses_the_roster_projection_not_later_identity_evidence() -> TestResult {
-    let Some(f) = fixture_or_skip().await? else {
-        return Ok(());
-    };
-    let caller = f.person("detail-caller@http-live.test").await?;
-    let report = f.person("detail-report@http-live.test").await?;
-    f.project_person(
-        report,
-        Some("roster@example.com"),
-        Some("roster-handle"),
-        Some("Roster Name"),
-        Some("Roster"),
-        Some("Name"),
-    )
-    .await?;
-    f.observed(report, "display_name", "Activity Name").await?;
-    f.reports_to(report, caller).await?;
-
-    let (status, body) = get(app(&f, caller), &format!("/v1/people/{report}")).await?;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["person_id"], report.to_string());
-    assert_eq!(body["display_name"], "Roster Name");
-    assert_eq!(body["first_name"], "Roster");
-    assert_eq!(body["last_name"], "Name");
-    assert_eq!(body["manager_person_id"], caller.to_string());
-    Ok(())
-}
-
-#[tokio::test]
-async fn people_detail_hides_a_roster_person_outside_the_callers_visible_set() -> TestResult {
-    let Some(f) = fixture_or_skip().await? else {
-        return Ok(());
-    };
-    let caller = f.person("detail-hidden-caller@http-live.test").await?;
-    let hidden = f.person("detail-hidden-person@http-live.test").await?;
-    f.project_person(hidden, None, None, Some("Hidden Person"), None, None)
-        .await?;
-
-    let (status, _) = get(app(&f, caller), &format!("/v1/people/{hidden}")).await?;
-
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    Ok(())
-}
-
-#[tokio::test]
 async fn people_preserve_source_names_and_only_synthesize_a_missing_display_name() -> TestResult {
     let Some(f) = fixture_or_skip().await? else {
         return Ok(());

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
-import { collectPeopleAttrs } from "@/lib/insight/slices";
+import { useViewer } from "@/auth";
+import { collectRosterAttrs } from "@/lib/insight/slices";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import {
   catalogAttributes,
@@ -8,8 +9,8 @@ import {
   type CohortOptions,
 } from "@/lib/portal/cohort-options";
 import { usePortalSlice } from "@/lib/portal/portal-nav";
+import { useIcPerson } from "@/queries/ic-dashboard";
 import { useMetricDefinitionsResponse } from "@/queries/metric-definitions";
-import { useVisibleRoster } from "@/queries/visible-roster";
 
 export interface CohortOptionsState extends CohortOptions {
   /** True until both sources have answered — nothing may be dropped before. */
@@ -34,20 +35,21 @@ export interface CohortOptionsState extends CohortOptions {
  * `cohortOptions` for why the catalog outranks the roster.
  */
 export function useCohortOptions(): CohortOptionsState {
+  const { personId } = useViewer();
   const stored = usePortalSlice();
   const definitions = useMetricDefinitionsResponse();
-  const roster = useVisibleRoster(true);
+  const tree = useIcPerson(personId ?? "");
 
   const options = useMemo(
     () =>
       cohortOptions(
         catalogAttributes(definitions.data),
-        collectPeopleAttrs(roster.roster, normalizePersonId).values(),
+        collectRosterAttrs(tree.data ?? null, normalizePersonId).values()
       ),
-    [definitions.data, roster.roster],
+    [definitions.data, tree.data]
   );
 
-  const isPending = definitions.isPending || roster.isPending;
+  const isPending = definitions.isPending || tree.isPending;
   return {
     ...options,
     isPending,
