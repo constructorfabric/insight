@@ -301,6 +301,7 @@ impl Default for RateLimitConfig {
 pub struct McpOAuthConfig {
     pub enabled: bool,
     pub public_url: String,
+    pub allow_insecure_private_network: bool,
     pub authorization_code_ttl_seconds: u64,
     pub access_token_ttl_seconds: u64,
 }
@@ -310,6 +311,7 @@ impl Default for McpOAuthConfig {
         Self {
             enabled: false,
             public_url: String::new(),
+            allow_insecure_private_network: false,
             authorization_code_ttl_seconds: 300,
             access_token_ttl_seconds: 300,
         }
@@ -660,19 +662,29 @@ fn validate_mcp_oauth(config: &McpOAuthConfig) -> anyhow::Result<()> {
 
     let public_url = url::Url::parse(&config.public_url)
         .map_err(|error| anyhow::anyhow!("mcp_oauth.public_url is invalid: {error}"))?;
+    let private_http = public_url.scheme() == "http"
+        && config.allow_insecure_private_network
+        && public_url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_some_and(|address| match address {
+                std::net::IpAddr::V4(address) => address.is_private(),
+                std::net::IpAddr::V6(address) => (address.segments()[0] & 0xfe00) == 0xfc00,
+            });
     anyhow::ensure!(
         matches!(public_url.scheme(), "https" | "http")
             && (public_url.scheme() == "https"
                 || matches!(
                     public_url.host_str(),
                     Some("localhost" | "127.0.0.1" | "::1")
-                ))
+                )
+                || private_http)
             && public_url.path() == "/"
             && public_url.query().is_none()
             && public_url.fragment().is_none()
             && public_url.username().is_empty()
             && public_url.password().is_none(),
-        "mcp_oauth.public_url must be an HTTPS origin, or an HTTP localhost origin"
+        "mcp_oauth.public_url must be an HTTPS origin or an allowed local HTTP origin"
     );
     anyhow::ensure!(
         config.authorization_code_ttl_seconds > 0,

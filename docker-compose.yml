@@ -265,6 +265,7 @@ services:
       APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
       APP__gears__analytics__config__mcp__enabled: "${MCP_ENABLED:-false}"
       APP__gears__analytics__config__mcp__public_url: "${MCP_PUBLIC_URL:-}"
+      APP__gears__analytics__config__mcp__allow_insecure_private_network: "true"
       APP__gears__analytics__config__mcp__clickhouse_user: "insight_mcp"
       APP__gears__analytics__config__mcp__clickhouse_password: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
@@ -445,6 +446,7 @@ services:
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/app/keys"
       APP__gears__authenticator__config__mcp_oauth__enabled: "${MCP_ENABLED:-false}"
       APP__gears__authenticator__config__mcp_oauth__public_url: "${MCP_PUBLIC_URL:-}"
+      APP__gears__authenticator__config__mcp_oauth__allow_insecure_private_network: "true"
       # Audit events to the platform topic (step 10.8). Delivery failures are
       # dropped + counted, so a stack without Redpanda still works.
       APP__gears__authenticator__config__audit__brokers: "${AUDIT_BROKERS:-redpanda:9092}"

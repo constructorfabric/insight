@@ -255,7 +255,7 @@ pub async fn start(
                 .with_max_request_body_bytes(MAX_REQUEST_BODY_BYTES)
                 .with_cancellation_token(cancellation_token.child_token()),
         );
-    let auth = TokenVerifier::new(&config.public_url)?;
+    let auth = TokenVerifier::new(&config.public_url, config.allow_insecure_private_network)?;
     let router = Router::new()
         .nest_service("/mcp", service)
         .layer(middleware::from_fn_with_state(auth, authenticate));
@@ -278,7 +278,7 @@ pub fn validate_config(config: &McpConfig) -> anyhow::Result<()> {
         return Ok(());
     }
     config.bind_addr.parse::<SocketAddr>()?;
-    validate_public_url(&config.public_url)?;
+    validate_public_url(&config.public_url, config.allow_insecure_private_network)?;
     if config.clickhouse_user.trim().is_empty() {
         anyhow::bail!("MCP ClickHouse user is empty");
     }
@@ -320,8 +320,8 @@ async fn authenticate(
 }
 
 impl TokenVerifier {
-    fn new(public_url: &str) -> anyhow::Result<Self> {
-        validate_public_url(public_url)?;
+    fn new(public_url: &str, allow_insecure_private_network: bool) -> anyhow::Result<Self> {
+        validate_public_url(public_url, allow_insecure_private_network)?;
         let issuer = public_url.trim_end_matches('/').to_owned();
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
@@ -431,18 +431,30 @@ impl TokenVerifier {
     }
 }
 
-fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
+fn validate_public_url(
+    public_url: &str,
+    allow_insecure_private_network: bool,
+) -> anyhow::Result<()> {
     let url = url::Url::parse(public_url)?;
     let local_http =
         url.scheme() == "http" && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    let private_http = url.scheme() == "http"
+        && allow_insecure_private_network
+        && url
+            .host_str()
+            .and_then(|host| host.parse::<std::net::IpAddr>().ok())
+            .is_some_and(|address| match address {
+                std::net::IpAddr::V4(address) => address.is_private(),
+                std::net::IpAddr::V6(address) => (address.segments()[0] & 0xfe00) == 0xfc00,
+            });
     anyhow::ensure!(
-        (url.scheme() == "https" || local_http)
+        (url.scheme() == "https" || local_http || private_http)
             && url.path() == "/"
             && url.query().is_none()
             && url.fragment().is_none()
             && url.username().is_empty()
             && url.password().is_none(),
-        "MCP public URL must be an HTTPS origin, or an HTTP localhost origin"
+        "MCP public URL must be an HTTPS origin or an allowed local HTTP origin"
     );
     Ok(())
 }
