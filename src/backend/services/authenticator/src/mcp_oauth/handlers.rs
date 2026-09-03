@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use axum::Extension;
 use axum::extract::{Form, Query};
-use axum::http::header::{CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, LOCATION};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, LOCATION, RETRY_AFTER,
+};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use axum_extra::extract::cookie::CookieJar;
@@ -18,8 +20,10 @@ use crate::api::AppState;
 use crate::audit::AuditEvent;
 use crate::cookie;
 use crate::jwt::McpAccessClaims;
+use crate::ratelimit::BucketSpec;
 use crate::session::SessionRecord;
 
+use super::store::McpOAuthStoreError;
 use super::types::{
     AuthorizationCodeGrant, AuthorizationDecision, AuthorizeQuery, ClientRegistrationRequest,
     MCP_SCOPE, OAuthError, PendingAuthorization, RefreshGrant, RegisteredClient, RevocationRequest,
@@ -27,6 +31,12 @@ use super::types::{
 };
 
 const ADMIN_ROLE: &str = "admin";
+const CLIENT_REGISTRATION_TTL_SECONDS: u64 = 365 * 24 * 60 * 60;
+const MAX_REGISTERED_CLIENTS: u64 = 1_000;
+const REGISTRATION_RATE_LIMIT: BucketSpec = BucketSpec {
+    burst: 20,
+    per_minute: 20,
+};
 const MAX_PARAMETER_LENGTH: usize = 2_048;
 const REFERRER_POLICY: &str = "referrer-policy";
 const X_CONTENT_TYPE_OPTIONS: &str = "x-content-type-options";
@@ -51,6 +61,23 @@ pub async fn register_client(
     if !state.cfg.mcp_oauth.enabled {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let registration_allowed = state
+        .sessions
+        .rate_limit_take(
+            "mcp_registration",
+            "global",
+            REGISTRATION_RATE_LIMIT,
+            now_secs(),
+        )
+        .await;
+    match registration_allowed {
+        Ok(true) => {}
+        Ok(false) => return registration_limited("client registration rate limit exceeded"),
+        Err(error) => {
+            tracing::error!(error = %error, "could not enforce MCP client registration limit");
+            return temporarily_unavailable();
+        }
+    }
 
     let client = match validated_registration(request, random_token()) {
         Ok(client) => client,
@@ -58,13 +85,24 @@ pub async fn register_client(
             return oauth_error(StatusCode::BAD_REQUEST, "invalid_client_metadata", reason);
         }
     };
-    if let Err(error) = state.mcp_oauth.put_client(&client).await {
-        tracing::error!(error = %error, "could not store MCP OAuth client");
-        return oauth_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "temporarily_unavailable",
-            "authorization server unavailable",
-        );
+    match state
+        .mcp_oauth
+        .put_client(
+            &client,
+            CLIENT_REGISTRATION_TTL_SECONDS,
+            MAX_REGISTERED_CLIENTS,
+            now_secs(),
+        )
+        .await
+    {
+        Ok(()) => {}
+        Err(McpOAuthStoreError::ClientQuotaExceeded) => {
+            return registration_limited("client registration capacity exhausted");
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "could not store MCP OAuth client");
+            return temporarily_unavailable();
+        }
     }
 
     json_response(StatusCode::CREATED, &client)
@@ -254,6 +292,7 @@ pub async fn revoke(
         .await
     {
         tracing::warn!(error = %error, "could not revoke MCP refresh token");
+        return temporarily_unavailable();
     }
     no_store(StatusCode::OK.into_response())
 }
@@ -657,9 +696,11 @@ fn consent_page(
     pending: &PendingAuthorization,
 ) -> Response {
     let nonce = random_token();
+    let redirect_origin = redirect_origin(&pending.redirect_uri);
     let body = format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize data access</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}button{{font:inherit;padding:.65rem 1rem;margin-right:.5rem}}.approve{{background:#17202a;color:white;border:0;border-radius:6px}}</style></head><body><main><h1>Authorize data exploration</h1><p><strong>{}</strong> is requesting read-only SQL access to this Insight instance.</p><p>This connection will act as <strong>{}</strong> and requires an active administrator role.</p><form id="decision"><input type="hidden" name="request_id" value="{}"><input type="hidden" id="csrf" value="{}"><button class="approve" name="decision" value="approve">Approve</button><button name="decision" value="cancel">Cancel</button></form><p id="error" role="alert"></p></main><script nonce="{}">const form=document.getElementById('decision');form.addEventListener('submit',async event=>{{event.preventDefault();const button=event.submitter;const data=new URLSearchParams(new FormData(form));data.set('decision',button.value);const csrf=document.getElementById('csrf').value;const response=await fetch('/auth/oauth/decision',{{method:'POST',headers:{{'content-type':'application/x-www-form-urlencoded','x-csrf-token':csrf}},body:data}});const result=await response.json();if(response.ok&&result.redirect_to){{location.assign(result.redirect_to)}}else{{document.getElementById('error').textContent=result.error_description||'Authorization failed'}}}});</script></body></html>"#,
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize data access</title><style>body{{font:16px system-ui;max-width:42rem;margin:4rem auto;padding:0 1rem;color:#17202a}}main{{border:1px solid #d5d8dc;border-radius:12px;padding:2rem}}button{{font:inherit;padding:.65rem 1rem;margin-right:.5rem}}.approve{{background:#17202a;color:white;border:0;border-radius:6px}}</style></head><body><main><h1>Authorize data exploration</h1><p>Client-provided name: <strong>{}</strong> (unverified).</p><p>Redirect destination: <strong>{}</strong>.</p><p>This client is requesting read-only SQL access to this Insight instance.</p><p>This connection will act as <strong>{}</strong> and requires an active administrator role.</p><form id="decision"><input type="hidden" name="request_id" value="{}"><input type="hidden" id="csrf" value="{}"><button class="approve" name="decision" value="approve">Approve access</button><button name="decision" value="cancel">Cancel</button></form><p id="error" role="alert"></p></main><script nonce="{}">const form=document.getElementById('decision');form.addEventListener('submit',async event=>{{event.preventDefault();const button=event.submitter;const data=new URLSearchParams(new FormData(form));data.set('decision',button.value);const csrf=document.getElementById('csrf').value;const response=await fetch('/auth/oauth/decision',{{method:'POST',headers:{{'content-type':'application/x-www-form-urlencoded','x-csrf-token':csrf}},body:data}});const result=await response.json();if(response.ok&&result.redirect_to){{location.assign(result.redirect_to)}}else{{document.getElementById('error').textContent=result.error_description||'Authorization failed'}}}});</script></body></html>"#,
         html_escape(&pending.client_name),
+        html_escape(&redirect_origin),
         html_escape(&record.email),
         html_escape(request_id),
         html_escape(&record.csrf_token),
@@ -685,6 +726,13 @@ fn consent_page(
         .headers_mut()
         .insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     response
+}
+
+fn redirect_origin(redirect_uri: &str) -> String {
+    Url::parse(redirect_uri).map_or_else(
+        |_| "invalid redirect origin".to_owned(),
+        |url| url.origin().ascii_serialization(),
+    )
 }
 
 pub(crate) fn login_continuation_page(return_to: &str) -> Response {
@@ -839,6 +887,18 @@ fn temporarily_unavailable() -> Response {
     )
 }
 
+fn registration_limited(description: &str) -> Response {
+    let mut response = oauth_error(
+        StatusCode::TOO_MANY_REQUESTS,
+        "temporarily_unavailable",
+        description,
+    );
+    response
+        .headers_mut()
+        .insert(RETRY_AFTER, HeaderValue::from_static("60"));
+    response
+}
+
 fn oauth_error(status: StatusCode, error: &'static str, description: &str) -> Response {
     json_response(
         status,
@@ -955,7 +1015,7 @@ mod tests {
     use axum::http::header::{CACHE_CONTROL, LOCATION};
     use url::Url;
 
-    use super::{OAuthFailure, authorization_error_redirect, redirect_uri_target};
+    use super::{OAuthFailure, authorization_error_redirect, redirect_origin, redirect_uri_target};
 
     type R = Result<(), Box<dyn Error>>;
 
@@ -1003,5 +1063,13 @@ mod tests {
         let target = Url::parse(&target)?;
         assert!(target.query_pairs().all(|(name, _)| name != "state"));
         Ok(())
+    }
+
+    #[test]
+    fn consent_identity_uses_redirect_origin_not_path() {
+        assert_eq!(
+            redirect_origin("http://127.0.0.1:49152/callback?state=secret"),
+            "http://127.0.0.1:49152"
+        );
     }
 }

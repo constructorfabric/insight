@@ -14,6 +14,28 @@ redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
 return 1
 ";
 
+const PUT_CLIENT_LUA: &str = r"
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
+if redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[5]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[4], ARGV[6])
+return 1
+";
+
+const CLIENT_INDEX_KEY: &str = "{mcp_oauth}:clients";
+
+#[derive(Debug, thiserror::Error)]
+pub enum McpOAuthStoreError {
+    #[error("MCP OAuth Redis operation failed: {0}")]
+    Redis(#[from] redis::RedisError),
+    #[error("MCP OAuth record serialization failed: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("MCP OAuth client registration quota exhausted")]
+    ClientQuotaExceeded,
+}
+
 #[derive(Clone)]
 pub struct McpOAuthStore {
     conn: ConnectionManager,
@@ -29,17 +51,39 @@ impl McpOAuthStore {
         Ok(Self { conn })
     }
 
-    pub async fn put_client(&self, client: &RegisteredClient) -> anyhow::Result<()> {
+    pub async fn put_client(
+        &self,
+        client: &RegisteredClient,
+        ttl_seconds: u64,
+        max_clients: u64,
+        now: u64,
+    ) -> Result<(), McpOAuthStoreError> {
         let mut conn = self.conn.clone();
         let value = serde_json::to_string(client)?;
-        conn.set::<_, _, ()>(client_key(&client.client_id), value)
-            .await
-            .context("store MCP OAuth client")
+        let expires_at = now.saturating_add(ttl_seconds);
+        let stored: i64 = redis::Script::new(PUT_CLIENT_LUA)
+            .key(client_key(&client.client_id))
+            .key(CLIENT_INDEX_KEY)
+            .arg(value)
+            .arg(ttl_seconds)
+            .arg(now)
+            .arg(expires_at)
+            .arg(max_clients)
+            .arg(&client.client_id)
+            .invoke_async(&mut conn)
+            .await?;
+        if stored == 1 {
+            Ok(())
+        } else {
+            Err(McpOAuthStoreError::ClientQuotaExceeded)
+        }
     }
 
-    pub async fn client(&self, client_id: &str) -> anyhow::Result<Option<RegisteredClient>> {
-        self.get_json(client_key(client_id), "load MCP OAuth client")
-            .await
+    pub async fn client(
+        &self,
+        client_id: &str,
+    ) -> Result<Option<RegisteredClient>, McpOAuthStoreError> {
+        self.get_json(client_key(client_id)).await
     }
 
     pub async fn put_pending(
@@ -47,27 +91,23 @@ impl McpOAuthStore {
         request_id: &str,
         pending: &PendingAuthorization,
         ttl_seconds: u64,
-    ) -> anyhow::Result<()> {
-        self.set_json_ex(
-            pending_key(request_id),
-            pending,
-            ttl_seconds,
-            "store MCP authorization request",
-        )
-        .await
+    ) -> Result<(), McpOAuthStoreError> {
+        self.set_json_ex(pending_key(request_id), pending, ttl_seconds)
+            .await
     }
 
-    pub async fn pending(&self, request_id: &str) -> anyhow::Result<Option<PendingAuthorization>> {
-        self.get_json(pending_key(request_id), "load MCP authorization request")
-            .await
+    pub async fn pending(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<PendingAuthorization>, McpOAuthStoreError> {
+        self.get_json(pending_key(request_id)).await
     }
 
     pub async fn take_pending(
         &self,
         request_id: &str,
-    ) -> anyhow::Result<Option<PendingAuthorization>> {
-        self.take_json(pending_key(request_id), "consume MCP authorization request")
-            .await
+    ) -> Result<Option<PendingAuthorization>, McpOAuthStoreError> {
+        self.take_json(pending_key(request_id)).await
     }
 
     pub async fn put_code(
@@ -75,19 +115,15 @@ impl McpOAuthStore {
         code: &str,
         grant: &AuthorizationCodeGrant,
         ttl_seconds: u64,
-    ) -> anyhow::Result<()> {
-        self.set_json_ex(
-            code_key(code),
-            grant,
-            ttl_seconds,
-            "store MCP authorization code",
-        )
-        .await
+    ) -> Result<(), McpOAuthStoreError> {
+        self.set_json_ex(code_key(code), grant, ttl_seconds).await
     }
 
-    pub async fn take_code(&self, code: &str) -> anyhow::Result<Option<AuthorizationCodeGrant>> {
-        self.take_json(code_key(code), "consume MCP authorization code")
-            .await
+    pub async fn take_code(
+        &self,
+        code: &str,
+    ) -> Result<Option<AuthorizationCodeGrant>, McpOAuthStoreError> {
+        self.take_json(code_key(code)).await
     }
 
     pub async fn put_refresh(
@@ -95,26 +131,22 @@ impl McpOAuthStore {
         token_hash: &str,
         grant: &RefreshGrant,
         ttl_seconds: u64,
-    ) -> anyhow::Result<()> {
-        self.set_json_ex(
-            refresh_key(token_hash),
-            grant,
-            ttl_seconds,
-            "store MCP refresh token",
-        )
-        .await
-    }
-
-    pub async fn refresh(&self, token_hash: &str) -> anyhow::Result<Option<RefreshGrant>> {
-        self.get_json(refresh_key(token_hash), "load MCP refresh token")
+    ) -> Result<(), McpOAuthStoreError> {
+        self.set_json_ex(refresh_key(token_hash), grant, ttl_seconds)
             .await
     }
 
-    pub async fn delete_refresh(&self, token_hash: &str) -> anyhow::Result<()> {
+    pub async fn refresh(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<RefreshGrant>, McpOAuthStoreError> {
+        self.get_json(refresh_key(token_hash)).await
+    }
+
+    pub async fn delete_refresh(&self, token_hash: &str) -> Result<(), McpOAuthStoreError> {
         let mut conn = self.conn.clone();
-        conn.del::<_, ()>(refresh_key(token_hash))
-            .await
-            .context("revoke MCP refresh token")
+        conn.del::<_, ()>(refresh_key(token_hash)).await?;
+        Ok(())
     }
 
     pub async fn rotate_refresh(
@@ -124,7 +156,7 @@ impl McpOAuthStore {
         new_hash: &str,
         new_grant: &RefreshGrant,
         ttl_seconds: u64,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, McpOAuthStoreError> {
         let mut conn = self.conn.clone();
         let expected = serde_json::to_string(old_grant)?;
         let replacement = serde_json::to_string(new_grant)?;
@@ -135,8 +167,7 @@ impl McpOAuthStore {
             .arg(replacement)
             .arg(ttl_seconds)
             .invoke_async(&mut conn)
-            .await
-            .context("rotate MCP refresh token")?;
+            .await?;
         Ok(rotated == 1)
     }
 
@@ -145,40 +176,32 @@ impl McpOAuthStore {
         key: String,
         value: &T,
         ttl_seconds: u64,
-        context: &'static str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), McpOAuthStoreError> {
         let mut conn = self.conn.clone();
         let value = serde_json::to_string(value)?;
-        conn.set_ex::<_, _, ()>(key, value, ttl_seconds)
-            .await
-            .context(context)
+        conn.set_ex::<_, _, ()>(key, value, ttl_seconds).await?;
+        Ok(())
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         key: String,
-        context: &'static str,
-    ) -> anyhow::Result<Option<T>> {
+    ) -> Result<Option<T>, McpOAuthStoreError> {
         let mut conn = self.conn.clone();
-        let value: Option<String> = conn.get(key).await.context(context)?;
+        let value: Option<String> = conn.get(key).await?;
         value
-            .map(|value| serde_json::from_str(&value).context(context))
+            .map(|value| serde_json::from_str(&value).map_err(McpOAuthStoreError::from))
             .transpose()
     }
 
     async fn take_json<T: serde::de::DeserializeOwned>(
         &self,
         key: String,
-        context: &'static str,
-    ) -> anyhow::Result<Option<T>> {
+    ) -> Result<Option<T>, McpOAuthStoreError> {
         let mut conn = self.conn.clone();
-        let value: Option<String> = redis::cmd("GETDEL")
-            .arg(key)
-            .query_async(&mut conn)
-            .await
-            .context(context)?;
+        let value: Option<String> = redis::cmd("GETDEL").arg(key).query_async(&mut conn).await?;
         value
-            .map(|value| serde_json::from_str(&value).context(context))
+            .map(|value| serde_json::from_str(&value).map_err(McpOAuthStoreError::from))
             .transpose()
     }
 }
