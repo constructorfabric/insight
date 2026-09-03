@@ -1,30 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import "@/i18n";
 
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { WhatsNewScreen } from "@/screens/whats-new";
-
-// SidebarProvider's useIsMobile reads window.matchMedia, which jsdom does
-// not implement — provide a desktop-shaped stub.
-beforeAll(() => {
-  if (typeof window.matchMedia !== "function") {
-    window.matchMedia = (query: string) =>
-      ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        addListener: () => {},
-        removeListener: () => {},
-        dispatchEvent: () => false,
-      }) as MediaQueryList;
-  }
-});
+import { WhatsNewBody } from "@/screens/whats-new";
 
 // Section names now repeat across the release and Coming next, so assertions
 // scope themselves to the block whose header they mean.
@@ -37,14 +18,12 @@ function sectionFor(label: string): HTMLElement {
 function renderScreen() {
   return render(
     <TooltipProvider>
-      <SidebarProvider>
-        <WhatsNewScreen />
-      </SidebarProvider>
+        <WhatsNewBody />
     </TooltipProvider>
   );
 }
 
-describe("WhatsNewScreen", () => {
+describe("WhatsNewBody", () => {
   it("renders the release header and stamp", () => {
     renderScreen();
     expect(

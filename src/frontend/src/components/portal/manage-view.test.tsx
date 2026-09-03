@@ -49,6 +49,14 @@ vi.mock("@/components/portal/connector-health", () => ({
   ConnectorHealthPane: () => <div data-testid="connector-health-pane" />,
 }));
 
+vi.mock("@/screens/metrics-console", () => ({
+  MetricsConsoleBody: () => <div data-testid="metrics-console-body" />,
+}));
+
+vi.mock("@/screens/query-console", () => ({
+  QueryConsoleBody: () => <div data-testid="query-console-body" />,
+}));
+
 import { MANAGE_ITEMS } from "@/lib/portal/nav-model";
 
 import { ManageView } from "./manage-view";
@@ -248,5 +256,19 @@ describe("identities gate", () => {
     expect(screen.getByText(/could not verify/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Manage · the consoles the legacy shell used to own", () => {
+  it("opens the custom-metric console", async () => {
+    render(<ManageView item="custom-metrics" />);
+
+    expect(await screen.findByTestId("metrics-console-body")).toBeInTheDocument();
+  });
+
+  it("opens the saved-query console", async () => {
+    render(<ManageView item="query-console" />);
+
+    expect(await screen.findByTestId("query-console-body")).toBeInTheDocument();
   });
 });

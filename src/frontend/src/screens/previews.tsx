@@ -12,7 +12,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Table,
@@ -30,20 +29,6 @@ import {
   usePreviewsGate,
 } from "@/queries/previews";
 
-export function PreviewsScreen() {
-  return (
-    <>
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
-        <SidebarTrigger />
-        <h1 className="text-lg font-semibold tracking-tight">Previews</h1>
-      </header>
-
-      <PreviewsBody />
-    </>
-  );
-}
-
-/** The previews console alone — the portal's Manage zone brings its own chrome. */
 export function PreviewsBody() {
   const allowed = usePreviewsGate();
   if (!allowed) {

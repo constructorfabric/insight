@@ -155,3 +155,11 @@ describe("peopleItemsFor", () => {
     );
   });
 });
+
+describe("the consoles the legacy shell used to own", () => {
+  it("lists both in Manage, so removing their routes loses nothing", () => {
+    const ids = MANAGE_ITEMS.map((i) => i.id);
+    expect(ids).toContain("custom-metrics");
+    expect(ids).toContain("query-console");
+  });
+});

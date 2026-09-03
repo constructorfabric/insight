@@ -10,6 +10,7 @@ import {
   Filter,
   Database,
   Fingerprint,
+  Gauge,
   FlaskConical,
   GitPullRequest,
   LayoutGrid,
@@ -23,6 +24,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Terminal,
   Ticket,
   TrendingUp,
   User,
@@ -348,6 +350,8 @@ export function manageItemsFor(
 
 export const MANAGE_ITEMS: readonly PaneItem[] = [
   { id: "metric-catalog", label: "Metric catalog", icon: LayoutGrid },
+  { id: "custom-metrics", label: "Custom metrics", icon: Gauge },
+  { id: "query-console", label: "Query console", icon: Terminal },
   { id: "identities", label: "Identities", icon: Fingerprint, adminOnly: true },
   { id: "taxonomy", label: "Roles & taxonomy", icon: Boxes },
   { id: "exclusions", label: "Data exclusions", icon: Filter },

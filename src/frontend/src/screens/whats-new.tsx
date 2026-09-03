@@ -6,7 +6,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 
 // The release reads as sections, the way the written release notes are grouped.
 // Each section is one row of the release card, styled like the archived
@@ -136,24 +135,6 @@ function ReleaseSections({
   );
 }
 
-export function WhatsNewScreen() {
-  const { t } = useTranslation();
-
-  return (
-    <>
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
-        <SidebarTrigger />
-        <h1 className="text-lg font-semibold tracking-tight">
-          {t("whats_new.nav_label")}
-        </h1>
-      </header>
-
-      <WhatsNewBody />
-    </>
-  );
-}
-
-/** The release notes alone — the portal's Manage zone brings its own chrome. */
 export function WhatsNewBody() {
   const { t } = useTranslation();
 
