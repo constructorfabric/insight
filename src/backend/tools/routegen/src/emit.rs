@@ -74,21 +74,29 @@ fn authority_of(raw: &str, what: &str) -> anyhow::Result<(String, String)> {
     Ok((url.scheme().to_owned(), format!("{host}:{port}")))
 }
 
-fn mcp_resource_metadata_url(raw: Option<&str>) -> anyhow::Result<Option<String>> {
+#[derive(Debug, thiserror::Error)]
+enum McpPublicUrlError {
+    #[error("MCP public URL is invalid: {0}")]
+    Parse(#[from] url::ParseError),
+    #[error("MCP public URL must be an HTTP(S) origin")]
+    InvalidOrigin,
+}
+
+fn mcp_resource_metadata_url(raw: Option<&str>) -> Result<Option<String>, McpPublicUrlError> {
     let Some(raw) = raw else {
         return Ok(None);
     };
-    let url = Url::parse(raw).context("MCP public URL is invalid")?;
-    anyhow::ensure!(
-        matches!(url.scheme(), "http" | "https")
-            && url.host_str().is_some()
-            && url.path() == "/"
-            && url.query().is_none()
-            && url.fragment().is_none()
-            && url.username().is_empty()
-            && url.password().is_none(),
-        "MCP public URL must be an HTTP(S) origin"
-    );
+    let url = Url::parse(raw)?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(McpPublicUrlError::InvalidOrigin);
+    }
 
     Ok(Some(format!(
         "{}/.well-known/oauth-protected-resource/mcp",
