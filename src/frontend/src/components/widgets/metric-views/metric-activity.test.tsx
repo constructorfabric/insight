@@ -285,9 +285,10 @@ describe("MetricActivity", () => {
   });
 
   it("names a constant denominator, because that is what a share is argued with", () => {
+    // Percentages as the metric computes them — scale already applied.
     series.state.data = [
-      { date: "2026-03-01", value: 0.75, numerator: 6, denominator: 8 },
-      { date: "2026-03-02", value: 0.875, numerator: 7, denominator: 8 },
+      { date: "2026-03-01", value: 75, numerator: 6, denominator: 8 },
+      { date: "2026-03-02", value: 87.5, numerator: 7, denominator: 8 },
     ];
     // A real ratio, because the readout is scaled on the way out: a metric
     // left as a sum would render the same string whether the day value was a
@@ -302,7 +303,7 @@ describe("MetricActivity", () => {
     );
     expect(screen.getByText(/measured against 8 per day/)).toBeInTheDocument();
     const label = screen.getByRole("img").getAttribute("aria-label") ?? "";
-    // 0.875 scaled once is 88%. Scaled twice it reads 8,750%.
+    // Formatted once, from the metric's own figure: 88%, not 8,750%.
     expect(label).toMatch(/busiest 2 Mar — 88% of 8/);
   });
 

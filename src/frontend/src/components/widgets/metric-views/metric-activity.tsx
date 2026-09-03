@@ -292,11 +292,6 @@ function eventType(values: Readonly<Record<string, unknown>>): string | null {
   return type === "" ? null : type;
 }
 
-/** A ratio's daily value is a fraction; the metric says what to scale it by. */
-function scaled(metric: NormalizedMetricResult, value: number): number {
-  return metric.computation === "ratio" ? value * (metric.scale ?? 1) : value;
-}
-
 /**
  * One day, in words.
  *
@@ -308,11 +303,10 @@ function dayTitle(metric: NormalizedMetricResult, day: StripDay): string {
   const when = formatDate(day.date, "d MMM");
   if (!day.collected) return `${when} — not collected yet`;
   if (day.value == null) return `${when} — no reading`;
-  const value = formatMetricValue(
-    scaled(metric, day.value),
-    metric.format,
-    metric.unit
-  );
+  // Formatted once, from the reading as the metric computed it. A ratio
+  // arrives with its scale and its value transform already applied, so
+  // anything applied again here would show a clamped share past its clamp.
+  const value = formatMetricValue(day.value, metric.format, metric.unit);
   const suffix = day.provisional ? ", may still change" : "";
   if (day.numerator != null && day.denominator != null) {
     return `${when} — ${value} of ${day.denominator}${suffix}`;

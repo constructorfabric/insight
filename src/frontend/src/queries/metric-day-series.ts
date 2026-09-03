@@ -40,10 +40,10 @@ function resultsEntity(
  * asked for — while the strip drawn from it states how many days hold no
  * reading. A partial answer is a wrong answer there, not a shorter one.
  *
- * INVARIANT: a ratio's day value is its own two sides, divided here — NOT the
- * `value` the wire carries, which the server has already multiplied by the
- * metric's scale. The strip scales again when it renders, so taking the wire
- * value would multiply a percent twice.
+ * INVARIANT: the value is the metric's own, taken as the wire sends it — the
+ * server has already applied the scale and the definition's value transform,
+ * and a reading recomputed from the two sides would ignore both. The sides
+ * ride along only to say what a share was measured against.
  *
  * INVARIANT: values are summed across series, which is the identity for the
  * one-entity selection every caller passes. A selection naming several people
@@ -99,13 +99,7 @@ function readings(
     }
   }
 
-  return [...byDate.values()]
-    .map((day) =>
-      day.denominator != null && day.denominator > 0
-        ? { ...day, value: (day.numerator ?? 0) / day.denominator }
-        : day
-    )
-    .sort((a, b) => a.date.localeCompare(b.date));
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function useMetricDaySeries(

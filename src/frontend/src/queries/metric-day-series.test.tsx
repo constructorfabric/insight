@@ -96,19 +96,19 @@ describe("useMetricDaySeries", () => {
     ]);
   });
 
-  it("divides a ratio itself rather than taking the scaled figure off the wire", async () => {
-    // The server has already multiplied `value` by the metric's scale, and the
-    // strip scales again when it renders. Taking `value` here would show a
-    // share of 87.5% as 8,750%. Two days, because one day alone passes whether
-    // the division happens or the wire value is simply never read.
+  it("takes a ratio's value as the metric computed it, sides and all", async () => {
+    // The server applies the scale and the definition's value transform, so a
+    // reading rebuilt from the two sides would ignore both — 50 clamped from
+    // 87.5 would come back out as 87.5. The sides ride along for the readout
+    // that names what the share was measured against.
     answers([
-      { bucket_start: "2026-03-01", value: 87.5, numerator: 7, denominator: 8 },
+      { bucket_start: "2026-03-01", value: 50, numerator: 7, denominator: 8 },
       { bucket_start: "2026-03-02", value: 25, numerator: 1, denominator: 4 },
     ]);
-    const days = await readings();
-    expect(days?.map((d) => d.value)).toEqual([0.875, 0.25]);
-    // Nothing on the wire equals these: the scaled figures are 87.5 and 25.
-    expect(days?.every((d) => d.value < 1)).toBe(true);
+    expect(await readings()).toEqual([
+      { date: "2026-03-01", value: 50, numerator: 7, denominator: 8 },
+      { date: "2026-03-02", value: 25, numerator: 1, denominator: 4 },
+    ]);
   });
 
   it("names both sides of a ratio even on a day with no numerator", async () => {
