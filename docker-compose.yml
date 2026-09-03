@@ -266,6 +266,7 @@ services:
       APP__gears__analytics__config__mcp__enabled: "${MCP_ENABLED:-false}"
       APP__gears__analytics__config__mcp__public_url: "${MCP_PUBLIC_URL:-}"
       APP__gears__analytics__config__mcp__allow_insecure_private_network: "true"
+      APP__gears__analytics__config__mcp__max_concurrent_queries: "${MCP_MAX_CONCURRENT_QUERIES:-16}"
       APP__gears__analytics__config__mcp__clickhouse_user: "insight_mcp"
       APP__gears__analytics__config__mcp__clickhouse_password: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream

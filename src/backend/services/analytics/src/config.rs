@@ -46,6 +46,7 @@ pub struct McpConfig {
     pub bind_addr: String,
     pub public_url: String,
     pub allow_insecure_private_network: bool,
+    pub max_concurrent_queries: usize,
     pub clickhouse_user: String,
     pub clickhouse_password: SecretString,
 }
@@ -57,6 +58,7 @@ impl Default for McpConfig {
             bind_addr: "0.0.0.0:8086".to_owned(),
             public_url: String::new(),
             allow_insecure_private_network: false,
+            max_concurrent_queries: 16,
             clickhouse_user: "insight_mcp".to_owned(),
             clickhouse_password: SecretString::from(String::new()),
         }

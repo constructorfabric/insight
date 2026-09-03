@@ -31,7 +31,6 @@ const MAX_REQUEST_BODY_BYTES: usize = 128 * 1024;
 const MAX_SQL_BYTES: usize = 64 * 1024;
 const MAX_RESULT_BYTES: usize = 5 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(35);
-const MAX_CONCURRENT_QUERIES: usize = 2;
 const MAX_JWKS_BYTES: usize = 1024 * 1024;
 const MCP_SCOPE: &str = "mcp:query";
 
@@ -106,10 +105,10 @@ struct SqlExplorer {
 }
 
 impl SqlExplorer {
-    fn new(client: insight_clickhouse::Client) -> Self {
+    fn new(client: insight_clickhouse::Client, max_concurrent_queries: usize) -> Self {
         Self {
             client,
-            query_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_QUERIES)),
+            query_slots: Arc::new(Semaphore::new(max_concurrent_queries)),
             tool_router: Self::tool_router(),
         }
     }
@@ -243,7 +242,7 @@ pub async fn start(
             )
             .without_query_timeout(),
     );
-    let explorer = SqlExplorer::new(client);
+    let explorer = SqlExplorer::new(client, config.max_concurrent_queries);
     let service: StreamableHttpService<SqlExplorer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(explorer.clone()),
@@ -279,6 +278,9 @@ pub fn validate_config(config: &McpConfig) -> anyhow::Result<()> {
     }
     config.bind_addr.parse::<SocketAddr>()?;
     validate_public_url(&config.public_url, config.allow_insecure_private_network)?;
+    if config.max_concurrent_queries == 0 {
+        anyhow::bail!("MCP max concurrent queries must be greater than zero");
+    }
     if config.clickhouse_user.trim().is_empty() {
         anyhow::bail!("MCP ClickHouse user is empty");
     }

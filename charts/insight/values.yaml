@@ -558,6 +558,7 @@ analytics:
     tenantMetricsEnabled: false
   mcp:
     port: 8086
+    maxConcurrentQueries: 16
     # Operator-managed Secret carrying the dedicated ClickHouse user's password.
     credentialsSecret: insight-mcp-creds
     clickhouseUser: insight_mcp

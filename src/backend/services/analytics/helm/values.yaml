@@ -18,6 +18,7 @@ service:
 
 mcp:
   port: 8086
+  maxConcurrentQueries: 16
   # Pre-create this Secret with the dedicated ClickHouse password.
   credentialsSecret: insight-mcp-creds
   clickhouseUser: insight_mcp
