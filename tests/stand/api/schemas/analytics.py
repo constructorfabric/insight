@@ -952,6 +952,8 @@ class TimeseriesPointDto(BaseModel):
         extra='forbid',
     )
     bucket_start: str
+    denominator: float | None = Field(None, description='What it was taken from, below the line. Ratio metrics only.')
+    numerator: float | None = Field(None, description='What the bucket\'s ratio was taken from, above the line. Ratio metrics\nonly, and absent on a bucket whose numerator measure has no rows —\na share is argued with its denominator, and a reader who can see\n"6 of 8" can tell a quiet day from a bad one.')
     value: float | None = None
 
 

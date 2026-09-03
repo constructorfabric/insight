@@ -240,8 +240,12 @@ SELECT
     '' AS account_source_type,
     '' AS account_source_id,
     '' AS account_id,
-    assumeNotNull(toDate(date)) AS metric_date,
-    toNullable(toDateTime64(date, 3)) AS observed_at,
+    -- INVARIANT: dated by the COMMITTER date, unlike every other git measure.
+    -- This one is the commit side of a join-coverage figure whose other side —
+    -- CI runs — is dated by when a run actually ran. Dating it by the author
+    -- date (#3153) would file a rebased commit on a day that had no runs.
+    assumeNotNull(toDate(commit_date)) AS metric_date,
+    toNullable(toDateTime64(commit_date, 3)) AS observed_at,
     'commits_observed' AS measure_key,
     concat(coalesce(source_id, ''), ':', project_key, '/', repo_slug, ':', commit_hash, ':commits_observed') AS record_id,
     'commit' AS record_kind,
@@ -253,7 +257,16 @@ SELECT
     map(
         'repository', concat(project_key, '/', repo_slug)
     ) AS details
-FROM {{ ref('class_git_commits') }} FINAL
+FROM (
+    SELECT
+        tenant_id,
+        source_id,
+        project_key,
+        repo_slug,
+        commit_hash,
+        coalesce(committer_date, date) AS commit_date
+    FROM {{ ref('class_git_commits') }} FINAL
+)
 WHERE tenant_id IS NOT NULL
   AND commit_hash != ''
-  AND date IS NOT NULL
+  AND commit_date IS NOT NULL

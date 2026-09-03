@@ -13,9 +13,9 @@ Skipped unless a server is offered, so CI stays dependency-free:
     src/ingestion/scripts/lib/ch-exec.sh < the migration, then
     SWEEP_TEST_CH_URL=http://localhost:38310 \\
     SWEEP_TEST_CH_USER=insight SWEEP_TEST_CH_PASSWORD=insight \\
-        python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests
+        pytest src/ingestion/reconcile-connectors/tests
 
-Run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests
+Run: pytest src/ingestion/reconcile-connectors/tests
 """
 
 from __future__ import annotations
@@ -25,13 +25,14 @@ import json
 import os
 import sys
 import threading
-import unittest
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Self
+from typing import Any, ClassVar, Self
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
@@ -226,10 +227,19 @@ def _count(sql: str) -> int:
     return int(value)
 
 
-@unittest.skipUnless(CH_URL, "set SWEEP_TEST_CH_URL to run")
-class SweptRowsLandAndResolve(unittest.TestCase):
+@pytest.mark.skipif(not CH_URL, reason="set SWEEP_TEST_CH_URL to run")
+class TestSweptRowsLandAndResolve:
+    entry: ClassVar[Any]
+
+    @pytest.fixture(scope="class", autouse=True)
     @classmethod
-    def setUpClass(cls) -> None:
+    def _sweep_points_at_the_stubs(cls) -> None:
+        """The entry point, and the environment it reads its two endpoints from.
+
+        Imported here rather than at module scope: the import runs the package's
+        own wiring, which an install without a server offered must not pay for
+        only to skip every test that follows.
+        """
         from sweep import __main__ as entry
 
         cls.entry = entry
@@ -247,7 +257,9 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             }
         )
 
-    def setUp(self) -> None:
+    @pytest.fixture(autouse=True)
+    def _empty_ledger(self) -> None:
+        """Each case states its own history, so it starts from no rows at all."""
         _query(f"TRUNCATE TABLE {TABLE}")
 
     def _tick(self, tick_id: str) -> int:
@@ -261,16 +273,15 @@ class SweptRowsLandAndResolve(unittest.TestCase):
 
     def test_a_first_sweep_lands_the_whole_retained_history(self) -> None:
         with _StubMover() as mover:
-            self.assertEqual(self._tick("tick-a"), 0)
-            self.assertIsNone(
-                mover.requests[0].get("updatedAtStart"),
-                "an empty ledger reads everything, unfiltered",
+            assert self._tick("tick-a") == 0
+            assert mover.requests[0].get("updatedAtStart") is None, (
+                "an empty ledger reads everything, unfiltered"
             )
 
         syncs = _rows(
             f"SELECT job_id FROM {TABLE} WHERE event = 'sync.completed' ORDER BY job_id"
         )
-        self.assertEqual(len(syncs), 8, "seven closed jobs plus the running one")
+        assert len(syncs) == 8, "seven closed jobs plus the running one"
 
     def test_a_later_tick_reads_from_the_watermark_not_from_the_start(self) -> None:
         with _StubMover() as mover:
@@ -279,11 +290,11 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             self._tick("tick-b")
 
             since = mover.requests[0].get("updatedAtStart")
-            self.assertIsNotNone(since, "a populated ledger must filter")
+            assert since is not None, "a populated ledger must filter"
             # Not merely "a stamp": one the listing can parse. The ledger's own
             # form differs by a space, and a listing handed that form filters on
             # nothing at all.
-            self.assertEqual(_parse_iso(since).tzinfo is None, False, since)
+            assert _parse_iso(since).tzinfo is not None, since
 
     def test_the_watermark_does_not_step_over_an_unfinished_job(self) -> None:
         """It stands on the oldest OPEN job, so that job is read again.
@@ -298,10 +309,8 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             self._tick("tick-b")
 
         since = mover.requests[0]["updatedAtStart"]
-        self.assertLessEqual(
-            _parse_iso(since),
-            _parse_iso(_stamp(8)),
-            "the still-running job must stay at or above the watermark",
+        assert _parse_iso(since) <= _parse_iso(_stamp(8)), (
+            "the still-running job must stay at or above the watermark"
         )
 
     def test_the_tick_seals_after_its_snapshot(self) -> None:
@@ -316,10 +325,8 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             f"SELECT toString(max(ts)) AS ts FROM {TABLE} "
             "WHERE event = 'connector.configured'"
         )
-        self.assertEqual(len(seal), 1)
-        self.assertGreaterEqual(
-            seal[0]["ts"], snapshot[0]["ts"], "the seal must be written last"
-        )
+        assert len(seal) == 1
+        assert seal[0]["ts"] >= snapshot[0]["ts"], "the seal must be written last"
 
     def test_a_second_tick_adds_no_row_for_a_closed_job(self) -> None:
         with _StubMover():
@@ -331,7 +338,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             "WHERE event = 'sync.completed' AND status = 'succeeded' "
             "GROUP BY job_id HAVING seen > 1"
         )
-        self.assertEqual(closed, [], "a job with a final account is left alone")
+        assert closed == [], "a job with a final account is left alone"
 
     def test_a_running_job_is_re_recorded_once_it_ends(self) -> None:
         """The one behaviour every other test here would pass without."""
@@ -345,11 +352,9 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             "WHERE event = 'sync.completed' AND job_id = '999' "
             "ORDER BY ts DESC LIMIT 1"
         )
-        self.assertEqual(resolved[0]["status"], "failed")
-        self.assertEqual(
-            int(resolved[0]["records_reported"]),
-            0,
-            "a reported zero is not an absence",
+        assert resolved[0]["status"] == "failed"
+        assert int(resolved[0]["records_reported"]) == 0, (
+            "a reported zero is not an absence"
         )
 
     def test_the_summary_resolves_to_the_newest_row_of_the_newest_job(self) -> None:
@@ -365,9 +370,9 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             "   ORDER BY job_id, ts DESC LIMIT 1 BY job_id"
             ") ORDER BY connector, job_updated_at DESC, job_id DESC LIMIT 1 BY connector"
         )
-        self.assertEqual(len(summary), 1)
-        self.assertEqual(summary[0]["job_id"], "999")
-        self.assertEqual(summary[0]["status"], "failed")
+        assert len(summary) == 1
+        assert summary[0]["job_id"] == "999"
+        assert summary[0]["status"] == "failed"
 
     def test_a_job_in_flight_is_recorded_and_placed_at_its_start(self) -> None:
         """The listing sends a running job with a start and no update stamp.
@@ -384,9 +389,9 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             f"toString(job_updated_at) AS placed FROM {TABLE} "
             "WHERE event = 'sync.completed' AND job_id = '999'"
         )
-        self.assertEqual(len(running), 1, "the job in flight must be recorded")
-        self.assertEqual(running[0]["status"], "running")
-        self.assertEqual(running[0]["placed"], running[0]["started"])
+        assert len(running) == 1, "the job in flight must be recorded"
+        assert running[0]["status"] == "running"
+        assert running[0]["placed"] == running[0]["started"]
 
     def test_no_connectors_records_nothing_at_all(self) -> None:
         """An empty configured set is indistinguishable from "all removed"."""
@@ -394,8 +399,8 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             code = self.entry.run(
                 io.StringIO(json.dumps({"tick_id": "tick-z", "connectors": []}))
             )
-        self.assertEqual(code, 1)
-        self.assertEqual(_count(f"SELECT count() AS n FROM {TABLE}"), 0)
+        assert code == 1
+        assert _count(f"SELECT count() AS n FROM {TABLE}") == 0
 
     def test_an_unreachable_mover_records_nothing_and_does_not_seal(self) -> None:
         """The seal dates the page, so an unread tick must not place one.
@@ -406,15 +411,11 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         """
         # No stub server running: the listing call fails.
         code = self._tick("tick-y")
-        self.assertEqual(code, 1, "the caller learns the tick was incomplete")
+        assert code == 1, "the caller learns the tick was incomplete"
         for event in ("sync.completed", "connector.configured", "sweep.completed"):
-            self.assertEqual(
-                _count(
+            assert _count(
                     f"SELECT count() AS n FROM {TABLE} WHERE event = '{event}'"
-                ),
-                0,
-                f"an unread tick must write no {event} row",
-            )
+                ) == 0, f"an unread tick must write no {event} row"
 
     def test_a_listing_that_ignores_the_watermark_records_nothing(self) -> None:
         """An unapplied filter is a failed read, not a noisy one.
@@ -436,19 +437,13 @@ class SweptRowsLandAndResolve(unittest.TestCase):
         with _StubMover(honours_filter=False):
             code = self._tick("tick-b")
 
-        self.assertEqual(code, 1, "the caller learns the tick was incomplete")
-        self.assertEqual(
-            _count(f"SELECT count() AS n FROM {TABLE}"),
-            before,
-            "an unfiltered listing must not re-record the history it served",
+        assert code == 1, "the caller learns the tick was incomplete"
+        assert _count(f"SELECT count() AS n FROM {TABLE}") == before, (
+            "an unfiltered listing must not re-record the history it served"
         )
-        self.assertEqual(
-            _count(
+        assert _count(
                 f"SELECT count() AS n FROM {TABLE} WHERE event = 'sweep.completed'"
-            ),
-            seals,
-            "and must not seal, or the page reports itself freshly checked",
-        )
+            ) == seals, "and must not seal, or the page reports itself freshly checked"
 
     def test_a_connector_awaiting_its_first_connection_is_still_configured(self) -> None:
         """Configured is the first thing the page answers, and it does not
@@ -463,7 +458,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             }
         )
         with _StubMover():
-            self.assertEqual(self.entry.run(io.StringIO(work)), 0)
+            assert self.entry.run(io.StringIO(work)) == 0
 
         configured = {
             row["connector"]
@@ -471,7 +466,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
                 f"SELECT connector FROM {TABLE} WHERE event = 'connector.configured'"
             )
         }
-        self.assertEqual(configured, {CONNECTOR, "awaiting-connection"})
+        assert configured == {CONNECTOR, "awaiting-connection"}
 
     def test_a_job_that_fell_below_the_read_start_stops_reading_as_running(self) -> None:
         """The floor's own cost, paid honestly.
@@ -500,10 +495,8 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             f"SELECT status FROM {TABLE} WHERE event = 'sync.completed' "
             "AND job_id = 'stranded' ORDER BY ts DESC LIMIT 1"
         )
-        self.assertEqual(
-            resolved[0]["status"],
-            "unknown",
-            "a job the sweep can no longer see must not keep reading as running",
+        assert resolved[0]["status"] == "unknown", (
+            "a job the sweep can no longer see must not keep reading as running"
         )
 
     def test_a_stranded_job_is_marked_once_and_not_every_tick(self) -> None:
@@ -531,7 +524,7 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             f"SELECT count() AS n FROM {TABLE} WHERE job_id = 'stranded' "
             "AND status = 'unknown'"
         )
-        self.assertEqual(markers, 1, "the marker must settle, not repeat")
+        assert markers == 1, "the marker must settle, not repeat"
 
     def test_a_stuck_open_job_does_not_pin_the_watermark_for_ever(self) -> None:
         """One job that can never close would otherwise drag the read start back
@@ -550,12 +543,6 @@ class SweptRowsLandAndResolve(unittest.TestCase):
             self._tick("tick-b")
 
         since = _parse_iso(mover.requests[0]["updatedAtStart"])
-        self.assertGreater(
-            since,
-            _parse_iso(stale),
-            "the stuck job must not hold the read start at its own creation time",
+        assert since > _parse_iso(stale), (
+            "the stuck job must not hold the read start at its own creation time"
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -23,6 +23,7 @@ SELECT
     commits.repo_slug AS repo_slug,
     commits.commit_hash AS commit_hash,
     commits.observed_at AS observed_at,
+    commits.committer_date AS committer_date,
     raw_file_change.data_source AS data_source,
     raw_file_change.file_path AS file_path,
     raw_file_change.file_extension AS file_extension,

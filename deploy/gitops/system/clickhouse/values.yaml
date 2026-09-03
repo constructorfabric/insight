@@ -59,3 +59,16 @@ keeper:
 # Service's `http-metrics` port. alloy-metrics scrapes it into VictoriaMetrics.
 metrics:
   enabled: true
+
+# Query journal for the slow-query dashboard panels (the chart's generated
+# config omits it). TTL keeps the journal from growing unbounded.
+configdFiles:
+  query-log.xml: |
+    <clickhouse>
+      <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+      </query_log>
+    </clickhouse>

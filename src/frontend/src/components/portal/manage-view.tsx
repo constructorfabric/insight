@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { Suspense, lazy, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
@@ -44,8 +44,22 @@ const STATUS_STYLE: Record<MetricDefinitionSchemaStatus, string> = {
  * namespace (`*_bullet_rows.*`), so listing it here showed an admin a catalog
  * no portal surface reads (constructorfabric/insight#1988).
  */
+const MetricsConsoleBody = lazy(() =>
+  import("@/screens/metrics-console").then((m) => ({ default: m.MetricsConsoleBody }))
+);
+
+const QueryConsoleBody = lazy(() =>
+  import("@/screens/query-console").then((m) => ({ default: m.QueryConsoleBody }))
+);
+
+function Deferred({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<CenteredSpinner />}>{children}</Suspense>;
+}
+
 export function ManageView({ item }: { item: string | null }) {
   if (item === "metric-catalog") return <MetricCatalogTable />;
+  if (item === "custom-metrics") return <Deferred><MetricsConsoleBody /></Deferred>;
+  if (item === "query-console") return <Deferred><QueryConsoleBody /></Deferred>;
   if (item === "connector-health")
     return (
       <AdminGate>

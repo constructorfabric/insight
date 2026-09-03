@@ -18,6 +18,7 @@ import {
   UNMEASURED,
   describeAge,
   describeConnector,
+  describeDuration,
   describeRecording,
   describeSync,
   formatDuration,
@@ -134,6 +135,73 @@ describe("what a row says", () => {
     for (const status of statuses) {
       expect(describeSync(sync({ status })).label.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("how long a sync has been going", () => {
+  const AS_OF = "2026-01-15T09:22:00.000Z";
+
+  it("a finished sync states what it took", () => {
+    const view = describeDuration(sync({ duration_ms: 142_000 }), AS_OF);
+    expect(view).toEqual({ text: "2m 22s", inFlight: false });
+  });
+
+  it("a running sync states how long it has been going, worded as unfinished", () => {
+    const view = describeDuration(
+      sync({ status: "running", started_at: "2026-01-15T09:00:00.000Z" }),
+      AS_OF,
+    );
+    expect(view).toEqual({ text: "22m 0s so far", inFlight: true });
+  });
+
+  it("a running sync ignores a recorded duration rather than printing it", () => {
+    // Rows written before the recorder stopped storing one still hold the
+    // mover's zero here, and printing it says a running sync took no time.
+    const view = describeDuration(
+      sync({
+        status: "running",
+        started_at: "2026-01-15T09:00:00.000Z",
+        duration_ms: 0,
+      }),
+      AS_OF,
+    );
+    expect(view.text).toBe("22m 0s so far");
+  });
+
+  it("a queued sync has no start to measure from, so it prints absence", () => {
+    // Not "0 s so far": nothing has begun, and a span from nothing is invented.
+    const view = describeDuration(
+      sync({ status: "pending", started_at: null, duration_ms: null }),
+      AS_OF,
+    );
+    expect(view).toEqual({ text: UNMEASURED, inFlight: false });
+  });
+
+  it("a start the page cannot date prints absence rather than an epoch span", () => {
+    const view = describeDuration(sync({ status: "running", started_at: "nonsense" }), AS_OF);
+    expect(view.text).toBe(UNMEASURED);
+  });
+
+  it("a start ahead of the answer's own clock prints absence", () => {
+    // Two clocks that disagree can date nothing, and "0 s so far" would be the
+    // page asserting a measurement neither of them supports.
+    const view = describeDuration(
+      sync({ status: "running", started_at: "2026-01-15T10:00:00.000Z" }),
+      AS_OF,
+    );
+    expect(view.text).toBe(UNMEASURED);
+  });
+
+  it("a status this build cannot read is not treated as running", () => {
+    // An unreadable word may well name a finished sync, and the measurement it
+    // carries is the only account of it there is.
+    const view = describeDuration(sync({ status: "borked", duration_ms: 142_000 }), AS_OF);
+    expect(view).toEqual({ text: "2m 22s", inFlight: false });
+  });
+
+  it("a connector that has never synced prints absence", () => {
+    expect(describeDuration(null, AS_OF)).toEqual({ text: UNMEASURED, inFlight: false });
+    expect(describeDuration(undefined, AS_OF)).toEqual({ text: UNMEASURED, inFlight: false });
   });
 });
 

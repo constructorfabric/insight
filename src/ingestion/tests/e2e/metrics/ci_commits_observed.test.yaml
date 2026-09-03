@@ -20,6 +20,7 @@ bronze:
       author_name: Dev One
       committer_name: Dev One
       committer_email: dev1@example.com
+      authored_date: "2026-03-02T09:00:00Z"
       committed_date: "2026-03-02T09:00:00Z"
     - $ref: templates/git_activity.yaml#/templates/commit
       unique_key: gh-commit-co2
@@ -30,6 +31,7 @@ bronze:
       author_name: Dev One
       committer_name: Dev One
       committer_email: dev1@example.com
+      authored_date: "2026-03-03T09:00:00Z"
       committed_date: "2026-03-03T09:00:00Z"
 cases:
   - name: every collected commit counts once at its commit date

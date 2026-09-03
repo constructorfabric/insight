@@ -13,8 +13,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
+import { TEXT_TITLE } from "@/lib/type-scale";
 import { MetricDetail } from "@/components/widgets/metrics-console/metric-detail";
 import { MetricEditorDialog } from "@/components/widgets/metrics-console/metric-editor-dialog";
 import {
@@ -36,7 +36,7 @@ type DialogState =
   | { kind: "create" }
   | { kind: "edit"; metricKey: string };
 
-export function MetricsConsoleScreen() {
+export function MetricsConsoleBody() {
   const { t } = useTranslation();
   const { data: metrics, isPending, isError } = useCustomMetrics();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -57,22 +57,19 @@ export function MetricsConsoleScreen() {
 
   return (
     <>
-      <header className="sticky top-0 z-20 flex flex-wrap items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur-sm">
-        <SidebarTrigger />
-        <h1 className="text-lg font-semibold tracking-tight">
-          {t("metrics_console.title")}
-        </h1>
-        <Button
-          className="ms-auto"
-          size="sm"
-          onClick={() => setDialog({ kind: "create" })}
-        >
-          <Plus />
-          {t("metrics_console.new_metric")}
-        </Button>
-      </header>
-
       <main className="flex flex-1 flex-col p-4 md:p-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-3 pb-4">
+          <h2 className={TEXT_TITLE}>{t("metrics_console.title")}</h2>
+          <Button
+            className="ms-auto"
+            size="sm"
+            onClick={() => setDialog({ kind: "create" })}
+          >
+            <Plus />
+            {t("metrics_console.new_metric")}
+          </Button>
+        </div>
+
         {isPending ? <CenteredSpinner className="min-h-[70vh]" /> : null}
 
         {isError ? (

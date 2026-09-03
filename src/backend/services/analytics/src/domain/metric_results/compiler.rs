@@ -86,6 +86,13 @@ pub struct TimeseriesQueryRow {
     pub entity_id: String,
     pub bucket_start: String,
     pub value: Option<f64>,
+    /// Both sides of a ratio, NULL for every other computation. Defaulted
+    /// because `compile_capped_timeseries_query` selects neither column — a
+    /// grouped read answers without them rather than failing to decode.
+    #[serde(default)]
+    pub numerator: Option<f64>,
+    #[serde(default)]
+    pub denominator: Option<f64>,
     pub is_total: u8,
     pub rank: Option<u32>,
     pub remainder: u8,
@@ -298,7 +305,9 @@ pub(crate) fn compile_timeseries_query(
     if let Some(group_limit) = group_limit {
         return compile_capped_timeseries_query(def, req, bucket, dimensions, filters, group_limit);
     }
+    let (sides_select, sides_params) = ratio_sides_expr(def);
     let mut params = grouped_value_params(def);
+    params.extend(sides_params);
     let read = single_resolved_observation_from(def, req, ScanScope::PrimaryOnly, &mut params);
     params.extend(metric_where_params(def, req));
     let filter_where = dimension_filter_where(filters, &mut params);
@@ -323,12 +332,12 @@ pub(crate) fn compile_timeseries_query(
         SELECT
             entity_id,
             toString({bucket}) AS bucket_start{dim_select},
-            {value_expr} AS value,
+            {value_expr} AS value{sides_select},
             toUInt8(grouping({bucket})) AS is_total,
             CAST(NULL AS Nullable(UInt32)) AS rank,
             toUInt8(0) AS remainder,
             CAST(NULL AS Nullable(String)) AS group_label
-        FROM {observation_table}
+        FROM {observation_table} AS {OBS}
         WHERE {metric_where}
           {filter_where}{entity_scope}
         GROUP BY GROUPING SETS (({bucket_group}), ({total_group}))
@@ -1482,6 +1491,27 @@ fn item_value_expr(
     }
 }
 
+/// The alias the metric timeseries gives its observation source, so the ratio
+/// sides can name their columns without colliding with the `value` alias.
+const OBS: &str = "obs_src";
+
+fn ratio_denominator_expr_over(
+    aggregation: RatioDenominatorAggregation,
+    sum_column: &str,
+    distinct_column: &str,
+    sum_condition: &str,
+    distinct_condition: &str,
+) -> String {
+    match aggregation {
+        RatioDenominatorAggregation::Sum => {
+            format!("sumIf({sum_column}, {sum_condition})")
+        }
+        RatioDenominatorAggregation::DistinctCount => {
+            format!("uniqExactIf({distinct_column}, {distinct_condition})")
+        }
+    }
+}
+
 fn ratio_denominator_expr(
     aggregation: RatioDenominatorAggregation,
     sum_condition: &str,
@@ -1716,6 +1746,57 @@ fn metric_where(def: &MetricDefinition, enforce_tenant_scope: bool) -> String {
             )
         }
     }
+}
+
+/// The two sides of a ratio as their own SELECT columns, for the views that
+/// hand a reader the denominator rather than only the quotient. Every other
+/// computation has no sides to name, so the columns come back NULL.
+///
+/// INVARIANT: the returned params are appended to `grouped_value_params` and
+/// the expression is placed directly after the value column — placeholders
+/// bind in the text order of the whole statement, so neither may move without
+/// the other.
+fn ratio_sides_expr(def: &MetricDefinition) -> (String, Vec<String>) {
+    let ComputationSpec::Ratio {
+        numerator,
+        denominator,
+        denominator_aggregation,
+        ..
+    } = &def.spec
+    else {
+        return (
+            ",\n            CAST(NULL AS Nullable(Float64)) AS numerator,\n            CAST(NULL AS Nullable(Float64)) AS denominator"
+                .to_owned(),
+            Vec::new(),
+        );
+    };
+    let denominator_expr = ratio_denominator_expr_over(
+        *denominator_aggregation,
+        &format!("{OBS}.value"),
+        &format!("{OBS}.subject_key"),
+        &format!("{OBS}.measure_key = ? AND {OBS}.value IS NOT NULL"),
+        &format!("{OBS}.measure_key = ? AND {OBS}.subject_key IS NOT NULL"),
+    );
+    // SAFETY: toFloat64 on the denominator. A distinct-count denominator is
+    // `uniqExactIf`, whose UInt64 ClickHouse JSON-quotes — the f64 row decoder
+    // rejects it. Inside `grouped_value_expr` the division hides that; as an
+    // output column of its own it does not. Same wrap the drilldown carries.
+    //
+    // SAFETY: every column here is qualified with the source alias. The value
+    // column of this SELECT is itself named `value`, and an alias outranks a
+    // source column throughout the list — so a bare `value` inside these
+    // aggregates resolves to the ratio expression and ClickHouse rejects the
+    // whole query with ILLEGAL_AGGREGATION. The drilldown qualifies for the
+    // same reason.
+    (
+        format!(
+            ",\n            sumIfOrNull({OBS}.value, {OBS}.measure_key = ? AND {OBS}.value IS NOT NULL) AS numerator,\n            toFloat64({denominator_expr}) AS denominator"
+        ),
+        vec![
+            numerator.measure_key.clone(),
+            denominator.measure_key.clone(),
+        ],
+    )
 }
 
 fn grouped_value_params(def: &MetricDefinition) -> Vec<String> {

@@ -1,6 +1,5 @@
 {
   "common": {
-    "app_name": "Insight",
     "em_dash": "—",
     "metrics": {
       "ai_adoption": "AI adoption",
@@ -323,51 +322,8 @@
     "description": "You are signed in as {{impersonator}} and seeing the portal as this person.",
     "exit": "Exit view-as"
   },
-  "ic_route": {
-    "personal_view_label": "Personal",
-    "team_view_label": "Team"
-  },
   "metric_definitions": {
-    "nav_label": "Metric catalog",
-    "title": "Metric catalog",
-    "error_title": "Failed to load the metric catalog",
-    "error_description": "Try reloading the page. If the problem persists, contact your administrator.",
-    "search_placeholder": "Search metrics…",
-    "no_results_title": "No metrics found",
-    "no_results_description": "Nothing matches \"{{query}}\".",
-    "columns": {
-      "metric": "Metric",
-      "description": "Description",
-      "format": "Format",
-      "better_when": "Better when",
-      "dimensions": "Dimensions",
-      "last_data": "Last data",
-      "status": "Status"
-    },
-    "last_data_help": "The most recent date this metric observed any data. An old date isn't an error — it just means there's been no recent activity of this kind.",
-    "format": {
-      "integer": "Integer",
-      "decimal": "Decimal",
-      "currency": "Currency",
-      "percent": "Percent"
-    },
-    "better_when": {
-      "higher_is_better": "Higher",
-      "lower_is_better": "Lower",
-      "neutral": "—"
-    },
-    "status": {
-      "active": "Active",
-      "disabled": "Disabled",
-      "schema_error": "Schema error",
-      "unchecked": "Unchecked"
-    },
-    "error_code": {
-      "table_not_found": "The source table was not found in the warehouse.",
-      "column_not_found": "A required column is missing from the source table.",
-      "dimension_not_covered": "A declared dimension is not present on the source rows.",
-      "unknown": "The schema check failed for an unknown reason."
-    }
+    "nav_label": "Metric catalog"
   },
   "query_console": {
     "nav_label": "Query console",
@@ -428,7 +384,7 @@
       "direction_label": "Direction",
       "computation_label": "Computation",
       "scale_label": "Scale",
-      "quantile_label": "Quantile (0\u20131)",
+      "quantile_label": "Quantile (0–1)",
       "peer_cohort_key_label": "Peer cohort key",
       "source_key_label": "Source key",
       "observation_sql_label": "Observation SQL",

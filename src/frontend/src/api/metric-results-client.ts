@@ -175,7 +175,13 @@ export interface TimeseriesView {
     rank?: number;
     remainder?: boolean;
     label?: string;
-    points: Array<{ bucket_start: string; value: number | null }>;
+    points: Array<{
+    bucket_start: string;
+    value: number | null;
+    /** Both sides of a ratio, for the bucket. Ratio metrics only. */
+    numerator?: number | null;
+    denominator?: number | null;
+  }>;
   }>;
 }
 

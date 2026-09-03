@@ -31,10 +31,7 @@ vi.mock("@/auth", () => ({
   useViewer: () => ({ email: null, personId: viewerPersonId }),
 }));
 
-vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => null }));
 vi.mock("@/components/auth-gate", () => ({ AuthGate: () => null }));
-vi.mock("@/components/mock-banner", () => ({ MockBanner: () => null }));
-vi.mock("@/components/view-as-banner", () => ({ ViewAsBanner: () => null }));
 
 import { prefetchViewerIdentity } from "./__root";
 
@@ -58,7 +55,7 @@ describe("prefetchViewerIdentity", () => {
   it("resolves the viewer by person_id and caches it under the normalized key", async () => {
     await prefetchViewerIdentity();
 
-    expect(resolve).toHaveBeenCalledWith(PERSON_ID);
+    expect(resolve).toHaveBeenCalledWith(PERSON_ID, expect.any(AbortSignal));
     // Lowercased: this is the key `useIcPerson` computes, so the shell mounts
     // with the tree already cached instead of re-fetching it.
     expect(

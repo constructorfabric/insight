@@ -46,7 +46,7 @@ IDENTITY_PORT="${IDENTITY_PORT:-8092}"
 REDIS_CT=authenticator-e2e-redis
 KC_CT=authenticator-e2e-keycloak
 # Same image the compose stack pins for its realm (docker-compose.yml).
-KC_IMAGE=quay.io/keycloak/keycloak:26.4
+KC_IMAGE=quay.io/keycloak/keycloak:26.7
 KC_REALM=insight
 KC_REALM_B=insight-b
 KC_ADMIN_USER=admin

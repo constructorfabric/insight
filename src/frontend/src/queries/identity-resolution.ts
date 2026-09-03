@@ -26,6 +26,7 @@ import {
   getAccountBinding,
   getAttention,
   getPersonAccounts,
+  listPeople,
   mergePersons,
   QUEUE_FIRST_PAGE,
   searchAccounts,
@@ -100,6 +101,7 @@ const RESOLUTION_KEY = ["identity", "resolution"] as const;
  *  changes its answers too: a merge absorbs a person the cache would keep
  *  offering, and binding to them recreates the split the operator just fixed. */
 const PERSON_SEARCH_KEY = ["identity", "persons", "search"] as const;
+const PEOPLE_SEARCH_KEY = ["identity", "people", "search"] as const;
 
 type Verb<TArgs> = UseMutationResult<CorrectionResponse, unknown, TArgs>;
 
@@ -125,6 +127,7 @@ function useCorrection<TArgs>(
       );
       void client.invalidateQueries({ queryKey: RESOLUTION_KEY });
       void client.invalidateQueries({ queryKey: PERSON_SEARCH_KEY });
+      void client.invalidateQueries({ queryKey: PEOPLE_SEARCH_KEY });
     },
   });
 }
@@ -149,6 +152,7 @@ const PAGE_SIZE = 50;
  */
 /** What a blank query means to a caller of {@link usePersonList}. */
 export type PersonListIntent = "browse" | "match";
+export type PersonListSource = "identities" | "roster";
 
 /**
  * The same for {@link useAccountList}. The accounts mode browses — reviewing
@@ -172,9 +176,9 @@ export type AccountListIntent = "browse" | "match";
 export const MIN_SEARCH_CHARS = 2;
 
 /**
- * The ceiling both identity search surfaces are checked against server-side —
- * `listing::MAX_QUERY_CHARS` on `/v1/persons` and `/v1/visible-persons`, and
- * the same value on `/v1/resolution/accounts`. Declared here so a field can
+ * The ceiling the identity search surfaces check server-side —
+ * `listing::MAX_QUERY_CHARS` on `/v1/persons`, `/v1/visible-persons`,
+ * `/v1/people`, and `/v1/resolution/accounts`. Declared here so a field can
  * stop at the limit rather than let the operator type past it and receive a
  * refusal they cannot read as "too long".
  */
@@ -270,17 +274,49 @@ export function usePersonList(
    *  stops a request and not a cache read, so one shared key would render the
    *  roster that browse mode cached inside the dialog. */
   intent: PersonListIntent = "browse",
+  source: PersonListSource = "identities",
 ): UseInfiniteQueryResult<InfiniteData<PersonSearchResponse>> {
   const { session } = useAuth();
   const sessionScope = sessionAuthorizationScope(session);
   const trimmed = q.trim();
   return useInfiniteQuery({
-    queryKey: ["identity", "persons", "search", sessionScope, intent, trimmed],
+    queryKey:
+      source === "roster"
+        ? [...PEOPLE_SEARCH_KEY, sessionScope, intent, trimmed]
+        : [...PERSON_SEARCH_KEY, sessionScope, intent, trimmed],
     // The signal is the point, not hygiene: a search-as-you-type field
-    // supersedes its own request, and each one costs the service a scan of the
-    // person journal. Dropped on the client, they would all still be answered.
-    queryFn: ({ pageParam, signal }) =>
-      searchPersons(trimmed, { cursor: pageParam, limit: PAGE_SIZE }, signal),
+    // supersedes its own request. Dropped on the client, every stale listing
+    // would still be answered.
+    queryFn: async ({ pageParam, signal }) => {
+      if (source === "identities") {
+        return searchPersons(
+          trimmed,
+          { cursor: pageParam, limit: PAGE_SIZE },
+          signal,
+        );
+      }
+
+      const page = await listPeople(
+        {
+          q: trimmed,
+          visibility: "tenant",
+          cursor: pageParam,
+          limit: PAGE_SIZE,
+        },
+        signal,
+      );
+      return {
+        items: page.items.map((person) => ({
+          person_id: person.person_id,
+          display_name: person.display_name,
+          email: person.email,
+          username: person.username,
+          job_title: person.attributes.job_title,
+          status: person.attributes.status,
+        })),
+        next_cursor: page.next_cursor,
+      };
+    },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     staleTime: ATTENTION_STALE_TIME,

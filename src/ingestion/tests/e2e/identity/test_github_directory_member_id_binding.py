@@ -311,9 +311,9 @@ def test_github_directory_emits_roster_profile_claims(
     )
 
     assert rows == [
-        ["person_display_name", display_name],
-        ["person_email", email],
-        ["person_username", login],
+        ("person_display_name", display_name),
+        ("person_email", email),
+        ("person_username", login),
     ]
 
 

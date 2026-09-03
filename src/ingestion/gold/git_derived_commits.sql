@@ -36,6 +36,11 @@
 --   row collected before the source did) have unknown identity and are never
 --   collapsed.
 --
+--   INVARIANT: the committer date ranks after the author date and before the
+--   hash. A rebase and a cherry-pick both PRESERVE the author date, so the
+--   copies this rule exists to rank tie on `first_seen_date` alone; without a
+--   second real key the original would be chosen by comparing hashes. #3153
+--
 -- Merge commits themselves (two parents) never enter the evidence commit set,
 -- so they need no row here.
 
@@ -97,7 +102,8 @@ commit_patches AS (
         repo_slug,
         commit_hash,
         min(patch_id) AS commit_patch_id,
-        min(date) AS first_seen_date
+        min(date) AS first_seen_date,
+        min(committer_date) AS first_carried_date
     FROM {{ ref('class_git_commits') }} FINAL
     WHERE is_merge_commit = 0
       AND coalesce(patch_id, '') != ''
@@ -116,7 +122,7 @@ patch_duplicates AS (
             commit_hash,
             row_number() OVER (
                 PARTITION BY tenant_id, data_source, project_key, repo_slug, commit_patch_id
-                ORDER BY is_merge_result, first_seen_date, commit_hash
+                ORDER BY is_merge_result, first_seen_date, first_carried_date, commit_hash
             ) AS authored_rank
         FROM (
             SELECT
@@ -127,6 +133,7 @@ patch_duplicates AS (
                 commit_hash,
                 commit_patch_id,
                 first_seen_date,
+                first_carried_date,
                 if(
                     (tenant_id, data_source, commit_hash) IN (
                         SELECT tenant_id, data_source, commit_hash

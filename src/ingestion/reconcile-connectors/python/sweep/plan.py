@@ -250,15 +250,22 @@ def sync_row(
     if placed is None:
         return Skipped(job_id, "job carries no readable moment")
 
+    status = vocab.normalise(entry.get("status"))
+
     return {
         "tick_id": tick_id,
         "job_id": job_id,
         "connector": connector,
         "event": SYNC_COMPLETED,
-        "status": vocab.normalise(entry.get("status")),
+        "status": status,
         "started_at": moment(entry.get("startTime")),
         "job_updated_at": placed,
-        "duration_ms": duration_ms(entry.get("duration")),
+        # SAFETY: an unfinished job's reported duration is not what this column
+        # holds. Recorded as-is, the mover's zero reads as a sync that took no
+        # time; how long such a job has been going is derived from its start.
+        "duration_ms": (
+            None if vocab.is_in_flight(status) else duration_ms(entry.get("duration"))
+        ),
         "records_reported": records_reported(entry),
     }
 

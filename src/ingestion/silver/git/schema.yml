@@ -245,6 +245,19 @@ models:
           Content identity of the commit's diff: a rebase copy or a cherry-pick
           carries a new hash but the same patch id. NULL for a source that does
           not report it and for rows collected before the source did.
+      - name: date
+        description: >
+          When the work was written — the AUTHOR date, falling back to the
+          committer date where a source reports none. Rebase, amend and
+          cherry-pick rewrite the committer date and keep this one, so every
+          metric dated by a commit is dated by this column (#3153).
+      - name: committer_date
+        description: >
+          When the commit last took its current shape. Carried beside `date`
+          for the two readers that must tell a rebase copy from its original,
+          which the author date cannot do because both carry it unchanged, and
+          for the reports whose window is real time rather than authorship.
+          NULL for rows materialized before the column existed.
 
   - name: class_git_file_changes
     description: "Unified git file changes from all sources (GitHub, Bitbucket, GitLab)"

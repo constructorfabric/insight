@@ -35,7 +35,18 @@ name: github
 #   drops a bronze column.
 #   Additive alongside: a new `issue_links` stream, twelve link event types on
 #   `issue_timeline_events`, and four columns for the link target.
-version: "7.0.1"
+# 8.0.0: the class-contract column `date` now carries the AUTHOR date rather
+#   than the committer date, and `committer_date` joins it as its own column.
+#   A rebase, an amend and a cherry-pick rewrite the committer date and keep
+#   the author date, so a branch rebased before merging used to collapse every
+#   day of work on it onto the day of the last rewrite. MAJOR for the same
+#   reason as the patch id: staging is incremental on _airbyte_extracted_at and
+#   never re-reads Bronze, so already-materialized commits keep the committer
+#   date forever and the install would run in two regimes. Only the one-shot
+#   scoped `dbt --full-refresh` a major bump dispatches re-materializes them.
+#   Safe: both dates have been in Bronze all along, and the author date falls
+#   back to the committer date where a source left it empty. #3153
+version: "8.0.0"
 schedule: "0 */4 * * *"
 workflow: sync
 

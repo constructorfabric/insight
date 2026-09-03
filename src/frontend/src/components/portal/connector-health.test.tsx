@@ -152,6 +152,33 @@ describe("the pane prints what it was served", () => {
     expect(within(row).queryByText("0")).not.toBeInTheDocument();
   });
 
+  it("says how long a sync in flight has been going, not that it took no time", () => {
+    // The mover reports an unfinished job's duration as a running total, and
+    // ledger rows recorded before that stopped being stored still carry its
+    // zero. A row printing that zero hides the one state this page exists to
+    // surface: a sync that started and never came back.
+    mocks.summary.data = summary({
+      connectors: [
+        {
+          connector: "alpha",
+          configured: true,
+          last_sync: {
+            job_id: "1",
+            status: "running",
+            started_at: "2026-01-15T10:46:00.000Z",
+            duration_ms: 0,
+            records_reported: null,
+          },
+        },
+      ],
+    });
+    render(<ConnectorHealthPane />);
+
+    const row = rowFor("alpha");
+    expect(within(row).getByText("1h 14m so far")).toBeInTheDocument();
+    expect(within(row).queryByText("0 ms")).not.toBeInTheDocument();
+  });
+
   it("says a reported zero is a zero", () => {
     mocks.summary.data = summary({
       connectors: [

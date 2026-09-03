@@ -4,7 +4,7 @@
 prints a list newline-separated and `render_cronworkflow.py` turns every line
 into one entry of the Argo >=3.5 `schedules:` array.
 
-Run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests
+Run: pytest src/ingestion/reconcile-connectors/tests
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
-import unittest
 from pathlib import Path
+
+import pytest
 
 RECONCILE_DIR = Path(__file__).resolve().parents[1]
 RENDERER = RECONCILE_DIR / "python" / "render_cronworkflow.py"
@@ -93,33 +93,39 @@ def _rendered_name(document: str) -> str:
     raise AssertionError("the rendered document carries no `metadata.name`")
 
 
-class RendererTests(unittest.TestCase):
+class TestRenderer:
     def test_a_single_cron_renders_exactly_one_entry(self) -> None:
         result = _render("0 4 * * *")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(_rendered_schedules(result.stdout), ["0 4 * * *"])
-        self.assertEqual(_rendered_name(result.stdout), "example-connector-example-sync")
+        assert result.returncode == 0, result.stderr
+        assert _rendered_schedules(result.stdout) == ["0 4 * * *"]
+        assert _rendered_name(result.stdout) == "example-connector-example-sync"
 
     def test_every_cron_line_renders_its_own_entry_in_order(self) -> None:
         result = _render("50 23 * * *\n0 9,15,21 28-31 * *")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(_rendered_schedules(result.stdout), ["50 23 * * *", "0 9,15,21 28-31 * *"])
+        assert result.returncode == 0, result.stderr
+        assert _rendered_schedules(result.stdout) == [
+            "50 23 * * *",
+            "0 9,15,21 28-31 * *",
+        ]
 
     def test_a_schedule_carrying_no_cron_expression_is_rejected(self) -> None:
         result = _render("\n   \n")
 
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("render_cronworkflow: --schedule carries no cron expression", result.stderr)
+        assert result.returncode == 2, result.stderr
+        expected = "render_cronworkflow: --schedule carries no cron expression"
+        assert expected in result.stderr
 
 
-class ArgoCronWorkflowTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.tmp_path = Path(self.tmp.name)
-        self.kubectl_log = self.tmp_path / "kubectl.log"
-        kubectl = self.tmp_path / "kubectl"
+class TestArgoCronWorkflow:
+    @pytest.fixture(autouse=True)
+    def _kubectl_on_path(self, tmp_path: Path) -> None:
+        """A fake `kubectl` earlier on PATH than the real one, and a log of what
+        the script asked it to do."""
+        self.tmp_path = tmp_path
+        self.kubectl_log = tmp_path / "kubectl.log"
+        kubectl = tmp_path / "kubectl"
         kubectl.write_text(
             """#!/usr/bin/env bash
 printf '%s\\n' \"$*\" >> \"${FAKE_KUBECTL_LOG}\"
@@ -139,9 +145,6 @@ printf 'ok\\n'
             "FAKE_KUBECTL_LOG": str(self.kubectl_log),
             "PATH": f"{self.tmp_path}{os.pathsep}{os.environ['PATH']}",
         }
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
 
     def _run_argo(self, script: str, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -183,9 +186,9 @@ argo_apply_cronworkflow \"$@\"
         connector = "c" * 38
         result = self._run_argo('source "$ARGO_SCRIPT"\nargo_cron_workflow_name "$@"', connector, "tenantid")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"{connector}-tenantid-sync")
-        self.assertEqual(len(result.stdout.strip()), 52)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == f"{connector}-tenantid-sync"
+        assert len(result.stdout.strip()) == 52
 
     def test_a_53_character_name_is_rejected_before_kubectl(self) -> None:
         result = self._run_argo(
@@ -199,53 +202,47 @@ argo_apply_cronworkflow \"$@\"
             "",
         )
 
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("Argo accepts at most 52", result.stderr)
-        self.assertEqual(self._kubectl_calls(), [])
+        assert result.returncode == 1, result.stderr
+        assert "Argo accepts at most 52" in result.stderr
+        assert self._kubectl_calls() == []
 
     def test_apply_removes_the_legacy_full_tenant_name(self) -> None:
         tenant = "tenant-identifier"
         result = self._apply("example-connector", tenant)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self._kubectl_calls(),
-            [
+        assert result.returncode == 0, result.stderr
+        assert self._kubectl_calls() == [
                 "apply -f -",
                 f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
-            ],
-        )
+            ]
 
     def test_apply_returns_2_when_legacy_cleanup_fails(self) -> None:
         tenant = "tenant-identifier"
         legacy_name = f"example-connector-{tenant}-sync"
         result = self._apply("example-connector", tenant, FAKE_KUBECTL_FAIL_DELETE_NAME=legacy_name)
 
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn(f"{legacy_name}: kubectl delete failed: delete rejected", result.stderr)
+        assert result.returncode == 2, result.stderr
+        assert f"{legacy_name}: kubectl delete failed: delete rejected" in result.stderr
 
     def test_apply_for_a_short_tenant_does_not_delete_the_same_name_twice(self) -> None:
         result = self._apply("example-connector", "short")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self._kubectl_calls(), ["apply -f -"])
+        assert result.returncode == 0, result.stderr
+        assert self._kubectl_calls() == ["apply -f -"]
 
     def test_delete_removes_full_tenant_and_bounded_names(self) -> None:
         tenant = "tenant-identifier"
         result = self._delete("example-connector", tenant)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            self._kubectl_calls(),
-            [
+        assert result.returncode == 0, result.stderr
+        assert self._kubectl_calls() == [
                 f"-n insight delete cronworkflow.argoproj.io/example-connector-{tenant}-sync --ignore-not-found",
                 "-n insight delete cronworkflow.argoproj.io/example-connector-tenant-i-sync --ignore-not-found",
-            ],
-        )
+            ]
 
 
-@unittest.skipUnless(HAS_PYYAML, "PyYAML unavailable")
-class DescriptorScheduleTests(unittest.TestCase):
+@pytest.mark.skipif(not HAS_PYYAML, reason="PyYAML unavailable")
+class TestDescriptorSchedule:
     """The descriptor -> parse_descriptor -> renderer path reconcile takes."""
 
     def test_the_whole_rendered_document_stays_valid_yaml(self) -> None:
@@ -253,38 +250,40 @@ class DescriptorScheduleTests(unittest.TestCase):
 
         rendered = _render("50 23 * * *\n0 9,15,21 28-31 * *")
 
-        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        assert rendered.returncode == 0, rendered.stderr
         document = yaml.safe_load(rendered.stdout)
-        self.assertEqual(document["kind"], "CronWorkflow")
-        self.assertEqual(document["spec"]["schedules"], ["50 23 * * *", "0 9,15,21 28-31 * *"])
+        assert document["kind"] == "CronWorkflow"
+        assert document["spec"]["schedules"] == ["50 23 * * *", "0 9,15,21 28-31 * *"]
 
     def _schedule_of(self, descriptor: Path) -> str:
         result = _run([sys.executable, str(PARSER), "--descriptor", str(descriptor), "--field", "schedule"])
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        assert result.returncode == 0, result.stderr
         return result.stdout
 
-    def test_a_descriptor_schedule_reaches_the_rendered_array(self) -> None:
-        for label, body, expected in DESCRIPTOR_CASES:
-            with self.subTest(descriptor=label), tempfile.TemporaryDirectory() as tmp:
-                descriptor = Path(tmp) / "descriptor.yaml"
-                descriptor.write_text(f'name: example-connector\nversion: "1.0.0"\n{body}', encoding="utf-8")
+    @pytest.mark.parametrize(("label", "body", "expected"), DESCRIPTOR_CASES)
+    def test_a_descriptor_schedule_reaches_the_rendered_array(
+        self, tmp_path: Path, label: str, body: str, expected: list[str]
+    ) -> None:
+        descriptor = tmp_path / "descriptor.yaml"
+        descriptor.write_text(
+            f'name: example-connector\nversion: "1.0.0"\n{body}', encoding="utf-8"
+        )
 
-                rendered = _render(self._schedule_of(descriptor))
+        rendered = _render(self._schedule_of(descriptor))
 
-                self.assertEqual(rendered.returncode, 0, rendered.stderr)
-                self.assertEqual(_rendered_schedules(rendered.stdout), expected, f"should render: {label}")
+        assert rendered.returncode == 0, rendered.stderr
+        assert _rendered_schedules(rendered.stdout) == expected, (
+            f"should render: {label}"
+        )
 
     def test_claude_team_reads_more_than_once_a_day_at_month_end(self) -> None:
         rendered = _render(self._schedule_of(CLAUDE_TEAM_DESCRIPTOR))
 
-        self.assertEqual(rendered.returncode, 0, rendered.stderr)
-        self.assertEqual(
-            _rendered_schedules(rendered.stdout),
-            ["50 23 * * *", "0 9,15,21 28-31 * *"],
-            "claude-team must keep the extra month-end readings its billing month depends on",
+        assert rendered.returncode == 0, rendered.stderr
+        assert _rendered_schedules(rendered.stdout) == [
+            "50 23 * * *",
+            "0 9,15,21 28-31 * *",
+        ], (
+            "claude-team must keep the extra month-end readings its billing month depends on"
         )
-
-
-if __name__ == "__main__":
-    unittest.main()
