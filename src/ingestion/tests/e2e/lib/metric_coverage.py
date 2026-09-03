@@ -9,7 +9,6 @@ from pathlib import Path
 
 import yaml
 
-
 _E2E_ROOT = Path(__file__).resolve().parents[1]
 METRICS_DIR = _E2E_ROOT / "metrics"
 _VIEW_FIELDS = {
@@ -98,17 +97,15 @@ def _covers_view(rule: dict, view: str) -> bool:
     if view == "timeseries":
         return ".points" in expression
     if view == "breakdown":
-        return (
-            ".dimensions" in expression and ".value" in expression
-        ) or bool(re.search(r"size\(items\)\s*==\s*0", expression))
+        return (".dimensions" in expression and ".value" in expression) or bool(
+            re.search(r"size\(items\)\s*==\s*0", expression)
+        )
     if view == "histogram":
         return ".bins" in expression
     return False
 
 
-def coverage_from_tests(
-    metrics_dir: Path = METRICS_DIR,
-) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
+def coverage_from_tests(metrics_dir: Path = METRICS_DIR) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
     asserted: dict[str, dict[str, set[str]]] = {}
     requested: set[str] = set()
     for path in sorted(metrics_dir.rglob("*.test.yaml")):
@@ -129,11 +126,30 @@ def coverage_from_tests(
     return asserted, requested
 
 
+LEDGER_FILE = METRICS_DIR.parent / ".artifacts" / "metric_assertions.json"
+
+
+def coverage_from_ledger(path: Path = LEDGER_FILE) -> tuple[dict[str, dict[str, set[str]]], set[str]]:
+    """What the ported spec modules asserted, as `lib.metric_expect` recorded it at
+    run time. Absent when no ported spec ran, which is not a gap by itself: the
+    YAML specs still contribute through `coverage_from_tests` until the last one
+    moves."""
+    if not path.is_file():
+        return {}, set()
+    from lib.metric_expect import Ledger
+
+    return Ledger.read(path)
+
+
 def build_report(
-    universe: dict[str, MetricDefinition], metrics_dir: Path = METRICS_DIR
+    universe: dict[str, MetricDefinition], metrics_dir: Path = METRICS_DIR, ledger: Path = LEDGER_FILE
 ) -> CoverageReport:
     asserted, requested = coverage_from_tests(metrics_dir)
-    return CoverageReport(universe=universe, asserted=asserted, requested=requested)
+    ledger_asserted, ledger_requested = coverage_from_ledger(ledger)
+    for key, views in ledger_asserted.items():
+        for view, names in views.items():
+            asserted.setdefault(key, {}).setdefault(view, set()).update(names)
+    return CoverageReport(universe=universe, asserted=asserted, requested=requested | ledger_requested)
 
 
 def gate_violations(report: CoverageReport) -> list[str]:
@@ -177,13 +193,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--universe-file", required=True)
     parser.add_argument("--metrics-dir", type=Path, default=METRICS_DIR)
+    parser.add_argument("--ledger", type=Path, default=LEDGER_FILE)
     parser.add_argument("--md", action="store_true")
     args = parser.parse_args(argv)
-    report = build_report(universe_from_file(args.universe_file), args.metrics_dir)
+    report = build_report(universe_from_file(args.universe_file), args.metrics_dir, args.ledger)
     output = render_markdown(report)
-    print(output, end="")
+    sys.stdout.write(output)
     for violation in gate_violations(report):
-        print(violation, file=sys.stderr)
+        sys.stderr.write(violation + "\n")
     return 0 if report.passed else 1
 
 

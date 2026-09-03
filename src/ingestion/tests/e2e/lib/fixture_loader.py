@@ -141,9 +141,6 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
             raise FixtureError(f"{path}: identity_accounts[{idx}] values must be non-empty strings")
         identity_accounts.append(IdentityAccount(**entry))
 
-    if "cases" not in doc:
-        raise FixtureError(f"{path}: a test must define `cases`")
-
     bronze_doc = doc.get("bronze") or {}
     if not isinstance(bronze_doc, dict):
         raise FixtureError(f"{path}: `bronze` must be a mapping of table → records")
@@ -166,11 +163,7 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
                 raise FixtureError(f"{path}: bronze.{table}[{idx}] did not resolve to a record")
             stated_payload = "raw_data" in merged
             merged = _with_derived_payload(merged, schema)
-            if (
-                not stated_payload
-                and "raw_data" in schema.get("properties", {})
-                and not merged.get("raw_data")
-            ):
+            if not stated_payload and "raw_data" in schema.get("properties", {}) and not merged.get("raw_data"):
                 raise FixtureError(
                     f"{path}: bronze.{table}[{idx}] derived an empty raw_data — the models of a "
                     "source that hands over its whole report row read the payload, not the "
@@ -184,9 +177,9 @@ def load(path: Path, *, schemas_dir: Path | None = None) -> TestYaml:
         bronze[table] = resolved
         schemas[table] = schema
 
-    cases = doc["cases"]
-    if not isinstance(cases, list) or not cases:
-        raise FixtureError(f"{path}: `cases` must be a non-empty list")
+    cases = doc.get("cases") or []
+    if not isinstance(cases, list):
+        raise FixtureError(f"{path}: `cases` must be a list")
     for i, case in enumerate(cases):
         if not isinstance(case, dict) or "request" not in case or "expect" not in case:
             raise FixtureError(f"{path}: cases[{i}] must be a mapping with `request` and `expect`")

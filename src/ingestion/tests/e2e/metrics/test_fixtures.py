@@ -1,27 +1,22 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 import pytest
-from lib import clickhouse
 from lib.analytics import AnalyticsProcess
 from lib.ch_seeder import CHSeeder
-from lib.config import SessionConfig
 from lib.dbt_runner import DbtRunner
 from lib.enrich import EnrichRunner
 from lib.expect_engine import evaluate_case
-from lib.fixture_loader import IdentityAccount, TestYaml
-from lib.identity_stub import IdentityStub, person_id_for
+from lib.fixture_loader import TestYaml
+from lib.identity_stub import IdentityStub
+from lib.spec_runner import _EMAIL_TOKEN, person_ids_for, seed_identity_accounts, seed_identity_persons, translate
 from lib.tracked_models import TrackedModels
 from lib.worker import WorkerContext
 
 pytestmark = pytest.mark.fixture
 LOG = logging.getLogger("e2e.runner")
-
-
-_EMAIL_TOKEN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 
 def _requested_persona_emails(test_yaml: TestYaml) -> list[str]:
@@ -62,143 +57,12 @@ def _all_persona_emails(test_yaml: TestYaml) -> list[str]:
     return sorted(emails)
 
 
-def _person_ids_for(emails: list[str], aliases: dict[str, list[str]]) -> dict[str, str]:
-    """email -> person id, with `identity_aliases` bound to the canonical
-    persona's id so several source accounts resolve to ONE person."""
-    canonical_of = {alias.strip().lower(): canonical for canonical, group in aliases.items() for alias in group}
-    return {email: person_id_for(canonical_of.get(email.strip().lower(), email)) for email in emails}
-
-
-def _seed_identity_persons(cfg: SessionConfig, person_ids: dict[str, str]) -> None:
-    """Give each persona an account that carries their email and is bound to
-    their person id — the shape `identity.person_map` resolves through.
-
-    Resolution is account-derived: `identity_inputs` says which account carries
-    an email, `identity_persons` says who that account belongs to. The rig plays
-    both producers (the connector models and the service's persons-sync), one
-    synthetic account per persona.
-
-    Ordering is not free: the map RELATION must exist before the gold build,
-    because `metric_entity_cohorts_current` is a view that INNER JOINs
-    `person_map` and ClickHouse validates a view's query when it creates it. The
-    map's CONTENTS are read per request, so only the rows may change afterwards.
-    """
-    # NOT worker-scoped: the map models name the `identity` schema literally, so
-    # a per-worker suffix would leave the map reading an unseeded table. xdist
-    # needs them schema-aware first.
-    clickhouse.ensure_database(cfg, "identity")
-    clickhouse.execute(
-        cfg,
-        """
-        CREATE TABLE IF NOT EXISTS identity.identity_persons (
-            id UInt64, value_type String,
-            insight_source_type String, insight_source_id UUID,
-            insight_tenant_id UUID,
-            value_id Nullable(String), value_full_text Nullable(String),
-            value Nullable(String), value_effective Nullable(String),
-            person_id UUID, author_person_id UUID, reason Nullable(String),
-            created_at DateTime64(6, 'UTC'), _synced_at DateTime64(3, 'UTC')
-        ) ENGINE = MergeTree ORDER BY id
-        """,
-    )
-    clickhouse.execute(
-        cfg,
-        """
-        CREATE TABLE IF NOT EXISTS identity.identity_inputs (
-            unique_key String, insight_tenant_id UUID,
-            insight_source_id UUID, insight_source_type String,
-            source_account_id Nullable(String), value_type String,
-            value Nullable(String), value_field_name String,
-            operation_type String, _synced_at DateTime64(3), _version Int64
-        ) ENGINE = ReplacingMergeTree(_version) ORDER BY unique_key
-        SETTINGS allow_nullable_key = 1
-        """,
-    )
-    clickhouse.execute(cfg, "TRUNCATE TABLE identity.identity_persons")
-    clickhouse.execute(cfg, "TRUNCATE TABLE identity.identity_inputs")
-    if not person_ids:
-        return
-
-    personas = sorted(person_ids.items())
-
-    # The account id is the email: deterministic, and the two tables must agree
-    # on it for the join to land.
-    binding_rows = ", ".join(
-        f"({index + 1}, 'id', 'e2e-rig', toUUID('{_RIG_SOURCE_ID}'), generateUUIDv4(), "
-        f"'{email}', '{email}', toUUID('{person_id}'), "
-        f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
-        for index, (email, person_id) in enumerate(personas)
-    )
-    clickhouse.execute(
-        cfg,
-        "INSERT INTO identity.identity_persons "  # noqa: S608 — values derive from fixture emails
-        "(id, value_type, insight_source_type, insight_source_id, insight_tenant_id,"
-        " value_id, value_effective, person_id, author_person_id, created_at, _synced_at) "
-        "VALUES " + binding_rows,
-    )
-
-    evidence_rows = ", ".join(
-        f"('e2e-rig:{email}:email', generateUUIDv4(), toUUID('{_RIG_SOURCE_ID}'), 'e2e-rig', "
-        f"'{email}', 'email', '{email}', 'e2e.rig.email', 'UPSERT', now64(3), 1)"
-        for email, _ in personas
-    )
-    clickhouse.execute(
-        cfg,
-        "INSERT INTO identity.identity_inputs "  # noqa: S608 — values derive from fixture emails
-        "(unique_key, insight_tenant_id, insight_source_id, insight_source_type,"
-        " source_account_id, value_type, value, value_field_name, operation_type,"
-        " _synced_at, _version) "
-        "VALUES " + evidence_rows,
-    )
-
-
 # The reserved not-a-human person (bots, CI): an account bound to it claims
 # nothing in either resolution map. Mirrors excluded_person_id() in dbt.
-_EXCLUDED_PERSON_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
-
-
-def _seed_identity_accounts(cfg: SessionConfig, accounts: list[IdentityAccount], start_id: int) -> None:
-    """Source-account bindings from the yaml's `identity_accounts` — the rows
-    the account-first map (resolve_person_id_by_account) resolves pull-request
-    authors through. insight_source_id is hashed from the RAW source id with
-    the same expression the connectors' identity_inputs models use, so the
-    seam under test is the real one.
-    """
-    if not accounts:
-        return
-
-    rows = ", ".join(
-        f"({start_id + index}, 'id', '{entry.source_type}', "
-        f"toUUID(UUIDNumToString(sipHash128('{entry.source_id}'))), generateUUIDv4(), "
-        f"'{entry.account_id}', '{entry.account_id}', "
-        f"toUUID('{_EXCLUDED_PERSON_ID if entry.person == 'excluded' else person_id_for(entry.person)}'), "
-        f"toUUID('00000000-0000-0000-0000-000000000000'), now64(6), now64(3))"
-        for index, entry in enumerate(accounts)
-    )
-    clickhouse.execute(
-        cfg,
-        "INSERT INTO identity.identity_persons "  # noqa: S608 — values derive from fixture yaml
-        "(id, value_type, insight_source_type, insight_source_id, insight_tenant_id,"
-        " value_id, value_effective, person_id, author_person_id, created_at, _synced_at) "
-        "VALUES " + rows,
-    )
 
 
 # One synthetic connector instance for every rig persona: the account triple is
 # what joins evidence to bindings, so both inserts must name the same source.
-_RIG_SOURCE_ID = "e2e0e2e0-0000-4000-8000-000000000001"
-
-
-def _translate(value: Any, mapping: dict[str, str]) -> Any:
-    """Deep-copy `value` swapping every mapped string (request emails →
-    person UUIDs, or response UUIDs → emails for the expect rules)."""
-    if isinstance(value, str):
-        return mapping.get(value, value)
-    if isinstance(value, list):
-        return [_translate(item, mapping) for item in value]
-    if isinstance(value, dict):
-        return {key: _translate(item, mapping) for key, item in value.items()}
-    return value
 
 
 def test_metric_smoke(
@@ -266,14 +130,14 @@ def test_metric_smoke(
     #    persons-sync role). Must precede the gold build: the cohorts view
     #    INNER JOINs person_map, and creating a view validates its references.
     persona_emails = _all_persona_emails(test_yaml)
-    all_person_ids = _person_ids_for(persona_emails, test_yaml.identity_aliases)
+    all_person_ids = person_ids_for(persona_emails, test_yaml.identity_aliases)
     to_person_id = {email: all_person_ids[email] for email in _requested_persona_emails(test_yaml)}
     # The visibility gate asks the stub about the ids this case requests, so
     # the stub's visible set is derived from the yaml — never a hand-kept list
     # a new persona could fall outside of (that reads as an authz bug).
     identity_stub.allow_visible(persona_emails)
-    _seed_identity_persons(ch_seeder.cfg, all_person_ids)
-    _seed_identity_accounts(ch_seeder.cfg, test_yaml.identity_accounts, start_id=len(all_person_ids) + 1)
+    seed_identity_persons(ch_seeder.cfg, all_person_ids)
+    seed_identity_accounts(ch_seeder.cfg, test_yaml.identity_accounts, start_id=len(all_person_ids) + 1)
 
     # Selected without upstream: `identity_inputs` is hand-created above and
     # excluded from the silver selection.
@@ -305,7 +169,7 @@ def test_metric_smoke(
             raise AssertionError(f"two requested spellings share a person id: {seen!r} and {email!r}")
         to_email[person_id] = canonical
     for case in test_yaml.cases:
-        status, payload = analytics.call_request(_translate(case["request"], to_person_id))
+        status, payload = analytics.call_request(translate(case["request"], to_person_id))
         if status != 200:
             LOG.warning("HTTP %d; body: %r", status, payload)
-        evaluate_case(case, _translate(payload, to_email), status)
+        evaluate_case(case, translate(payload, to_email), status)
