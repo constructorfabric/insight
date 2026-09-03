@@ -1108,9 +1108,13 @@ function syntheticDays(count: number) {
  * visible in the mock too.
  */
 function connectorHealthHandlers() {
-  const now = new Date();
+  // The fixtures are anchored once, so a sync keeps the moment it started
+  // across requests. Only the answer's own clock is read per request — below,
+  // in the handler — because a fixed `as_of` would freeze the elapsed time the
+  // page derives from it and the running row would never advance while polling.
+  const anchor = new Date();
   const minutesAgo = (minutes: number) =>
-    new Date(now.getTime() - minutes * 60_000).toISOString();
+    new Date(anchor.getTime() - minutes * 60_000).toISOString();
 
   const sync = (
     job_id: string,
@@ -1139,6 +1143,13 @@ function connectorHealthHandlers() {
       sync("8402", "succeeded", 24, 41_000, 903),
       sync("8388", "succeeded", 84, 39_100, 874),
     ],
+    // A sync still in flight carries no duration — the mover reports one only
+    // for a job it has finished — so the row states how long it has been going
+    // instead.
+    "example-inbox": [
+      sync("8420", "running", 37, null, null),
+      sync("8391", "succeeded", 97, 61_000, 2_140),
+    ],
     "example-warehouse": [],
     "example-retired": [sync("7801", "succeeded", 60 * 26, 90_000, 55)],
   };
@@ -1150,21 +1161,23 @@ function connectorHealthHandlers() {
   });
 
   return [
-    http.get("/api/analytics/v1/connector-health", () =>
-      HttpResponse.json({
+    http.get("/api/analytics/v1/connector-health", () => {
+      const now = new Date();
+      return HttpResponse.json({
         as_of: now.toISOString(),
-        checked_at: minutesAgo(6),
+        checked_at: new Date(now.getTime() - 6 * 60_000).toISOString(),
         typical_read_interval_ms: 15 * 60_000,
         history_available: true,
         connectors: [
           summaryRow("example-tracker", true),
           summaryRow("example-directory", true),
           summaryRow("example-messaging", true),
+          summaryRow("example-inbox", true),
           summaryRow("example-warehouse", true),
           summaryRow("example-retired", false),
         ],
-      }),
-    ),
+      });
+    }),
     http.get("/api/analytics/v1/connector-health/:connector/syncs", ({ params }) => {
       const connector = String(params.connector);
       return HttpResponse.json({

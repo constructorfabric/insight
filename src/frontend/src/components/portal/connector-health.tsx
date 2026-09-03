@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { SyncFact } from "@/api/connector-health-client";
+import type { ConnectorHealth, SyncFact } from "@/api/connector-health-client";
 import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { Badge } from "@/components/ui/badge";
@@ -15,9 +15,9 @@ import {
 import {
   UNMEASURED,
   describeConnector,
+  describeDuration,
   describeRecording,
   describeSync,
-  formatDuration,
   formatRecords,
   formatStarted,
   type ConnectorTone,
@@ -145,9 +145,7 @@ export function ConnectorHealthPane() {
                     <TableCell className="tabular-nums text-muted-foreground">
                       {formatStarted(row.last_sync?.started_at ?? null)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {formatDuration(row.last_sync?.duration_ms ?? null)}
-                    </TableCell>
+                    <DurationCell sync={row.last_sync} asOf={data.as_of} />
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatRecords(row.last_sync?.records_reported ?? null)}
                     </TableCell>
@@ -155,7 +153,7 @@ export function ConnectorHealthPane() {
                   open ? (
                     <TableRow key={`syncs-${row.connector}`}>
                       <TableCell colSpan={COLUMNS} id={panelId} className="bg-muted/40">
-                        <RecentSyncs connector={row.connector} />
+                        <RecentSyncs connector={row.connector} asOf={data.as_of} />
                       </TableCell>
                     </TableRow>
                   ) : null,
@@ -169,7 +167,32 @@ export function ConnectorHealthPane() {
   );
 }
 
-function RecentSyncs({ connector }: { connector: string }) {
+/**
+ * A sync still in flight is not dimmed like a settled one: its number is the
+ * only thing on the row that keeps moving, and it is what an operator opened
+ * the page to see.
+ */
+function DurationCell({
+  sync,
+  asOf,
+}: {
+  sync: ConnectorHealth["last_sync"];
+  asOf: string;
+}) {
+  const duration = describeDuration(sync, asOf);
+  return (
+    <TableCell
+      className={cn(
+        "text-right tabular-nums",
+        duration.inFlight ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      {duration.text}
+    </TableCell>
+  );
+}
+
+function RecentSyncs({ connector, asOf }: { connector: string; asOf: string }) {
   const { data, isPending, isError, refetch } = useConnectorSyncs(connector);
 
   if (isPending) return <CenteredSpinner className="min-h-24" />;
@@ -195,23 +218,29 @@ function RecentSyncs({ connector }: { connector: string }) {
       </p>
       <ul className="flex flex-col gap-1">
         {data.syncs.map((sync) => (
-          <SyncLine key={sync.job_id} sync={sync} />
+          <SyncLine key={sync.job_id} sync={sync} asOf={asOf} />
         ))}
       </ul>
     </div>
   );
 }
 
-function SyncLine({ sync }: { sync: SyncFact }) {
+function SyncLine({ sync, asOf }: { sync: SyncFact; asOf: string }) {
   const state = describeSync(sync);
+  const duration = describeDuration(sync, asOf);
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
       <Badge className={cn("font-medium", TONE_STYLE[state.tone])}>
         {state.label}
       </Badge>
       <span className="tabular-nums">{formatStarted(sync.started_at)}</span>
-      <span className="tabular-nums text-muted-foreground">
-        {formatDuration(sync.duration_ms)}
+      <span
+        className={cn(
+          "tabular-nums",
+          duration.inFlight ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {duration.text}
       </span>
       <span className="tabular-nums text-muted-foreground">
         {formatRecords(sync.records_reported)} records
