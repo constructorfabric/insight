@@ -9,6 +9,11 @@ const COMMITMENT_FIELD: &str = "Commitment";
 const PRIORITY_FIELD: &str = "Prio (A.C.V.Ag)";
 const EFFORT_FIELD: &str = "Estimated Efforts m*d";
 
+/// Cards one board will serve. A delivery board is curated by hand and nothing
+/// like this size in practice, so reaching it means the board stopped being one
+/// — the read logs when it truncates rather than quietly serving a partial one.
+const GEAR_LIMIT: usize = 2_000;
+
 // SAFETY: every interpolated name below is a module constant, never caller input.
 static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
     let status = single_select(STATUS_FIELD);
@@ -24,12 +29,13 @@ static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
                 content_repo_full_name AS repo_full_name,
                 content_number AS content_number,
                 argMax(ifNull(field_values_json, '[]'), ifNull(updated_at, '')) AS field_values,
-                argMax(ifNull(source_id, ''), ifNull(updated_at, '')) AS source_id
+                argMax(ifNull(source_id, ''), ifNull(updated_at, '')) AS source_id,
+                argMax(ifNull(is_archived, false), ifNull(updated_at, '')) AS archived
             FROM bronze_github.project_items
             WHERE project_number = ?
               AND content_number > 0
-              AND NOT ifNull(is_archived, false)
             GROUP BY repo_full_name, content_number
+            HAVING NOT archived
         ),
         board_issues AS (
             SELECT
@@ -41,6 +47,7 @@ static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
                 argMax(ifNull(assignee_logins, '[]'), ifNull(collected_at, '')) AS assignee_logins,
                 argMax(ifNull(issue_field_values_json, '[]'), ifNull(collected_at, '')) AS issue_fields
             FROM bronze_github.issues
+            WHERE repo_full_name IN (SELECT repo_full_name FROM board_items)
             GROUP BY repo_full_name, number
         )
         SELECT
@@ -61,7 +68,8 @@ static READ_GEARS_SQL: LazyLock<String> = LazyLock::new(|| {
         INNER JOIN board_issues
             ON board_issues.repo_full_name = assumeNotNull(board_items.repo_full_name)
            AND board_issues.number = board_items.content_number
-        ORDER BY title"
+        ORDER BY title
+        LIMIT {GEAR_LIMIT}"
     )
 });
 
@@ -97,12 +105,20 @@ pub(crate) async fn read_gears(
         .fetch_all::<GearRow>()
         .await?;
 
+    if rows.len() >= GEAR_LIMIT {
+        tracing::warn!(
+            project_number,
+            limit = GEAR_LIMIT,
+            "gear roadmap truncated at the card limit"
+        );
+    }
+
     Ok(rows.into_iter().map(Gear::from_row).collect())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::READ_GEARS_SQL;
+    use super::{GEAR_LIMIT, READ_GEARS_SQL};
 
     #[test]
     fn the_statement_reads_one_board_and_binds_its_number() {
@@ -121,7 +137,29 @@ mod tests {
 
     #[test]
     fn archived_items_and_draft_cards_stay_out() {
-        assert!(READ_GEARS_SQL.contains("NOT ifNull(is_archived, false)"));
+        assert!(READ_GEARS_SQL.contains("HAVING NOT archived"));
         assert!(READ_GEARS_SQL.contains("content_number > 0"));
+    }
+
+    /// `project_items` is a `ReplacingMergeTree` keyed per card, so an archived
+    /// re-read and its older active version both sit there until a merge.
+    /// Filtering rows before `argMax` drops the archived latest and groups the
+    /// stale active one, so the card comes back from the dead.
+    #[test]
+    fn the_archive_flag_is_resolved_before_it_is_filtered() {
+        assert!(READ_GEARS_SQL.contains("argMax(ifNull(is_archived, false)"));
+        assert!(!READ_GEARS_SQL.contains("AND NOT ifNull(is_archived, false)"));
+    }
+
+    #[test]
+    fn the_issue_read_is_narrowed_to_the_repositories_on_the_board() {
+        assert!(
+            READ_GEARS_SQL.contains("repo_full_name IN (SELECT repo_full_name FROM board_items)")
+        );
+    }
+
+    #[test]
+    fn the_read_is_bounded() {
+        assert!(READ_GEARS_SQL.contains(&format!("LIMIT {GEAR_LIMIT}")));
     }
 }
