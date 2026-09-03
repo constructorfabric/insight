@@ -1,5 +1,3 @@
-import { addMonths, differenceInCalendarDays, format, startOfMonth } from "date-fns";
-
 import type { GearLane } from "@/api/gear-roadmap-client";
 
 const MS_PER_DAY = 86_400_000;
@@ -72,28 +70,43 @@ export interface MonthTick {
 export function monthTicks(start: string, totalDays: number): MonthTick[] {
   if (start === "" || totalDays <= 0) return [];
 
-  const first = utcDate(start);
+  const first = dayNumber(start);
   const ticks: MonthTick[] = [];
 
-  for (let month = addMonths(startOfMonth(first), 1); ; month = addMonths(month, 1)) {
-    const offsetDays = differenceInCalendarDays(month, first);
+  for (let index = 1; ; index += 1) {
+    const month = monthIndex(start) + index;
+    const offsetDays = firstOfMonthDay(month) - first;
     if (offsetDays >= totalDays) return ticks;
 
-    ticks.push({ label: format(month, "yyyy-MM"), offsetDays });
+    ticks.push({ label: monthKey(month), offsetDays });
   }
 }
 
 /** Months of the window, `yyyy-MM`, starting at the window's own first month. */
 export function monthLabels(windowStart: string, months: number): string[] {
-  const first = utcDate(`${windowStart}-01`);
+  const first = monthIndex(windowStart);
 
-  return Array.from({ length: months }, (_, index) =>
-    format(addMonths(first, index), "yyyy-MM"),
-  );
+  return Array.from({ length: months }, (_, index) => monthKey(first + index));
 }
 
-function utcDate(date: string): Date {
-  return new Date(`${date}T00:00:00Z`);
+/**
+ * Months since year zero. These dates are calendar days with no time and no
+ * zone, so every step of the arithmetic stays in UTC: a `Date` built from a UTC
+ * midnight but read through the host's local calendar is the previous day
+ * anywhere west of UTC, which walks the labels back a month.
+ */
+function monthIndex(date: string): number {
+  const [year, month] = date.split("-").map(Number);
+  return year * 12 + (month - 1);
+}
+
+function monthKey(month: number): string {
+  const year = Math.floor(month / 12);
+  return `${String(year).padStart(4, "0")}-${String((month % 12) + 1).padStart(2, "0")}`;
+}
+
+function firstOfMonthDay(month: number): number {
+  return Math.floor(Date.UTC(Math.floor(month / 12), month % 12, 1) / MS_PER_DAY);
 }
 
 export function dayNumber(date: string): number {

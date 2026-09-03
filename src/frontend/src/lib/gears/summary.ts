@@ -32,7 +32,10 @@ export function summariseBySubsystem(gears: Gear[]): SubsystemSummary[] {
 }
 
 function summarise(subsystem: string, gears: Gear[]): SubsystemSummary {
-  const done = gears.filter((gear) => gear.status_percent === 100).length;
+  const done = gears.filter(
+    (gear) =>
+      gear.placement.kind === "delivered" || gear.status_percent === 100,
+  ).length;
 
   return {
     subsystem,

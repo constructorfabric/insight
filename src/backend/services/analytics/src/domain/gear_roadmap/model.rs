@@ -94,6 +94,11 @@ impl Gear {
 
     pub(crate) fn remaining_man_days(&self) -> Option<f64> {
         let effort = self.effort_man_days?;
+
+        if self.is_delivered() {
+            return Some(0.0);
+        }
+
         let done = self
             .status
             .and_then(LadderStep::percent_complete)
@@ -194,5 +199,17 @@ mod tests {
         let gear = Gear::from_row(source);
 
         assert_eq!(gear.remaining_man_days(), None);
+    }
+
+    /// The scheduler gives a delivered gear no lane and no forecast, so any
+    /// remaining effort here is work no pane will ever show being done.
+    #[test]
+    fn a_closed_gear_has_nothing_left_to_do() {
+        let mut source = row();
+        source.closed = true;
+
+        let gear = Gear::from_row(source);
+
+        assert_eq!(gear.remaining_man_days(), Some(0.0));
     }
 }

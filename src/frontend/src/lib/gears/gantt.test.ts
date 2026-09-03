@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { GearLane } from "@/api/gear-roadmap-client";
-import { barGeometry, buildGantt, monthTicks } from "@/lib/gears/gantt";
+import {
+  barGeometry,
+  buildGantt,
+  monthLabels,
+  monthTicks,
+} from "@/lib/gears/gantt";
 
 const LANES: GearLane[] = [
   {
@@ -83,5 +88,23 @@ describe("barGeometry", () => {
       offsetDays: 5,
       lengthDays: 15,
     });
+  });
+});
+
+describe("monthLabels", () => {
+  it("runs from the window's own first month", () => {
+    expect(monthLabels("2030-01", 3)).toEqual([
+      "2030-01",
+      "2030-02",
+      "2030-03",
+    ]);
+  });
+
+  it("rolls into the next year", () => {
+    expect(monthLabels("2030-11", 3)).toEqual([
+      "2030-11",
+      "2030-12",
+      "2031-01",
+    ]);
   });
 });

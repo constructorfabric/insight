@@ -17,6 +17,15 @@ function gear(overrides: Partial<Gear>): Gear {
 }
 
 describe("summariseBySubsystem", () => {
+  it("counts a delivered gear as done however its ladder reads", () => {
+    const rows = summariseBySubsystem([
+      gear({ number: 1, status_percent: 40, placement: { kind: "delivered" } }),
+      gear({ number: 2, status_percent: 90 }),
+    ]);
+
+    expect(rows[0].done).toBe(1);
+  });
+
   it("counts a gear as done only at full implementation", () => {
     const rows = summariseBySubsystem([
       gear({ number: 1, status_percent: 100 }),
