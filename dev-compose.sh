@@ -642,7 +642,9 @@ YML
   fi
   local kc_base="http://${kc_ip:-localhost}:${KEYCLOAK_PORT:-8085}/kc"
 
-  echo "=== Generating Keycloak realm import (deploy/compose/keycloak/realm-insight.generated.json) ==="
+  local realm_out="${KEYCLOAK_REALM_FILE:-deploy/compose/keycloak/realm-insight.generated.json}"
+  realm_out="${realm_out#./}"
+  echo "=== Generating Keycloak realm import ($realm_out) ==="
   # The generator's own --authenticator-redirect REPLACES its defaults rather
   # than appending, so whenever we pass any URI we must re-state the two
   # defaults too — dropping them would deregister the human login origins
@@ -669,7 +671,7 @@ YML
   uv run --project "$ROOT_DIR/src/ingestion/tools/seed" insight-seed-realm \
     --dev-email "$dev_lead_email" \
     $redirect_args \
-    --out "$ROOT_DIR/deploy/compose/keycloak/realm-insight.generated.json"
+    --out "$ROOT_DIR/$realm_out"
 
   # NGINX_BFF: the AUTHENTICATOR (not the frontend) logs in against Keycloak,
   # server-side, as the pre-seeded `insight-authenticator` confidential client.
@@ -1417,6 +1419,87 @@ EOF
 # so `./dev-compose.sh up` keeps behaving exactly as it did.
 
 TEST_STAND_ENV_FILE=".env.compose.test-stand"
+TEST_STAND_REALM_FILE="deploy/compose/keycloak/realm-insight.generated.json"
+TEST_STAND_MANIFEST_FILE="src/ingestion/tools/seed/manifest.json"
+TEST_STAND_DEFAULT_TREE="tests/stand"
+TEST_STAND_INSTANCE=""
+TEST_STAND_PORT_OFFSET=0
+
+# Every published host port, with the base docker-compose.yml falls back to.
+# INVARIANT: each default must equal that service's `${VAR:-N}` in
+# docker-compose.yml. An instance shifts from the base named here, so a stale
+# entry publishes a port the stack never binds.
+TEST_STAND_PUBLISHED_PORTS=(
+  GATEWAY_PORT=8080
+  ANALYTICS_PORT=8081
+  AUTHENTICATOR_PORT=8083
+  AUTHENTICATOR_TOKEN_PORT=8093
+  KEYCLOAK_PORT=8085
+  IDENTITY_RESOLUTION_PORT=8086
+  FRONTEND_PORT=3000
+  MARIADB_PORT=3306
+  REDIS_PORT=6379
+  CLICKHOUSE_HTTP_PORT=8123
+  CLICKHOUSE_NATIVE_PORT=9000
+  REDPANDA_SCHEMA_PORT=18081
+  REDPANDA_PROXY_PORT=18082
+  REDPANDA_KAFKA_PORT=19092
+  REDPANDA_ADMIN_PORT=19644
+)
+
+# Same name, same ports, every bring-up: an instance keeps its address so a
+# suite can be re-aimed at a stand that is already running.
+test_stand_derive_port_offset() {
+  local sum
+  sum="$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+  printf '%d' "$(( 100 + (sum % 90) * 100 ))"
+}
+
+# Resolve every per-instance path and the port offset. The default instance
+# keeps the historical paths and a zero offset, so a command that omits
+# --instance behaves exactly as it did.
+test_stand_select_instance() {
+  local requested="${1:-}" offset="${2:-}" project
+  project="$(compose_project_name "$requested")" || return $?
+  if [[ "$project" == "insight" ]]; then
+    TEST_STAND_INSTANCE=""
+  else
+    TEST_STAND_INSTANCE="${project#insight-}"
+  fi
+  COMPOSE_INSTANCE="$TEST_STAND_INSTANCE"
+  TEST_STAND_GATEWAY_CONTAINER="${project}-gateway"
+
+  [[ -z "$TEST_STAND_INSTANCE" ]] && { TEST_STAND_PORT_OFFSET=0; return 0; }
+
+  TEST_STAND_ENV_FILE=".env.compose.test-stand-${TEST_STAND_INSTANCE}"
+  TEST_STAND_REALM_FILE="deploy/compose/keycloak/realm-insight.generated-${TEST_STAND_INSTANCE}.json"
+  TEST_STAND_MANIFEST_FILE="src/ingestion/tools/seed/manifest-${TEST_STAND_INSTANCE}.json"
+
+  if [[ -z "$offset" ]]; then
+    TEST_STAND_PORT_OFFSET="$(test_stand_derive_port_offset "$TEST_STAND_INSTANCE")"
+    return 0
+  fi
+  case "$offset" in
+    ''|*[!0-9]*) echo "ERROR: --port-offset must be a non-negative integer." >&2; return 2 ;;
+  esac
+  TEST_STAND_PORT_OFFSET="$offset"
+}
+
+# Move every published host port by the instance's offset so two stands can be
+# up at once. Container-side ports (*_INTERNAL_PORT) never move: they name a
+# port inside a namespace of their own, which no other instance shares.
+test_stand_shift_ports() {
+  local entry var base current
+  (( TEST_STAND_PORT_OFFSET == 0 )) && return 0
+  for entry in "${TEST_STAND_PUBLISHED_PORTS[@]}"; do
+    var="${entry%%=*}"
+    base="${entry#*=}"
+    current="$(grep -E "^[[:space:]]*${var}=" "$TEST_STAND_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2)"
+    current="$(trim "${current:-$base}")"
+    [[ "$current" =~ ^[0-9]+$ ]] || current="$base"
+    update_env_var "$TEST_STAND_ENV_FILE" "$var" "$(( current + TEST_STAND_PORT_OFFSET ))"
+  done
+}
 # The origin the app is driven at, by a browser runner and by a human alike.
 #
 # Two things are load-bearing here.
@@ -1448,7 +1531,7 @@ TEST_STAND_READY_INTERVAL=5
 
 cmd_test_stand_help() {
   cat <<'EOF'
-usage: dev-compose.sh test-stand <up|seed|test|down> [args]
+usage: dev-compose.sh test-stand <up|env|seed|test|down> [args]
 
 The stack in test configuration: pinned ghcr images for the frontend and all
 four backend services, real Keycloak login, and a readiness gate that waits
@@ -1477,6 +1560,9 @@ for dbt-built gold data rather than for containers to report healthy.
           `up` refuses to pin a tree that differs from origin/main and names
           the flag to pass — but only when origin/main is in the checkout. A
           shallow clone says so on stderr and defers to its caller.
+  env     Write this instance's env file and stop. Takes up's build flags.
+          Nothing is started, pulled or seeded — use it to see the ports,
+          paths and callback an instance resolves to.
   seed    Re-seed the running stand (default target: all).
   test    Run the stand suite against an already-up stand. Passes extra
           arguments through to pytest — no `--` separator.
@@ -1484,6 +1570,10 @@ for dbt-built gold data rather than for containers to report healthy.
           --base-url <url> and --stand-manifest <path> when pointing it
           somewhere else.
 
+          --tree <path>  Which tree to run. Repeatable. Default tests/stand.
+                         pytest UNIONS path arguments, so a bare path widens
+                         the run rather than narrowing it — name the tree here
+                         and use -k / --ignore to select within it.
           --image <ref>  Run inside an already-pulled suite image instead
                          of on the host, sharing the gateway's network
                          namespace. Never builds: no suite image is published
@@ -1494,8 +1584,21 @@ for dbt-built gold data rather than for containers to report healthy.
   down    Stop the stand and REMOVE its volumes, so the next `up` starts
           from empty databases.
 
+Every verb accepts:
+
+  --instance=NAME     Raise this stand beside the default one instead of
+                      replacing it. Containers, networks and volumes are
+                      isolated as insight-NAME, and so are the env file, the
+                      generated realm, the seed manifest and every published
+                      host port. `worktree` derives NAME from the checkout.
+  --port-offset=N     Override the offset added to every published host port.
+                      Derived from NAME by default, so an instance keeps the
+                      same address across bring-ups; pass this when two names
+                      happen to derive the same offset.
+
 Isolation: reads and writes .env.compose.test-stand only — never your own
-.env.compose. Airbyte and Argo are never started.
+.env.compose. With --instance=NAME the file is .env.compose.test-stand-NAME.
+Airbyte and Argo are never started.
 EOF
 }
 
@@ -1607,10 +1710,30 @@ test_stand_frontend_matches_chart() {
 # knobs the test path forces. SEEDED_LOCAL_* are blanked so every `up` seeds.
 # `mode` is ghcr (image required) or built (image empty — the front-built
 # profile serves the pnpm build from src/frontend/dist).
+# The frontend half of `up`'s env step, on its own so `env` can run exactly it.
+test_stand_prepare_env() {
+  local build_frontend="$1" image
+  if [[ "$build_frontend" == true ]]; then
+    test_stand_write_env built || return 1
+    echo "=== the frontend is built from this tree (pnpm), not pulled ==="
+    return 0
+  fi
+  test_stand_frontend_matches_chart || return 1
+  image="$(test_stand_frontend_image)" || return 1
+  test_stand_write_env ghcr "$image"
+}
+
 test_stand_write_env() {
   local mode="$1" image="${2:-}"
   [[ -f .env.compose.example ]] || { echo "ERROR: .env.compose.example not found." >&2; return 1; }
   cp .env.compose.example "$TEST_STAND_ENV_FILE"
+  test_stand_shift_ports || return 1
+  # Both are read by docker-compose.yml. The realm has to exist before `up`:
+  # Docker creates a DIRECTORY at a missing bind-mount source, and Keycloak
+  # then imports nothing without failing.
+  update_env_var "$TEST_STAND_ENV_FILE" KEYCLOAK_REALM_FILE "./$TEST_STAND_REALM_FILE"
+  update_env_var "$TEST_STAND_ENV_FILE" SEED_MANIFEST_PATH \
+    "/ingestion/${TEST_STAND_MANIFEST_FILE#src/ingestion/}"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_MODE   "$mode"
   update_env_var "$TEST_STAND_ENV_FILE" FRONTEND_IMAGE  "$image"
   update_env_var "$TEST_STAND_ENV_FILE" SEEDED_LOCAL_MARIA ""
@@ -1624,6 +1747,10 @@ test_stand_write_env() {
   update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_REDIRECT_URI "$(test_stand_origin)/auth/callback"
   echo "=== test-stand env → $TEST_STAND_ENV_FILE (frontend: ${image:-built from src/frontend}) ==="
   echo "    app origin: $(test_stand_origin)  callback: $(test_stand_origin)/auth/callback"
+  if [[ -n "$TEST_STAND_INSTANCE" ]]; then
+    echo "    instance: $TEST_STAND_INSTANCE  ports +${TEST_STAND_PORT_OFFSET}"
+    echo "    realm: $TEST_STAND_REALM_FILE  manifest: $TEST_STAND_MANIFEST_FILE"
+  fi
 }
 
 # Every gold observation table this seed is expected to populate. The gate
@@ -1776,7 +1903,7 @@ test_stand_test_in_image() {
     return 1
   fi
 
-  local manifest="src/ingestion/tools/seed/manifest.json"
+  local manifest="$TEST_STAND_MANIFEST_FILE"
   [[ -f "$manifest" ]] || {
     echo "ERROR: $manifest not found — seed the stand first: ./dev-compose.sh test-stand seed" >&2
     return 1; }
@@ -1859,11 +1986,27 @@ cmd_test_stand() {
   local verb="${1:-help}"
   [[ $# -gt 0 ]] && shift
 
+  # `main` already stripped --instance into COMPOSE_INSTANCE, for every
+  # subcommand alike; only the offset is ours to read. Resolving here rather
+  # than per verb keeps every verb pointed at the same stand.
+  local offset="" rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port-offset=*) offset="${1#*=}"; shift ;;
+      --port-offset)
+        [[ $# -ge 2 ]] || { echo "ERROR: --port-offset requires a value." >&2; return 2; }
+        offset="$2"; shift 2 ;;
+      *) rest+=("$1"); shift ;;
+    esac
+  done
+  set -- ${rest[@]+"${rest[@]}"}
+  test_stand_select_instance "$COMPOSE_INSTANCE" "$offset" || return $?
+
   case "$verb" in
     up)
       # Each tree is pinned to its chart's appVersion or built from this one,
       # asked separately: --build is the both-axes alias.
-      local image backend_mode=pinned build_frontend=false
+      local backend_mode=pinned build_frontend=false
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --build)          backend_mode=source; build_frontend=true; shift ;;
@@ -1875,14 +2018,7 @@ cmd_test_stand() {
         esac
       done
 
-      if [[ "$build_frontend" == true ]]; then
-        test_stand_write_env built || return 1
-        echo "=== the frontend is built from this tree (pnpm), not pulled ==="
-      else
-        test_stand_frontend_matches_chart || return 1
-        image="$(test_stand_frontend_image)" || return 1
-        test_stand_write_env ghcr "$image" || return 1
-      fi
+      test_stand_prepare_env "$build_frontend" || return 1
 
       # INVARIANT: pinning writes the *_IMAGE vars, and that is the only thing
       # keeping cmd_up off the compiler — so it has to run before cmd_up reads
@@ -1924,6 +2060,22 @@ cmd_test_stand() {
       echo "=== test-stand is ready ==="
       ;;
 
+    env)
+      # Writes the env file and stops. Everything an instance derives -- paths,
+      # ports, callback -- is visible without raising a stack, which is what
+      # the two-instance check asserts over.
+      local build_frontend=false
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --build|--build-frontend) build_frontend=true; shift ;;
+          --build-backend|--prebuilt-backend) shift ;;
+          -h|--help) cmd_test_stand_help; return 0 ;;
+          *) echo "ERROR: unknown test-stand env option: $1" >&2; return 2 ;;
+        esac
+      done
+      test_stand_prepare_env "$build_frontend"
+      ;;
+
     seed)
       [[ -f "$TEST_STAND_ENV_FILE" ]] || {
         echo "ERROR: $TEST_STAND_ENV_FILE not found — run: ./dev-compose.sh test-stand up" >&2; return 1; }
@@ -1937,17 +2089,27 @@ cmd_test_stand() {
       # Two runners, one verb. On the host (default) the suite runs from
       # tests/ with uv. With --image, it runs the checkout's test source in a
       # browser runner image instead.
-      local image=""
+      local image="" trees=()
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --image=*) image="${1#*=}"; shift ;;
           --image)
             [[ $# -ge 2 ]] || { echo "ERROR: --image requires a value." >&2; return 2; }
             image="$2"; shift 2 ;;
-          # Only a LEADING --image is ours; everything from here on is pytest's.
+          --tree=*) trees+=("${1#*=}"); shift ;;
+          --tree)
+            [[ $# -ge 2 ]] || { echo "ERROR: --tree requires a value." >&2; return 2; }
+            trees+=("$2"); shift 2 ;;
+          # Only LEADING options are ours; everything from here on is pytest's.
           *) break ;;
         esac
       done
+      [[ ${#trees[@]} -gt 0 ]] || trees=("$TEST_STAND_DEFAULT_TREE")
+
+      [[ -f "$TEST_STAND_ENV_FILE" ]] || {
+        echo "ERROR: $TEST_STAND_ENV_FILE not found — this stand was never brought up." >&2
+        echo "       Run: ./dev-compose.sh test-stand up${TEST_STAND_INSTANCE:+ --instance=$TEST_STAND_INSTANCE}" >&2
+        return 1; }
 
       # Read the port from the stand's own env file rather than the ambient
       # shell, so a stand on a non-default GATEWAY_PORT is probed where it
@@ -1965,9 +2127,10 @@ cmd_test_stand() {
         return $?
       fi
 
-      [[ -d tests/stand ]] || {
-        echo "ERROR: tests/stand does not exist yet (it is created in a later phase)." >&2
-        return 1; }
+      local tree
+      for tree in "${trees[@]}"; do
+        [[ -d "$tree" ]] || { echo "ERROR: test tree does not exist: $tree" >&2; return 1; }
+      done
       [[ -f tests/pyproject.toml ]] || {
         echo "ERROR: tests/pyproject.toml not found — the suite has no dependency set." >&2
         return 1; }
@@ -1978,7 +2141,15 @@ cmd_test_stand() {
         return 1; }
       # --frozen: run exactly the locked dependency set, never re-resolve
       # silently, so every runner stays identical.
-      uv run --project tests --frozen pytest tests/stand "$@"
+      #
+      # The instance is handed over as environment rather than as pytest flags:
+      # --stand-manifest is registered by tests/stand/conftest.py alone, so a
+      # run over any other tree would die on an unrecognised argument. Both
+      # variables sit below an explicit flag in the suite's own precedence, so
+      # --base-url / --stand-manifest still win.
+      INSIGHT_STAND_ENV_FILE="$TEST_STAND_ENV_FILE" \
+      INSIGHT_STAND_MANIFEST="$TEST_STAND_MANIFEST_FILE" \
+      uv run --project tests --frozen pytest "${trees[@]}" "$@"
       ;;
 
     down)
