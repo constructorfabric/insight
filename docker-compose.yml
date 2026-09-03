@@ -774,6 +774,7 @@ services:
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE:-insight}"
       # Grant-less `presentation` user's password (#1964), provisioned on seed.
       CLICKHOUSE_PRESENTATION_PASSWORD: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
+      MCP_ENABLED: "${MCP_ENABLED:-false}"
       CLICKHOUSE_MCP_PASSWORD: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
