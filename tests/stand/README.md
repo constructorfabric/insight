@@ -201,7 +201,7 @@ it":
 - **Nothing measures this suite's own coverage.** There is no per-operation,
   per-status-code gate here, so a route that gains a status code no test
   exercises goes unreported. The rig has one
-  (`src/ingestion/tests/e2e/lib/api_coverage.py` — an httpx-hook ledger plus a
+  (`scripts/ci/api_coverage.py` — an httpx-hook ledger plus a
   gate over the committed OpenAPI document); migrating it is a known
   follow-up. Until it lands, `api/operations.py` is the only catalogue of the
   surface and it is kept honest by hand.

@@ -26,7 +26,7 @@ error set onto every operation. Identity stays held to (1) until the suite
 either observes those codes or the gate learns to discount the stamped ones
 (#1669), which is a change to the gate rather than to this note.
 
-This is a port of `src/ingestion/tests/e2e/lib/api_coverage.py`. The universal
+This is a port of `scripts/ci/api_coverage.py`. The universal
 table agrees with it — the rig dropped 401 from its own exclusions once its host
 began verifying the gateway JWT, so 429 is all either one drops.
 

@@ -61,7 +61,7 @@ question (`A1`…`G4`). Design only what is in scope.
   on — that verdict is a deliverable, not a failure.
 - Re-specify what a blocking gate already covers — the metric×view gate
   (`src/ingestion/tests/e2e/lib/metric_coverage.py`) or the per-operation API
-  gate (`lib/api_coverage.py`).
+  gate (`scripts/ci/api_coverage.py`).
 - Soften a claim to match the implementation. If the code disagrees with
   SCENARIOS.md, the claim stays and gets marked.
 - Include any production-derived information (`AGENTS.md`). The seeded roster

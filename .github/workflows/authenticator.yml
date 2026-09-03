@@ -7,7 +7,7 @@ name: Authenticator — e2e, endpoint coverage
 # authenticator into a ledger, and the gate job matches that ledger against
 # the committed OpenAPI spec — a documented operation no test exercises fails
 # the gate. Same gate script and report as the analytics/identity lanes
-# (src/ingestion/tests/e2e/lib/api_coverage.py); the spec universe is kept
+# (scripts/ci/api_coverage.py); the spec universe is kept
 # fresh by the openapi-specs drift gate.
 on:
   pull_request:
@@ -25,7 +25,7 @@ on:
       # openidconnect's pinned HTTP-client impls).
       - "src/backend/Cargo.toml"
       - "src/backend/Cargo.lock"
-      - "src/ingestion/tests/e2e/lib/api_coverage.py"
+      - "scripts/ci/api_coverage.py"
       - "docs/components/backend/authenticator/openapi.json"
       - ".github/workflows/authenticator.yml"
   push:
@@ -38,7 +38,7 @@ on:
       - "src/ingestion/tools/seed/insight_seed/keycloak_realm.py"
       - "src/backend/Cargo.toml"
       - "src/backend/Cargo.lock"
-      - "src/ingestion/tests/e2e/lib/api_coverage.py"
+      - "scripts/ci/api_coverage.py"
       - "docs/components/backend/authenticator/openapi.json"
       - ".github/workflows/authenticator.yml"
   workflow_dispatch:
@@ -130,7 +130,7 @@ jobs:
           path: coverage-inputs
       - name: Analyse authenticator endpoint coverage
         run: |
-          python3 src/ingestion/tests/e2e/lib/api_coverage.py \
+          python3 scripts/ci/api_coverage.py \
             --suite authenticator \
             --observed coverage-inputs/observed_authenticator_endpoints.json \
             --spec docs/components/backend/authenticator/openapi.json | tee authenticator_coverage.md

@@ -85,7 +85,7 @@ e2e/
 │   ├── analytics.py        # builds + spawns the analytics binary
 │   ├── worker.py               # WorkerContext (resolves pytest-xdist worker id)
 │   ├── metric_coverage.py      # builtin metric coverage gate
-│   ├── api_coverage.py         # endpoint-coverage report + httpx recording hook
+│   ├── api_coverage.py         # shim: loads scripts/ci/api_coverage.py for the identity lane
 │   ├── collect_metric_definitions.py # snapshot enabled builtin definitions
 │   └── config.py               # session config (ports, random creds)
 ├── seed/

@@ -7,7 +7,7 @@ rendered report all deriving from one predicate — and the two failure modes th
 gate exists for.
 
 Ported from the rig's `identity/test_meta_gate.py`, which pinned the same
-property for `lib/api_coverage.py`. The tables differ on 403 (see `coverage.py`'s
+property for `scripts/ci/api_coverage.py`. The tables differ on 403 (see `coverage.py`'s
 docstring for why it is required here rather than excluded); the reason for
 testing the gate does not.
 

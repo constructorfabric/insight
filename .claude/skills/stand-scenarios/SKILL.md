@@ -110,7 +110,7 @@ faster than grep for anything recorded there.
 
 Two blocking gates in the sibling rig also own territory — the metric×view gate
 (`src/ingestion/tests/e2e/lib/metric_coverage.py`) and the per-operation API
-gate (`lib/api_coverage.py`). Do not re-specify what a gate already fails on.
+gate (`scripts/ci/api_coverage.py`). Do not re-specify what a gate already fails on.
 
 Mark the verdict on every claim: **new** · **covered by `<test>`** ·
 **partially covered by `<test>`** (say what is missing).
