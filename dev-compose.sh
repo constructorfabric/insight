@@ -2238,11 +2238,12 @@ cmd_test_stand() {
       #
       # The instance is handed over as environment rather than as pytest flags:
       # --stand-manifest is registered by tests/stand/conftest.py alone, so a
-      # run over any other tree would die on an unrecognised argument. Both
-      # variables sit below an explicit flag in the suite's own precedence, so
+      # run over any other tree would die on an unrecognised argument. Each of
+      # the three sits below an explicit flag in the suite's own precedence, so
       # --base-url / --stand-manifest still win.
       INSIGHT_STAND_ENV_FILE="$TEST_STAND_ENV_FILE" \
       INSIGHT_STAND_MANIFEST="$TEST_STAND_MANIFEST_FILE" \
+      INSIGHT_STAND_REALM_EXPORT="$TEST_STAND_REALM_FILE" \
       uv run --project tests --frozen pytest "${trees[@]}" "$@"
       ;;
 
