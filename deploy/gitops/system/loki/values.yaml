@@ -37,6 +37,11 @@ loki:
           period: 24h
   storage:
     type: filesystem
+  # INVARIANT: retention_period alone deletes nothing — only the compactor
+  # enforces it; without this block the store grows until the PVC fills.
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
   limits_config:
     # Keep logs cheap: 7d retention for the whole store. Per-stream
     # retention (e.g. shorter for the chatty `namespace=airbyte`) is a
