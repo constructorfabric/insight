@@ -11,7 +11,11 @@
 -- LEFT JOINs on `week` align rows from the same activity window.
 -- For prs_merged the week is taken from the merge commit's date (when the
 -- merge_commit_hash resolves to a commit row), falling back to the PR
--- closed_on week. This avoids commit-week vs PR-close-week drift.
+-- closed_on week. This avoids commit-week vs PR-close-week drift, except for
+-- Bitbucket Cloud: its API reports `merge_commit.hash` as a 12-character
+-- prefix, the equality below resolves nothing, and every Bitbucket row takes
+-- the fallback. Correcting that here needs a resolution which cannot match two
+-- commits at once, because this join feeds an aggregate. See #3161.
 --
 -- Why anchor + LEFT JOINs instead of FULL OUTER JOIN ... USING:
 -- ClickHouse 25.3 fills unmatched per-side columns with the column's default

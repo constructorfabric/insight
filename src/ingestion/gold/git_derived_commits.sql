@@ -23,7 +23,9 @@
 --   completes, which never loses work or per-author credit — the content
 --   dedup on file oids still folds the overlapping lines). The result hash
 --   is never marked when it is itself a linked commit: a fast-forward merge
---   promotes an original, which stays authored.
+--   promotes an original, which stays authored. Nor when the result commit
+--   was never collected in that repository — there is then nothing for the
+--   evidence build to exclude.
 --
 -- * patch_duplicate: a commit whose diff content (patch id) an earlier commit
 --   IN THE SAME REPOSITORY already carries — a rebase copy or a cherry-pick.
@@ -51,6 +53,7 @@ collected_branch_commits AS (
         source_id,
         project_key,
         repo_slug,
+        data_source,
         commit_hash
     FROM {{ ref('class_git_commits') }} FINAL
     WHERE is_merge_commit = 0
@@ -73,11 +76,22 @@ pull_request_links AS (
     FROM {{ ref('class_git_pull_requests_commits') }} FINAL
     GROUP BY tenant_id, source_id, project_key, repo_slug, pr_id
 ),
-merge_results AS (
-    SELECT DISTINCT
+-- The result commit each merged request produced, resolved to a collected
+-- commit rather than compared to one.
+--
+-- WORKAROUND: Bitbucket Cloud answers `merge_commit.hash` with a 12-character
+-- prefix where GitHub answers the full 40, so an equality join marks no
+-- Bitbucket result at all. #3161
+--
+-- SAFETY: marking a commit removes its lines along with itself, so a prefix
+-- that names more than one collected commit marks neither. Over-counting the
+-- request is recoverable; deleting an unrelated author's work is not.
+resolved_merge_results AS (
+    SELECT
         prs.tenant_id AS tenant_id,
         prs.data_source AS data_source,
-        prs.merge_commit_hash AS commit_hash
+        groupUniqArray(result.commit_hash) AS candidates,
+        any(links.linked_hashes) AS linked_hashes
     FROM {{ ref('class_git_pull_requests') }} AS prs FINAL
     INNER JOIN pull_request_links AS links
         ON links.tenant_id = prs.tenant_id
@@ -85,10 +99,33 @@ merge_results AS (
         AND links.project_key = prs.project_key
         AND links.repo_slug = prs.repo_slug
         AND links.pr_id = prs.pr_id
+    INNER JOIN collected_branch_commits AS result
+        ON result.tenant_id = prs.tenant_id
+        AND result.source_id = prs.source_id
+        AND result.project_key = prs.project_key
+        AND result.repo_slug = prs.repo_slug
+        AND result.data_source = prs.data_source
+        AND startsWith(result.commit_hash, prs.merge_commit_hash)
     WHERE prs.state = 'MERGED'
       AND prs.merge_commit_hash != ''
       AND links.collected_branch_commit_count = length(links.linked_hashes)
-      AND NOT has(links.linked_hashes, prs.merge_commit_hash)
+    GROUP BY
+        prs.tenant_id,
+        prs.source_id,
+        prs.project_key,
+        prs.repo_slug,
+        prs.pr_id,
+        prs.data_source
+    HAVING length(candidates) = 1
+),
+merge_results AS (
+    SELECT DISTINCT
+        tenant_id,
+        data_source,
+        arrayElement(candidates, 1) AS commit_hash
+    FROM resolved_merge_results
+    -- A fast-forward merge promotes an original, which stays authored.
+    WHERE NOT has(linked_hashes, arrayElement(candidates, 1))
 ),
 -- One row per commit per repository: patch ids rank within a repository, so a
 -- duplicate patch in an unrelated repository is untouched. A hash present in

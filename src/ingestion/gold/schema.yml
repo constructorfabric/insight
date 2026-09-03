@@ -168,7 +168,8 @@ models:
       tenant/data_source/commit_hash/reason. merge_result is the commit a
       merged pull request produced on its destination (a squash result or the
       last rebased copy), marked only when every linked branch commit was
-      collected; patch_duplicate is a later carrier of a patch id an earlier
+      collected and the result commit itself was collected in that repository;
+      patch_duplicate is a later carrier of a patch id an earlier
       commit in the same repository authored (a rebase copy or a cherry-pick).
       The git
       evidence build excludes these from both the commit and the line figures,

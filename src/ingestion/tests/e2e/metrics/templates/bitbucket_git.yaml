@@ -64,6 +64,18 @@ templates:
     merge_commit_sha: null
     participants: "[]"
 
+  pull_request_commit:
+    $ref: "#/templates/base"
+    repo_full_name: acme/platform
+    pr_id: null
+    sha: null
+    message: change
+    committed_date: "2026-10-01T09:00:00Z"
+    parent_shas: "[\"parent\"]"
+    is_merge: false
+    author_name: null
+    author_email: null
+
   diffstat:
     $ref: "#/templates/base"
     repo_full_name: acme/platform
