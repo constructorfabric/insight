@@ -22,6 +22,9 @@ data:
       {{- range .Values.gateway.routes }}
       - prefix: {{ .prefix }}
         upstream: {{ tpl .upstream $ | quote }}
+        {{- with .auth }}
+        auth: {{ . }}
+        {{- end }}
         {{- with .timeoutMs }}
         timeout_ms: {{ . }}
         {{- end }}

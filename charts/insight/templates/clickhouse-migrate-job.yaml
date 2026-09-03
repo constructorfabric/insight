@@ -107,6 +107,13 @@ spec:
                   name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  "clickhouse-presentation-password"
                   optional: true
+            {{- if .Values.analytics.mcp.enabled }}
+            - name: CLICKHOUSE_MCP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "analytics.mcp.credentialsSecret is required when MCP is enabled" .Values.analytics.mcp.credentialsSecret | quote }}
+                  key: {{ required "analytics.mcp.clickhousePasswordKey is required when MCP is enabled" .Values.analytics.mcp.clickhousePasswordKey | quote }}
+            {{- end }}
             # Grant-less SELECT-only `grafana` user's password (#2888), shared
             # with the Grafana datasource secret in insight-infra. Optional:
             # unset -> the script provisions the role only.

@@ -47,6 +47,7 @@ impl Gear for AnalyticsApiGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: GearConfig = ctx.config()?;
         validate_reports_config(&cfg.reports)?;
+        crate::mcp::validate_config(&cfg.mcp)?;
         let report_temp_dir = cfg.reports.temp_dir.clone();
         tokio::task::spawn_blocking(move || {
             crate::domain::reports::temp::prepare_temp_dir(&report_temp_dir)
@@ -85,6 +86,16 @@ impl Gear for AnalyticsApiGear {
             ch_config = ch_config.with_auth(user, password);
         }
         let ch = insight_clickhouse::Client::new(ch_config);
+
+        if cfg.mcp.enabled {
+            crate::mcp::start(
+                &cfg.mcp,
+                &cfg.clickhouse_url,
+                &cfg.clickhouse_database,
+                ctx.cancellation_token().child_token(),
+            )
+            .await?;
+        }
 
         // Identity client.
         let identity = infra::identity::IdentityClient::new(&cfg.identity_url)?;
@@ -238,6 +249,7 @@ pub fn check_config(app: &toolkit::bootstrap::AppConfig) -> anyhow::Result<()> {
         );
     }
     ExternalSourceRegistry::new(&cfg.external_sources)?;
+    crate::mcp::validate_config(&cfg.mcp)?;
     if cfg.ai_assist.enabled {
         if cfg.ai_assist.max_concurrent == 0 {
             anyhow::bail!(

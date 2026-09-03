@@ -21,6 +21,7 @@ insight-migration = { workspace = true }
 clickhouse = { workspace = true }
 
 sqlparser = { workspace = true }
+rmcp = { workspace = true }
 
 axum = { workspace = true }
 sea-orm = { workspace = true }
@@ -54,6 +55,7 @@ redis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+schemars = { workspace = true }
 url = { workspace = true }
 # OpenAPI schemas for request/response DTOs. Version pinned to 5.5 to match the
 # `utoipa::ToSchema` the toolkit (`OperationBuilder::json_request` /
@@ -75,6 +77,8 @@ aes-gcm = { workspace = true }
 zeroize = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+secrecy = { workspace = true }
+subtle = { workspace = true }
 csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }

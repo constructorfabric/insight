@@ -1,5 +1,4 @@
--- gateway.lua -- the access-phase cookie-to-JWT exchange (ADR-0001 Option A;
--- gateway DESIGN 3.10, 3.11).
+-- gateway.lua -- access-phase authentication and request hygiene.
 --
 -- A straight-line chain, deliberately trivial:
 --   dict hit  -> inject Authorization, done.
@@ -111,6 +110,16 @@ local function resolve_bearer(cookie, sid)
     return bearer
 end
 
+local function set_request_context()
+    local corr = uuid.generate_time_v7()
+    ngx.req.set_header("X-Correlation-Id", corr)
+    ngx.var.correlation_id = corr
+
+    ngx.req.clear_header("X-Forwarded-For")
+    ngx.req.clear_header("X-Forwarded-Proto")
+    ngx.req.clear_header("X-Forwarded-Host")
+end
+
 -- The access-phase entry point wired into every generated /api/ location.
 function _M.exchange()
     local cookie = ngx.var.http_cookie
@@ -136,13 +145,17 @@ function _M.exchange()
         ngx.req.clear_header("Cookie")
     end
 
-    local corr = uuid.generate_time_v7()
-    ngx.req.set_header("X-Correlation-Id", corr)
-    ngx.var.correlation_id = corr
+    set_request_context()
+end
 
-    ngx.req.clear_header("X-Forwarded-For")
-    ngx.req.clear_header("X-Forwarded-Proto")
-    ngx.req.clear_header("X-Forwarded-Host")
+function _M.pass_bearer()
+    local authorization = ngx.var.http_authorization
+    if not authorization or not string.match(authorization, "^Bearer %S+$") then
+        return errors.bearer_unauthorized()
+    end
+
+    ngx.req.clear_header("Cookie")
+    set_request_context()
 end
 
 return _M

@@ -140,6 +140,10 @@ data:
       analytics:
         config:
           visibility_policy: {{ .Values.visibilityPolicy | default "org_chart" | quote }}
+          mcp:
+            enabled: {{ .Values.mcp.enabled }}
+            bind_addr: "0.0.0.0:{{ .Values.mcp.port }}"
+            clickhouse_user: {{ .Values.mcp.clickhouseUser | quote }}
           metric_catalog:
             tenant_metrics_enabled: {{ .Values.metricCatalog.tenantMetricsEnabled }}
           reports:

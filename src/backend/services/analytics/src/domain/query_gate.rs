@@ -90,6 +90,30 @@ pub fn validate_single_select(sql: &str) -> Result<(), String> {
     }
 }
 
+/// Gate SQL submitted through the MCP explorer.
+pub fn validate_mcp_sql(sql: &str) -> Result<(), String> {
+    let statements = parse_read_statements(sql)?;
+
+    let query = match statements.as_slice() {
+        [] => return Err("query is empty".to_owned()),
+        [Statement::Query(query)] => query,
+        [_] => return Err("query must be a single SELECT or WITH statement".to_owned()),
+        _ => return Err("only one statement is allowed on the query path".to_owned()),
+    };
+
+    if query.settings.is_some() {
+        return Err("query-level SETTINGS are not allowed".to_owned());
+    }
+    if query.format_clause.is_some() {
+        return Err("query-level FORMAT is not allowed".to_owned());
+    }
+    if let Some(name) = first_denied_table_function(sql) {
+        return Err(format!("table function `{name}` is not allowed"));
+    }
+
+    Ok(())
+}
+
 /// Gate a custom observation source's SQL: a single read (as above) that names
 /// no admin-only database and calls no external/remote table function. The
 /// compiler wraps this SQL as `FROM (<sql>)` and executes it as

@@ -11,6 +11,16 @@ service:
   type: ClusterIP
   port: 8081
 
+mcp:
+  enabled: false
+  port: 8086
+  # Pre-create this Secret with `token` and `clickhouse-password` keys.
+  # Possession of `token` grants access to the SQL explorer.
+  credentialsSecret: insight-mcp-creds
+  bearerTokenKey: token
+  clickhouseUser: insight_mcp
+  clickhousePasswordKey: clickhouse-password
+
 resources:
   requests:
     cpu: 100m

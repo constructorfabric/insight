@@ -69,6 +69,24 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+            {{- if .Values.mcp.enabled }}
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if .Values.mcp.enabled }}
+          env:
+            - name: APP__gears__analytics__config__mcp__bearer_token
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "mcp.credentialsSecret is required when MCP is enabled" .Values.mcp.credentialsSecret | quote }}
+                  key: {{ required "mcp.bearerTokenKey is required when MCP is enabled" .Values.mcp.bearerTokenKey | quote }}
+            - name: APP__gears__analytics__config__mcp__clickhouse_password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "mcp.credentialsSecret is required when MCP is enabled" .Values.mcp.credentialsSecret | quote }}
+                  key: {{ required "mcp.clickhousePasswordKey is required when MCP is enabled" .Values.mcp.clickhousePasswordKey | quote }}
+          {{- end }}
           # Gateway-JWT verification (NGINX_BFF R1): the plugin's verification
           # config is nested/list-shaped and rendered into the ConfigMap from
           # `.Values.gateway.*` (issuer / discoveryUrl / audience / caCertPaths),

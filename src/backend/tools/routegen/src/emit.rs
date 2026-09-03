@@ -3,7 +3,7 @@
 //! The mechanism is the pure `access_by_lua` exchange, **not** the stock
 //! `auth_request` directive: the two do not compose (an `auth_request` cannot be
 //! skipped on a `lua_shared_dict` hit), so the miss-path subrequest is issued
-//! from Lua. Every generated `/api/` location gets the full hygiene block by
+//! from Lua. Every generated location gets the full hygiene block by
 //! construction -- there is no hand-written location to forget it in.
 
 use std::fmt::Write as _;
@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use anyhow::Context as _;
 use url::Url;
 
-use crate::schema::{ResolvedRoute, RouteConfig};
+use crate::schema::{Authentication, ResolvedRoute, RouteConfig};
 
 // INVARIANT: the gateway chart's exporter scrape URI must match this address.
 const STUB_STATUS_LISTEN: &str = "127.0.0.1:8090";
@@ -290,7 +290,7 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
 }
 
 /// Emit the `server { ... }` block: health, the fixed unauthenticated surface,
-/// every generated `/api/` route, and the SPA fallthrough.
+/// every generated route, and the SPA fallthrough.
 fn emit_server(
     c: &mut String,
     config: &RouteConfig,
@@ -333,7 +333,6 @@ fn emit_server(
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n\n");
 
-    // Generated /api routes.
     c.push_str("        # --- generated /api routes: full auth + hygiene block per location ---\n");
     for (route, ident) in routes.iter().zip(route_upstream) {
         emit_api_location(c, route, ident, upstreams, config)?;
@@ -389,7 +388,7 @@ fn emit_stub_status(c: &mut String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Emit one `/api/` location with the complete hygiene block (DESIGN 3.9).
+/// Emit one configured location with the complete hygiene block.
 fn emit_api_location(
     c: &mut String,
     route: &ResolvedRoute,
@@ -403,9 +402,18 @@ fn emit_api_location(
         .map_or("http", |u| u.scheme.as_str());
 
     writeln!(c, "        # route: {} -> {}", route.prefix, route.upstream)?;
-    writeln!(c, "        location {} {{", route.prefix)?;
-    // 1. auth exchange (Authorization inject, cookie strip, UUIDv7 -- all in Lua)
-    c.push_str("            access_by_lua_block { require(\"gateway\").exchange() }\n");
+    match route.auth {
+        Authentication::Session => writeln!(c, "        location {} {{", route.prefix)?,
+        Authentication::Bearer => writeln!(c, "        location = {} {{", route.prefix)?,
+    }
+    match route.auth {
+        Authentication::Session => {
+            c.push_str("            access_by_lua_block { require(\"gateway\").exchange() }\n");
+        }
+        Authentication::Bearer => {
+            c.push_str("            access_by_lua_block { require(\"gateway\").pass_bearer() }\n");
+        }
+    }
     if route.strip_prefix {
         writeln!(
             c,
@@ -414,7 +422,10 @@ fn emit_api_location(
         )?;
     }
     writeln!(c, "            proxy_pass {scheme}://{ident};")?;
-    c.push_str("            proxy_set_header Host $host;\n");
+    match route.auth {
+        Authentication::Session => c.push_str("            proxy_set_header Host $host;\n"),
+        Authentication::Bearer => c.push_str("            proxy_set_header Host localhost;\n"),
+    }
     // 5. gateway-authored forwarding headers (client-supplied are cleared in Lua)
     if route.websocket {
         c.push_str("            proxy_set_header Upgrade $http_upgrade;\n");

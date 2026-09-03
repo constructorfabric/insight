@@ -33,6 +33,7 @@ mod config;
 mod domain;
 mod gear;
 mod infra;
+mod mcp;
 mod migration;
 
 // System gears — linked via inventory for the REST host + auth pipeline.

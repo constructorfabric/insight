@@ -52,6 +52,17 @@ function _M.unauthorized()
     )
 end
 
+function _M.bearer_unauthorized()
+    ngx.header["WWW-Authenticate"] = "Bearer"
+    return problem(
+        401,
+        TYPE_UNAUTHENTICATED,
+        "Unauthenticated",
+        "A valid bearer token is required.",
+        { reason = "invalid_bearer" }
+    )
+end
+
 --- 503 Service Unavailable: authenticator unreachable, timed out, or 5xx --
 --- fail closed, shaped, with Retry-After.
 function _M.unavailable(detail)
