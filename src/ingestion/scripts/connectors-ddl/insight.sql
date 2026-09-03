@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS insight.git_authored_commits
     `author_name` String,
     `message` String,
     `observed_at` Nullable(DateTime),
+    `committer_date` Nullable(DateTime),
     `entity_id` String,
     `metric_date` Nullable(Date),
     `lines_added` Nullable(Int64),
@@ -280,6 +281,7 @@ CREATE TABLE IF NOT EXISTS insight.git_commit_file_changes
     `repo_slug` String,
     `commit_hash` String,
     `observed_at` Nullable(DateTime),
+    `committer_date` Nullable(DateTime),
     `data_source` String,
     `file_path` String,
     `file_extension` String,
@@ -441,6 +443,18 @@ CREATE TABLE IF NOT EXISTS insight.git_review_events
 )
 ENGINE = MergeTree
 ORDER BY (tenant_id, entity_id, metric_date)
+SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
+;
+
+CREATE TABLE IF NOT EXISTS insight.git_superseded_file_changes
+(
+    `tenant_id` Nullable(String),
+    `data_source` String,
+    `commit_hash` String,
+    `file_path` String
+)
+ENGINE = MergeTree
+ORDER BY (tenant_id, data_source, commit_hash)
 SETTINGS allow_nullable_key = 1, replicated_deduplication_window = '0', index_granularity = 8192
 ;
 
