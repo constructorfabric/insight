@@ -477,7 +477,7 @@ services:
   # insight_seed.keycloak_realm, gitignored). Gated behind
   # --profile auth-keycloak.
   keycloak:
-    image: quay.io/keycloak/keycloak:26.4
+    image: quay.io/keycloak/keycloak:26.7
     container_name: ${COMPOSE_PROJECT_NAME:-insight}-keycloak
     command: ["start-dev", "--import-realm", "--http-relative-path=/kc"]
     environment:

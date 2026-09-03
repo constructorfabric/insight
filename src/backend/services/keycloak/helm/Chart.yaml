@@ -2,5 +2,5 @@ apiVersion: v2
 name: insight-keycloak
 description: The stack's Keycloak — identity broker per ADR-0003, MariaDB-backed, realm content as code
 version: 0.1.0
-appVersion: "26.4"
+appVersion: "26.7"
 type: application
