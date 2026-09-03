@@ -263,6 +263,10 @@ services:
       APP__gears__analytics__config__ai_assist__api_key: "${AI_ASSIST_API_KEY:-}"
       APP__gears__analytics__config__ai_assist__admin_only: "${AI_ASSIST_ADMIN_ONLY:-true}"
       APP__gears__analytics__config__ai_assist__model: "${AI_ASSIST_MODEL:-claude-sonnet-5}"
+      APP__gears__analytics__config__mcp__enabled: "${MCP_ENABLED:-false}"
+      APP__gears__analytics__config__mcp__public_url: "${MCP_PUBLIC_URL:-}"
+      APP__gears__analytics__config__mcp__clickhouse_user: "insight_mcp"
+      APP__gears__analytics__config__mcp__clickhouse_password: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # Gateway-JWT verification (NGINX_BFF R1) is done by the upstream
       # cf-gears-oidc-authn-plugin. Its config is nested/list-shaped (not
       # env-injectable) and resolves the JWKS via OIDC discovery over HTTPS ONLY,
@@ -439,6 +443,8 @@ services:
       # Resolves the testclient public_key_paths against the mounted dev keys
       # (dev-compose.sh generates testclient.pub.pem there; nothing committed).
       APP__gears__authenticator__config__service_tokens__public_key_dir: "/app/keys"
+      APP__gears__authenticator__config__mcp_oauth__enabled: "${MCP_ENABLED:-false}"
+      APP__gears__authenticator__config__mcp_oauth__public_url: "${MCP_PUBLIC_URL:-}"
       # Audit events to the platform topic (step 10.8). Delivery failures are
       # dropped + counted, so a stack without Redpanda still works.
       APP__gears__authenticator__config__audit__brokers: "${AUDIT_BROKERS:-redpanda:9092}"
@@ -764,6 +770,7 @@ services:
       CLICKHOUSE_DATABASE: "${CLICKHOUSE_DATABASE:-insight}"
       # Grant-less `presentation` user's password (#1964), provisioned on seed.
       CLICKHOUSE_PRESENTATION_PASSWORD: "${CLICKHOUSE_PRESENTATION_PASSWORD:-presentation-local}"
+      CLICKHOUSE_MCP_PASSWORD: "${CLICKHOUSE_MCP_PASSWORD:-}"
       # apply-ch-migrations.sh runs `dbt run` from /ingestion/dbt. The
       # ingestion tree is bind-mounted read-only (below), so redirect dbt's
       # writable outputs (target/, logs/) to a writable scratch dir.
