@@ -1,0 +1,124 @@
+spec_version: 1
+description: >
+  Metric: git.commit_size — median diff size (lines added plus removed) of a
+  person's authored commits. Values chosen so the median is the ONLY aggregate
+  that fits: erin's sizes over the window are {4, 6, 10, 30, 204} — median 10,
+  mean 50.8, max 204 — so a mean, a sum, an extremum or a wrong percentile all
+  fail the period assertion. No file-change rows are seeded, so every commit
+  reports the size its own stats gave (the file-grain corrections have their
+  own specs: content identity, work identity, uncollected file changes).
+
+  Fixture:
+    * erin, 2026-10-01, acme/api: sizes 10, 30, 204 — an odd pool whose median
+      is 30, plus a merge commit (1000) that must contribute nothing.
+    * erin, 2026-10-02, acme/web: sizes 4, 6 — an even pool; ClickHouse
+      quantileExact(0.5) takes the UPPER middle element, so the day reads 6.
+    * dave, 2026-10-01, acme/api: one commit whose bronze row carries no
+      stats at all. Staging projects absent stats to zero, so the commit
+      enters the median as 0 rather than abstaining.
+
+  Cases: period median over both days, per-day timeseries medians, per-repo
+  breakdown medians, deterministic histogram bins over erin's [4, 204], the
+  stats-less commit reading 0.
+
+bronze:
+  bronze_bamboohr.employees:
+    - $ref: templates/people.yaml#/templates/dave
+    - $ref: templates/people.yaml#/templates/erin
+
+  bronze_github.commits:
+    # Day one, acme/api: {10, 30, 204}.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-a1, repository: "https://github.com/acme/api.git", sha: cs-a1, committed_date: "2026-10-01T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 8, deletions: 2}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-a2, repository: "https://github.com/acme/api.git", sha: cs-a2, committed_date: "2026-10-01T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 25, deletions: 5}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-a3, repository: "https://github.com/acme/api.git", sha: cs-a3, committed_date: "2026-10-01T11:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 200, deletions: 4}
+    # A merge commit with a huge diff: excluded from the pool entirely. If it
+    # counted, the period median could not read 10.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-merge, repository: "https://github.com/acme/api.git", sha: cs-merge, committed_date: "2026-10-01T12:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 900, deletions: 100, is_merge: true}
+    # Day two, acme/web: {4, 6}.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-w1, repository: "https://github.com/acme/web.git", sha: cs-w1, committed_date: "2026-10-02T09:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 3, deletions: 1}
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-erin-w2, repository: "https://github.com/acme/web.git", sha: cs-w2, committed_date: "2026-10-02T10:00:00Z", author_name: erin, author_email: erin@example.com, committer_name: erin, committer_email: erin@example.com, additions: 5, deletions: 1}
+    # dave: a commit whose source reported no line stats.
+    - {$ref: templates/git_activity.yaml#/templates/commit, unique_key: cs-dave-nostats, repository: "https://github.com/acme/api.git", sha: cs-d1, committed_date: "2026-10-01T09:00:00Z", author_name: dave, author_email: dave@example.com, committer_name: dave, committer_email: dave@example.com, additions: null, deletions: null}
+
+cases:
+  - name: The period value is the exact median of the per-commit sizes
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [erin@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
+              - {view: timeseries, bucket: day}
+              - {view: breakdown, dimensions: [repository]}
+              - {view: histogram}
+    expect:
+      - assert: "status == 200"
+      # {4, 6, 10, 30, 204}: median 10. Mean (50.8), max (204), min (4), sum
+      # (254) and p75 (30) all disagree with this value.
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: erin@example.com}
+        equal: {value: 10}
+      # Each day buckets its own median: {10, 30, 204} reads 30, and the even
+      # pair {4, 6} reads its upper middle, 6 — not the interpolated 5.
+      - metric: git.commit_size
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-01", value: 30}}
+      - metric: git.commit_size
+        view: timeseries
+        find: {entity_id: erin@example.com}
+        contains: {points: {bucket_start: "2026-10-02", value: 6}}
+      # Per-repository medians over each repository's own pool.
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:acme/api"}}
+        equal: {value: 30}
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: erin@example.com, dimensions: {key: repository, value: "git-test:acme/web"}}
+        equal: {value: 6}
+      # Ten fixed-width bins over erin's own [4, 204], width 20: the first bin
+      # holds {4, 6, 10} and the last closes exactly at 204 with the one
+      # outlier. A pool including the merge commit would rescale every bin.
+      - metric: git.commit_size
+        view: histogram
+        find: {entity_id: erin@example.com}
+        contains: {bins: {lo: 4, count: 3}}
+      - metric: git.commit_size
+        view: histogram
+        find: {entity_id: erin@example.com}
+        contains: {bins: {hi: 204, count: 1}}
+
+  - name: A commit whose source reported no stats reads zero, not absent
+    request:
+      url: /v1/metric-results
+      method: POST
+      body:
+        entity: {type: person, ids: [dave@example.com]}
+        period: {from: "2026-10-01", to: "2026-10-02"}
+        metrics:
+          - metric_key: git.commits
+            views:
+              - {view: period}
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
+    expect:
+      - assert: "status == 200"
+      - metric: git.commits
+        view: period
+        find: {entity_id: dave@example.com}
+        equal: {value: 1}
+      # Staging projects absent stats to zero, so the commit enters the size
+      # pool as 0 instead of abstaining. This pins the served behavior; a
+      # staging change that lets the NULL flow through would surface here as
+      # value: null.
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: dave@example.com}
+        equal: {value: 0}

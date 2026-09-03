@@ -9,6 +9,12 @@ description: >-
   commit's change WAS collected and then lost the content dedup, which is not
   the same thing as never arriving.
 
+  Commit size reads the same corrected numbers: alice's sizes are {11, 22}
+  (median 22 — quantileExact(0.5) on an even count takes the upper middle),
+  bob's single empty commit reads 0, and carol's repeat commit keeps only the
+  part of its own stats the dedup did not remove: 26 reported less the 11
+  deduplicated lines is 15, so her median over {11, 15} is 15.
+
 bronze:
   bronze_bamboohr.employees:
     - $ref: templates/people.yaml#/templates/alice
@@ -58,6 +64,9 @@ cases:
           - metric_key: git.code_lines
             views:
               - {view: period}
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
     expect:
       - assert: "status == 200"
 
@@ -92,6 +101,12 @@ cases:
         find: {entity_id: alice@example.com}
         equal: {value: 10}
 
+      # Both sizes enter the median: {11, 22} reads 22 (upper middle).
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: alice@example.com}
+        equal: {value: 22}
+
   - name: A commit that changed nothing reports zero, not an absent value
     request:
       url: /v1/metric-results
@@ -109,6 +124,9 @@ cases:
           - metric_key: git.lines_removed
             views:
               - {view: period}
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
     expect:
       - assert: "status == 200"
       - metric: git.commits
@@ -120,6 +138,12 @@ cases:
         find: {entity_id: bob@example.com}
         equal: {value: 0}
       - metric: git.lines_removed
+        view: period
+        find: {entity_id: bob@example.com}
+        equal: {value: 0}
+      # Zero size, not an absent value: the source said the commit changed
+      # nothing.
+      - metric: git.commit_size
         view: period
         find: {entity_id: bob@example.com}
         equal: {value: 0}
@@ -139,6 +163,9 @@ cases:
             views:
               - {view: period}
               - {view: breakdown, dimensions: [category]}
+          - metric_key: git.commit_size
+            views:
+              - {view: period}
     expect:
       - assert: "status == 200"
 
@@ -164,3 +191,12 @@ cases:
       - metric: git.lines_added
         view: breakdown
         assert: "!items.exists(v, v.dimensions.exists(d, d.key == 'category' && d.value == '__unknown__') && v.entity_id == 'carol@example.com')"
+
+      # The repeat commit keeps only the part of its stats the dedup did not
+      # remove: 26 reported less the 11 deduplicated lines is 15. Sizes {11, 15}
+      # read 15 — a size restored in full (26) or zeroed outright would both
+      # fail here.
+      - metric: git.commit_size
+        view: period
+        find: {entity_id: carol@example.com}
+        equal: {value: 15}

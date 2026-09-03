@@ -14,6 +14,7 @@ import {
   chunkEntityIds,
   filterCollectionByKey,
   filterCollectionToAvailable,
+  filterCollectionToDeclaredDimensions,
   entityChunkSize,
   mergeNormalizedResults,
   normalizeMetricResults,
@@ -26,7 +27,10 @@ import {
 import { normalizePersonId } from "@/lib/metrics/entity";
 import { metricVisible } from "@/lib/portal/nav-policy";
 import { usePortalShowPlanned } from "@/lib/portal/portal-store";
-import { useAvailableMetricKeys } from "@/queries/metric-definitions";
+import {
+  useAvailableMetricKeys,
+  useDeclaredMetricDimensions,
+} from "@/queries/metric-definitions";
 import type { PeriodValue } from "@/types/insight";
 
 /**
@@ -122,9 +126,13 @@ export function useMetricCollection(
   // rejects the WHOLE request over one unknown key, so a compiled-in key that
   // a tenant does not have would blank the screen instead of its own tile.
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const asked = filterCollectionByKey(
-    filterCollectionToAvailable(collection, catalog.keys),
+    filterCollectionToDeclaredDimensions(
+      filterCollectionToAvailable(collection, catalog.keys),
+      dimensions.byMetricKey
+    ),
     gate
   );
   const canonicalEntity: MetricCollectionEntity =
@@ -150,6 +158,7 @@ export function useMetricCollection(
     entitySelected(entity, ids) &&
     request.metrics.length > 0 &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   const current = useQuery({
@@ -178,10 +187,13 @@ export function useMetricCollection(
     previousByKey,
     // Pending while the catalog resolves too: the request is coming, so the
     // screen must show a skeleton rather than an empty state it would replace
-    // a moment later.
+    // a moment later. Both catalog reads gate `enabled`, so both belong here —
+    // one missing leaves a window where nothing is asked and nothing is
+    // pending, which renders as "no data".
     isPending:
       (current.isPending && enabled) ||
-      (entitySelected(entity, ids) && catalog.isPending),
+      (entitySelected(entity, ids) &&
+        (catalog.isPending || dimensions.isPending)),
     isFetching: current.isFetching,
     // Defensive: `ids` and `range` both ride in the query key, so today a
     // disabled query cannot be holding an error from an enabled one. Kept so
@@ -225,10 +237,12 @@ export function useMetricCollectionSet(
 ): Map<string, MetricCollectionResult> {
   const ids = canonicalEntityIds(entity);
   const catalog = useAvailableMetricKeys();
+  const dimensions = useDeclaredMetricDimensions();
   const gate = useMetricGate();
   const enabled =
     entitySelected(entity, ids) &&
     !catalog.isPending &&
+    !dimensions.isPending &&
     Boolean(range.from && range.to);
 
   // Large rosters are chunked so a period+peer collection over N entities
@@ -238,7 +252,10 @@ export function useMetricCollectionSet(
   const requests = collections.flatMap(({ key, collection: raw }) => {
     // Same catalog and install gates as `useMetricCollection` — see the notes there.
     const collection = filterCollectionByKey(
-      filterCollectionToAvailable(raw, catalog.keys),
+      filterCollectionToDeclaredDimensions(
+        filterCollectionToAvailable(raw, catalog.keys),
+        dimensions.byMetricKey
+      ),
       gate
     );
     const chunkSize = entityChunkSize(collection);
@@ -296,12 +313,13 @@ export function useMetricCollectionSet(
     out.set(key, {
       byKey: new Map(),
       previousByKey: null,
-      // Pending covers the catalog wait too — otherwise a screen reads "no
+      // Pending covers both catalog waits too — otherwise a screen reads "no
       // data" for the moment before its requests are even allowed to fire.
       isPending:
         (existing?.isPending ?? false) ||
         (query.isPending && active) ||
-        (entitySelected(entity, ids) && catalog.isPending),
+        (entitySelected(entity, ids) &&
+          (catalog.isPending || dimensions.isPending)),
       isFetching: (existing?.isFetching ?? false) || query.isFetching,
       isError: (existing?.isError ?? false) || (active && query.isError),
       // Chunks of the same collection share a key; refetch fans out to all.

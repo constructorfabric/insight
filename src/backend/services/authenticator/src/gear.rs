@@ -28,7 +28,7 @@ use crate::session::SessionManager;
 /// `stateful` (background workers — stubbed for step 04).
 #[toolkit::gear(
     name = "authenticator",
-    deps = ["types-registry"],
+    deps = [types_registry],
     capabilities = [rest, stateful]
 )]
 pub struct AuthenticatorGear {

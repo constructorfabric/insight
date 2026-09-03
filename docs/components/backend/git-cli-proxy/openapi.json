@@ -896,5 +896,6 @@
         "summary": "Per-file changes of non-merge commits, with optional patch text"
       }
     }
-  }
+  },
+  "x-toolkit-spec-scope": "minimum-conformance"
 }

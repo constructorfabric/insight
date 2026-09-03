@@ -152,6 +152,9 @@ cases:
             views:
               - {view: period}
               - {view: breakdown, dimensions: [branch_scope]}
+          - metric_key: git.commit_size
+            views:
+              - {view: breakdown, dimensions: [branch_scope]}
     expect:
       - assert: "status == 200"
 
@@ -381,6 +384,17 @@ cases:
         view: breakdown
         find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: non_default}}
         equal: {value: 20}
+
+      # Sizes split with their commits: the landed 11 and the in-flight 22
+      # never pool into one median.
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: default}}
+        equal: {value: 11}
+      - metric: git.commit_size
+        view: breakdown
+        find: {entity_id: alice@example.com, dimensions: {key: branch_scope, value: non_default}}
+        equal: {value: 22}
 
   - name: A merged request into the default branch promotes its commit
     request:

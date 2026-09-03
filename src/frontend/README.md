@@ -151,7 +151,10 @@ resolution. A `planned` entry is demoted to the "Planned" menu group and
 toggled by the viewer's "Show planned sections" switch. Planning is entirely
 deployment-owned: entries absent from `nav.planned` are treated as live. A path
 in both lists is hidden; a path that matches nothing is ignored (malformed ones
-warn in the browser console).
+warn in the browser console). One control is planned in code rather than by
+path: the topbar Cohort select renders only while the switch is on, and with it
+off the `?slice=` parameter is ignored so no view compares against a cohort the
+reader cannot see or change.
 This is presentation, not authorization — the API refuses on its own
 regardless of what the menu shows. Parsing and semantics live in
 [src/lib/portal/nav-policy.ts](src/lib/portal/nav-policy.ts).

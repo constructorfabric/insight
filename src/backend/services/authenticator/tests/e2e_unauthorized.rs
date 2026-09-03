@@ -1,4 +1,4 @@
-//! End-to-end 401 contract for the session-cookie surface: every `.public()`
+//! End-to-end 401 contract for the session-cookie surface: every `.anonymous().exposed()`
 //! route that requires a session answers 401 both without a cookie and with a
 //! cookie that resolves to no session.
 //!

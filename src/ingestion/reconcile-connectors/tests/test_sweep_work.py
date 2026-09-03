@@ -8,14 +8,13 @@ have, too narrow and a configured one reads as removed.
 Drives the real bash rather than a transcription of it — the gate's three exit
 codes are the whole point, and a rewrite in Python would test the rewrite.
 
-Run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests
+Run: pytest src/ingestion/reconcile-connectors/tests
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
-import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,26 +60,26 @@ def names(result: subprocess.CompletedProcess) -> list[str]:
     return [c["name"] for c in work["connectors"]]
 
 
-class ConfiguredMeansTheInstallHasIt(unittest.TestCase):
+class TestConfiguredMeansTheInstallHasIt:
     def test_a_descriptor_without_a_secret_is_not_configured(self) -> None:
         """Descriptors are every connector the product ships. Reporting them all
         fills the page with connectors this install never had — and reconcile
         agrees: without a Secret it deletes the source rather than driving it."""
         result = build_work('[[ "$1" == "charlie" ]] && return 0; return 1')
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(names(result), ["alpha", "bravo"])
+        assert result.returncode == 0, result.stderr
+        assert names(result) == ["alpha", "bravo"]
 
     def test_a_connector_with_a_secret_is_configured_even_with_no_connection(self) -> None:
         """A configured connector that never ran is a state the page must be
         able to show, so it is reported without a connection id, not dropped."""
         result = build_work("return 1")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        assert result.returncode == 0, result.stderr
         work = json.loads(result.stdout)
         by_name = {c["name"]: c for c in work["connectors"]}
-        self.assertEqual(by_name["alpha"]["connection_id"], "conn-alpha")
-        self.assertNotIn("connection_id", by_name["charlie"])
+        assert by_name["alpha"]["connection_id"] == "conn-alpha"
+        assert "connection_id" not in by_name["charlie"]
 
     def test_a_failed_secret_lookup_records_nothing_at_all(self) -> None:
         """Exit 2 is "the API blipped", not "the Secret is gone". Dropping the
@@ -88,18 +87,14 @@ class ConfiguredMeansTheInstallHasIt(unittest.TestCase):
         which the read surface takes at face value — so no snapshot is built."""
         result = build_work('[[ "$1" == "bravo" ]] && return 2; return 1')
 
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout.strip(), "")
-        self.assertIn("bravo", result.stderr)
+        assert result.returncode == 1
+        assert result.stdout.strip() == ""
+        assert "bravo" in result.stderr
 
     def test_no_descriptor_carries_a_secret_and_the_set_is_empty(self) -> None:
         """An empty set is not an error here. The caller refuses to seal it —
         an empty snapshot and "everything was removed" are the same rows."""
         result = build_work("return 0")
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(names(result), [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert result.returncode == 0, result.stderr
+        assert names(result) == []

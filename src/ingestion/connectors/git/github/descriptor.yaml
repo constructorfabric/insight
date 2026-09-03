@@ -35,7 +35,7 @@ name: github
 #   drops a bronze column.
 #   Additive alongside: a new `issue_links` stream, twelve link event types on
 #   `issue_timeline_events`, and four columns for the link target.
-version: "7.0.0"
+version: "7.0.1"
 schedule: "0 */4 * * *"
 workflow: sync
 
