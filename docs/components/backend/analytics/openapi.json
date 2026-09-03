@@ -2975,6 +2975,7 @@
             "type": "string"
           },
           "denominator": {
+            "description": "What it was taken from, below the line. Ratio metrics only.",
             "format": "double",
             "type": [
               "number",
@@ -2982,7 +2983,7 @@
             ]
           },
           "numerator": {
-            "description": "The two sides a ratio was taken from, for the bucket. Present only for\nratio metrics: a share is argued with its denominator, and a reader who\ncan see \"6 of 8\" can tell a quiet day from a bad one. Every other\ncomputation leaves them out rather than sending nulls.",
+            "description": "What the bucket's ratio was taken from, above the line. Ratio metrics\nonly, and absent on a bucket whose numerator measure has no rows —\na share is argued with its denominator, and a reader who can see\n\"6 of 8\" can tell a quiet day from a bad one.",
             "format": "double",
             "type": [
               "number",
