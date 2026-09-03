@@ -19,12 +19,14 @@ local CACHE = "jwt_cache"
 -- Populated by init() from the generated init_by_lua_block.
 local cfg = {
     authz_url = nil,
+    mcp_resource_metadata_url = nil,
     authz_connect_timeout_ms = 2000,
     authz_read_timeout_ms = 2000,
 }
 
 function _M.init(opts)
     cfg.authz_url = opts.authz_url
+    cfg.mcp_resource_metadata_url = opts.mcp_resource_metadata_url
     cfg.authz_connect_timeout_ms = opts.authz_connect_timeout_ms or cfg.authz_connect_timeout_ms
     cfg.authz_read_timeout_ms = opts.authz_read_timeout_ms or cfg.authz_read_timeout_ms
 end
@@ -150,8 +152,9 @@ end
 
 function _M.pass_bearer()
     local authorization = ngx.var.http_authorization
-    if not authorization or not string.match(authorization, "^Bearer %S+$") then
-        return errors.bearer_unauthorized()
+    local scheme, token = string.match(authorization or "", "^(%S+) (%S+)$")
+    if not scheme or string.lower(scheme) ~= "bearer" or not token then
+        return errors.bearer_unauthorized(cfg.mcp_resource_metadata_url)
     end
 
     ngx.req.clear_header("Cookie")

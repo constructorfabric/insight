@@ -25,6 +25,7 @@ pub struct Settings {
     pub authenticator_url: String,
     pub authz_path: String,
     pub front_url: String,
+    pub mcp_public_url: Option<String>,
     pub jwt_cache_size: String,
     pub authz_connect_timeout_ms: u32,
     pub authz_read_timeout_ms: u32,
@@ -41,6 +42,7 @@ impl Default for Settings {
             authenticator_url: "http://authenticator.insight.svc.cluster.local:8083".to_owned(),
             authz_path: "/internal/authz".to_owned(),
             front_url: "http://insight-front.insight.svc.cluster.local:8080".to_owned(),
+            mcp_public_url: None,
             jwt_cache_size: "64m".to_owned(),
             authz_connect_timeout_ms: 2000,
             authz_read_timeout_ms: 2000,
@@ -70,6 +72,28 @@ fn authority_of(raw: &str, what: &str) -> anyhow::Result<(String, String)> {
         .port_or_known_default()
         .with_context(|| format!("{what}: '{raw}' has no port"))?;
     Ok((url.scheme().to_owned(), format!("{host}:{port}")))
+}
+
+fn mcp_resource_metadata_url(raw: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let url = Url::parse(raw).context("MCP public URL is invalid")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none(),
+        "MCP public URL must be an HTTP(S) origin"
+    );
+
+    Ok(Some(format!(
+        "{}/.well-known/oauth-protected-resource/mcp",
+        url.as_str().trim_end_matches('/')
+    )))
 }
 
 /// A stable, nginx-safe upstream identifier derived from the authority.
@@ -149,6 +173,7 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
         settings.authenticator_url.trim_end_matches('/'),
         settings.authz_path
     );
+    let mcp_resource_metadata_url = mcp_resource_metadata_url(settings.mcp_public_url.as_deref())?;
 
     let mut c = String::new();
 
@@ -174,7 +199,12 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
     writeln!(c, "    server_tokens off;")?;
     c.push('\n');
 
-    emit_http_runtime(&mut c, settings, &authz_url)?;
+    emit_http_runtime(
+        &mut c,
+        settings,
+        &authz_url,
+        mcp_resource_metadata_url.as_deref(),
+    )?;
 
     // Upstreams (keepalive-pooled).
     c.push_str("    # --- upstreams (keepalive-pooled) ---\n");
@@ -219,7 +249,12 @@ pub fn emit(config: &RouteConfig, settings: &Settings) -> anyhow::Result<String>
 
 /// Emit the http-block runtime: the Lua runtime + exchange config, the JSON
 /// access log, and the client-IP trust chain.
-fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> anyhow::Result<()> {
+fn emit_http_runtime(
+    c: &mut String,
+    settings: &Settings,
+    authz_url: &str,
+    mcp_resource_metadata_url: Option<&str>,
+) -> anyhow::Result<()> {
     // OpenResty Lua runtime (ADR-0001 Option A).
     c.push_str("    # --- OpenResty Lua runtime (DESIGN 3.11; ADR-0001 Option A) ---\n");
     writeln!(c, "    lua_package_path \"/etc/nginx/lua/?.lua;;\";")?;
@@ -235,6 +270,10 @@ fn emit_http_runtime(c: &mut String, settings: &Settings, authz_url: &str) -> an
     c.push_str("    init_by_lua_block {\n");
     c.push_str("        require(\"gateway\").init({\n");
     writeln!(c, "            authz_url = \"{authz_url}\",")?;
+    match mcp_resource_metadata_url {
+        Some(url) => writeln!(c, "            mcp_resource_metadata_url = \"{url}\",")?,
+        None => c.push_str("            mcp_resource_metadata_url = nil,\n"),
+    }
     writeln!(
         c,
         "            authz_connect_timeout_ms = {},",
