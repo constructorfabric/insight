@@ -1,0 +1,37 @@
+# The connector enrich sidecar, as an overlay on the root docker-compose.yml.
+#
+# A connector whose descriptor declares `images.enrich` materializes part of its
+# silver through a compiled binary: it reads that connector's staging tables and
+# writes back into `staging.*`, which dbt then unions into `silver.*`. The
+# pipeline is `dbt(tag:<connector>) → enrich → dbt(silver)`.
+#
+# The image is the one the connector's descriptor pins, which is also the
+# reference the chart hands to tt-enrich-<connector>-run, so what runs is the
+# shipped artefact rather than a locally compiled binary.
+#
+# An overlay, not a service in the root file: `${VAR:?}` is interpolated for
+# every compose command regardless of profile, so a required variable there
+# would break `./dev-compose.sh up` for everyone who never runs enrich.
+#
+#   ENRICH_IMAGE=<descriptor images.enrich.image> \
+#   docker compose -f docker-compose.yml -f deploy/compose/docker-compose.enrich.yml \
+#     --env-file <env> run --rm enrich \
+#     --insight-source-id=<id> --clickhouse-host=clickhouse --clickhouse-port=8123 \
+#     --clickhouse-user=insight --batch-size=10000
+services:
+  # One generic service rather than one per connector: the caller picks the
+  # image out of the descriptor, so a second connector that declares an enrich
+  # block participates without a change here. Arguments are the caller's too —
+  # the image's ENTRYPOINT is the binary, and `compose run enrich <args>`
+  # appends to it exactly as the workflow template's `args:` do.
+  enrich:
+    image: ${ENRICH_IMAGE:?ENRICH_IMAGE must name a connector descriptor's images.enrich.image}
+    networks: [insight]
+    environment:
+      # The template passes the password through the environment and everything
+      # else as flags. Keeping that split means a divergence in either shows up
+      # here rather than only in a deployment.
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-insight-local}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    depends_on:
+      clickhouse: {condition: service_healthy, required: false}

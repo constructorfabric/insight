@@ -154,6 +154,9 @@ Options:
                             Full instances cannot run concurrently because
                             published host ports are shared.
   --env-file=PATH           Alternate dotenv file. Default: .env.compose.
+  --seed-target=T           What the first-run seed populates: identity,
+                            silver or all. Default: derived from which
+                            datastore volumes are fresh.
 
 Out-of-scope:
   --start-airbyte / --start-argo
@@ -404,6 +407,7 @@ YML
 
 cmd_up() {
   local env_file=".env.compose"
+  local seed_target_override=""
   local from_ghcr_csv=""
   local watch_csv=""
   local watch_option_set=false
@@ -419,6 +423,10 @@ cmd_up() {
     case "$1" in
       --env-file=*)      env_file="${1#*=}"; shift ;;
       --env-file)        env_file="$2"; shift 2 ;;
+      --seed-target=*)   seed_target_override="${1#*=}"; shift ;;
+      --seed-target)
+        [[ $# -ge 2 ]] || { echo "ERROR: --seed-target requires a value." >&2; return 2; }
+        seed_target_override="$2"; shift 2 ;;
       --from-ghcr=*)     from_ghcr_csv="${1#*=}"; shift ;;
       --from-ghcr)       from_ghcr_csv="$2"; shift 2 ;;
       --watch=*)         watch_csv="${1#*=}"; watch_option_set=true; shift ;;
@@ -853,6 +861,7 @@ YML
     elif [[ "$need_maria" == "true" ]]; then                          seed_target=identity
     else                                                              seed_target=silver
     fi
+    [[ -n "$seed_target_override" ]] && seed_target="$seed_target_override"
     echo "=== First-run seed ($seed_target) ==="
     if cmd_seed --env-file "$env_file" "$seed_target"; then
       if [[ -z "$instance" ]]; then
@@ -1531,7 +1540,7 @@ TEST_STAND_READY_INTERVAL=5
 
 cmd_test_stand_help() {
   cat <<'EOF'
-usage: dev-compose.sh test-stand <up|env|seed|test|down> [args]
+usage: dev-compose.sh test-stand <up|minimal|env|seed|test|down> [args]
 
 The stack in test configuration: pinned ghcr images for the frontend and all
 four backend services, real Keycloak login, and a readiness gate that waits
@@ -1560,6 +1569,11 @@ for dbt-built gold data rather than for containers to report healthy.
           `up` refuses to pin a tree that differs from origin/main and names
           the flag to pass — but only when origin/main is in the checkout. A
           shallow clone says so on stderr and defers to its caller.
+  minimal Bring the stand up seeded with identity and the Keycloak realm
+          only, and gate on the services answering rather than on gold
+          holding rows. For a suite that writes its own bronze: the silver
+          generators do not run, so nothing is seeded that such a run would
+          immediately delete. Takes up's build flags.
   env     Write this instance's env file and stop. Takes up's build flags.
           Nothing is started, pulled or seeded — use it to see the ports,
           paths and callback an instance resolves to.
@@ -1825,6 +1839,47 @@ test_stand_table_ready() {
 # Requiring the whole set rather than one canary is what stops a stand where a
 # single generator family produced nothing from being reported ready — that
 # failure otherwise surfaces much later, as tests failing on absent rows.
+# Every service the data path is read through. All four answer the framework's
+# /health, so one path covers them.
+TEST_STAND_SERVICE_PROBES=(
+  "gateway|GATEWAY_PORT"
+  "analytics|ANALYTICS_PORT"
+  "authenticator|AUTHENTICATOR_PORT"
+  "identity-resolution|IDENTITY_RESOLUTION_PORT"
+)
+
+# Readiness for a stand whose data its caller will write itself. The gold gate
+# below certifies rows a data-path run deletes as its first act, so waiting on
+# them would mean waiting for something about to be destroyed.
+test_stand_wait_services() {
+  local elapsed=0 probe name var port pending=()
+
+  echo "=== Readiness gate: waiting for ${#TEST_STAND_SERVICE_PROBES[@]} services to answer /health ==="
+  while [[ "$elapsed" -lt "$TEST_STAND_READY_TIMEOUT" ]]; do
+    pending=()
+    for probe in "${TEST_STAND_SERVICE_PROBES[@]}"; do
+      name="${probe%%|*}"
+      var="${probe##*|}"
+      port="$(env_file_value "$TEST_STAND_ENV_FILE" "$var")"
+      curl -sf -o /dev/null --max-time 5 "http://localhost:${port:-0}/health" \
+        || pending+=("${name} (:${port:-unset})")
+    done
+
+    if [[ ${#pending[@]} -eq 0 ]]; then
+      echo "Readiness gate: all ${#TEST_STAND_SERVICE_PROBES[@]} services answered after ${elapsed}s."
+      return 0
+    fi
+
+    sleep "$TEST_STAND_READY_INTERVAL"
+    elapsed=$((elapsed + TEST_STAND_READY_INTERVAL))
+  done
+
+  echo "ERROR: readiness gate timed out after ${TEST_STAND_READY_TIMEOUT}s." >&2
+  echo "       ${#pending[@]} service(s) never answered /health:" >&2
+  printf '         %s\n' "${pending[@]}" >&2
+  return 1
+}
+
 test_stand_wait_ready() {
   local run_started_at="$1"
   local elapsed=0 table reason
@@ -2074,6 +2129,45 @@ cmd_test_stand() {
         esac
       done
       test_stand_prepare_env "$build_frontend"
+      ;;
+
+    minimal)
+      # The stand a suite writes its own bronze into: identity and the realm,
+      # and nothing the suite is about to delete. Its silver generators do not
+      # run, so gold is empty and the gold gate would never pass -- readiness
+      # is the services answering instead.
+      local mbackend_mode=pinned mbuild_frontend=false
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --build)          mbackend_mode=source; mbuild_frontend=true; shift ;;
+          --build-backend)  mbackend_mode=source; shift ;;
+          --prebuilt-backend) mbackend_mode=prebuilt; shift ;;
+          --build-frontend) mbuild_frontend=true; shift ;;
+          -h|--help) cmd_test_stand_help; return 0 ;;
+          *) echo "ERROR: unknown test-stand minimal option: $1" >&2; return 2 ;;
+        esac
+      done
+
+      test_stand_prepare_env "$mbuild_frontend" || return 1
+      case "$mbackend_mode" in
+        source)   echo "=== the backend is compiled from this tree, not pulled ===" ;;
+        prebuilt) test_stand_use_prebuilt_backends || return 1 ;;
+        pinned)   test_stand_backend_matches_charts || return 1
+                  test_stand_pull_backends || return 1 ;;
+      esac
+
+      cmd_up --env-file "$TEST_STAND_ENV_FILE" --seed-target identity \
+             --authenticator-redirect "$(test_stand_origin)/auth/callback" || return 1
+
+      update_env_var "$TEST_STAND_ENV_FILE" AUTHENTICATOR_OIDC_ISSUER "${AUTHENTICATOR_OIDC_ISSUER:-}"
+      echo "=== persisted AUTHENTICATOR_OIDC_ISSUER=${AUTHENTICATOR_OIDC_ISSUER:-<empty>} ==="
+
+      # cmd_up's first-run seed ran before the issuer was persisted, so its
+      # manifest would name the wrong IdP. Same reason `up` re-seeds.
+      cmd_seed --env-file "$TEST_STAND_ENV_FILE" identity || return 1
+
+      test_stand_wait_services || return 1
+      echo "=== test-stand is ready (identity only; bronze is yours to write) ==="
       ;;
 
     seed)
