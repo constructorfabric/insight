@@ -736,6 +736,71 @@ mod tests {
     use crate::engine::read::patches::Patch;
 
     #[tokio::test]
+    async fn a_serve_holds_its_slot_until_the_caller_is_done_with_the_page() {
+        // The cap bounds SERVES, not merely the read inside one: a page's rows
+        // and the body it serializes into coexist, so the slot has to outlive
+        // the read and come back only when the caller drops it.
+        let fixture = crate::engine::store::tests::fixture("api-serve-slot");
+        let state = Arc::new(AppState {
+            store: Arc::clone(&fixture.store),
+            config: crate::config::GearConfig {
+                bind_addr: "127.0.0.1:0".to_owned(),
+                data_dir: fixture.root.display().to_string(),
+                disk_budget_bytes: 1_000_000_000,
+                max_repo_bytes: 500_000_000,
+                default_max_staleness_seconds: 300,
+                heavy_ops_concurrency: 2,
+                serve_concurrency: 1,
+                proxy_token: "t0ken".to_owned(),
+                ca_cert_path: String::new(),
+                allow_file_repos: true,
+                allowed_repo_hosts: Vec::new(),
+            },
+            serves: Arc::new(tokio::sync::Semaphore::new(1)),
+        });
+        let context = RequestContext {
+            key: crate::engine::store::tests::key(&fixture),
+            creds: crate::engine::store::tests::creds(),
+            max_staleness: None,
+        };
+        let Ok(paging) = Paging::parse(None, None) else {
+            panic!("default paging must parse")
+        };
+
+        let served = read_snapshot(&state, &context, &paging, |guard: RepoGuard| {
+            Box::pin(async move {
+                Ok(Page {
+                    items: vec![guard.generation()],
+                    next_page_token: None,
+                })
+            })
+        })
+        .await;
+        let (page, slot) = match served {
+            Ok(served) => served,
+            Err(e) => panic!("a fixture repository must serve a page: {e}"),
+        };
+
+        assert_eq!(
+            page.items,
+            vec![1],
+            "the clone's first generation is served"
+        );
+        assert_eq!(
+            state.serves.available_permits(),
+            0,
+            "the slot stays taken while the page is alive"
+        );
+
+        drop(slot);
+        assert_eq!(
+            state.serves.available_permits(),
+            1,
+            "and returns once the caller is done with the page"
+        );
+    }
+
+    #[tokio::test]
     async fn a_page_declares_its_own_length() {
         // The response-size histogram reads this header. Left to the wire
         // layer it is absent here, and every page is recorded as zero bytes.

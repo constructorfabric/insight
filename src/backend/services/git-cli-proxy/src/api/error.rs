@@ -421,12 +421,23 @@ mod tests {
                 GitError::AdmissionRejected.into(),
                 StatusCode::TOO_MANY_REQUESTS,
             ),
+            // Ours, not the entry's: every page-serve slot is taken.
+            (ApiError::ServeSaturated, StatusCode::TOO_MANY_REQUESTS),
+            (
+                ApiError::Serialization("boom".to_owned()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
         ];
         for (error, expected) in cases {
             let label = error.to_string();
+            // INVARIANT: what a request is RECORDED against and what it is
+            // ANSWERED with are the same status — the metrics middleware
+            // reads the former off the error before the latter exists.
+            let recorded = error.status_code();
             let (status, _, body) = problem(error).await;
             assert_eq!(status, expected, "for {label}");
             assert_eq!(body["status"], expected.as_u16(), "for {label}");
+            assert_eq!(recorded, expected.as_u16(), "recorded status for {label}");
         }
     }
 
