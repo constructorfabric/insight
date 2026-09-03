@@ -74,6 +74,72 @@
         "x-toolkit-visibility": "exposed"
       }
     },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.metadata",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authorization server metadata"
+          }
+        },
+        "summary": "OAuth authorization server metadata for MCP clients",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Protected resource metadata for the MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/.well-known/oauth-protected-resource/mcp": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.protected_resource_mcp",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Protected resource metadata"
+          }
+        },
+        "summary": "Path-specific protected resource metadata for the MCP endpoint",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
     "/.well-known/openid-configuration": {
       "get": {
         "operationId": "authenticator.openid_configuration",
@@ -264,6 +330,110 @@
         "summary": "Current session summary for the SPA",
         "tags": [
           "auth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/authorize": {
+      "get": {
+        "operationId": "authenticator.mcp_oauth.authorize",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "format": "text/html",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Authorization confirmation"
+          }
+        },
+        "summary": "Authorize an MCP client with code and PKCE",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/decision": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.decision",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Client redirect"
+          }
+        },
+        "summary": "Approve or deny a pending MCP authorization",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/register": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.register",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Registered client"
+          }
+        },
+        "summary": "Register a public MCP OAuth client",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/revoke": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.revoke",
+        "responses": {
+          "200": {
+            "description": "Token revoked"
+          }
+        },
+        "summary": "Revoke an MCP refresh token",
+        "tags": [
+          "mcp-oauth"
+        ],
+        "x-toolkit-visibility": "exposed"
+      }
+    },
+    "/auth/oauth/token": {
+      "post": {
+        "operationId": "authenticator.mcp_oauth.token",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OAuth token response"
+          }
+        },
+        "summary": "Exchange an authorization code or refresh token",
+        "tags": [
+          "mcp-oauth"
         ],
         "x-toolkit-visibility": "exposed"
       }

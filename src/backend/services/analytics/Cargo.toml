@@ -50,6 +50,7 @@ grpc_hub = { workspace = true }
 gear_orchestrator = { workspace = true }
 types_registry = { workspace = true }
 reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
 redis = { workspace = true }
 
 serde = { workspace = true }
@@ -78,7 +79,6 @@ zeroize = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 secrecy = { workspace = true }
-subtle = { workspace = true }
 csv = { workspace = true }
 rust_xlsxwriter = { workspace = true }
 tracing = { workspace = true }

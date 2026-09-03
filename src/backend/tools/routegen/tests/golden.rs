@@ -108,11 +108,12 @@ fn stub_status_is_loopback_only() {
 }
 
 #[test]
-fn jwks_is_not_fronted_by_the_gateway() {
-    // JWKS is public and served directly by the authenticator (the key issuer),
-    // never proxied through the edge.
+fn mcp_oauth_metadata_and_jwks_are_fronted_by_the_gateway() {
     let conf = generate(&fixture("full.routes.yaml"), &Settings::default()).unwrap();
-    assert!(!conf.contains("jwks"), "gateway must not front JWKS");
+    assert!(conf.contains("location = /.well-known/oauth-authorization-server"));
+    assert!(conf.contains("location = /.well-known/oauth-protected-resource/mcp"));
+    assert!(conf.contains("location = /.well-known/jwks.json"));
+    assert!(!conf.contains("location = /.well-known/openid-configuration"));
 }
 
 fn reject(yaml: &str) -> String {

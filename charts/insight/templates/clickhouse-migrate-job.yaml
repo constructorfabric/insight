@@ -107,7 +107,7 @@ spec:
                   name: {{ default "insight-db-creds" .Values.clickhouse.passwordSecret.name | quote }}
                   key:  "clickhouse-presentation-password"
                   optional: true
-            {{- if .Values.analytics.mcp.enabled }}
+            {{- if .Values.global.mcp.enabled }}
             - name: CLICKHOUSE_MCP_PASSWORD
               valueFrom:
                 secretKeyRef:

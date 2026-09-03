@@ -44,7 +44,7 @@ pub enum VisibilityPolicy {
 pub struct McpConfig {
     pub enabled: bool,
     pub bind_addr: String,
-    pub bearer_token: SecretString,
+    pub public_url: String,
     pub clickhouse_user: String,
     pub clickhouse_password: SecretString,
 }
@@ -54,7 +54,7 @@ impl Default for McpConfig {
         Self {
             enabled: false,
             bind_addr: "0.0.0.0:8086".to_owned(),
-            bearer_token: SecretString::from(String::new()),
+            public_url: String::new(),
             clickhouse_user: "insight_mcp".to_owned(),
             clickhouse_password: SecretString::from(String::new()),
         }

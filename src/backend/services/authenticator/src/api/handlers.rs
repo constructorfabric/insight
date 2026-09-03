@@ -60,11 +60,14 @@ pub async fn login(
         return login_denied_unknown_host(&state, &headers, &host);
     };
 
-    let return_to = sanitize_return_to(
-        params.return_to.as_deref(),
-        &state.cfg.default_return_to,
-        &state.cfg.return_to_prefix,
-    );
+    let return_to = match params.return_to.as_deref() {
+        Some(return_to) if is_mcp_oauth_return(return_to) => return_to.to_owned(),
+        candidate => sanitize_return_to(
+            candidate,
+            &state.cfg.default_return_to,
+            &state.cfg.return_to_prefix,
+        ),
+    };
 
     // Preview experiments (`/exp/<name>`) are a capability, off by default. A
     // production stand leaves `experiments_enabled=false`, so a login can never
@@ -1558,6 +1561,16 @@ pub fn sanitize_return_to(candidate: Option<&str>, default: &str, prefix: &str) 
         .filter(|p| is_safe_return_to(p, prefix))
         .unwrap_or(default)
         .to_owned()
+}
+
+fn is_mcp_oauth_return(value: &str) -> bool {
+    let Some(request_id) = value.strip_prefix("/auth/oauth/authorize?request_id=") else {
+        return false;
+    };
+    (32..=256).contains(&request_id.len())
+        && request_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// Reserved path prefix that preview experiments (`/exp/<name>`) are served

@@ -87,7 +87,19 @@
         "imagePullPolicy":  { "enum": ["Always", "IfNotPresent", "Never"] },
         "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
         "storageClass":     { "type": "string" },
-        "observability":    { "$ref": "#/definitions/observability" }
+        "observability":    { "$ref": "#/definitions/observability" },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "publicUrl": {
+              "anyOf": [
+                { "const": "" },
+                { "type": "string", "format": "uri" }
+              ]
+            }
+          }
+        }
       }
     },
 

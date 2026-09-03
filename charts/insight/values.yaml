@@ -93,6 +93,10 @@ credentials:
 global:
   imagePullSecrets: [] # pull-secrets for a private registry
   storageClass: "" # empty = default StorageClass of the cluster
+  mcp:
+    enabled: false
+    # Public origin of this Insight instance, for example https://insight.example.com.
+    publicUrl: ""
   security:
     # bitnami charts check that the image belongs to their "secure images"
     # list. We use bitnamilegacy (see mariadb.image / redis.image) so we
@@ -553,12 +557,9 @@ analytics:
     # its honest not-enabled state.
     tenantMetricsEnabled: false
   mcp:
-    enabled: false
     port: 8086
-    # Operator-managed Secret shared only with administrators. It carries
-    # `token` for MCP clients and the dedicated ClickHouse user's password.
+    # Operator-managed Secret carrying the dedicated ClickHouse user's password.
     credentialsSecret: insight-mcp-creds
-    bearerTokenKey: token
     clickhouseUser: insight_mcp
     clickhousePasswordKey: clickhouse-password
   externalSources: []

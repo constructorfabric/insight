@@ -333,6 +333,22 @@ fn emit_server(
     c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
     c.push_str("        }\n\n");
 
+    for path in [
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/jwks.json",
+    ] {
+        writeln!(c, "        location = {path} {{")?;
+        c.push_str("            limit_req zone=auth_per_ip burst=120 nodelay;\n");
+        c.push_str("            proxy_pass http://authenticator;\n");
+        c.push_str("            proxy_set_header Connection \"\";\n");
+        c.push_str("            proxy_set_header Host $host;\n");
+        c.push_str("            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n");
+        c.push_str("            proxy_set_header X-Forwarded-Proto $scheme;\n");
+        c.push_str("        }\n\n");
+    }
+
     c.push_str("        # --- generated /api routes: full auth + hygiene block per location ---\n");
     for (route, ident) in routes.iter().zip(route_upstream) {
         emit_api_location(c, route, ident, upstreams, config)?;

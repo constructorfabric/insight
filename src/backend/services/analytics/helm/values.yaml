@@ -1,5 +1,10 @@
 replicaCount: 1
 
+global:
+  mcp:
+    enabled: false
+    publicUrl: ""
+
 podAnnotations: {}
 
 image:
@@ -12,12 +17,9 @@ service:
   port: 8081
 
 mcp:
-  enabled: false
   port: 8086
-  # Pre-create this Secret with `token` and `clickhouse-password` keys.
-  # Possession of `token` grants access to the SQL explorer.
+  # Pre-create this Secret with the dedicated ClickHouse password.
   credentialsSecret: insight-mcp-creds
-  bearerTokenKey: token
   clickhouseUser: insight_mcp
   clickhousePasswordKey: clickhouse-password
 
