@@ -90,17 +90,31 @@ export interface GearOrder {
   direction: "asc" | "desc";
 }
 
+export interface GearBoard {
+  number: number;
+  cards: number;
+}
+
+/** The boards bronze holds, for the `project` the roadmap read requires. */
+export async function getGearBoards(): Promise<GearBoard[]> {
+  const res = await fetchWithAuth(`${BASE}/gear-roadmap/boards`);
+  if (!res.ok) {
+    throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
+  }
+  return ((await res.json()) as { boards: GearBoard[] }).boards;
+}
+
 /** No order asked for means the server's own, so the request carries none. */
 export async function getGearRoadmap(
+  project: number,
   order: GearOrder | null,
 ): Promise<GearRoadmap> {
-  const query = order
-    ? `?${new URLSearchParams({
-        sort: order.sort,
-        direction: order.direction,
-      }).toString()}`
-    : "";
-  const res = await fetchWithAuth(`${BASE}/gear-roadmap${query}`);
+  const params = new URLSearchParams({ project: String(project) });
+  if (order) {
+    params.set("sort", order.sort);
+    params.set("direction", order.direction);
+  }
+  const res = await fetchWithAuth(`${BASE}/gear-roadmap?${params.toString()}`);
   if (!res.ok) {
     throw new AnalyticsApiError(res.status, await res.json().catch(() => null));
   }

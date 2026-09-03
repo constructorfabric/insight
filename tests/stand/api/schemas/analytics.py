@@ -66,6 +66,21 @@ class AssigneeLink(BaseModel):
     url: str | None = None
 
 
+class BoardDto(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cards: int = Field(..., ge=0)
+    number: int
+
+
+class BoardsResponse(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    boards: list[BoardDto]
+
+
 class BreakdownWindowValueDto(BaseModel):
     """
     One group's reading over the comparison window.

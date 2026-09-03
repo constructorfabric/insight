@@ -1,3 +1,4 @@
+pub(crate) mod boards;
 pub(crate) mod forecast;
 pub(crate) mod milestone;
 pub(crate) mod model;

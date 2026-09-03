@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { GearsTable } from "@/components/portal/gear-delivery/gears-table";
@@ -9,7 +10,7 @@ import { CenteredSpinner } from "@/components/widgets/centered-spinner";
 import type { GearRoadmap } from "@/api/gear-roadmap-client";
 import type { BoardLensConfig } from "@/lib/portal/lens-configs";
 import { usePortalGearOrder } from "@/lib/portal/portal-nav";
-import { useGearRoadmap } from "@/queries/gear-roadmap";
+import { useGearBoards, useGearRoadmap } from "@/queries/gear-roadmap";
 
 /**
  * A Development lens over the gear board. Each pane states the capacity the
@@ -19,7 +20,13 @@ import { useGearRoadmap } from "@/queries/gear-roadmap";
 export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
   const { t } = useTranslation();
   const order = usePortalGearOrder();
+  const boards = useGearBoards();
+  const [chosen, setChosen] = useState<number | null>(null);
+
+  const project = chosen ?? boards.data?.[0]?.number ?? null;
+
   const { data, isPending, isError } = useGearRoadmap(
+    project,
     order.sort
       ? {
           sort: order.sort,
@@ -28,6 +35,14 @@ export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
       : null,
   );
 
+  if (boards.isSuccess && boards.data.length === 0) {
+    return (
+      <div className="flex flex-col gap-6 p-6">
+        <p role="status">{t("gear_roadmap.no_boards")}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -35,8 +50,36 @@ export function GearDeliveryView({ config }: { config: BoardLensConfig }) {
         {config.tagline ? (
           <p className="text-sm text-muted-foreground">{config.tagline}</p>
         ) : null}
+        {boards.data && boards.data.length > 1 ? (
+          <label className="ms-auto flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">
+              {t("gear_roadmap.board_label")}
+            </span>
+            <select
+              className="rounded-md border bg-background px-2 py-1"
+              value={project ?? ""}
+              onChange={(event) => setChosen(Number(event.target.value))}
+            >
+              {boards.data.map((board) => (
+                <option key={board.number} value={board.number}>
+                  {t("gear_roadmap.board_option", {
+                    number: board.number,
+                    cards: board.cards,
+                  })}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {data ? (
-          <Badge variant="outline" className="ms-auto font-normal">
+          <Badge
+            variant="outline"
+            className={
+              boards.data && boards.data.length > 1
+                ? "font-normal"
+                : "ms-auto font-normal"
+            }
+          >
             {t("gear_roadmap.capacity_note", {
               capacity: data.capacity_man_days_per_person,
             })}

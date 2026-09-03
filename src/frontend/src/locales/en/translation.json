@@ -695,6 +695,9 @@
       "lane": "Assignee",
       "window": "Scheduled",
       "open_issue": "Open issue #{{number}}"
-    }
+    },
+    "board_label": "Board",
+    "board_option": "#{{number}} · {{cards}} cards",
+    "no_boards": "No delivery board has been synced yet."
   }
 }

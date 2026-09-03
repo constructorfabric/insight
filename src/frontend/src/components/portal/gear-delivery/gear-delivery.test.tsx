@@ -19,8 +19,14 @@ let queryState: {
   isError: boolean;
 };
 
+let boardsState: {
+  data?: { number: number; cards: number }[];
+  isSuccess: boolean;
+};
+
 vi.mock("@/queries/gear-roadmap", () => ({
   useGearRoadmap: () => queryState,
+  useGearBoards: () => boardsState,
 }));
 
 vi.mock("@/components/ui/sidebar", () => ({
@@ -78,6 +84,7 @@ function roadmap(over: Partial<GearRoadmap> = {}): GearRoadmap {
 beforeEach(() => {
   portalRouter.reset();
   queryState = { data: roadmap(), isPending: false, isError: false };
+  boardsState = { data: [{ number: 48, cards: 3 }], isSuccess: true };
 });
 
 describe("GearSummary", () => {
@@ -263,6 +270,50 @@ describe("GearSchedule", () => {
 });
 
 describe("GearDeliveryView", () => {
+  it("reads the only board without asking which", () => {
+    render(
+      <GearDeliveryView
+        config={{ title: "Gear summary", board: "gear-summary" }}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("asks which board once a second one is synced", () => {
+    boardsState = {
+      data: [
+        { number: 48, cards: 3 },
+        { number: 51, cards: 9 },
+      ],
+      isSuccess: true,
+    };
+
+    render(
+      <GearDeliveryView
+        config={{ title: "Gear summary", board: "gear-summary" }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("option", { name: /#51/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing is synced rather than failing to load", () => {
+    boardsState = { data: [], isSuccess: true };
+
+    render(
+      <GearDeliveryView
+        config={{ title: "Gear summary", board: "gear-summary" }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No delivery board has been synced yet.",
+    );
+  });
+
   it("says so when the board cannot be read", () => {
     queryState = { isPending: false, isError: true };
 
