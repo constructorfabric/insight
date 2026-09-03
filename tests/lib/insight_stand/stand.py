@@ -113,7 +113,10 @@ def parse_env_file(path: Path) -> Mapping[str, str]:
     return values
 
 
-def _candidate_env_files(repo_root: Path, environ: Mapping[str, str]) -> list[Path]:
+def candidate_env_files(repo_root: Path, environ: Mapping[str, str]) -> list[Path]:
+    """Env files to try, most specific first. `$INSIGHT_STAND_ENV_FILE` replaces
+    the search rather than extending it: a run aimed at one stand must not fall
+    back to another's ports."""
     override = (environ.get(ENV_FILE_ENV) or "").strip()
     if override:
         return [Path(override)]
@@ -134,7 +137,7 @@ def resolve_endpoint(
         return StandEndpoint(base_url=explicit.rstrip("/"), source=f"${BASE_URL_ENV}")
 
     tried: list[str] = []
-    for candidate in _candidate_env_files(root, env):
+    for candidate in candidate_env_files(root, env):
         if not candidate.is_file():
             tried.append(f"{candidate} (absent)")
             continue

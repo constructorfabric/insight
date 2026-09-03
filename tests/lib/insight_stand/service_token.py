@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from .errors import PersonaError
-from .stand import CANDIDATE_ENV_FILES, PUBLISHED_HOST, parse_env_file
+from .stand import PUBLISHED_HOST, candidate_env_files, parse_env_file
 
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 
@@ -89,9 +89,11 @@ ASSERTION_LIFETIME_S: Final[int] = 30
 DEFAULT_MAX_TOKEN_AGE_S: Final[float] = 240.0
 
 
-def _env_file() -> Path | None:
-    for name in CANDIDATE_ENV_FILES:
-        candidate = _REPO_ROOT / name
+def _env_file(environ: Mapping[str, str] | None = None) -> Path | None:
+    import os
+
+    env = os.environ if environ is None else environ
+    for candidate in candidate_env_files(_REPO_ROOT, env):
         if candidate.is_file():
             return candidate
     return None
