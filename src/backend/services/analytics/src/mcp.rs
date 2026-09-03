@@ -97,6 +97,31 @@ enum AuthFailure {
     Unavailable,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum QueryFailure {
+    #[error("query capacity is exhausted")]
+    Busy,
+    #[error("query result exceeded the response limit")]
+    ResultTooLarge,
+    #[error("query timed out")]
+    Timeout,
+    #[error("ClickHouse query failed: {0}")]
+    ClickHouse(#[from] clickhouse::error::Error),
+    #[error("ClickHouse returned an invalid JSON response: {0}")]
+    InvalidResponse(#[from] serde_json::Error),
+}
+
+impl QueryFailure {
+    fn public_message(&self) -> &'static str {
+        match self {
+            Self::Busy => "the SQL explorer is busy; retry shortly",
+            Self::ResultTooLarge => "query result exceeded the response limit",
+            Self::Timeout => "query timed out",
+            Self::ClickHouse(_) | Self::InvalidResponse(_) => "query execution failed",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct SqlExplorer {
     client: insight_clickhouse::Client,
@@ -113,41 +138,30 @@ impl SqlExplorer {
         }
     }
 
-    async fn execute(&self, sql: &str) -> Result<QuerySqlResult, String> {
+    async fn execute(&self, sql: &str) -> Result<QuerySqlResult, QueryFailure> {
         let permit = self
             .query_slots
             .clone()
             .try_acquire_owned()
-            .map_err(|_| "the SQL explorer is busy; retry shortly".to_owned())?;
+            .map_err(|_| QueryFailure::Busy)?;
 
-        let mut query = self
-            .client
-            .query(sql)
-            .fetch_bytes("JSON")
-            .map_err(|error| format!("ClickHouse rejected the query: {error}"))?;
+        let mut query = self.client.query(sql).fetch_bytes("JSON")?;
 
         let fetch = async {
             let mut bytes = Vec::new();
-            while let Some(chunk) = query
-                .next()
-                .await
-                .map_err(|error| format!("ClickHouse query failed: {error}"))?
-            {
+            while let Some(chunk) = query.next().await? {
                 let next_len = bytes.len().saturating_add(chunk.len());
                 if next_len > MAX_RESULT_BYTES {
-                    return Err(format!(
-                        "query result exceeded the {MAX_RESULT_BYTES}-byte response limit"
-                    ));
+                    return Err(QueryFailure::ResultTooLarge);
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            serde_json::from_slice::<ClickHouseJsonResult>(&bytes)
-                .map_err(|error| format!("ClickHouse returned invalid JSON: {error}"))
+            Ok(serde_json::from_slice::<ClickHouseJsonResult>(&bytes)?)
         };
 
         let result = tokio::time::timeout(FETCH_TIMEOUT, fetch)
             .await
-            .map_err(|_| "query timed out".to_owned())??;
+            .map_err(|_| QueryFailure::Timeout)??;
         drop(permit);
 
         let row_count = result.data.len();
@@ -198,14 +212,15 @@ impl SqlExplorer {
                     }
                 }
             }
-            Err(message) => {
+            Err(error) => {
                 tracing::warn!(
                     query_hash,
                     duration_ms = started.elapsed().as_millis(),
+                    error = %error,
                     outcome = "error",
                     "MCP SQL query failed"
                 );
-                tool_error(message)
+                tool_error(error.public_message())
             }
         }
     }
@@ -472,4 +487,43 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 
 fn tool_error(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QueryFailure;
+
+    #[test]
+    fn backend_failures_have_a_generic_public_message() {
+        let clickhouse_failure = QueryFailure::ClickHouse(clickhouse::error::Error::BadResponse(
+            "private backend diagnostic".to_owned(),
+        ));
+        let parse_error = serde_json::Error::io(std::io::Error::other("private JSON diagnostic"));
+        let json_failure = QueryFailure::InvalidResponse(parse_error);
+
+        assert_eq!(
+            clickhouse_failure.public_message(),
+            "query execution failed"
+        );
+        assert_eq!(json_failure.public_message(), "query execution failed");
+        assert!(
+            !clickhouse_failure
+                .public_message()
+                .contains("private backend diagnostic")
+        );
+        assert!(!json_failure.public_message().contains("JSON"));
+    }
+
+    #[test]
+    fn bounded_query_failures_have_stable_public_messages() {
+        assert_eq!(
+            QueryFailure::Busy.public_message(),
+            "the SQL explorer is busy; retry shortly"
+        );
+        assert_eq!(
+            QueryFailure::ResultTooLarge.public_message(),
+            "query result exceeded the response limit"
+        );
+        assert_eq!(QueryFailure::Timeout.public_message(), "query timed out");
+    }
 }

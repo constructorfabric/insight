@@ -197,3 +197,72 @@ fn valid_redirect_uri(value: &str) -> bool {
 fn is_loopback(uri: &Url) -> bool {
     uri.scheme() == "http" && matches!(uri.host_str(), Some("localhost" | "127.0.0.1" | "::1"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::{
+        ClientRegistrationRequest, redirect_uri_matches, valid_code_verifier,
+        validated_registration,
+    };
+
+    type R = Result<(), Box<dyn Error>>;
+
+    #[test]
+    fn registration_applies_supported_public_client_metadata() -> R {
+        let request = ClientRegistrationRequest {
+            client_name: Some(" Codex ".to_owned()),
+            redirect_uris: vec!["http://127.0.0.1:3000/callback".to_owned()],
+            grant_types: Vec::new(),
+            response_types: Vec::new(),
+            token_endpoint_auth_method: None,
+        };
+
+        let client = validated_registration(request, "client-id".to_owned())
+            .map_err(std::io::Error::other)?;
+
+        assert_eq!(client.client_name, "Codex");
+        assert_eq!(client.grant_types, ["authorization_code", "refresh_token"]);
+        assert_eq!(client.response_types, ["code"]);
+        assert_eq!(client.token_endpoint_auth_method, "none");
+        Ok(())
+    }
+
+    #[test]
+    fn registration_rejects_insecure_non_loopback_redirect() {
+        let request = ClientRegistrationRequest {
+            client_name: Some("MCP client".to_owned()),
+            redirect_uris: vec!["http://client.example/callback".to_owned()],
+            grant_types: Vec::new(),
+            response_types: Vec::new(),
+            token_endpoint_auth_method: None,
+        };
+
+        assert!(matches!(
+            validated_registration(request, "client-id".to_owned()),
+            Err("redirect_uris contains an unsupported URI")
+        ));
+    }
+
+    #[test]
+    fn loopback_redirect_allows_dynamic_port_only() {
+        assert!(redirect_uri_matches(
+            "http://127.0.0.1:3000/callback?flow=mcp",
+            "http://127.0.0.1:49152/callback?flow=mcp"
+        ));
+        assert!(!redirect_uri_matches(
+            "http://127.0.0.1:3000/callback?flow=mcp",
+            "http://127.0.0.1:49152/other?flow=mcp"
+        ));
+    }
+
+    #[test]
+    fn pkce_verifier_accepts_only_rfc_unreserved_boundary_values() {
+        assert!(valid_code_verifier(&"a".repeat(43)));
+        assert!(valid_code_verifier(&"~".repeat(128)));
+        assert!(!valid_code_verifier(&"a".repeat(42)));
+        assert!(!valid_code_verifier(&"a".repeat(129)));
+        assert!(!valid_code_verifier(&format!("{}+", "a".repeat(42))));
+    }
+}

@@ -304,10 +304,22 @@ async fn authorization_request(
             "redirect_uri is not registered",
         ));
     }
-    let pending = validate_authorize_query(state, query, client, redirect_uri)
-        .map_err(OAuthFailure::response)?;
+    let error_state = query
+        .state
+        .clone()
+        .filter(|state| state.len() <= MAX_PARAMETER_LENGTH);
+    let pending = match validate_authorize_query(state, query, client, redirect_uri.clone()) {
+        Ok(pending) => pending,
+        Err(error) => {
+            return Err(authorization_error_redirect(
+                &redirect_uri,
+                error_state.as_deref(),
+                &error,
+            ));
+        }
+    };
     let request_id = random_token();
-    state
+    if let Err(error) = state
         .mcp_oauth
         .put_pending(
             &request_id,
@@ -315,14 +327,16 @@ async fn authorization_request(
             state.cfg.mcp_oauth.authorization_code_ttl_seconds,
         )
         .await
-        .map_err(|error| {
-            tracing::error!(error = %error, "could not store MCP authorization request");
-            oauth_error(
-                StatusCode::SERVICE_UNAVAILABLE,
+    {
+        tracing::error!(error = %error, "could not store MCP authorization request");
+        return Err(authorization_redirect(
+            &pending,
+            Some((
                 "temporarily_unavailable",
                 "authorization server unavailable",
-            )
-        })?;
+            )),
+        ));
+    }
     Ok((request_id, pending))
 }
 
@@ -720,6 +734,22 @@ fn authorization_redirect(pending: &PendingAuthorization, error: Option<(&str, &
     }
 }
 
+fn authorization_error_redirect(
+    redirect_uri: &str,
+    state: Option<&str>,
+    error: &OAuthFailure,
+) -> Response {
+    match redirect_uri_target(
+        redirect_uri,
+        state,
+        Some((error.error, error.description.as_str())),
+        None,
+    ) {
+        Ok(target) => redirect(&target),
+        Err(error) => error.response(),
+    }
+}
+
 fn redirect_json(pending: &PendingAuthorization, error: Option<(&str, &str)>) -> Response {
     match redirect_target(pending, error, None) {
         Ok(target) => json_response(StatusCode::OK, &json!({"redirect_to": target})),
@@ -739,10 +769,21 @@ fn redirect_target(
     error: Option<(&str, &str)>,
     code: Option<&str>,
 ) -> Result<String, OAuthFailure> {
-    let mut url = Url::parse(&pending.redirect_uri)
-        .map_err(|_| failure("invalid_request", "invalid redirect URI"))?;
+    redirect_uri_target(&pending.redirect_uri, Some(&pending.state), error, code)
+}
+
+fn redirect_uri_target(
+    redirect_uri: &str,
+    state: Option<&str>,
+    error: Option<(&str, &str)>,
+    code: Option<&str>,
+) -> Result<String, OAuthFailure> {
+    let mut url =
+        Url::parse(redirect_uri).map_err(|_| failure("invalid_request", "invalid redirect URI"))?;
     let mut query = url.query_pairs_mut();
-    query.append_pair("state", &pending.state);
+    if let Some(state) = state {
+        query.append_pair("state", state);
+    }
     if let Some(code) = code {
         query.append_pair("code", code);
     }
@@ -904,4 +945,63 @@ fn audit(
         resource_id: resource_id.to_owned(),
         details,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use axum::http::StatusCode;
+    use axum::http::header::{CACHE_CONTROL, LOCATION};
+    use url::Url;
+
+    use super::{OAuthFailure, authorization_error_redirect, redirect_uri_target};
+
+    type R = Result<(), Box<dyn Error>>;
+
+    #[test]
+    fn authorization_error_redirect_returns_error_and_state_to_client() -> R {
+        let failure = OAuthFailure {
+            status: StatusCode::BAD_REQUEST,
+            error: "invalid_request",
+            description: "response_type must be code".to_owned(),
+        };
+
+        let response = authorization_error_redirect(
+            "http://127.0.0.1:3210/callback?client=codex",
+            Some("opaque-state"),
+            &failure,
+        );
+
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
+        let location = response.headers()[LOCATION].to_str()?;
+        let location = Url::parse(location)?;
+        let query = location
+            .query_pairs()
+            .collect::<std::collections::HashMap<_, _>>();
+        assert!(matches!(query.get("client"), Some(value) if value == "codex"));
+        assert!(matches!(query.get("error"), Some(value) if value == "invalid_request"));
+        assert!(matches!(
+            query.get("error_description"),
+            Some(value) if value == "response_type must be code"
+        ));
+        assert!(matches!(query.get("state"), Some(value) if value == "opaque-state"));
+        Ok(())
+    }
+
+    #[test]
+    fn authorization_error_redirect_omits_absent_state() -> R {
+        let target = redirect_uri_target(
+            "https://client.example/callback",
+            None,
+            Some(("invalid_scope", "scope is not supported")),
+            None,
+        )
+        .map_err(|error| error.description)?;
+
+        let target = Url::parse(&target)?;
+        assert!(target.query_pairs().all(|(name, _)| name != "state"));
+        Ok(())
+    }
 }
