@@ -86,6 +86,13 @@ impl Gear {
         }
     }
 
+    /// A board is org-scoped, so the issue number is unique only within its
+    /// repository. Everything that maps or keys a gear uses this, never the
+    /// number on its own.
+    pub(crate) fn id(&self) -> String {
+        format!("{}#{}", self.repo_full_name, self.number)
+    }
+
     /// Done on the board, or closed on the tracker — either one settles it, and
     /// the two disagree in practice.
     pub(crate) fn is_delivered(&self) -> bool {

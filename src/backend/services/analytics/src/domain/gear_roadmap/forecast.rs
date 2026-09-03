@@ -4,16 +4,16 @@ const CAPACITY_MAN_DAYS_PER_DAY: f64 = 1.0;
 const MAX_SPAN_DAYS: i64 = 3650;
 const MAX_SPAN_DAYS_F64: f64 = 3650.0;
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ScheduleItem<'a> {
-    pub(crate) gear_number: i64,
+#[derive(Debug, Clone)]
+pub(crate) struct ScheduleItem {
+    pub(crate) gear_id: String,
     pub(crate) remaining_man_days: f64,
-    pub(crate) assignee: Option<&'a str>,
+    pub(crate) assignee: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Span {
-    pub(crate) gear_number: i64,
+    pub(crate) gear_id: String,
     pub(crate) start: NaiveDate,
     pub(crate) end: NaiveDate,
 }
@@ -24,7 +24,7 @@ pub(crate) struct Lane {
     pub(crate) spans: Vec<Span>,
 }
 
-pub(crate) fn schedule(items: &[ScheduleItem<'_>], from: NaiveDate) -> Vec<Lane> {
+pub(crate) fn schedule(items: &[ScheduleItem], from: NaiveDate) -> Vec<Lane> {
     let mut lanes: Vec<Lane> = Vec::new();
 
     for item in items {
@@ -32,7 +32,7 @@ pub(crate) fn schedule(items: &[ScheduleItem<'_>], from: NaiveDate) -> Vec<Lane>
             continue;
         }
 
-        let index = lane_for(&mut lanes, item.assignee);
+        let index = lane_for(&mut lanes, item.assignee.as_deref());
         let lane = &mut lanes[index];
 
         let start = lane
@@ -42,7 +42,7 @@ pub(crate) fn schedule(items: &[ScheduleItem<'_>], from: NaiveDate) -> Vec<Lane>
         let end = start + Duration::days(span_days(item.remaining_man_days) - 1);
 
         lane.spans.push(Span {
-            gear_number: item.gear_number,
+            gear_id: item.gear_id.clone(),
             start,
             end,
         });
@@ -91,8 +91,8 @@ mod tests {
 
     use super::{ScheduleItem, schedule};
 
-    const FIRST_GEAR: i64 = 1;
-    const SECOND_GEAR: i64 = 2;
+    const FIRST_GEAR: &str = "org/repo#1";
+    const SECOND_GEAR: &str = "org/repo#2";
 
     fn day(day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2030, 1, day).expect("valid date")
@@ -102,14 +102,14 @@ mod tests {
     fn one_assignee_runs_their_gears_back_to_back() {
         let items = [
             ScheduleItem {
-                gear_number: FIRST_GEAR,
+                gear_id: FIRST_GEAR.to_owned(),
                 remaining_man_days: 3.0,
-                assignee: Some("dev-one"),
+                assignee: Some("dev-one".to_owned()),
             },
             ScheduleItem {
-                gear_number: SECOND_GEAR,
+                gear_id: SECOND_GEAR.to_owned(),
                 remaining_man_days: 2.0,
-                assignee: Some("dev-one"),
+                assignee: Some("dev-one".to_owned()),
             },
         ];
 
@@ -126,12 +126,12 @@ mod tests {
     fn every_unassigned_gear_gets_its_own_lane() {
         let items = [
             ScheduleItem {
-                gear_number: FIRST_GEAR,
+                gear_id: FIRST_GEAR.to_owned(),
                 remaining_man_days: 3.0,
                 assignee: None,
             },
             ScheduleItem {
-                gear_number: SECOND_GEAR,
+                gear_id: SECOND_GEAR.to_owned(),
                 remaining_man_days: 3.0,
                 assignee: None,
             },
@@ -148,14 +148,14 @@ mod tests {
     fn a_gear_with_nothing_left_is_not_scheduled() {
         let items = [
             ScheduleItem {
-                gear_number: FIRST_GEAR,
+                gear_id: FIRST_GEAR.to_owned(),
                 remaining_man_days: 0.0,
-                assignee: Some("dev-one"),
+                assignee: Some("dev-one".to_owned()),
             },
             ScheduleItem {
-                gear_number: SECOND_GEAR,
+                gear_id: SECOND_GEAR.to_owned(),
                 remaining_man_days: 2.0,
-                assignee: Some("dev-one"),
+                assignee: Some("dev-one".to_owned()),
             },
         ];
 
@@ -163,7 +163,7 @@ mod tests {
 
         assert_eq!(lanes.len(), 1);
         assert_eq!(lanes[0].spans.len(), 1);
-        assert_eq!(lanes[0].spans[0].gear_number, SECOND_GEAR);
+        assert_eq!(lanes[0].spans[0].gear_id, SECOND_GEAR);
         assert_eq!(lanes[0].spans[0].start, day(1));
     }
 }

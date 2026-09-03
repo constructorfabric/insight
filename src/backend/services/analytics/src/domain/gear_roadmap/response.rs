@@ -26,6 +26,8 @@ pub(crate) struct GearRoadmapResponse {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct GearDto {
+    /// `{repository}#{issue}` — the number alone repeats across repositories.
+    pub(crate) id: String,
     pub(crate) number: i64,
     pub(crate) title: String,
     pub(crate) subsystem: Option<String>,
@@ -88,7 +90,7 @@ pub(crate) struct LaneDto {
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub(crate) struct SpanDto {
-    pub(crate) gear_number: i64,
+    pub(crate) gear_id: String,
     pub(crate) start: String,
     pub(crate) end: String,
 }
@@ -106,15 +108,15 @@ pub(crate) fn build(
         month: today.month(),
     };
 
-    let items: Vec<ScheduleItem<'_>> = gears.iter().filter_map(schedule_item).collect();
+    let items: Vec<ScheduleItem> = gears.iter().filter_map(schedule_item).collect();
 
     let sources = source_by_login(gears);
 
     let scheduled = schedule(&items, today);
-    let forecasts: HashMap<i64, String> = scheduled
+    let forecasts: HashMap<String, String> = scheduled
         .iter()
         .flat_map(|lane| lane.spans.iter())
-        .map(|span| (span.gear_number, span.end.format("%Y-%m").to_string()))
+        .map(|span| (span.gear_id.clone(), span.end.format("%Y-%m").to_string()))
         .collect();
 
     let lanes = scheduled
@@ -144,15 +146,15 @@ pub(crate) fn build(
     }
 }
 
-fn schedule_item(gear: &Gear) -> Option<ScheduleItem<'_>> {
+fn schedule_item(gear: &Gear) -> Option<ScheduleItem> {
     if gear.closed {
         return None;
     }
 
     Some(ScheduleItem {
-        gear_number: gear.number,
+        gear_id: gear.id(),
         remaining_man_days: gear.remaining_man_days()?,
-        assignee: gear.assignees.first().map(String::as_str),
+        assignee: gear.assignees.first().cloned(),
     })
 }
 
@@ -169,7 +171,7 @@ fn lane_dto(lane: Lane, sources: &HashMap<&str, &str>, links: &ExternalSourceReg
             .spans
             .into_iter()
             .map(|span| SpanDto {
-                gear_number: span.gear_number,
+                gear_id: span.gear_id,
                 start: span.start.to_string(),
                 end: span.end.to_string(),
             })
@@ -183,10 +185,11 @@ fn gear_dto(
     today: NaiveDate,
     links: &ExternalSourceRegistry,
     sources: &HashMap<&str, &str>,
-    forecasts: &HashMap<i64, String>,
+    forecasts: &HashMap<String, String>,
 ) -> GearDto {
     GearDto {
         number: gear.number,
+        id: gear.id(),
         title: gear.title.clone(),
         subsystem: gear.subsystem.clone(),
         status_percent: gear.status.and_then(LadderStep::percent_complete),
@@ -197,7 +200,7 @@ fn gear_dto(
         effort_man_days: gear.effort_man_days,
         remaining_man_days: gear.remaining_man_days(),
         milestone: milestone_label(gear.milestone.as_ref()),
-        forecast: forecasts.get(&gear.number).cloned(),
+        forecast: forecasts.get(&gear.id()).cloned(),
         placement: placement_of(gear, window_start, today),
         assignees: gear.assignees.clone(),
         closed: gear.closed,
@@ -378,6 +381,29 @@ mod tests {
             repo_full_name: "example-org/example-repo".to_owned(),
             source_id: "source-a".to_owned(),
         }
+    }
+
+    #[test]
+    fn two_repositories_sharing_an_issue_number_stay_two_gears() {
+        let mut first = gear_row(7, "30.09", "Todo");
+        first.repo_full_name = "example-org/repo-a".to_owned();
+        let mut second = gear_row(7, "30.09", "Todo");
+        second.repo_full_name = "example-org/repo-b".to_owned();
+        second.assignees = vec!["dev-two".to_owned()];
+
+        let response = build_for_test(&[Gear::from_row(first), Gear::from_row(second)], today());
+
+        let ids: Vec<&str> = response.gears.iter().map(|gear| gear.id.as_str()).collect();
+        assert_eq!(ids, vec!["example-org/repo-a#7", "example-org/repo-b#7"]);
+
+        let spans: Vec<&str> = response
+            .lanes
+            .iter()
+            .flat_map(|lane| lane.spans.iter())
+            .map(|span| span.gear_id.as_str())
+            .collect();
+        assert_eq!(spans.len(), 2);
+        assert_ne!(spans[0], spans[1]);
     }
 
     #[test]
@@ -582,7 +608,10 @@ mod tests {
 
         assert_eq!(response.lanes.len(), 1);
         assert_eq!(response.lanes[0].assignee.as_deref(), Some("dev-one"));
-        assert_eq!(response.lanes[0].spans[0].gear_number, 7);
+        assert_eq!(
+            response.lanes[0].spans[0].gear_id,
+            "example-org/example-repo#7"
+        );
         assert_eq!(response.lanes[0].spans[0].start, "2030-08-01");
         assert_eq!(response.lanes[0].spans[0].end, "2030-08-10");
     }

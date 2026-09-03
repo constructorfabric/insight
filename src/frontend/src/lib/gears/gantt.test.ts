@@ -12,13 +12,13 @@ const LANES: GearLane[] = [
   {
     assignee: "dev-one",
     spans: [
-      { gear_number: 1, start: "2030-01-01", end: "2030-01-10" },
-      { gear_number: 2, start: "2030-01-11", end: "2030-01-15" },
+      { gear_id: "example-org/example-repo#1", start: "2030-01-01", end: "2030-01-10" },
+      { gear_id: "example-org/example-repo#2", start: "2030-01-11", end: "2030-01-15" },
     ],
   },
   {
     assignee: null,
-    spans: [{ gear_number: 3, start: "2030-01-06", end: "2030-01-20" }],
+    spans: [{ gear_id: "example-org/example-repo#3", start: "2030-01-06", end: "2030-01-20" }],
   },
 ];
 
@@ -34,7 +34,7 @@ describe("buildGantt", () => {
     const chart = buildGantt(LANES);
 
     expect(chart.lanes[0].bars[0]).toEqual({
-      gearNumber: 1,
+      gearId: "example-org/example-repo#1",
       start: "2030-01-01",
       end: "2030-01-10",
     });

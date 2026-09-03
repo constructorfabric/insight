@@ -101,7 +101,7 @@ function Cell({
       ) : (
         <ul className="flex flex-col gap-1">
           {gears.map((gear) => (
-            <li key={gear.number} className="flex">
+            <li key={gear.id} className="flex">
               <Chip gear={gear} overdue={overdue} delivered={delivered} />
             </li>
           ))}

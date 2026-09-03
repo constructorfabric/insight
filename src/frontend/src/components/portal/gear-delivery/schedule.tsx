@@ -27,7 +27,7 @@ export function GearSchedule({ roadmap }: { roadmap: GearRoadmap }) {
 
   const shown = useSubsystemGears(roadmap.gears);
   const gears = useMemo(
-    () => new Map(shown.map((gear) => [gear.number, gear])),
+    () => new Map(shown.map((gear) => [gear.id, gear])),
     [shown],
   );
   // The chart keeps the whole board's span so narrowing does not slide the
@@ -40,7 +40,7 @@ export function GearSchedule({ roadmap }: { roadmap: GearRoadmap }) {
       lanes: full.lanes
         .map((lane) => ({
           ...lane,
-          bars: lane.bars.filter((bar) => gears.has(bar.gearNumber)),
+          bars: lane.bars.filter((bar) => gears.has(bar.gearId)),
         }))
         .filter((lane) => lane.bars.length > 0),
     };
@@ -118,8 +118,8 @@ export function GearSchedule({ roadmap }: { roadmap: GearRoadmap }) {
 
                 {lane.bars.map((bar) => (
                   <Bar
-                    key={bar.gearNumber}
-                    gear={gears.get(bar.gearNumber)}
+                    key={bar.gearId}
+                    gear={gears.get(bar.gearId)}
                     bar={bar}
                     chartStart={chart.start}
                   />

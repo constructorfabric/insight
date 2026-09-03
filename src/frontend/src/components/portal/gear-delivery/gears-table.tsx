@@ -133,7 +133,7 @@ export function GearsTable({ roadmap }: { roadmap: GearRoadmap }) {
           </TableHeader>
           <TableBody>
             {gears.map((gear) => (
-              <TableRow key={gear.number}>
+              <TableRow key={gear.id}>
                 <TableCell className="max-w-96">
                   <span className="flex items-center gap-2">
                     <span className="truncate font-medium" title={gear.title}>

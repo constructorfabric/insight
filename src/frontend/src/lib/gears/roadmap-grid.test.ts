@@ -6,8 +6,11 @@ import { UNGROUPED, buildRoadmap } from "@/lib/gears/roadmap-grid";
 const WINDOW_MONTHS = 9;
 
 function gear(overrides: Partial<Gear>): Gear {
+  const number = overrides.number ?? 1;
+
   return {
-    number: 1,
+    id: `example-org/example-repo#${number}`,
+    number,
     title: "CORE - Example Module",
     subsystem: "CORE",
     commitment: "committed",

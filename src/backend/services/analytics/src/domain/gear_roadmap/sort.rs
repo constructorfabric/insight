@@ -56,7 +56,7 @@ enum Key<'a> {
 /// window, and when the schedule lands it.
 pub(crate) struct Context<'a, P: Fn(&Gear) -> Placement> {
     pub(crate) placement: P,
-    pub(crate) forecasts: &'a HashMap<i64, String>,
+    pub(crate) forecasts: &'a HashMap<String, String>,
 }
 
 /// Gears ordered for presentation. Placement and forecast are decided
@@ -139,7 +139,7 @@ fn key<'a, P: Fn(&Gear) -> Placement>(
             Placement::Overdue { days } => Some(-days_as_f64(days)),
             _ => gear.milestone_sort_key(),
         }),
-        GearSort::Forecast => Key::Text(context.forecasts.get(&gear.number).map(String::as_str)),
+        GearSort::Forecast => Key::Text(context.forecasts.get(&gear.id()).map(String::as_str)),
         GearSort::Assignees => Key::Text(gear.assignees.first().map(String::as_str)),
     }
 }

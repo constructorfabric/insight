@@ -41,8 +41,11 @@ import { GearSchedule } from "./schedule";
 import { GearSummary } from "./summary";
 
 function gear(over: Partial<Gear> = {}): Gear {
+  const number = over.number ?? 1;
+
   return {
-    number: 1,
+    id: `example-org/example-repo#${number}`,
+    number,
     title: "CORE - Example Module",
     subsystem: "CORE",
     status_percent: 80,
@@ -74,7 +77,7 @@ function roadmap(over: Partial<GearRoadmap> = {}): GearRoadmap {
       {
         assignee: "dev-one",
         assignee_url: "https://git.example.test/dev-one",
-        spans: [{ gear_number: 1, start: "2030-08-01", end: "2030-08-06" }],
+        spans: [{ gear_id: "example-org/example-repo#1", start: "2030-08-01", end: "2030-08-06" }],
       },
     ],
     ...over,
@@ -216,6 +219,46 @@ describe("RoadmapGrid", () => {
 });
 
 describe("GearSchedule", () => {
+  it("tells apart two repositories sharing an issue number", () => {
+    queryState = {
+      data: roadmap({
+        gears: [
+          gear({ id: "example-org/repo-a#7", number: 7, title: "CORE - From A" }),
+          gear({ id: "example-org/repo-b#7", number: 7, title: "CORE - From B" }),
+        ],
+        lanes: [
+          {
+            assignee: "dev-one",
+            assignee_url: null,
+            spans: [
+              {
+                gear_id: "example-org/repo-a#7",
+                start: "2030-08-01",
+                end: "2030-08-03",
+              },
+              {
+                gear_id: "example-org/repo-b#7",
+                start: "2030-08-04",
+                end: "2030-08-06",
+              },
+            ],
+          },
+        ],
+      }),
+      isPending: false,
+      isError: false,
+    };
+
+    render(<GearSchedule roadmap={queryState.data!} />);
+
+    expect(
+      screen.getByRole("button", { name: "CORE - From A" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "CORE - From B" }),
+    ).toBeInTheDocument();
+  });
+
   it("links the lane to the account page of the person in it", () => {
     render(<GearSchedule roadmap={queryState.data!} />);
 
@@ -232,7 +275,7 @@ describe("GearSchedule", () => {
           {
             assignee: "dev-two",
             spans: [
-              { gear_number: 1, start: "2030-08-01", end: "2030-08-06" },
+              { gear_id: "example-org/example-repo#1", start: "2030-08-01", end: "2030-08-06" },
             ],
           },
         ],
@@ -563,11 +606,11 @@ describe("the subsystem in the URL reaches every board", () => {
         lanes: [
           {
             assignee: "dev-one",
-            spans: [{ gear_number: 1, start: "2030-08-01", end: "2030-08-06" }],
+            spans: [{ gear_id: "example-org/example-repo#1", start: "2030-08-01", end: "2030-08-06" }],
           },
           {
             assignee: "dev-two",
-            spans: [{ gear_number: 2, start: "2030-08-01", end: "2030-08-06" }],
+            spans: [{ gear_id: "example-org/example-repo#2", start: "2030-08-01", end: "2030-08-06" }],
           },
         ],
       }),

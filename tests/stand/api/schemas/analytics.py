@@ -1071,7 +1071,7 @@ class SpanDto(BaseModel):
         extra='forbid',
     )
     end: str
-    gear_number: int
+    gear_id: str
     start: str
 
 
@@ -1316,6 +1316,7 @@ class GearDto(BaseModel):
     design_percent: int | None = Field(None, ge=0)
     effort_man_days: float | None = None
     forecast: str | None = Field(None, description='The month the schedule lands the gear in, `YYYY-MM`. Absent for a gear\nwith nothing left to schedule.')
+    id: str = Field(..., description='`{repository}#{issue}` — the number alone repeats across repositories.')
     issue_url: str | None = Field(None, description="Absent when no configured external source claims the gear's repository.")
     milestone: str | None = None
     number: int

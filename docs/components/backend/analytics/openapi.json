@@ -801,6 +801,10 @@
               "null"
             ]
           },
+          "id": {
+            "description": "`{repository}#{issue}` — the number alone repeats across repositories.",
+            "type": "string"
+          },
           "issue_url": {
             "description": "Absent when no configured external source claims the gear's repository.",
             "type": [
@@ -861,6 +865,7 @@
           }
         },
         "required": [
+          "id",
           "number",
           "title",
           "commitment",
@@ -3144,16 +3149,15 @@
           "end": {
             "type": "string"
           },
-          "gear_number": {
-            "format": "int64",
-            "type": "integer"
+          "gear_id": {
+            "type": "string"
           },
           "start": {
             "type": "string"
           }
         },
         "required": [
-          "gear_number",
+          "gear_id",
           "start",
           "end"
         ],

@@ -33,6 +33,8 @@ export type GearCommitment = "committed" | "planned" | "unstated";
  * `status_percent` is a gear whose ladder value the server could not read.
  */
 export interface Gear {
+  /** `{repository}#{issue}` — the number alone repeats across repositories. */
+  id: string;
   number: number;
   title: string;
   subsystem?: string | null;
@@ -61,7 +63,7 @@ export interface AssigneeLink {
 }
 
 export interface GearSpan {
-  gear_number: number;
+  gear_id: string;
   start: string;
   end: string;
 }

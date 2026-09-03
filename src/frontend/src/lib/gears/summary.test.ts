@@ -4,8 +4,11 @@ import type { Gear } from "@/api/gear-roadmap-client";
 import { summariseBySubsystem } from "@/lib/gears/summary";
 
 function gear(overrides: Partial<Gear>): Gear {
+  const number = overrides.number ?? 1;
+
   return {
-    number: 1,
+    id: `example-org/example-repo#${number}`,
+    number,
     title: "CORE - Example Module",
     subsystem: "CORE",
     commitment: "committed",

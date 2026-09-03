@@ -3,7 +3,7 @@ import type { GearLane } from "@/api/gear-roadmap-client";
 const MS_PER_DAY = 86_400_000;
 
 export interface GanttBar {
-  gearNumber: number;
+  gearId: string;
   start: string;
   end: string;
 }
@@ -39,7 +39,7 @@ export function buildGantt(lanes: GearLane[]): GanttChart {
       assignee: lane.assignee ?? null,
       assigneeUrl: lane.assignee_url ?? null,
       bars: lane.spans.map((span) => ({
-        gearNumber: span.gear_number,
+        gearId: span.gear_id,
         start: span.start,
         end: span.end,
       })),
