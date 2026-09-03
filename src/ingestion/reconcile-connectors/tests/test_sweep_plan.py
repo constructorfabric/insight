@@ -1,13 +1,14 @@
 """What a tick decides to write.
 
-Run: python3 -m unittest discover -s src/ingestion/reconcile-connectors/tests
+Run: pytest src/ingestion/reconcile-connectors/tests
 """
 
 from __future__ import annotations
 
 import sys
-import unittest
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
@@ -71,63 +72,58 @@ def row(**overrides: object) -> dict[str, object]:
     return planned
 
 
-class StatusKeepsTheMoversWord(unittest.TestCase):
-    def test_documented_statuses_are_stored_verbatim(self) -> None:
-        for word in sorted(vocab.MOVER_STATUSES):
-            with self.subTest(word=word):
-                self.assertEqual(row(status=word)["status"], word)
+class TestStatusKeepsTheMoversWord:
+    @pytest.mark.parametrize("word", sorted(vocab.MOVER_STATUSES))
+    def test_documented_statuses_are_stored_verbatim(self, word: str) -> None:
+        assert row(status=word)["status"] == word
 
-    def test_an_undocumented_word_is_stored_as_unknown(self) -> None:
-        for word in ("SUCCEEDED_PARTIALLY", "", None, 7, "  "):
-            with self.subTest(word=word):
-                self.assertEqual(
-                    row(status=word)["status"],
-                    vocab.UNKNOWN,
-                    f"should not pass through: {word!r}",
-                )
+    @pytest.mark.parametrize("word", ["SUCCEEDED_PARTIALLY", "", None, 7, "  "])
+    def test_an_undocumented_word_is_stored_as_unknown(self, word: object) -> None:
+        assert row(status=word)["status"] == vocab.UNKNOWN, (
+            f"should not pass through: {word!r}"
+        )
 
     def test_case_and_padding_do_not_produce_an_unknown(self) -> None:
-        self.assertEqual(row(status=" Succeeded ")["status"], "succeeded")
+        assert row(status=" Succeeded ")["status"] == "succeeded"
 
     def test_unknown_does_not_close_a_job(self) -> None:
         """Coverage fails closed: a status we could not read is re-read."""
-        self.assertFalse(vocab.is_terminal(vocab.UNKNOWN))
+        assert not vocab.is_terminal(vocab.UNKNOWN)
 
-    def test_an_unfinished_status_does_not_close_a_job(self) -> None:
-        for word in ("pending", "running"):
-            with self.subTest(word=word):
-                self.assertFalse(vocab.is_terminal(word))
+    @pytest.mark.parametrize("word", ["pending", "running"])
+    def test_an_unfinished_status_does_not_close_a_job(self, word: str) -> None:
+        assert not vocab.is_terminal(word)
 
 
-class AJobMustBePlaceable(unittest.TestCase):
-    def test_a_job_with_neither_stamp_readable_is_refused(self) -> None:
+class TestAJobMustBePlaceable:
+    @pytest.mark.parametrize("absent", [None, 0, -1, "yesterday", True])
+    def test_a_job_with_neither_stamp_readable_is_refused(self, absent: object) -> None:
         """Both, because either one places the job. A case that blanks only the
         update stamp stops testing the refusal the moment a fallback exists."""
-        for absent in (None, 0, -1, "yesterday", True):
-            with self.subTest(absent=absent):
-                planned = plan.sync_row(
-                    entry(lastUpdatedAt=absent, startTime=absent), CONNECTORS, TICK
-                )
-                self.assertIsInstance(
-                    planned, plan.Skipped, f"should refuse both stamps = {absent!r}"
-                )
+        planned = plan.sync_row(
+            entry(lastUpdatedAt=absent, startTime=absent), CONNECTORS, TICK
+        )
+
+        assert isinstance(planned, plan.Skipped), (
+            f"should refuse both stamps = {absent!r}"
+        )
 
     def test_a_job_with_no_identity_is_refused(self) -> None:
         planned = plan.sync_row(entry(jobId=None), CONNECTORS, TICK)
-        self.assertIsInstance(planned, plan.Skipped)
+        assert isinstance(planned, plan.Skipped)
 
     def test_an_entry_with_no_job_is_refused(self) -> None:
         planned = plan.sync_row({"connectionId": CONNECTION}, CONNECTORS, TICK)
-        self.assertIsInstance(planned, plan.Skipped)
+        assert isinstance(planned, plan.Skipped)
 
     def test_a_refusal_carries_its_reason(self) -> None:
         planned = plan.sync_row(
             entry(lastUpdatedAt=None, startTime=None), CONNECTORS, TICK
         )
-        self.assertIn("moment", planned.reason)
+        assert "moment" in planned.reason
 
 
-class AbsenceIsNotZero(unittest.TestCase):
+class TestAbsenceIsNotZero:
     def test_a_job_not_started_has_no_start_and_no_duration(self) -> None:
         bare = {
             "jobId": 1,
@@ -136,55 +132,54 @@ class AbsenceIsNotZero(unittest.TestCase):
             "lastUpdatedAt": UPDATED,
         }
         planned = plan.sync_row(bare, CONNECTORS, TICK)
-        self.assertIsNone(planned["started_at"])
-        self.assertIsNone(planned["duration_ms"])
-        self.assertIsNone(planned["records_reported"])
+        assert planned["started_at"] is None
+        assert planned["duration_ms"] is None
+        assert planned["records_reported"] is None
 
     def test_a_reported_zero_survives_as_zero(self) -> None:
         """A sync that moved nothing is not a sync nobody counted."""
-        self.assertEqual(row(rowsSynced=0)["records_reported"], 0)
+        assert row(rowsSynced=0)["records_reported"] == 0
 
-    def test_no_reported_count_at_all_is_absent(self) -> None:
-        for absent in (None, "", "many", True):
-            with self.subTest(absent=absent):
-                self.assertIsNone(row(rowsSynced=absent)["records_reported"])
+    @pytest.mark.parametrize("absent", [None, "", "many", True])
+    def test_no_reported_count_at_all_is_absent(self, absent: object) -> None:
+        assert row(rowsSynced=absent)["records_reported"] is None
 
     def test_a_negative_count_is_absent_rather_than_recorded(self) -> None:
-        self.assertIsNone(row(rowsSynced=-1)["records_reported"])
+        assert row(rowsSynced=-1)["records_reported"] is None
 
-    def test_a_non_finite_number_is_absent_rather_than_an_exception(self) -> None:
+    @pytest.mark.parametrize("absent", [float("nan"), float("inf"), float("-inf")])
+    def test_a_non_finite_number_is_absent_rather_than_an_exception(
+        self, absent: float
+    ) -> None:
         """`int(inf)` raises, and one malformed field would cost the whole tick
         its seal — which stops the page's own clock."""
-        for absent in (float("nan"), float("inf"), float("-inf")):
-            with self.subTest(absent=absent):
-                self.assertIsNone(row(duration=absent)["duration_ms"])
-                self.assertIsNone(row(rowsSynced=absent)["records_reported"])
+        assert row(duration=absent)["duration_ms"] is None
+        assert row(rowsSynced=absent)["records_reported"] is None
 
-    def test_an_empty_job_identity_is_refused(self) -> None:
+    @pytest.mark.parametrize("empty", ["", "   "])
+    def test_an_empty_job_identity_is_refused(self, empty: str) -> None:
         """Several such jobs would share one key and replace each other during
         resolution, so the page would answer with whichever landed last."""
-        for empty in ("", "   "):
-            with self.subTest(empty=empty):
-                planned = plan.sync_row(entry(jobId=empty), CONNECTORS, TICK)
-                self.assertIsInstance(planned, plan.Skipped)
+        planned = plan.sync_row(entry(jobId=empty), CONNECTORS, TICK)
 
-    def test_a_duration_that_will_not_parse_is_absent(self) -> None:
+        assert isinstance(planned, plan.Skipped)
+
+    @pytest.mark.parametrize("absent", ["1m37s", "P", "", None, "PT", "garbage"])
+    def test_a_duration_that_will_not_parse_is_absent(self, absent: object) -> None:
         """Reading only some components would report a span shorter than the
         truth, which is worse than reporting none."""
-        for absent in ("1m37s", "P", "", None, "PT", "garbage"):
-            with self.subTest(absent=absent):
-                self.assertIsNone(row(duration=absent)["duration_ms"])
+        assert row(duration=absent)["duration_ms"] is None
 
 
-class WhatIsRead(unittest.TestCase):
+class TestWhatIsRead:
     def test_the_stamps_are_read_as_iso_8601(self) -> None:
         planned = row()
-        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:02:52.000")
-        self.assertEqual(planned["started_at"], "2026-08-27 08:00:30.000")
+        assert planned["job_updated_at"] == "2026-08-27 08:02:52.000"
+        assert planned["started_at"] == "2026-08-27 08:00:30.000"
 
     def test_a_stamp_with_an_offset_is_normalised_to_utc(self) -> None:
         planned = row(lastUpdatedAt="2026-08-27T11:00:00+03:00")
-        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:00:00.000")
+        assert planned["job_updated_at"] == "2026-08-27 08:00:00.000"
 
     def test_the_placing_stamp_is_the_last_update_not_the_start(self) -> None:
         """Two stamps arrive and only one places the job.
@@ -193,8 +188,8 @@ class WhatIsRead(unittest.TestCase):
         expected value catches a planner that took `startTime` for the axis the
         watermark moves along.
         """
-        self.assertEqual(row()["job_updated_at"], "2026-08-27 08:02:52.000")
-        self.assertNotEqual(row()["job_updated_at"], row()["started_at"])
+        assert row()["job_updated_at"] == "2026-08-27 08:02:52.000"
+        assert row()["job_updated_at"] != row()["started_at"]
 
     def test_an_epoch_number_is_not_a_stamp(self) -> None:
         """The listing sends strings. A number here would be a different
@@ -204,51 +199,54 @@ class WhatIsRead(unittest.TestCase):
             CONNECTORS,
             TICK,
         )
-        self.assertIsInstance(planned, plan.Skipped)
+        assert isinstance(planned, plan.Skipped)
 
-    def test_the_duration_is_read_as_an_iso_8601_duration(self) -> None:
-        cases = {
-            "PT1M37S": 97_000,
-            "PT2H3M4.5S": 7_384_500,
-            "P1DT1S": 86_401_000,
-            "PT0.25S": 250,
-        }
-        for text, expected in cases.items():
-            with self.subTest(duration=text):
-                self.assertEqual(row(duration=text)["duration_ms"], expected)
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("PT1M37S", 97_000),
+            ("PT2H3M4.5S", 7_384_500),
+            ("P1DT1S", 86_401_000),
+            ("PT0.25S", 250),
+        ],
+    )
+    def test_the_duration_is_read_as_an_iso_8601_duration(
+        self, text: str, expected: int
+    ) -> None:
+        assert row(duration=text)["duration_ms"] == expected
 
     def test_the_reported_count_is_read_from_the_entry(self) -> None:
-        self.assertEqual(row()["records_reported"], 12_400)
+        assert row()["records_reported"] == 12_400
 
 
-class AJobMustBelongToAManagedConnection(unittest.TestCase):
+class TestAJobMustBelongToAManagedConnection:
     def test_a_job_on_an_unmanaged_connection_is_refused(self) -> None:
         """The listing is instance-wide, so it carries jobs this install does
         not manage. Guessing a connector for one would file syncs on the wrong
         row."""
         planned = plan.sync_row(entry(connectionId="someone-else"), CONNECTORS, TICK)
-        self.assertIsInstance(planned, plan.Skipped)
-        self.assertIn("managed connection", planned.reason)
+        assert isinstance(planned, plan.Skipped)
+        assert "managed connection" in planned.reason
 
     def test_a_job_with_no_connection_is_refused(self) -> None:
         planned = plan.sync_row(entry(connectionId=None), CONNECTORS, TICK)
-        self.assertIsInstance(planned, plan.Skipped)
+        assert isinstance(planned, plan.Skipped)
 
     def test_the_connector_comes_from_the_map_not_the_name(self) -> None:
         planned = plan.sync_row(entry(), {CONNECTION: "renamed"}, TICK)
-        self.assertEqual(planned["connector"], "renamed")
+        assert planned["connector"] == "renamed"
 
 
-class CoverageSkipsWhatIsClosed(unittest.TestCase):
+class TestCoverageSkipsWhatIsClosed:
     def test_a_job_already_terminal_in_the_ledger_is_left_alone(self) -> None:
         planned = plan.plan_syncs(
             [entry()], CONNECTORS, TICK, frozenset({"8412"})
         )
-        self.assertEqual(planned.rows, [])
+        assert planned.rows == []
 
     def test_a_job_not_yet_closed_is_recorded_again(self) -> None:
         planned = plan.plan_syncs([entry()], CONNECTORS, TICK, frozenset())
-        self.assertEqual(len(planned.rows), 1)
+        assert len(planned.rows) == 1
 
     def test_refusals_are_reported_beside_the_rows(self) -> None:
         planned = plan.plan_syncs(
@@ -257,12 +255,12 @@ class CoverageSkipsWhatIsClosed(unittest.TestCase):
             TICK,
             frozenset(),
         )
-        self.assertEqual(len(planned.rows), 1)
-        self.assertEqual(len(planned.skipped), 1)
-        self.assertEqual(planned.skipped[0].job_id, "7")
+        assert len(planned.rows) == 1
+        assert len(planned.skipped) == 1
+        assert planned.skipped[0].job_id == "7"
 
 
-class EveryRowClassFillsEveryColumn(unittest.TestCase):
+class TestEveryRowClassFillsEveryColumn:
     """The insert names no columns, so a row missing one would silently take a
     DEFAULT — and a row carrying an extra one would be rejected outright."""
 
@@ -270,33 +268,29 @@ class EveryRowClassFillsEveryColumn(unittest.TestCase):
         sync = row()
         snapshot = plan.plan_snapshot([CONNECTOR], TICK)[0]
         seal = plan.plan_seal(TICK)
-        self.assertEqual(set(snapshot), set(sync))
-        self.assertEqual(set(seal), set(sync))
+        assert set(snapshot) == set(sync)
+        assert set(seal) == set(sync)
 
     def test_a_snapshot_row_names_its_connector_and_nothing_else(self) -> None:
         snapshot = plan.plan_snapshot([CONNECTOR], TICK)[0]
-        self.assertEqual(snapshot["connector"], CONNECTOR)
-        self.assertEqual(snapshot["event"], plan.CONNECTOR_CONFIGURED)
-        self.assertEqual(snapshot["job_id"], "")
-        self.assertEqual(snapshot["status"], "")
-        self.assertIsNone(snapshot["job_updated_at"])
+        assert snapshot["connector"] == CONNECTOR
+        assert snapshot["event"] == plan.CONNECTOR_CONFIGURED
+        assert snapshot["job_id"] == ""
+        assert snapshot["status"] == ""
+        assert snapshot["job_updated_at"] is None
 
     def test_the_seal_names_no_connector(self) -> None:
         seal = plan.plan_seal(TICK)
-        self.assertEqual(seal["event"], plan.SWEEP_COMPLETED)
-        self.assertEqual(seal["connector"], "")
-        self.assertEqual(seal["tick_id"], TICK)
+        assert seal["event"] == plan.SWEEP_COMPLETED
+        assert seal["connector"] == ""
+        assert seal["tick_id"] == TICK
 
     def test_a_snapshot_holds_each_connector_once(self) -> None:
         rows = plan.plan_snapshot([CONNECTOR, CONNECTOR, "other"], TICK)
-        self.assertEqual([r["connector"] for r in rows], ["example-tracker", "other"])
+        assert [r["connector"] for r in rows] == ["example-tracker", "other"]
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TheListingsOwnShape(unittest.TestCase):
+class TestTheListingsOwnShape:
     """The fixture above is the mover's shape, not a convenient stand-in for it.
 
     A field the mover never sends refuses every real entry while every test
@@ -305,7 +299,7 @@ class TheListingsOwnShape(unittest.TestCase):
     """
 
     def test_the_fixture_carries_exactly_the_keys_the_listing_serves(self) -> None:
-        self.assertEqual(frozenset(entry()), SERVED_KEYS)
+        assert frozenset(entry()) == SERVED_KEYS
 
     def test_a_creation_stamp_does_not_place_a_job(self) -> None:
         """The listing filters on creation and reports none, so an entry
@@ -317,10 +311,10 @@ class TheListingsOwnShape(unittest.TestCase):
 
         planned = plan.sync_row(invented, CONNECTORS, TICK)
 
-        self.assertIsInstance(planned, plan.Skipped)
+        assert isinstance(planned, plan.Skipped)
 
 
-class AJobStillRunningIsPlaceable(unittest.TestCase):
+class TestAJobStillRunningIsPlaceable:
     """A running job can arrive with a start and no update stamp at all.
 
     Refusing it costs the one state the page most needs: the connector reads as
@@ -344,8 +338,8 @@ class AJobStillRunningIsPlaceable(unittest.TestCase):
     def test_it_is_recorded_rather_than_skipped(self) -> None:
         planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
 
-        self.assertNotIsInstance(planned, plan.Skipped, planned)
-        self.assertEqual(planned["status"], "running")
+        assert not isinstance(planned, plan.Skipped), planned
+        assert planned["status"] == "running"
 
     def test_it_is_placed_at_its_start(self) -> None:
         """The listing places such an entry around its start — it serves the
@@ -354,11 +348,11 @@ class AJobStillRunningIsPlaceable(unittest.TestCase):
         and the filter part company."""
         planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
 
-        self.assertEqual(planned["job_updated_at"], "2026-08-27 08:00:30.000")
+        assert planned["job_updated_at"] == "2026-08-27 08:00:30.000"
 
     def test_an_update_stamp_still_wins_when_there_is_one(self) -> None:
         """The fallback must not outrank the field it stands in for."""
-        self.assertEqual(row()["job_updated_at"], "2026-08-27 08:02:52.000")
+        assert row()["job_updated_at"] == "2026-08-27 08:02:52.000"
 
     def test_it_outranks_the_finished_job_it_follows(self) -> None:
         """A sync that started after the last one finished is the newer fact,
@@ -369,8 +363,8 @@ class AJobStillRunningIsPlaceable(unittest.TestCase):
         )
 
         placed = {r["job_id"]: r["job_updated_at"] for r in planned.rows}
-        self.assertEqual(len(placed), 2)
-        self.assertGreater(placed["9001"], placed["8900"])
+        assert len(placed) == 2
+        assert placed["9001"] > placed["8900"]
 
     def test_it_records_no_duration(self) -> None:
         """The mover reports an unfinished job's duration as a running total —
@@ -379,40 +373,37 @@ class AJobStillRunningIsPlaceable(unittest.TestCase):
         an operator watching a stuck sync must not be given."""
         planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
 
-        self.assertIsNone(planned["duration_ms"])
+        assert planned["duration_ms"] is None
 
     def test_it_still_states_when_it_started(self) -> None:
         """The elapsed time the page reports is derived from this stamp, so
         withholding the duration must not withhold the start with it."""
         planned = plan.sync_row(self.RUNNING, CONNECTORS, TICK)
 
-        self.assertEqual(planned["started_at"], "2026-08-27 08:00:30.000")
+        assert planned["started_at"] == "2026-08-27 08:00:30.000"
 
 
-class OnlyAnUnfinishedJobLosesItsDuration(unittest.TestCase):
-    def test_every_in_flight_word_records_none(self) -> None:
-        for word in sorted(vocab.IN_FLIGHT_STATUSES):
-            with self.subTest(word=word):
-                self.assertIsNone(row(status=word, duration="PT1M37S")["duration_ms"])
+class TestOnlyAnUnfinishedJobLosesItsDuration:
+    @pytest.mark.parametrize("word", sorted(vocab.IN_FLIGHT_STATUSES))
+    def test_every_in_flight_word_records_none(self, word: str) -> None:
+        assert row(status=word, duration="PT1M37S")["duration_ms"] is None
 
-    def test_every_finished_word_keeps_what_it_reported(self) -> None:
-        for word in sorted(vocab.TERMINAL_STATUSES):
-            with self.subTest(word=word):
-                planned = row(status=word, duration="PT1M37S")
-                self.assertEqual(planned["duration_ms"], 97_000)
+    @pytest.mark.parametrize("word", sorted(vocab.TERMINAL_STATUSES))
+    def test_every_finished_word_keeps_what_it_reported(self, word: str) -> None:
+        assert row(status=word, duration="PT1M37S")["duration_ms"] == 97_000
 
     def test_a_word_that_could_not_be_read_keeps_its_duration(self) -> None:
         """An unreadable word may well name a finished job, and treating it as
         in flight would discard a measurement that was actually taken."""
-        self.assertEqual(row(status="borked", duration="PT1M37S")["duration_ms"], 97_000)
+        assert row(status="borked", duration="PT1M37S")["duration_ms"] == 97_000
 
     def test_a_finished_job_that_really_took_no_time_still_says_so(self) -> None:
         """Suppression is decided by the status, never by the value: a zero
         from a finished job is a measurement, not an absence."""
-        self.assertEqual(row(status="succeeded", duration="PT0S")["duration_ms"], 0)
+        assert row(status="succeeded", duration="PT0S")["duration_ms"] == 0
 
 
-class AnIgnoredFilterIsVisible(unittest.TestCase):
+class TestAnIgnoredFilterIsVisible:
     """The mover answers 200 and drops a parameter it does not recognise.
 
     So a filter renamed by a later release stops filtering rather than failing:
@@ -428,21 +419,17 @@ class AnIgnoredFilterIsVisible(unittest.TestCase):
         at_the_mark = entry(jobId=2, lastUpdatedAt="2026-08-27T08:00:00Z")
         newer = entry(jobId=3, lastUpdatedAt="2026-08-27T09:00:00Z")
 
-        self.assertEqual(
-            plan.unfiltered_count([older, at_the_mark, newer], self.WATERMARK), 1
-        )
+        assert plan.unfiltered_count([older, at_the_mark, newer], self.WATERMARK) == 1
 
     def test_a_filtered_listing_counts_nothing(self) -> None:
-        self.assertEqual(plan.unfiltered_count([entry()], self.WATERMARK), 0)
+        assert plan.unfiltered_count([entry()], self.WATERMARK) == 0
 
     def test_the_first_sweep_sent_no_watermark_so_nothing_is_out_of_place(self) -> None:
         older = entry(lastUpdatedAt="2020-01-01T00:00:00Z")
 
-        self.assertEqual(plan.unfiltered_count([older], None), 0)
+        assert plan.unfiltered_count([older], None) == 0
 
     def test_an_unplaceable_entry_is_not_evidence_of_an_ignored_filter(self) -> None:
         """It is refused for its own reason; counting it here would report a
         working filter as broken on every tick that meets one."""
-        self.assertEqual(
-            plan.unfiltered_count([entry(lastUpdatedAt=None)], self.WATERMARK), 0
-        )
+        assert plan.unfiltered_count([entry(lastUpdatedAt=None)], self.WATERMARK) == 0
