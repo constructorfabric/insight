@@ -215,7 +215,7 @@ diagnosed as flakiness.
 
 ## What this suite must not assert
 
-- **No metric values.** `golden_metrics` is empty by design. Assert that a
+- **No metric values.** The seed publishes no expected values. Assert that a
   value is non-null, that entity ids match, that a union resolved — never a
   number.
 - **No minted tokens.** Sessions are won by driving the deployed OIDC chain.

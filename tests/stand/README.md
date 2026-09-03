@@ -113,22 +113,22 @@ disagree. Before adding a test, read it for:
 - **the roster and fixtures** — the `fixtures{}` table is the set of stable,
   role-shaped names (`dev_lead`, `admin_operator`, …) a test may declare
   against; a raw email or UUID is never a stable target.
-- **populated / golden metrics** — that table is empty by design (see
-  `src/ingestion/tools/seed/golden_metrics.py`'s admission criteria: an expectation must be
-  computable from the seed inputs, not read back out of the gold layer). No
-  test here asserts a metric's exact value, and none should until the table
-  has entries — reading a number off a running stand and asserting it back
-  only proves that the code which produced it produced it.
-
-  What `api/analytics/test_drilldown.py` does is a different thing and is
-  allowed: it asks two independent serving relations the same question — the
-  evidence rows behind a metric, and the metric's own value — and requires them
-  to agree. Neither side is a number typed into the test, so the seed can change
-  underneath it, and a disagreement is a real defect rather than a stale
-  expectation. `drilldown_matrix.py` states what "agree" means per metric.
 - **capabilities** — e.g. `ingestion`, which this stand does not have
   (compose seeds silver/gold directly). A test that needs a capability the
   stand may lack should carry the matching marker (below), not assume it.
+
+What it does not describe is an expected value for any metric: the seed
+publishes none, and no test here asserts one. An admissible expectation would
+have to be computable from the seed inputs rather than read back out of the
+gold layer; reading a number off a running stand and asserting it back only
+proves that the code which produced it produced it.
+
+What `api/analytics/test_drilldown.py` does is a different thing and is
+allowed: it asks two independent serving relations the same question — the
+evidence rows behind a metric, and the metric's own value — and requires them
+to agree. Neither side is a number typed into the test, so the seed can change
+underneath it, and a disagreement is a real defect rather than a stale
+expectation. `drilldown_matrix.py` states what "agree" means per metric.
 
 Regenerate it with `python3 -m insight_seed.render_profile` (from
 `src/ingestion/tools/seed`) after changing

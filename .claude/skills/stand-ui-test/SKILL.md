@@ -192,10 +192,10 @@ assert reports, "the manifest places nobody under this lead — the test would a
 That guard is not decoration. A derived expectation that comes back empty makes
 every assertion below it vacuous.
 
-**No metric value while the golden set is empty** — which it is, by design.
-Hand-authoring an expected number is forbidden under `tests/stand/`; the
-criteria an expectation must meet before it is admitted are in
-`src/ingestion/tools/seed/insight_seed/golden_metrics.py`.
+**No metric value.** Hand-authoring an expected number is forbidden under
+`tests/stand/`, and the seed publishes none: an admissible expectation would
+have to be computable from the seed inputs rather than read back out of the
+gold layer.
 What a journey *can* assert about numbers is their **honesty**:
 
 - a populated tile is `not_to_have_text("—")`

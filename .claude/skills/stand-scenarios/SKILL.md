@@ -74,7 +74,7 @@ oracles, and one forbidden one.
 | **The API response the UI just received** | anything on screen | the drilldown table matches the payload behind it |
 | **The endpoint contract** | status codes, media types, problem documents | 415 on a wrong content type |
 | **The code** | a rule whose only statement is an implementation | a suppression threshold that appears in no contract |
-| ~~A number you read off a running stand~~ | **never** | `golden_metrics` is empty by design |
+| ~~A number you read off a running stand~~ | **never** | the seed publishes no expected values |
 
 **No claim may assert an exact metric value.** Reading a number off the stand
 and asserting it back only proves that the code which produced it produced it.

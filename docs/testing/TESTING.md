@@ -94,12 +94,12 @@ Components against a real store, and the API contract:
 ```sh
 cd src/ingestion/tests/e2e
 ./e2e.sh test      # runs the rig + dbt
-./e2e.sh gates     # metric-coverage + openapi-drift
+./e2e.sh gates     # metric-coverage
 ```
 
-**CI:** `e2e-bronze-to-api.yml` — blocking metric-coverage + openapi-drift gates. Its `api` and
-`identity` HTTP contract lanes retired once those contracts moved to the compose stand
-(`e2e-stand.yml`); the endpoint gate moved with them.
+**CI:** `e2e-bronze-to-api.yml` — a blocking metric-coverage gate; OpenAPI drift is a separate workflow
+(`openapi-specs.yml`). Its `api` and `identity` HTTP contract lanes retired once those contracts moved to
+the compose stand (`e2e-stand.yml`); the endpoint gate moved with them.
 
 ---
 
@@ -113,8 +113,8 @@ cd src/ingestion/tests/e2e
 - A separate **compose-stand suite** (`tests/stand`, documented in `tests/stand/README.md`) drives a real Keycloak
   login and a set of browser journeys against the SPA, plus an API-contract suite — all against a local
   `docker-compose` stand seeded deterministically for tests (`src/ingestion/tools/seed`). Run it with
-  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE against a declared expectation: the seed's
-  `golden_metrics` is empty by design, and a harness for it is being migrated separately. It does reconcile every
+  `./dev-compose.sh test-stand up|test|down`. It asserts no metric VALUE against a declared expectation: the seed
+  publishes none, and the suite that does assert values is the data-path rig in §5. It does reconcile every
   metric's drilldown evidence against that metric's own served value, which needs no declared expectation.
 
 **CI:** `functional-k3s.yml` — ephemeral k3d install, post-merge on pushes to `main` that touch the deploy surface.
