@@ -23,6 +23,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PeopleListItem } from "@/api/identity-client";
+import { peopleFromIdentityTree } from "@/test/identity";
 import type { IdentityPerson, TeamMember } from "@/types/insight";
 
 vi.mock("@/components/ic-view-toggle", () => ({
@@ -71,8 +73,7 @@ vi.mock("@/queries/member-grid", () => ({
 /** Entity ids the scoped roster sent to the heatmap fetch. */
 function heatmapFetchedIds(): string[] {
   const entity = useMemberGridData.mock.lastCall?.[1] as
-    | { ids: string[] }
-    | undefined;
+    { ids: string[] } | undefined;
   return entity?.ids ?? [];
 }
 
@@ -97,7 +98,7 @@ function person(
   personId: string,
   email: string,
   name: string,
-  subordinates: IdentityPerson[] = [],
+  subordinates: IdentityPerson[] = []
 ): IdentityPerson {
   return {
     person_id: personId,
@@ -128,33 +129,27 @@ const grantedTree = person(PERSON_IDS.grace, "grace@x.io", "Grace", [
   person(PERSON_IDS.hana, "hana@x.io", "Hana"),
 ]);
 
-// Identity answers per person id: the screen asks for the PIVOT's profile, not
-// the viewer's tree, so a request keyed by anyone else must not resolve here.
-let trees: Record<string, IdentityPerson> = {};
+let roster: PeopleListItem[] = [];
+let rosterError = false;
+const rosterRetry = vi.fn();
 
-let pivotError: unknown;
-const pivotRefetch = vi.fn();
-
-vi.mock("@/queries/ic-dashboard", () => ({
-  useIcPerson: (personId: string) => ({
-    ...queryState,
-    data: pivotError === undefined ? trees[personId] : undefined,
-    error: pivotError,
-    isError: pivotError !== undefined,
-    refetch: pivotRefetch,
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({
+    roster,
+    isPending: false,
+    isError: rosterError,
+    retry: rosterRetry,
   }),
 }));
 
 import { TeamViewScreen } from "./team-view";
 
 beforeEach(() => {
-  pivotError = undefined;
-  pivotRefetch.mockReset();
-  trees = {
-    [PERSON_IDS.alice]: viewerTree,
-    [PERSON_IDS.dave]: flatTree,
-    [PERSON_IDS.grace]: grantedTree,
-  };
+  rosterError = false;
+  rosterRetry.mockReset();
+  roster = [viewerTree, flatTree, grantedTree].flatMap((root) =>
+    peopleFromIdentityTree(root)
+  );
 });
 
 function renderScreen(teamId: string = PERSON_IDS.alice) {
@@ -163,26 +158,24 @@ function renderScreen(teamId: string = PERSON_IDS.alice) {
 
 describe("TeamViewScreen identity failures", () => {
   it("says the person is unavailable instead of showing an empty team", async () => {
-    // A 404 pivot is not a team with no members: rendering the empty state
-    // over it would report a broken lookup as an empty org.
-    const { IdentityApiError } = await import("@/api/identity-client");
-    pivotError = new IdentityApiError(404, {});
+    roster = roster.filter((person) => person.person_id !== PERSON_IDS.alice);
 
     renderScreen();
 
-    expect(screen.getByText("This person is not available")).toBeInTheDocument();
+    expect(
+      screen.getByText("This person is not available")
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("heatmap")).not.toBeInTheDocument();
   });
 
   it("offers a retry when identity itself failed, not the lookup", async () => {
-    const { IdentityApiError } = await import("@/api/identity-client");
-    pivotError = new IdentityApiError(500, {});
+    rosterError = true;
 
     renderScreen();
 
     expect(screen.getByText("Unable to load this person")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(pivotRefetch).toHaveBeenCalled();
+    expect(rosterRetry).toHaveBeenCalled();
   });
 });
 
@@ -191,7 +184,7 @@ describe("TeamViewScreen direct-reports scoping", () => {
     renderScreen();
 
     expect(
-      screen.getByText("Direct reports of Alice · 2 members"),
+      screen.getByText("Direct reports of Alice · 2 members")
     ).toBeInTheDocument();
     expect(screen.getByText("Direct reports only")).toBeInTheDocument();
     expect(screen.getByText("(2/3)")).toBeInTheDocument();
@@ -207,7 +200,7 @@ describe("TeamViewScreen direct-reports scoping", () => {
     await user.click(screen.getByRole("switch"));
 
     expect(
-      screen.getByText("Alice's department · 3 members"),
+      screen.getByText("Alice's department · 3 members")
     ).toBeInTheDocument();
     expect(screen.getByText("(3/3)")).toBeInTheDocument();
     expect(screen.getByTestId("heatmap")).toHaveTextContent("Bob,Carol,Erin");
@@ -238,7 +231,7 @@ describe("TeamViewScreen direct-reports scoping", () => {
     // is just the member count, and the full roster reaches the queries.
     expect(screen.getByText("2 members")).toBeInTheDocument();
     expect(
-      screen.queryByText(/Direct reports of|department/),
+      screen.queryByText(/Direct reports of|department/)
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("heatmap")).toHaveTextContent("Fay,Gil");
 
@@ -248,18 +241,18 @@ describe("TeamViewScreen direct-reports scoping", () => {
 
 describe("TeamViewScreen member labels", () => {
   it("labels a member with no display name by username, then e-mail (#2711)", () => {
-    trees[PERSON_IDS.alice] = person(PERSON_IDS.alice, "alice@x.io", "Alice", [
-      {
-        ...person(PERSON_IDS.bob, "42+bee@noreply.x.io", ""),
-        username: "bee",
-      },
-      person(PERSON_IDS.erin, "erin@x.io", ""),
-    ]);
+    roster = peopleFromIdentityTree(
+      person(PERSON_IDS.alice, "alice@x.io", "Alice", [
+        {
+          ...person(PERSON_IDS.bob, "42+bee@noreply.x.io", ""),
+          username: "bee",
+        },
+        person(PERSON_IDS.erin, "erin@x.io", ""),
+      ])
+    );
 
     renderScreen();
 
-    expect(screen.getByTestId("heatmap")).toHaveTextContent(
-      "bee,erin@x.io",
-    );
+    expect(screen.getByTestId("heatmap")).toHaveTextContent("bee,erin@x.io");
   });
 });

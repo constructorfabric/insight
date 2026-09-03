@@ -1,15 +1,3 @@
-/**
- * `subordinates` is empty until the backend `expand_subordinates` flag is on.
- * When mocks are off and the endpoint fails the caller surfaces the failure to
- * the UI — never silently falls back to seeded data.
- *
- * The legacy `GET /persons/{email}` lookup (RFC 8594 deprecated) is replaced by
- * `POST /profiles` with a `{ value_type, value }` body. In the wire shape
- * (`ProfileResponse`) nearly every field is optional; we normalize it back into
- * the required-string `IdentityPerson` projection the UI already consumes so
- * callers and the org-tree sidebar are unchanged.
- */
-
 import { fetchWithAuth } from "@/api/fetch-with-auth";
 import { normalizePersonId } from "@/lib/metrics/entity";
 import type { IdentityPerson } from "@/types/insight";
@@ -17,28 +5,6 @@ import type { IdentityPerson } from "@/types/insight";
 const BASE =
   (import.meta.env.VITE_IDENTITY_BASE as string | undefined) ??
   "/api/identity/v1";
-
-/** Wire shape of `POST /profiles` (snake_case; optional fields omitted). */
-interface ProfileResponse {
-  person_id: string;
-  insight_tenant_id: string;
-  email?: string;
-  display_name?: string;
-  first_name?: string;
-  last_name?: string;
-  department?: string;
-  division?: string;
-  job_title?: string;
-  status?: string;
-  username?: string;
-  employee_id?: string;
-  supervisor_email?: string;
-  supervisor_name?: string;
-  parent_email?: string;
-  parent_person_id?: string;
-  subordinates?: ProfileResponse[];
-  ids?: unknown[];
-}
 
 /** One active role assignment of the caller, as `GET /me` reports it. */
 export interface MeRole {
@@ -88,7 +54,11 @@ export async function getMe(): Promise<MeResponse> {
   // diagnosable where a silent [] is not. The entries are checked too: the
   // gate reads `role_id` off each one, so a `[null]` would throw during
   // render rather than fail closed.
-  if (!me.person_id?.trim() || !Array.isArray(me.roles) || !me.roles.every(isMeRole)) {
+  if (
+    !me.person_id?.trim() ||
+    !Array.isArray(me.roles) ||
+    !me.roles.every(isMeRole)
+  ) {
     throw new IdentityApiError(res.status, { error: "malformed_me" });
   }
   return me;
@@ -183,9 +153,11 @@ export const QUEUE_MAX_ITEMS = 1000;
  * read, so asking for more of it is a larger `limit`, not a next page.
  */
 export async function getAttention(
-  limit: number = QUEUE_FIRST_PAGE,
+  limit: number = QUEUE_FIRST_PAGE
 ): Promise<AttentionResponse> {
-  const res = await fetchWithAuth(`${BASE}/resolution/attention?limit=${limit}`);
+  const res = await fetchWithAuth(
+    `${BASE}/resolution/attention?limit=${limit}`
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);
@@ -235,11 +207,11 @@ export interface AccountSearchResponse {
 export async function searchAccounts(
   q: string,
   page: PageRequest = {},
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<AccountSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/resolution/accounts?q=${encodeURIComponent(q)}${pageParams(page)}`,
-    { signal },
+    { signal }
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -353,7 +325,7 @@ export interface CorrectionResponse {
 
 async function postCorrection(
   path: string,
-  body: unknown,
+  body: unknown
 ): Promise<CorrectionResponse> {
   const res = await fetchWithAuth(`${BASE}/resolution/${path}`, {
     method: "POST",
@@ -453,10 +425,57 @@ export interface PersonSearchResponse {
   next_cursor?: string | null;
 }
 
+/** One canonical roster person returned by `GET /people`. */
+export interface PeopleListItem {
+  person_id: string;
+  display_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  username: string | null;
+  email: string | null;
+  attributes: Record<string, string>;
+  manager_person_id: string | null;
+}
+
+export interface PeopleListResponse {
+  items: PeopleListItem[];
+  next_cursor?: string | null;
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isPeopleListItem(value: unknown): value is PeopleListItem {
+  if (typeof value !== "object" || value === null) return false;
+  const person = value as Record<string, unknown>;
+  const attributes = person.attributes;
+  return (
+    typeof person.person_id === "string" &&
+    isNullableString(person.display_name) &&
+    isNullableString(person.first_name) &&
+    isNullableString(person.last_name) &&
+    isNullableString(person.username) &&
+    isNullableString(person.email) &&
+    typeof attributes === "object" &&
+    attributes !== null &&
+    !Array.isArray(attributes) &&
+    Object.values(attributes).every(
+      (attribute) => typeof attribute === "string"
+    ) &&
+    isNullableString(person.manager_person_id)
+  );
+}
+
 /** One page of a listing: where to resume and how many rows to ask for. */
 export interface PageRequest {
   cursor?: string;
   limit?: number;
+}
+
+export interface PeopleListRequest extends PageRequest {
+  q?: string;
+  visibility?: "caller" | "tenant";
 }
 
 function pageParams(page: PageRequest): string {
@@ -467,6 +486,37 @@ function pageParams(page: PageRequest): string {
   return query ? `&${query}` : "";
 }
 
+/** One caller-authorized page of the canonical roster. */
+export async function listPeople(
+  page: PeopleListRequest = {},
+  signal?: AbortSignal
+): Promise<PeopleListResponse> {
+  const params = new URLSearchParams();
+  if (page.visibility) params.set("visibility", page.visibility);
+  if (page.q) params.set("q", page.q);
+  if (page.cursor) params.set("cursor", page.cursor);
+  if (page.limit != null) params.set("limit", String(page.limit));
+  const query = params.toString();
+  const url = `${BASE}/people${query ? `?${query}` : ""}`;
+  const res = signal
+    ? await fetchWithAuth(url, { signal })
+    : await fetchWithAuth(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new IdentityApiError(res.status, body);
+  }
+  let listed: PeopleListResponse;
+  try {
+    listed = (await res.json()) as PeopleListResponse;
+  } catch {
+    throw new IdentityApiError(res.status, { error: "invalid_json" });
+  }
+  if (!Array.isArray(listed.items) || !listed.items.every(isPeopleListItem)) {
+    throw new IdentityApiError(res.status, { error: "malformed_roster" });
+  }
+  return listed;
+}
+
 /**
  * The operator's person listing (`GET /persons`) — tenant-wide, admin-gated.
  * Blank `q` lists everyone; terms narrow the same list, and a page is walked
@@ -475,11 +525,11 @@ function pageParams(page: PageRequest): string {
 export async function searchPersons(
   q: string,
   page: PageRequest = {},
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<PersonSearchResponse> {
   const res = await fetchWithAuth(
     `${BASE}/persons?q=${encodeURIComponent(q)}${pageParams(page)}`,
-    { signal },
+    { signal }
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -503,7 +553,7 @@ export async function searchPersons(
  * their own visible set, so it needs no admin role.
  */
 export async function listVisiblePersons(
-  page: PageRequest & { q?: string } = {},
+  page: PageRequest & { q?: string } = {}
 ): Promise<PersonSearchResponse> {
   const params = new URLSearchParams();
   if (page.q) params.set("q", page.q);
@@ -511,7 +561,7 @@ export async function listVisiblePersons(
   if (page.limit != null) params.set("limit", String(page.limit));
   const query = params.toString();
   const res = await fetchWithAuth(
-    `${BASE}/visible-persons${query ? `?${query}` : ""}`,
+    `${BASE}/visible-persons${query ? `?${query}` : ""}`
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -540,10 +590,10 @@ export interface PersonAccountEntry {
 
 /** Every account currently bound to a person — the merge preview's substance. */
 export async function getPersonAccounts(
-  personId: string,
+  personId: string
 ): Promise<{ person_id: string; accounts: PersonAccountEntry[] }> {
   const res = await fetchWithAuth(
-    `${BASE}/resolution/persons/${encodeURIComponent(personId)}/accounts`,
+    `${BASE}/resolution/persons/${encodeURIComponent(personId)}/accounts`
   );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -573,80 +623,49 @@ export class IdentityApiError extends Error {
   }
 }
 
-/**
- * Normalize a `ProfileResponse` into the FE `IdentityPerson`. `person_id` is the
- * UI identity (route links + React keys), so the top-level profile is guaranteed
- * to carry one by `getPerson`; subordinates the wire returns without one are
- * dropped rather than projected to `""` — a keyless node would make broken links
- * and collide as duplicate React keys across siblings. `email` is display-only
- * now and may legitimately be absent. Other optional strings default to `""`;
- * omitted parent/supervisor fields stay `null`.
- */
-function toIdentityPerson(p: ProfileResponse): IdentityPerson {
+function toIdentityPerson(p: PeopleListItem): IdentityPerson {
   return {
     person_id: p.person_id,
     email: p.email ?? "",
     display_name: p.display_name ?? "",
     first_name: p.first_name ?? "",
     last_name: p.last_name ?? "",
-    department: p.department ?? "",
-    division: p.division ?? "",
-    job_title: p.job_title ?? "",
-    status: p.status ?? "",
+    department: p.attributes.department ?? "",
+    division: p.attributes.division ?? "",
+    job_title: p.attributes.job_title ?? "",
+    status: p.attributes.status ?? "",
     username: p.username ?? "",
-    parent_email: p.parent_email ?? null,
-    // `parent_id` has no ProfileResponse source; preserve the prior default.
+    parent_email: null,
     parent_id: null,
-    parent_person_id: p.parent_person_id ?? null,
-    supervisor_email: p.supervisor_email ?? null,
-    supervisor_name: p.supervisor_name ?? null,
-    subordinates: (p.subordinates ?? [])
-      .filter((s) => Boolean(s.person_id?.trim()))
-      .map(toIdentityPerson),
+    parent_person_id: p.manager_person_id,
+    supervisor_email: null,
+    supervisor_name: null,
+    subordinates: [],
   };
 }
 
-/**
- * Resolve one profile by canonical person id — the key the SPA routes on and
- * the metrics API filters by since the identity cutover. Identity applies the
- * caller's visible set here, so a person's name and their metrics answer to
- * one permission: an id outside it is a 404, not a nameless dashboard.
- */
-export async function getPerson(personId: string): Promise<IdentityPerson> {
-  // Normalized on the way out, matching the query key: one spelling of an id
-  // must not become two requests, or two cache entries for one person.
-  return resolveProfile({
-    value_type: "person_id",
-    value: normalizePersonId(personId),
-  });
-}
-
-async function resolveProfile(body: {
-  value_type: "person_id";
-  value: string;
-}): Promise<IdentityPerson> {
-  const url = `${BASE}/profiles`;
-  const res = await fetchWithAuth(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+/** One caller-visible canonical roster person. */
+export async function getPerson(
+  personId: string,
+  signal?: AbortSignal
+): Promise<IdentityPerson> {
+  const id = normalizePersonId(personId);
+  const url = `${BASE}/people/${encodeURIComponent(id)}`;
+  const res = signal
+    ? await fetchWithAuth(url, { signal })
+    : await fetchWithAuth(url);
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new IdentityApiError(res.status, body);
   }
-  let profile: ProfileResponse;
+  let person: unknown;
   try {
-    profile = (await res.json()) as ProfileResponse;
+    person = await res.json();
   } catch {
     throw new IdentityApiError(res.status, { error: "invalid_json" });
   }
-  // `person_id` is the queried identity + the UI's key; a profile without it
-  // is unusable, so surface it rather than projecting a keyless person. The
-  // email is NOT required — identity resolves persons whose observation log
-  // carries no current email, and nothing keys on it any more.
-  if (!profile.person_id?.trim()) {
-    throw new IdentityApiError(res.status, { error: "missing_person_id" });
+  if (!isPeopleListItem(person)) {
+    throw new IdentityApiError(res.status, { error: "malformed_person" });
   }
-  return toIdentityPerson(profile);
+  return toIdentityPerson(person);
 }

@@ -1,10 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { IdentityApiError } from "@/api/identity-client";
-import {
-  personDisplayName,
-  personName,
-} from "@/lib/identities/person-display";
+import { personDisplayName, personName } from "@/lib/identities/person-display";
 import { ComingSoon } from "@/components/widgets/coming-soon";
 import { DashboardEmptyState } from "@/components/widgets/dashboard/dashboard-empty-state";
 import { DashboardHeader } from "@/components/widgets/dashboard/dashboard-header";
@@ -19,25 +15,22 @@ import { usePeriod } from "@/hooks/use-period";
 import {
   flattenSubordinates,
   hasIndirectReports,
+  rosterTree,
   scopeRosterToDirectReports,
 } from "@/lib/insight/identity-tree";
-import {
-  GROUPS,
-  HEATMAP_COLLECTION,
-  type GroupId,
-} from "@/lib/insight/groups";
+import { GROUPS, HEATMAP_COLLECTION, type GroupId } from "@/lib/insight/groups";
 import {
   memberMetricEntries,
   metricBelowCounts,
 } from "@/lib/insight/team-metrics";
 import { projectViews } from "@/lib/metrics/collection";
 import { normalizePersonId } from "@/lib/metrics/entity";
-import { useIcPerson } from "@/queries/ic-dashboard";
 import {
   collectionSetPending,
   useMetricCollectionSet,
 } from "@/queries/metric-results";
 import { useMemberGridData } from "@/queries/member-grid";
+import { useVisibleRoster } from "@/queries/visible-roster";
 import type { TeamMember } from "@/types/insight";
 
 // Team surfaces request period + peer only: a per-member timeseries over a
@@ -71,17 +64,15 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
     setOpenGroup(null);
   }
 
-  // The pivot is resolved by identity, NOT looked up in the viewer's tree:
-  // visibility also comes from explicit and wildcard grants, so a person the
-  // viewer may legitimately see can sit outside their reporting line. A tree
-  // lookup would render that team empty. The hook still serves the viewer's
-  // cached tree as placeholder data, so the common case paints immediately.
-  const pivotQ = useIcPerson(teamId);
-  const pivot = pivotQ.data ?? null;
+  const visibleRoster = useVisibleRoster(true);
+  const pivot = useMemo(
+    () => rosterTree(visibleRoster.roster, teamId),
+    [teamId, visibleRoster.roster]
+  );
 
   const fullRoster = useMemo(
     () => (pivot ? flattenSubordinates(pivot) : null),
-    [pivot],
+    [pivot]
   );
   // With no indirect reports, direct reports == the whole team, so the
   // toggle could never change the roster — hide it (#1756).
@@ -92,12 +83,11 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
     () =>
       scopeRosterToDirectReports(
         fullRoster,
-        canScopeToDirectReports && directReportsOnly,
+        canScopeToDirectReports && directReportsOnly
       ),
-    [fullRoster, canScopeToDirectReports, directReportsOnly],
+    [fullRoster, canScopeToDirectReports, directReportsOnly]
   );
-  // Never fall back to the raw id (a UUID) — the shell prefetches the viewer
-  // tree, so the pivot resolves synchronously in practice.
+  // Never fall back to the raw id (a UUID).
   const teamName = pivot ? (personName(pivot) ?? "") : "";
 
   // The roster IS the member list: identity owns who is on the team, and
@@ -109,7 +99,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
         person_id: entry.person_id,
         name: personDisplayName(entry),
       })),
-    [roster],
+    [roster]
   );
   const memberEntityIds = members.map((m) => normalizePersonId(m.person_id));
   const memberRefs: TeamMemberRef[] = members.map((m) => ({
@@ -120,13 +110,13 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
     HEATMAP_COLLECTION,
     { type: "person", ids: memberEntityIds },
     dateRange,
-    period,
+    period
   );
 
   const metricGroupData = useMetricCollectionSet(
     TEAM_METRIC_COLLECTIONS,
     { type: "person", ids: memberEntityIds },
-    dateRange,
+    dateRange
   );
 
   const metricBelowByMember = new Map<string, number>();
@@ -136,11 +126,11 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
     for (const [memberId, count] of metricBelowCounts(
       def,
       byKey,
-      memberEntityIds,
+      memberEntityIds
     )) {
       metricBelowByMember.set(
         memberId,
-        (metricBelowByMember.get(memberId) ?? 0) + count,
+        (metricBelowByMember.get(memberId) ?? 0) + count
       );
     }
   }
@@ -149,27 +139,21 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
   const metricEntriesByPerson = memberMetricEntries(
     GROUPS,
     (id) => metricGroupData.get(id)?.byKey,
-    memberEntityIds,
+    memberEntityIds
   );
 
   // The one loading gate: a single page spinner while ANY of the screen's
   // queries has no data. A period or scope change mints new query keys, so
   // the same gate re-trips — no per-widget loaders, no partial paints. The
-  // roster query (the pivot's own profile) comes first: every other query
-  // derives its entity ids from it.
+  // roster query comes first: every other query derives its entity ids from it.
   const isLoading =
-    pivotQ.isPending ||
+    visibleRoster.isPending ||
     heatmapQ.isPending ||
     collectionSetPending(metricGroupData);
   const hasMembers = members.length > 0;
   const isAllEmpty = !isLoading && !hasMembers;
-  // Identity failing is not an empty team: without the pivot there is no
-  // roster at all, and rendering the empty state over a 404 or a down service
-  // would read as "this team has no members". Same split as the personal
-  // dashboard: a 404 (gone, renamed, or outside the visible set) has nothing
-  // to retry; anything else offers one.
   const pivotMissing =
-    pivotQ.error instanceof IdentityApiError && pivotQ.error.status === 404;
+    !visibleRoster.isPending && !visibleRoster.isError && pivot === null;
 
   const memberCountLabel = `${members.length} member${members.length === 1 ? "" : "s"}`;
   const scopeLabel = directReportsOnly
@@ -189,13 +173,13 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
         hasReports
         actions={
           canScopeToDirectReports && fullRoster ? (
-            <label className="text-foreground flex cursor-pointer items-center gap-2 text-sm select-none">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground select-none">
               <Switch
                 checked={directReportsOnly}
                 onCheckedChange={setDirectReportsOnly}
               />
               <span>Direct reports only</span>
-              <span className="text-muted-foreground text-xs">
+              <span className="text-xs text-muted-foreground">
                 ({roster?.length ?? 0}/{fullRoster.length})
               </span>
             </label>
@@ -203,7 +187,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
         }
       />
       <main className="flex flex-1 flex-col gap-8 p-4 md:p-6">
-        {pivotQ.isError ? (
+        {visibleRoster.isError || pivotMissing ? (
           <ComingSoon
             variant="card"
             state="error"
@@ -212,7 +196,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
                 ? "This person is not available"
                 : "Unable to load this person"
             }
-            onRetry={pivotMissing ? undefined : () => void pivotQ.refetch()}
+            onRetry={pivotMissing ? undefined : visibleRoster.retry}
           />
         ) : isLoading ? (
           <CenteredSpinner className="min-h-[70vh]" />
@@ -243,7 +227,7 @@ export function TeamViewScreen({ teamId }: TeamViewScreenProps) {
             )}
 
             <section className="flex flex-col gap-3">
-              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
                 Sections
               </p>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">

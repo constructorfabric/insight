@@ -211,6 +211,21 @@ fn build_operations(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(people::list_people)
         .register(router, openapi);
 
+    let router = OperationBuilder::get("/v1/people/{person_id}")
+        .operation_id("identity_resolution.people.get")
+        .summary("Get one current roster person")
+        .authenticated()
+        .path_param("person_id", "Canonical person id")
+        .no_license_required()
+        .json_response_with_schema::<people::PeopleListItemResponse>(
+            openapi,
+            StatusCode::OK,
+            "Current roster person visible to the caller",
+        )
+        .standard_errors(openapi)
+        .handler(people::get_person)
+        .register(router, openapi);
+
     let router = OperationBuilder::get("/v1/persons")
         .operation_id("identity_resolution.persons.search")
         .summary("List the tenant's persons, narrowed by search terms (admin)")
@@ -745,6 +760,10 @@ mod openapi_tests {
         assert!(
             document.paths.paths.contains_key("/v1/people"),
             "the additive people listing must be described"
+        );
+        assert!(
+            document.paths.paths.contains_key("/v1/people/{person_id}"),
+            "the canonical person detail must be described"
         );
         assert!(
             document.paths.paths.contains_key("/v1/resolution/bind"),

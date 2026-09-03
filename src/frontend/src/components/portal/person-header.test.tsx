@@ -16,12 +16,19 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { identityPerson, pid } from "@/test/identity";
+import type { PeopleListItem } from "@/api/identity-client";
 import type { IdentityPerson } from "@/types/insight";
 
 const mocks = vi.hoisted(() => ({
   person: undefined as IdentityPerson | undefined,
-  managerNodes: [] as Array<{ person_id: string; name: string; depth: number; teamSize: number }>,
+  managerNodes: [] as Array<{
+    person_id: string;
+    name: string;
+    depth: number;
+    teamSize: number;
+  }>,
   icCalls: [] as string[],
+  roster: [] as PeopleListItem[],
 }));
 
 vi.mock("@/queries/ic-dashboard", () => ({
@@ -33,15 +40,36 @@ vi.mock("@/queries/ic-dashboard", () => ({
 vi.mock("@/lib/portal/use-org-scope", () => ({
   useOrgScope: () => ({ managerNodes: mocks.managerNodes }),
 }));
+vi.mock("@/queries/visible-roster", () => ({
+  useVisibleRoster: () => ({ roster: mocks.roster }),
+}));
 
 import { PersonHeader } from "./person-header";
 
 const LEAD = pid("lead");
 const BOSS = pid("boss");
 
+function rosterPerson(
+  personId: string,
+  displayName: string,
+  managerPersonId: string | null
+): PeopleListItem {
+  return {
+    person_id: personId,
+    display_name: displayName,
+    first_name: null,
+    last_name: null,
+    username: null,
+    email: null,
+    attributes: {},
+    manager_person_id: managerPersonId,
+  };
+}
+
 beforeEach(() => {
   mocks.icCalls = [];
   mocks.managerNodes = [];
+  mocks.roster = [rosterPerson(LEAD, "Lead", BOSS)];
   mocks.person = identityPerson("lead", {
     person_id: LEAD,
     display_name: "Lead",
@@ -68,8 +96,27 @@ describe("PersonHeader", () => {
     mocks.managerNodes = [
       { person_id: BOSS, name: "Boss", depth: 0, teamSize: 4 },
     ];
+    mocks.roster.push(rosterPerson(BOSS, "Boss", null));
     render(<PersonHeader person={LEAD} />);
     expect(screen.getByText("Boss")).toBeInTheDocument();
+  });
+
+  it("uses the canonical roster name instead of the profile supervisor label", () => {
+    mocks.person = identityPerson("lead", {
+      person_id: LEAD,
+      display_name: "Lead",
+      parent_person_id: BOSS,
+      supervisor_name: "Activity Name",
+    });
+    mocks.managerNodes = [
+      { person_id: BOSS, name: "Roster Boss", depth: 0, teamSize: 4 },
+    ];
+    mocks.roster.push(rosterPerson(BOSS, "Roster Boss", null));
+
+    render(<PersonHeader person={LEAD} />);
+
+    expect(screen.getByText("Roster Boss")).toBeInTheDocument();
+    expect(screen.queryByText("Activity Name")).toBeNull();
   });
 });
 
@@ -80,6 +127,7 @@ describe("PersonHeader on an organisation with no reporting lines", () => {
     // zones are how a flat organisation navigates — a button here that scoped to
     // an empty org would read as a broken link rather than an absent one.
     mocks.managerNodes = [];
+    mocks.roster = [rosterPerson(pid("solo"), "Solo", null)];
     mocks.person = identityPerson("solo", {
       person_id: pid("solo"),
       display_name: "Solo",
