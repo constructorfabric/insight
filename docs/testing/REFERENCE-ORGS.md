@@ -7,7 +7,7 @@ denominator.
 
 Figures are derived from measuring **two production installations** with identical SQL and are
 stated here as project standards. Companion documents: [`TESTING.md`](TESTING.md) (where these
-fixtures run) and [`product/VISION.md`](../product/VISION.md) §6.4.2 (the company-size tiers).
+fixtures run) and [`INSIGHT_VISION.md`](https://github.com/constructorfabric/vision/blob/main/INSIGHT_VISION.md) §6.4.2 (the company-size tiers).
 Tracked in #2215 (reference organisations) and #2216 (recommended resource requirements).
 
 ---
@@ -52,7 +52,7 @@ identity resolution is precisely what they stress.
 
 ## 3. The reference organisations
 
-Aligned to the company-size tiers in [`product/VISION.md`](../product/VISION.md) §6.4.2. One reference
+Aligned to the company-size tiers in [`INSIGHT_VISION.md`](https://github.com/constructorfabric/vision/blob/main/INSIGHT_VISION.md) §6.4.2. One reference
 organisation per tier, placed at the tier ceiling so that passing at the reference covers the tier
 below it.
 
