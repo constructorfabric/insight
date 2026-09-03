@@ -319,7 +319,7 @@ dashboards:
              ]}, "overrides": []},
              "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}},
              "targets": [
-               {"refId": "A", "legendFormat": "{{pod}}", "expr": "nginx_up{job=\"gateway-nginx\"}"}
+               {"refId": "A", "legendFormat": "{{pod}}", "instant": true, "range": false, "expr": "nginx_up{job=\"gateway-nginx\"}"}
              ]}
           ]
         }
