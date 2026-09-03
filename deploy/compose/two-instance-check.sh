@@ -49,7 +49,15 @@ check() { if [[ "$2" == "$3" ]]; then fail "$1 (both: $2)"; else pass "$1"; fi; 
 env_file()      { printf '.env.compose.test-stand-%s' "$1"; }
 realm_file()    { printf 'deploy/compose/keycloak/realm-insight.generated-%s.json' "$1"; }
 manifest_file() { printf 'src/ingestion/tools/seed/manifest-%s.json' "$1"; }
-port_of()       { grep -E "^${2}=" "$(env_file "$1")" | tail -1 | cut -d= -f2; }
+env_value()     { grep -E "^${2}=" "$(env_file "$1")" | tail -1 | cut -d= -f2; }
+port_of()       { env_value "$1" "$2"; }
+
+# One statement against an instance's own ClickHouse, over its own host port.
+ch_query() {
+  curl -s --max-time 15 \
+    "http://localhost:$(port_of "$1" CLICKHOUSE_HTTP_PORT)/?user=$(env_value "$1" CLICKHOUSE_USER)&password=$(env_value "$1" CLICKHOUSE_PASSWORD)" \
+    --data-binary "$2" | tr -d '[:space:]'
+}
 
 teardown() {
   [[ "$keep" == true ]] && { echo "== stands left up (--keep) =="; return; }
@@ -137,6 +145,21 @@ for instance in "$INSTANCE_A" "$INSTANCE_B"; do
     fail "$m missing or unparseable"
   fi
 done
+
+echo "== the two data planes are separate =="
+# Distinct ports and distinct files still leave the possibility that both
+# stacks resolved to one database. Writing on one and looking from the other
+# is the only check that rules it out.
+probe="two_instance_probe"
+ch_query "$INSTANCE_A" "CREATE TABLE IF NOT EXISTS insight.${probe} (x UInt8) ENGINE=Memory" >/dev/null
+a_sees="$(ch_query "$INSTANCE_A" "SELECT count() FROM system.tables WHERE database='insight' AND name='${probe}'")"
+b_sees="$(ch_query "$INSTANCE_B" "SELECT count() FROM system.tables WHERE database='insight' AND name='${probe}'")"
+ch_query "$INSTANCE_A" "DROP TABLE IF EXISTS insight.${probe}" >/dev/null
+if [[ "$a_sees" == "1" && "$b_sees" == "0" ]]; then
+  pass "a table created on $INSTANCE_A is invisible to $INSTANCE_B"
+else
+  fail "shared data plane: $INSTANCE_A sees '${a_sees}', $INSTANCE_B sees '${b_sees}' (want 1 and 0)"
+fi
 
 echo "== both stands are running at once =="
 for instance in "$INSTANCE_A" "$INSTANCE_B"; do
