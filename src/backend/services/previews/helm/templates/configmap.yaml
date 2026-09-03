@@ -21,7 +21,9 @@ data:
 
     logging:
       default:
-        console_level: info
+        # The install-wide knob: global.observability.logs.level — the same
+        # value the platform CM publishes as INSIGHT_LOG_LEVEL.
+        console_level: {{ ((((.Values.global).observability).logs).level) | default "info" }}
 
     gears:
       api-gateway:
