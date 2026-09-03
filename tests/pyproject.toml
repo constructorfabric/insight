@@ -29,9 +29,16 @@ description = "Deployed-stand test suite for Insight: shared library plus API an
 # pins 3.12 — that interpreter only runs stdlib helper scripts, never this
 # suite; reconciling the pins is CI enablement's call, not a reason to lower
 # the floor.)
-requires-python = ">=3.13"
+# The ceiling is dbt's: the data-path lane runs dbt-core in process, and
+# 1.11.14 -- the newest -- fails to import on 3.14 (mashumaro rejects
+# `Optional[str]` fields on that interpreter) while importing cleanly on 3.13.
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "pytest>=8",
+    # insight_datapath: `$ref` resolution and schema validation of the data-path
+    # fixtures are pure YAML + jsonschema work, so they sit in this project.
+    "pyyaml>=6.0",
+    "jsonschema>=4.20",
     # Sync HTTP with a cookie jar — the session transport LoginSession needs.
     "httpx>=0.27",
     # Pinned so every runner installs the same browser build via
@@ -60,6 +67,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy==2.1.0",
+    "types-PyYAML>=6.0",
+    "types-jsonschema>=4.20",
     "ruff==0.15.16",
     # Regenerates tests/stand/api/schemas/analytics.py from the committed
     # analytics OpenAPI document. Dev-only: the generated module is committed,
