@@ -39,7 +39,7 @@ name: gitlab
 #   commit it has already materialized.
 #   Safe: both dates have been in Bronze all along, and the author date falls
 #   back to the committer date where a source left it empty. #3153
-version: "2.0.0"
+version: "2.1.0"
 type: cdk
 schedule: "0 2 * * *"
 workflow: sync
@@ -48,7 +48,7 @@ images:
     name: source-gitlab-insight
     dockerfile: ./Dockerfile
     context: .
-    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.09.02.09.09-00d2c69"
+    image: "ghcr.io/constructorfabric/source-gitlab-insight:2026.09.03.08.06-08aee3d"
 dbt_select: "tag:gitlab+"
 connection:
   namespace: "bronze_gitlab"
