@@ -4,5 +4,5 @@ description: Insight Identity Resolution (epic #1602)
 version: 0.2.0
 # appVersion is managed by the release pipeline (build-images.yml): it is
 # bumped to the freshly built image tag on merges that change this service.
-appVersion: "2026.09.03.09.21-974d5d1"
+appVersion: "2026.09.03.12.06-c4114de"
 type: application
